@@ -1221,7 +1221,7 @@ def submit_data():
     return form()
 
 
-def get_country_data(iso3_code: str) -> list | None:
+def get_country_data(iso3_code: str):
     iso3_code = iso3_code.upper()
     cache = _load_cache()
 
@@ -1246,19 +1246,19 @@ def get_country_data(iso3_code: str) -> list | None:
         return None
 
 
-def get_country_continent(country_data: list) -> str:
+def get_country_continent(country_data: list):
     if country_data:
         return country_data[0].get('continents', [''])[0]
     return ''
 
 
-def get_country_population(country_data: list) -> int:
+def get_country_population(country_data: list):
     if country_data:
         return country_data[0].get('population', 0)
     return 0
 
 
-def get_country_gini(country_data: list) -> float:
+def get_country_gini(country_data: list):
     if country_data:
         # v5: gini moved to economy.gini_coefficient
         gini_data = country_data[0].get('economy', {}).get('gini_coefficient', {})
