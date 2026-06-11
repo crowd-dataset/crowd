@@ -9,6 +9,7 @@ import webbrowser
 from threading import Timer
 import random
 import requests
+from requests.exceptions import RequestException
 import ast
 import json
 from geopy.geocoders import Nominatim
@@ -18,11 +19,30 @@ from datetime import datetime
 app = Flask(__name__)
 
 FILE_PATH = common.get_configs("mapping")     # mapping file
+COUNTRY_CACHE_FILE = os.path.join(os.path.join(common.root_dir, 'cache_countries.json'))
 
 # average height data from kaggle
 height_data = pd.read_csv(os.path.join(common.root_dir, 'height_data.csv'))
 # average age data from https://simplemaps.com/data/countries
 age_data = pd.read_csv(os.path.join(common.root_dir, 'countries.csv'))
+
+
+def _load_cache() -> dict:
+    if os.path.exists(COUNTRY_CACHE_FILE):
+        try:
+            with open(COUNTRY_CACHE_FILE, 'r') as f:
+                return json.load(f)
+        except (json.JSONDecodeError, OSError):
+            return {}
+    return {}
+
+
+def _save_cache(cache: dict) -> None:
+    try:
+        with open(COUNTRY_CACHE_FILE, 'w') as f:
+            json.dump(cache, f, indent=2)
+    except OSError as e:
+        print(f"Error saving country cache: {e}")
 
 
 def format_locality_label(locality, state, country, iso3):
@@ -1201,43 +1221,50 @@ def submit_data():
     return form()
 
 
-def get_country_data(iso3_code):
+def get_country_data(iso3_code: str) -> list | None:
+    iso3_code = iso3_code.upper()
+    cache = _load_cache()
+
+    if iso3_code in cache:
+        return cache[iso3_code]
+
     try:
-        api_url = f"https://restcountries.com/v3.1/alpha/{iso3_code}"
-        response = requests.get(api_url)
-        if response.status_code == 200:
-            country_data = response.json()
-            return country_data
-        else:
-            return None
-    except Exception as e:
-        print(f"Error fetching country data: {e}")
+        response = requests.get(
+            f'https://api.restcountries.com/countries/v5?q={iso3_code}',
+            headers={'Authorization': 'Bearer ' + common.get_secrets('restcountries_api_key')},
+            timeout=10
+        )
+        response.raise_for_status()
+        data = response.json()
+        objects = data.get('data', {}).get('objects', [])
+
+        cache[iso3_code] = objects
+        _save_cache(cache)
+        return objects
+    except RequestException as e:
+        print(f"Error fetching country data for '{iso3_code}': {e}")
         return None
 
 
-def get_country_continent(country_data):
+def get_country_continent(country_data: list) -> str:
     if country_data:
-        return country_data[0]['continents'][0]
-    else:
-        return ''
+        return country_data[0].get('continents', [''])[0]
+    return ''
 
 
-def get_country_population(country_data):
+def get_country_population(country_data: list) -> int:
     if country_data:
-        return country_data[0]['population']
-    else:
-        return 0.0
+        return country_data[0].get('population', 0)
+    return 0
 
 
-def get_country_gini(country_data):
+def get_country_gini(country_data: list) -> float:
     if country_data:
-        gini_data = country_data[0].get('gini', {})
+        # v5: gini moved to economy.gini_coefficient
+        gini_data = country_data[0].get('economy', {}).get('gini_coefficient', {})
         if gini_data:
-            return list(gini_data.values())[0]
-        else:
-            return 0.0
-    else:
-        return 0.0
+            return list(gini_data.values())[-1]  # most recent year
+    return 0.0
 
 
 def get_country_literacy_rate(iso3_code):
