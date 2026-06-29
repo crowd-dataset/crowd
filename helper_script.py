@@ -408,7 +408,7 @@ class Youtube_Helper:
 
         filename_with_ext = filename if filename.lower().endswith(".mp4") else f"{filename}.mp4"
         filename_lower = filename_with_ext.lower()
-        aliases = ["tue1", "tue2", "tue3", "tue4"]
+        aliases = ["tue4", "tue5"]
 
         req_params = {"token": token} if token else None
 
