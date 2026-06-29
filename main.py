@@ -111,33 +111,16 @@ def process_mapping_concurrently(mapping, config, secret, logger) -> int:
     os.makedirs(internal_ssd, exist_ok=True)
 
     # ------------------------------------------------------------------
-    # Segment marker helpers
+    # Segment completion policy
     # ------------------------------------------------------------------
-    def _segment_marker_anyfps_exists(video_id: str, start_time: int) -> bool:
-        """True if a marker like {video_id}_{start_time}_{fps} exists in any data folder root.
-
-        We do not know FPS before opening/downloading the video, so we accept any FPS,
-        but require that the suffix after '{video_id}_{start_time}_' starts with digits.
-        """
-        prefix = f"{video_id}_{int(start_time)}_"
-        for folder in data_folders:
-            try:
-                for p in glob.glob(os.path.join(folder, prefix + "*")):
-                    bn = os.path.basename(p)
-                    if not bn.startswith(prefix):
-                        continue
-                    rest = bn[len(prefix):]
-                    digits = []
-                    for ch in rest:
-                        if ch.isdigit():
-                            digits.append(ch)
-                        else:
-                            break
-                    if digits:
-                        return True
-            except Exception:
-                continue
-        return False
+    # IMPORTANT:
+    # Do not use loose root-level marker files to decide that a segment is done.
+    # A temporary/leftover filename such as "-xvmIQqC3dw_0_475_30_mod_....mp4"
+    # can accidentally match the old marker pattern "{video_id}_{start_time}_*".
+    # That made videos whose IDs start with '-' download successfully, then get
+    # finalised without trimming or YOLO processing.  The pipeline now decides
+    # completion only from the actual expected output CSVs in data/*/bbox and
+    # data/*/seg.
 
     # Snellius multi-task sharding (1 task == 1 GPU)
     snellius_mode = bool(getattr(config, "snellius_mode", False))
@@ -212,24 +195,12 @@ def process_mapping_concurrently(mapping, config, secret, logger) -> int:
     for vid, info in video_plan.items():
         segments = info["segments"]
 
-        # Marker check intentionally ignores FPS (any {vid}_{start}_{fps} counts).
-        def _marker_done(start_time: int) -> bool:
-            return _segment_marker_anyfps_exists(vid, start_time)
-
-        # Skip entire video if every segment has a marker.
-        if all(_marker_done(st) for st, _, _ in segments):
-            continue
-
         if not (bbox_mode_cfg or seg_mode_cfg):
             vids_to_handle.append(vid)
             continue
 
         needs_any = False
         for st, _, _ in segments:
-            # Marker present → this segment is already considered processed.
-            if _marker_done(st):
-                continue
-
             has_bbox = any(glob.glob(os.path.join(folder, "bbox", f"{vid}_{st}_*.csv")) for folder in data_folders)
             has_seg = any(glob.glob(os.path.join(folder, "seg",  f"{vid}_{st}_*.csv")) for folder in data_folders)
             if (bbox_mode_cfg and not has_bbox) or (seg_mode_cfg and not has_seg):
@@ -443,7 +414,9 @@ def process_mapping_concurrently(mapping, config, secret, logger) -> int:
         # Unique trimmed video (avoid clobbering)
         tmp_dir = internal_ssd if getattr(config, "external_ssd", False) else output_path
         os.makedirs(tmp_dir, exist_ok=True)
-        trimmed_video_path = os.path.join(tmp_dir, f"{vid}_{st}_{et}_{int(video_fps)}_mod_{uuid.uuid4().hex}.mp4")
+        # Prefix with "yt_" so the basename never starts with "-".
+        # This keeps downstream tools safe if they ever pass a basename to a CLI.
+        trimmed_video_path = os.path.join(tmp_dir, f"yt_{vid}_{st}_{et}_{int(video_fps)}_mod_{uuid.uuid4().hex}.mp4")
 
         # Trim as needed
         if run_bbox or run_seg:
@@ -639,16 +612,19 @@ def process_mapping_concurrently(mapping, config, secret, logger) -> int:
                     continue
 
                 for (st, et, tod) in video_plan[v]["segments"]:
-                    # If any marker exists for this segment (any FPS), skip it regardless of CSV presence.
-                    if _segment_marker_anyfps_exists(v, st):
-                        continue
-
                     has_bbox = any(glob.glob(os.path.join(folder, "bbox",
                                                           f"{v}_{st}_*.csv")) for folder in data_folders)
                     has_seg = any(glob.glob(os.path.join(folder, "seg",
                                                          f"{v}_{st}_*.csv")) for folder in data_folders)
                     run_bbox = bool(bbox_mode_cfg and not has_bbox)
                     run_seg = bool(seg_mode_cfg and not has_seg)
+
+                    logger.info(
+                        f"{v}: segment {st}-{et}s output status: "
+                        f"has_bbox={has_bbox}, has_seg={has_seg}, "
+                        f"run_bbox={run_bbox}, run_seg={run_seg}"
+                    )
+
                     if run_bbox or run_seg:
                         pending[v].append((int(st), int(et), str(tod), run_bbox, run_seg))
 
