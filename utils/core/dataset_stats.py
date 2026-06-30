@@ -12,8 +12,32 @@ metadata = MetaData()
 
 
 class Dataset_Stats:
+    # The detector/tracker pipeline trims each segment to t_end - 1 second.
+    # All analysis durations should therefore use this processed endpoint.
+    ENDPOINT_ADJUSTMENT_SECONDS = 1
+
     def __init__(self) -> None:
         pass
+
+    @staticmethod
+    def _processed_segment_duration_seconds(start_time, end_time) -> int:
+        """Return processed segment duration using the pipeline endpoint adjustment.
+
+        For normal segments, the processed endpoint is end_time - 1 second.
+        If subtracting one second would make the endpoint non-positive relative
+        to start_time, fall back to the original endpoint, matching main.py.
+        """
+        try:
+            start = int(float(start_time))
+            end = int(float(end_time))
+        except Exception:
+            return 0
+
+        processed_end = end - Dataset_Stats.ENDPOINT_ADJUSTMENT_SECONDS
+        if processed_end <= start:
+            processed_end = end
+
+        return max(0, processed_end - start)
 
     @staticmethod
     def _parse_nested_list(s: str | None) -> list:
@@ -38,16 +62,13 @@ class Dataset_Stats:
 
     @staticmethod
     def _sum_durations(start_times: list, end_times: list) -> int:
-        """Sum (end-start) across nested lists, robust to malformed entries."""
+        """Sum processed durations across nested start/end lists."""
         total = 0
         for start, end in zip(start_times, end_times):
             start_list = start if isinstance(start, list) else [start]
             end_list = end if isinstance(end, list) else [end]
             for s, e in zip(start_list, end_list):
-                try:
-                    total += int(e) - int(s)
-                except Exception:
-                    continue
+                total += Dataset_Stats._processed_segment_duration_seconds(s, e)
         return total
 
     @staticmethod
@@ -89,7 +110,7 @@ class Dataset_Stats:
             state_name (str): State to match; if "unknown", matches null/empty/"NA".
 
         Returns:
-            int: Total duration seconds for the first matching row; 0 if no match.
+            int: Total processed duration seconds for the first matching row; 0 if no match.
         """
         if state_name.lower() == "unknown":
             mask = (
@@ -116,13 +137,13 @@ class Dataset_Stats:
         return self._sum_durations(start_times, end_times)
 
     def calculate_total_seconds(self, df: pl.DataFrame) -> int:
-        """Calculates total video duration (seconds) across the entire mapping DataFrame.
+        """Calculates total processed video duration (seconds) across the entire mapping DataFrame.
 
         Args:
             df (pl.DataFrame): Must include `start_time` and `end_time`.
 
         Returns:
-            int: Total duration seconds across all rows.
+            int: Total processed duration seconds across all rows.
         """
         total = 0
         for start_s, end_s in df.select(["start_time", "end_time"]).iter_rows():

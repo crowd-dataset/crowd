@@ -55,8 +55,13 @@ import hashlib
 import json
 import logging
 import math
+import os
+import platform
 import re
+import shutil
+import subprocess
 import sys
+from importlib import metadata as importlib_metadata
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from pathlib import Path
@@ -150,6 +155,32 @@ CONFIG: Dict[str, Any] = {
             11: "Non-electric scooter",
             12: "Pedestrian",
         },
+    },
+
+    # OPTIONAL: reproducibility environment capture for detection and tracking.
+    # This writes _output/reproducibility_environment.json and .txt.
+    "reproducibility": {
+        "enabled": True,
+        "project_config_candidates": [
+            "config",
+            "config.yaml",
+            "config.yml",
+            "config.json",
+            "common.yaml",
+            "settings.yaml",
+        ],
+        "model_candidates": [
+            "yolo11x.pt",
+            "yolo11x-seg.pt",
+        ],
+        "tracker_candidates": [
+            "bbox_custom_tracker.yaml",
+            "seg_custom_tracker.yaml",
+            "botsort.yaml",
+            "bytetrack.yaml",
+        ],
+        "output_json": "reproducibility_environment.json",
+        "output_txt": "reproducibility_environment.txt",
     },
 
     # OPTIONAL: known expected totals from the paper/logs (set to None to skip)
@@ -1872,6 +1903,404 @@ def export_validation_video_issues_csv(
 
 
 # =============================================================================
+# Reproducibility environment capture
+# =============================================================================
+def _package_version(package_name: str) -> str:
+    """Return the installed package version, or a clear missing value."""
+    try:
+        return importlib_metadata.version(package_name)
+    except importlib_metadata.PackageNotFoundError:
+        return "not installed"
+    except Exception as exc:
+        return f"unavailable: {exc}"
+
+
+def _run_command_quiet(command: List[str]) -> Dict[str, Any]:
+    """Run a command and return stdout/stderr without raising."""
+    try:
+        result = subprocess.run(command, check=False, text=True, capture_output=True)
+        return {
+            "command": command,
+            "returncode": result.returncode,
+            "stdout": result.stdout.strip(),
+            "stderr": result.stderr.strip(),
+        }
+    except Exception as exc:
+        return {"command": command, "returncode": None, "stdout": "", "stderr": f"failed: {exc}"}
+
+
+def _candidate_search_roots(data_dir: Path, yolo_dir: Path) -> List[Path]:
+    roots: List[Path] = []
+    for candidate in [Path.cwd(), data_dir, data_dir.parent, yolo_dir.parent]:
+        try:
+            resolved = candidate.resolve()
+        except Exception:
+            continue
+        if resolved.exists() and resolved not in roots:
+            roots.append(resolved)
+    return roots
+
+
+def _find_named_file(filename: str, roots: Sequence[Path]) -> Optional[Path]:
+    """Find a named file while pruning large generated folders."""
+    direct = Path(filename).expanduser()
+    if direct.exists() and direct.is_file():
+        return direct.resolve()
+
+    skip_dirs = {".git", "__pycache__", "_output", "bbox", "seg", "frames", "videos", ".venv", "venv"}
+    for root in roots:
+        direct_under_root = root / filename
+        if direct_under_root.exists() and direct_under_root.is_file():
+            return direct_under_root.resolve()
+
+        try:
+            for current_root, dirnames, filenames in os.walk(root):
+                dirnames[:] = [d for d in dirnames if d not in skip_dirs]
+                if filename in filenames:
+                    return (Path(current_root) / filename).resolve()
+        except Exception:
+            continue
+    return None
+
+
+def _read_small_text(path: Path, max_chars: int = 20000) -> Dict[str, Any]:
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+        truncated = len(text) > max_chars
+        if truncated:
+            text = text[:max_chars]
+        return {"path": str(path), "sha256": sha256_file(path), "text": text, "truncated": truncated}
+    except Exception as exc:
+        return {"path": str(path), "error": str(exc)}
+
+
+def _extract_yaml_like_values(text: str, keys: Sequence[str]) -> Dict[str, str]:
+    """Extract simple key: value lines from tracker/config text without interpreting the file."""
+    out: Dict[str, str] = {}
+    wanted = set(keys)
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or ":" not in line:
+            continue
+        key, value = line.split(":", 1)
+        key = key.strip()
+        if key in wanted:
+            out[key] = value.strip()
+    return out
+
+
+def _ultralytics_default_settings() -> Dict[str, Any]:
+    keys = [
+        "imgsz",
+        "iou",
+        "max_det",
+        "agnostic_nms",
+        "classes",
+        "rect",
+        "half",
+        "dnn",
+        "augment",
+        "vid_stride",
+        "stream_buffer",
+        "visualize",
+        "retina_masks",
+        "embed",
+        "conf",
+        "tracker",
+        "device",
+    ]
+
+    defaults: Dict[str, Any] = {}
+    try:
+        from ultralytics.cfg import DEFAULT_CFG_DICT  # type: ignore
+        if isinstance(DEFAULT_CFG_DICT, dict):
+            defaults.update(DEFAULT_CFG_DICT)
+    except Exception:
+        pass
+
+    if not defaults:
+        try:
+            from ultralytics.utils import DEFAULT_CFG  # type: ignore
+            if isinstance(DEFAULT_CFG, dict):
+                defaults.update(DEFAULT_CFG)
+            elif hasattr(DEFAULT_CFG, "__dict__"):
+                defaults.update(DEFAULT_CFG.__dict__)
+        except Exception:
+            pass
+
+    return {key: defaults.get(key, "not found") for key in keys}
+
+
+def _collect_torch_cuda_environment() -> Dict[str, Any]:
+    info: Dict[str, Any] = {}
+    try:
+        import torch  # type: ignore
+
+        info["torch_cuda_available"] = bool(torch.cuda.is_available())
+        info["torch_cuda_version"] = str(torch.version.cuda)
+        info["torch_cudnn_version"] = torch.backends.cudnn.version()
+        info["torch_cudnn_enabled"] = bool(torch.backends.cudnn.enabled)
+        info["torch_cudnn_benchmark"] = bool(torch.backends.cudnn.benchmark)
+        info["torch_cudnn_deterministic"] = bool(torch.backends.cudnn.deterministic)
+        try:
+            info["torch_use_deterministic_algorithms"] = bool(torch.are_deterministic_algorithms_enabled())
+        except Exception as exc:
+            info["torch_use_deterministic_algorithms"] = f"unavailable: {exc}"
+        try:
+            info["torch_allow_tf32_matmul"] = bool(torch.backends.cuda.matmul.allow_tf32)
+            info["torch_allow_tf32_cudnn"] = bool(torch.backends.cudnn.allow_tf32)
+        except Exception as exc:
+            info["torch_tf32_settings"] = f"unavailable: {exc}"
+
+        devices: List[Dict[str, Any]] = []
+        if torch.cuda.is_available():
+            for idx in range(torch.cuda.device_count()):
+                props = torch.cuda.get_device_properties(idx)
+                devices.append(
+                    {
+                        "index": idx,
+                        "name": props.name,
+                        "total_memory_bytes": int(props.total_memory),
+                        "compute_capability": f"{props.major}.{props.minor}",
+                    }
+                )
+        info["cuda_devices"] = devices
+    except Exception as exc:
+        info["error"] = str(exc)
+    return info
+
+
+def _collect_model_weight_info(model_name: str, roots: Sequence[Path]) -> Dict[str, Any]:
+    path = _find_named_file(model_name, roots)
+    if path is None:
+        return {"requested": model_name, "found": False, "path": None, "sha256": None}
+
+    item: Dict[str, Any] = {
+        "requested": model_name,
+        "found": True,
+        "path": str(path),
+        "size_bytes": path.stat().st_size,
+        "sha256": sha256_file(path),
+    }
+    try:
+        from ultralytics import YOLO  # type: ignore
+
+        model = YOLO(str(path))
+        item["model_task"] = str(getattr(model, "task", "not available"))
+        item["model_overrides"] = getattr(model, "overrides", {})
+    except Exception as exc:
+        item["model_load_error"] = str(exc)
+    return item
+
+
+def _collect_tracker_info(tracker_name: str, roots: Sequence[Path]) -> Dict[str, Any]:
+    path = _find_named_file(tracker_name, roots)
+    if path is None:
+        return {"requested": tracker_name, "found": False, "path": None}
+
+    text_info = _read_small_text(path)
+    important = [
+        "tracker_type",
+        "track_high_thresh",
+        "track_low_thresh",
+        "new_track_thresh",
+        "track_buffer",
+        "match_thresh",
+        "fuse_score",
+        "gmc_method",
+        "proximity_thresh",
+        "appearance_thresh",
+        "with_reid",
+        "model",
+    ]
+    return {
+        "requested": tracker_name,
+        "found": True,
+        "path": str(path),
+        "sha256": text_info.get("sha256"),
+        "important_fields": _extract_yaml_like_values(str(text_info.get("text", "")), important),
+        "raw_text": text_info.get("text", ""),
+        "raw_text_truncated": text_info.get("truncated", False),
+    }
+
+
+def _format_reproducibility_text(info: Dict[str, Any]) -> str:
+    lines: List[str] = []
+
+    def section(title: str) -> None:
+        lines.append("")
+        lines.append("=" * 90)
+        lines.append(title)
+        lines.append("=" * 90)
+
+    section("SYSTEM")
+    for key, value in info.get("system", {}).items():
+        lines.append(f"{key}: {value}")
+
+    section("PACKAGE VERSIONS")
+    for key, value in info.get("packages", {}).items():
+        lines.append(f"{key}: {value}")
+
+    section("CUDA, cuDNN, GPU")
+    lines.append(json.dumps(info.get("cuda", {}), indent=2, default=str))
+    lines.append("nvidia-smi:")
+    lines.append(json.dumps(info.get("nvidia_smi", {}), indent=2, default=str))
+    lines.append("nvcc:")
+    lines.append(json.dumps(info.get("nvcc", {}), indent=2, default=str))
+
+    section("MODEL WEIGHTS")
+    for item in info.get("model_weights", []):
+        lines.append(json.dumps(item, indent=2, default=str))
+
+    section("ULTRALYTICS DEFAULT INFERENCE SETTINGS")
+    lines.append(json.dumps(info.get("ultralytics_defaults", {}), indent=2, default=str))
+
+    section("EXPLICIT TRACK CALL PARAMETERS")
+    lines.append(json.dumps(info.get("explicit_track_call_parameters", {}), indent=2, default=str))
+
+    section("TRACKER CONFIGURATION")
+    for item in info.get("trackers", []):
+        lines.append(json.dumps(item, indent=2, default=str))
+
+    section("PROJECT CONFIG FILES")
+    for item in info.get("project_config_files", []):
+        lines.append(json.dumps(item, indent=2, default=str))
+
+    section("DETERMINISTIC ENVIRONMENT VARIABLES")
+    for key, value in info.get("deterministic_environment_variables", {}).items():
+        lines.append(f"{key}: {value}")
+
+    return "\n".join(lines).lstrip() + "\n"
+
+
+def collect_reproducibility_environment(
+    data_dir: Path,
+    yolo_dir: Path,
+    out_dir: Path,
+    logger: logging.Logger,
+    report: Report,
+) -> Dict[str, Any]:
+    """Capture exact detection/tracking environment details requested by reviewers."""
+    repro_cfg = CONFIG.get("reproducibility", {})
+    roots = _candidate_search_roots(data_dir, yolo_dir)
+
+    packages = [
+        "ultralytics",
+        "torch",
+        "torchvision",
+        "torchaudio",
+        "opencv-python",
+        "opencv-contrib-python",
+        "numpy",
+        "pandas",
+        "polars",
+        "pytubefix",
+        "yt-dlp",
+        "moviepy",
+        "PyYAML",
+        "scipy",
+        "plotly",
+    ]
+
+    project_config_files: List[Dict[str, Any]] = []
+    for name in repro_cfg.get("project_config_candidates", []):
+        found = _find_named_file(str(name), roots)
+        if found is not None:
+            project_config_files.append(_read_small_text(found))
+
+    model_infos = [
+        _collect_model_weight_info(str(name), roots)
+        for name in repro_cfg.get("model_candidates", [])
+    ]
+
+    tracker_infos = [
+        _collect_tracker_info(str(name), roots)
+        for name in repro_cfg.get("tracker_candidates", [])
+    ]
+
+    info: Dict[str, Any] = {
+        "system": {
+            "python": sys.version,
+            "python_executable": sys.executable,
+            "platform": platform.platform(),
+            "machine": platform.machine(),
+            "processor": platform.processor(),
+            "working_directory": str(Path.cwd()),
+            "data_dir": str(data_dir),
+            "yolo_dir": str(yolo_dir),
+        },
+        "packages": {package: _package_version(package) for package in packages},
+        "cuda": _collect_torch_cuda_environment(),
+        "nvidia_smi": _run_command_quiet(
+            ["nvidia-smi", "--query-gpu=name,driver_version,cuda_version,memory.total", "--format=csv,noheader"]
+        ) if shutil.which("nvidia-smi") else {"available": False, "reason": "nvidia-smi not found"},
+        "nvcc": _run_command_quiet(["nvcc", "--version"]) if shutil.which("nvcc") else {
+            "available": False,
+            "reason": "nvcc not found",
+        },
+        "project_config_files": project_config_files,
+        "model_weights": model_infos,
+        "ultralytics_defaults": _ultralytics_default_settings(),
+        "explicit_track_call_parameters": {
+            "call": "YOLO(model).track",
+            "tracker": "bbox_tracker or seg_tracker YAML from project configuration",
+            "persist": True,
+            "conf": 0.0,
+            "save": False,
+            "device": "cuda when available, otherwise cpu",
+            "track_buffer": "track_buffer_sec * rounded_video_fps when configured by the project code",
+            "note": "Any setting not listed here should be copied from ultralytics_defaults or the tracker YAML above.",
+        },
+        "trackers": tracker_infos,
+        "deterministic_environment_variables": {
+            "PYTHONHASHSEED": os.environ.get("PYTHONHASHSEED", "not set"),
+            "CUBLAS_WORKSPACE_CONFIG": os.environ.get("CUBLAS_WORKSPACE_CONFIG", "not set"),
+            "CUDA_VISIBLE_DEVICES": os.environ.get("CUDA_VISIBLE_DEVICES", "not set"),
+            "OMP_NUM_THREADS": os.environ.get("OMP_NUM_THREADS", "not set"),
+            "MKL_NUM_THREADS": os.environ.get("MKL_NUM_THREADS", "not set"),
+        },
+    }
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    json_path = out_dir / str(repro_cfg.get("output_json", "reproducibility_environment.json"))
+    txt_path = out_dir / str(repro_cfg.get("output_txt", "reproducibility_environment.txt"))
+    json_path.write_text(json.dumps(info, indent=2, default=str), encoding="utf-8")
+    txt_path.write_text(_format_reproducibility_text(info), encoding="utf-8")
+
+    logger.info(f"Reproducibility environment JSON written: {json_path}")
+    logger.info(f"Reproducibility environment text written: {txt_path}")
+    logger.info("\n=== Reproducibility summary ===")
+    logger.info(f"Ultralytics: {info['packages'].get('ultralytics')}")
+    logger.info(f"PyTorch: {info['packages'].get('torch')}")
+    logger.info(f"OpenCV: {info['packages'].get('opencv-python')}")
+    logger.info(f"CUDA available: {info.get('cuda', {}).get('torch_cuda_available')}")
+    logger.info(f"Ultralytics defaults: {json.dumps(info.get('ultralytics_defaults', {}), default=str)}")
+
+    report.add(
+        "reproducibility_environment_written",
+        ok=True,
+        details={
+            "json_path": str(json_path),
+            "txt_path": str(txt_path),
+            "ultralytics_version": info["packages"].get("ultralytics"),
+            "torch_version": info["packages"].get("torch"),
+            "opencv_python_version": info["packages"].get("opencv-python"),
+            "cuda": info.get("cuda", {}),
+            "model_weights": [
+                {k: v for k, v in item.items() if k in {"requested", "found", "path", "sha256", "size_bytes"}}
+                for item in model_infos
+            ],
+            "trackers": [
+                {k: v for k, v in item.items() if k in {"requested", "found", "path", "sha256", "important_fields"}}
+                for item in tracker_infos
+            ],
+        },
+    )
+
+    return info
+
+
+# =============================================================================
 # YOLO folder checks
 # =============================================================================
 @dataclass
@@ -2224,6 +2653,9 @@ def main() -> int:
     report.add("path.exists.yolo_dir", yolo_dir.exists(), {"path": str(yolo_dir)}, warn=False)
     if tex_path is not None:
         report.add("path.exists.main_tex", tex_path.exists(), {"path": str(tex_path)}, warn=True)
+
+    if CONFIG.get("reproducibility", {}).get("enabled", True):
+        collect_reproducibility_environment(data_dir, yolo_dir, out_dir, logger, report)
 
     if not mapping_path.exists() or not meta_path.exists() or not yolo_dir.exists():
         logger.error("Missing required inputs. Edit CONFIG['paths'].")

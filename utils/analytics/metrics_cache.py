@@ -62,6 +62,9 @@ _LOGGER = CustomLogger(__name__)
 
 
 class MetricsCache:
+    # The detector/tracker pipeline trims each segment to t_end - 1 second.
+    ENDPOINT_ADJUSTMENT_SECONDS = 1
+
     """
     Compute and cache metrics derived from YOLO detection CSVs.
 
@@ -86,6 +89,21 @@ class MetricsCache:
     # --------------------------------------------------------------------------
     # CSV indexing and parsing helpers
     # --------------------------------------------------------------------------
+    @staticmethod
+    def _processed_segment_duration_seconds(start_time: Any, end_time: Any) -> float:
+        """Return processed segment duration using the pipeline endpoint adjustment."""
+        try:
+            start = float(start_time)
+            end = float(end_time)
+        except Exception:
+            return 0.0
+
+        processed_end = end - MetricsCache.ENDPOINT_ADJUSTMENT_SECONDS
+        if processed_end <= start:
+            processed_end = end
+
+        return max(0.0, processed_end - start)
+
     @staticmethod
     def _parse_videos_cell(videos_cell: Optional[str]) -> List[str]:
         """
@@ -265,10 +283,7 @@ class MetricsCache:
                     except Exception:
                         fps_final = fps
 
-                    try:
-                        duration = float(end_sec) - float(start_sec)  # type: ignore
-                    except Exception:
-                        continue
+                    duration = cls._processed_segment_duration_seconds(start_sec, end_sec)
 
                     if duration <= 0:
                         continue

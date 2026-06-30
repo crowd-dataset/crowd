@@ -58,6 +58,29 @@ video_paths = common.get_configs("videos")
 # Common junk files/folders to ignore.
 MISC_FILES: Set[str] = {"DS_Store", "seg", "bbox"}
 
+# The detector/tracker pipeline trims each segment to t_end - 1 second.
+# Keep analysis duration calculations aligned with that processed endpoint.
+ENDPOINT_ADJUSTMENT_SECONDS = 1
+
+
+def processed_segment_duration_seconds(start_time, end_time) -> int:
+    """Return processed duration for one segment using t_end - 1 second.
+
+    This mirrors main.py: if subtracting one second would make the adjusted
+    endpoint less than or equal to the start time, the original endpoint is used.
+    """
+    try:
+        start = int(float(start_time))
+        end = int(float(end_time))
+    except Exception:
+        return 0
+
+    processed_end = end - ENDPOINT_ADJUSTMENT_SECONDS
+    if processed_end <= start:
+        processed_end = end
+
+    return max(0, processed_end - start)
+
 
 class Analysis():
 
@@ -587,18 +610,15 @@ def log_rollups(df_mapping: "pl.DataFrame") -> None:
         return int(c)
 
     def _compute_footage_time_s_from_lol(st_lol: list[list[float]], en_lol: list[list[float]]) -> int:
-        """Sum of (end-start) across per-video aligned start/end lists."""
+        """Sum processed durations across per-video aligned start/end lists."""
         if not (isinstance(st_lol, list) and isinstance(en_lol, list)):
             return 0
-        total = 0.0
+        total = 0
         for st_i, en_i in zip(st_lol, en_lol):
             st_list = st_i if isinstance(st_i, list) else [st_i]
             en_list = en_i if isinstance(en_i, list) else [en_i]
-            for s, e in zip(st_list, en_list):
-                try:
-                    total += float(e) - float(s)
-                except Exception:
-                    continue
+            for start, end in zip(st_list, en_list):
+                total += processed_segment_duration_seconds(start, end)
         return int(total)
 
     def _map_with_fallback(dct: dict, v):
@@ -866,11 +886,8 @@ def log_rollups(df_mapping: "pl.DataFrame") -> None:
             if i < len(st_lol) and i < len(en_lol):
                 st_i = st_lol[i] if isinstance(st_lol[i], list) else [st_lol[i]]
                 en_i = en_lol[i] if isinstance(en_lol[i], list) else [en_lol[i]]
-                for s, e in zip(st_i, en_i):
-                    try:
-                        dur += float(e) - float(s)
-                    except Exception:
-                        continue
+                for start, end in zip(st_i, en_i):
+                    dur += processed_segment_duration_seconds(start, end)
 
             out.append({"video_id": vid_s, "continent": contv, "duration_s": int(dur)})
 
@@ -1811,7 +1828,7 @@ if __name__ == "__main__":
                 start_times = flatten(ast.literal_eval(start_raw)) if start_raw is not None else []
                 end_times = flatten(ast.literal_eval(end_raw)) if end_raw is not None else []
 
-                return int(sum(e - s for s, e in zip(start_times, end_times)))
+                return int(sum(processed_segment_duration_seconds(s, e) for s, e in zip(start_times, end_times)))
             except Exception as e:
                 logger.error(f"Error in row {row.get('id')}: {e}")
                 return 0
@@ -1895,47 +1912,14 @@ if __name__ == "__main__":
                           file_name='scatter_all_total_time-video_count')  # type: ignore
         # scatter plot for countries with number of videos over total time
 
-        # compute total time per locality first
-        videos_raw = pl.col("videos").cast(pl.Utf8).str.strip_chars()
-        videos_unquoted = videos_raw.str.strip_chars("\"'")
-
-        videos_is_list = videos_unquoted.str.starts_with("[") & videos_unquoted.str.ends_with("]")
-
-        videos_inner = (
-            videos_unquoted
-            .str.strip_chars("[]")
-            .str.replace_all(r"[\"']", "")   # remove any inner quotes
-            .str.replace_all(r"\s+", "")     # remove whitespace
-            .str.strip_chars()
-        )
-
-        locality_video_count_expr = (
-            pl.when(videos_is_list & (videos_inner != ""))
-              .then(
-                  videos_inner
-                  .str.split(",")
-                  .list.filter(pl.element() != "")
-                  .list.len()
-              ).otherwise(0).cast(pl.Int64).alias("locality_video_count")
-        )
-
-        # Normalize end_time string and sum all numbers found (nested-safe)
-        end_raw = pl.col("end_time").cast(pl.Utf8).str.strip_chars()
-        end_unquoted = end_raw.str.strip_chars("\"'")
-        end_is_list = end_unquoted.str.starts_with("[")
-
-        locality_total_time_expr = (
-            pl.when(end_is_list)
-              .then(
-                  end_unquoted
-                  .str.extract_all(r"\d+")
-                  .list.eval(pl.element().cast(pl.Int64))
-                  .list.sum()
-                  .fill_null(0)
-              ).otherwise(0).cast(pl.Int64).alias("locality_total_time")
-        )
-
-        df = df.with_columns([locality_video_count_expr, locality_total_time_expr])
+        # Reuse the already computed locality-level values.
+        # total_time was computed above by summing processed segment durations:
+        # processed duration = (end_time - 1 second) - start_time, with fallback
+        # to the original end_time for very short segments.
+        df = df.with_columns([
+            pl.col("video_count").cast(pl.Int64).alias("locality_video_count"),
+            pl.col("total_time").cast(pl.Int64).alias("locality_total_time"),
+        ])
 
         # ---------- Aggregate to country level ----------
         df_country = (
