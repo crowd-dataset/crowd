@@ -9,10 +9,12 @@ Authors:
 from __future__ import annotations
 
 import ast
+import json
 import math
 import os
 import pickle
 import warnings
+from pathlib import Path
 from typing import Set
 
 import polars as pl
@@ -1721,6 +1723,341 @@ def log_rollups(df_mapping: "pl.DataFrame") -> None:
 
     logger.info("\n=== [rollups] H) Max/Min COUNTRY by duration ===")
     logger.info(f"\nMAX:\n{_df_full_str(top_ctry_t)}\nMIN (non-zero):\n{_df_full_str(bot_ctry_t)}")
+
+
+    # =========================================================================
+    # I) Country and locality concentration analysis
+    # =========================================================================
+    # Reviewer-requested long-tail diagnostics.  These use the same processed
+    # duration definition as the rest of the analysis: the detector/tracker
+    # pipeline processes each segment up to t_end - 1 second, with a fallback to
+    # the original endpoint for very short segments.
+    if {"videos", "start_time", "end_time"} <= set(df_mapping.columns):
+        concentration_percentiles = [1, 5, 10]
+        top_country_n = 10
+        top_locality_n = 20
+
+        concentration_cols = [
+            "id",
+            "locality",
+            "state",
+            "country",
+            "iso3",
+            "continent",
+            "lat",
+            "lon",
+        ]
+
+        df_conc_base = df_base
+        for col in concentration_cols:
+            if col not in df_conc_base.columns:
+                df_conc_base = df_conc_base.with_columns(pl.lit("").alias(col))
+
+        segment_concentration_dtype = pl.List(
+            pl.Struct(
+                [
+                    pl.Field("locality_key", pl.Utf8),
+                    pl.Field("country_key", pl.Utf8),
+                    pl.Field("locality", pl.Utf8),
+                    pl.Field("state", pl.Utf8),
+                    pl.Field("country", pl.Utf8),
+                    pl.Field("iso3", pl.Utf8),
+                    pl.Field("continent", pl.Utf8),
+                    pl.Field("lat", pl.Utf8),
+                    pl.Field("lon", pl.Utf8),
+                    pl.Field("video_id", pl.Utf8),
+                    pl.Field("duration_s", pl.Int64),
+                ]
+            )
+        )
+
+        def _clean_text(value) -> str:
+            if value is None:
+                return ""
+            text = str(value).strip()
+            if text.lower() in {"nan", "none", "null"}:
+                return ""
+            return text
+
+        def _expand_concentration_segments(row: dict) -> list[dict]:
+            videos = row.get("videos_list") or []
+            start_lol = row.get("start_time_lol") or []
+            end_lol = row.get("end_time_lol") or []
+
+            locality = _clean_text(row.get("locality"))
+            state = _clean_text(row.get("state"))
+            country = _clean_text(row.get("country"))
+            iso3 = _clean_text(row.get("iso3"))
+            continent = _clean_text(row.get("continent"))
+            lat = _clean_text(row.get("lat"))
+            lon = _clean_text(row.get("lon"))
+            row_id = _clean_text(row.get("id"))
+
+            # A locality is identified by the mapping-row identity plus the
+            # named place and geographic disambiguators.  This avoids merging
+            # homonymous localities in different states or countries.
+            locality_key = "|".join([row_id, locality, state, country, iso3, continent, lat, lon])
+            country_key = "|".join([iso3, country])
+
+            out: list[dict] = []
+            for video_index, video_id in enumerate(videos):
+                video_id = _clean_text(video_id)
+                if video_id == "":
+                    continue
+
+                if video_index >= len(start_lol) or video_index >= len(end_lol):
+                    continue
+
+                starts = start_lol[video_index] if isinstance(start_lol[video_index], list) else [start_lol[video_index]]
+                ends = end_lol[video_index] if isinstance(end_lol[video_index], list) else [end_lol[video_index]]
+
+                for start_time, end_time in zip(starts, ends):
+                    duration_s = processed_segment_duration_seconds(start_time, end_time)
+                    if duration_s <= 0:
+                        continue
+                    out.append(
+                        {
+                            "locality_key": locality_key,
+                            "country_key": country_key,
+                            "locality": locality,
+                            "state": state,
+                            "country": country,
+                            "iso3": iso3,
+                            "continent": continent,
+                            "lat": lat,
+                            "lon": lon,
+                            "video_id": video_id,
+                            "duration_s": int(duration_s),
+                        }
+                    )
+            return out
+
+        df_segments_concentration = (
+            df_conc_base
+            .select(concentration_cols + ["videos_list", "start_time_lol", "end_time_lol"])
+            .with_columns(
+                pl.struct(concentration_cols + ["videos_list", "start_time_lol", "end_time_lol"])
+                .map_elements(_expand_concentration_segments, return_dtype=segment_concentration_dtype)
+                .alias("segment_rows")
+            )
+            .select("segment_rows")
+            .explode("segment_rows")
+            .with_columns(
+                [
+                    pl.col("segment_rows").struct.field("locality_key").alias("locality_key"),
+                    pl.col("segment_rows").struct.field("country_key").alias("country_key"),
+                    pl.col("segment_rows").struct.field("locality").alias("locality"),
+                    pl.col("segment_rows").struct.field("state").alias("state"),
+                    pl.col("segment_rows").struct.field("country").alias("country"),
+                    pl.col("segment_rows").struct.field("iso3").alias("iso3"),
+                    pl.col("segment_rows").struct.field("continent").alias("continent"),
+                    pl.col("segment_rows").struct.field("lat").alias("lat"),
+                    pl.col("segment_rows").struct.field("lon").alias("lon"),
+                    pl.col("segment_rows").struct.field("video_id").alias("video_id"),
+                    pl.col("segment_rows").struct.field("duration_s").alias("duration_s"),
+                ]
+            )
+            .drop("segment_rows")
+            .filter(pl.col("duration_s").is_not_null() & (pl.col("duration_s") > 0))
+        )
+
+        if df_segments_concentration.height == 0:
+            logger.warning("[rollups] I) Concentration analysis skipped because no valid segment rows were found.")
+        else:
+            concentration_total_duration_s = int(
+                df_segments_concentration.select(pl.sum("duration_s")).item() or 0
+            )
+            concentration_total_segments = int(df_segments_concentration.height)
+            concentration_total_uploads = int(
+                df_segments_concentration.select(pl.col("video_id").n_unique()).item() or 0
+            )
+            concentration_duration_denom = max(concentration_total_duration_s, 1)
+
+            country_concentration = (
+                df_segments_concentration
+                .filter(pl.col("country").is_not_null() & (pl.col("country") != ""))
+                .group_by(["country_key", "country", "iso3"])
+                .agg(
+                    [
+                        pl.sum("duration_s").alias("duration_s"),
+                        pl.len().alias("segment_records"),
+                        pl.col("video_id").n_unique().alias("unique_uploads"),
+                        pl.col("locality_key").n_unique().alias("localities"),
+                    ]
+                )
+                .with_columns(
+                    [
+                        (pl.col("duration_s") / 3600).round(2).alias("duration_h"),
+                        (pl.col("duration_s") / pl.lit(concentration_duration_denom) * 100)
+                        .round(2)
+                        .alias("duration_share_pct"),
+                    ]
+                )
+                .sort(["duration_s", "country"], descending=[True, False])
+                .with_row_index("rank", offset=1)
+                .select(
+                    [
+                        "rank",
+                        "country",
+                        "iso3",
+                        "localities",
+                        "duration_s",
+                        "duration_h",
+                        "duration_share_pct",
+                        "segment_records",
+                        "unique_uploads",
+                    ]
+                )
+            )
+
+            locality_concentration = (
+                df_segments_concentration
+                .filter(pl.col("locality").is_not_null() & (pl.col("locality") != ""))
+                .group_by(["locality_key", "locality", "state", "country", "iso3", "continent", "lat", "lon"])
+                .agg(
+                    [
+                        pl.sum("duration_s").alias("duration_s"),
+                        pl.len().alias("segment_records"),
+                        pl.col("video_id").n_unique().alias("unique_uploads"),
+                    ]
+                )
+                .with_columns(
+                    [
+                        (pl.col("duration_s") / 3600).round(2).alias("duration_h"),
+                        (pl.col("duration_s") / pl.lit(concentration_duration_denom) * 100)
+                        .round(2)
+                        .alias("duration_share_pct"),
+                    ]
+                )
+                .sort(["duration_s", "country", "locality", "state"], descending=[True, False, False, False])
+                .with_row_index("rank", offset=1)
+                .select(
+                    [
+                        "rank",
+                        "locality",
+                        "state",
+                        "country",
+                        "iso3",
+                        "continent",
+                        "duration_s",
+                        "duration_h",
+                        "duration_share_pct",
+                        "segment_records",
+                        "unique_uploads",
+                    ]
+                )
+            )
+
+            n_localities_concentration = int(locality_concentration.height)
+            locality_concentration_share_rows = []
+            for percentile in concentration_percentiles:
+                n_top = int(math.ceil(n_localities_concentration * percentile / 100.0)) if n_localities_concentration else 0
+                top_duration_s = int(locality_concentration.head(n_top).select(pl.sum("duration_s")).item() or 0)
+                locality_concentration_share_rows.append(
+                    {
+                        "top_locality_percent": int(percentile),
+                        "n_localities": int(n_top),
+                        "duration_h": round(top_duration_s / 3600, 2),
+                        "duration_share_pct": round(
+                            (top_duration_s / concentration_duration_denom * 100) if concentration_duration_denom else 0.0,
+                            2,
+                        ),
+                    }
+                )
+
+            locality_concentration_shares = pl.DataFrame(locality_concentration_share_rows)
+
+            one_segment_localities = int(locality_concentration.filter(pl.col("segment_records") == 1).height)
+            one_upload_localities = int(locality_concentration.filter(pl.col("unique_uploads") == 1).height)
+            one_segment_localities_pct = round(
+                (one_segment_localities / n_localities_concentration * 100) if n_localities_concentration else 0.0,
+                2,
+            )
+            one_upload_localities_pct = round(
+                (one_upload_localities / n_localities_concentration * 100) if n_localities_concentration else 0.0,
+                2,
+            )
+
+            top10_country_duration_s = int(country_concentration.head(top_country_n).select(pl.sum("duration_s")).item() or 0)
+            top10_country_duration_share_pct = round(
+                (top10_country_duration_s / concentration_duration_denom * 100) if concentration_duration_denom else 0.0,
+                2,
+            )
+
+            logger.info("\n=== [rollups] I) Country concentration: largest contributors by retained processed duration ===")
+            logger.info(f"\n{_df_full_str(country_concentration.head(top_country_n))}")
+
+            logger.info("\n=== [rollups] I) Locality concentration: largest contributors by retained processed duration ===")
+            logger.info(f"\n{_df_full_str(locality_concentration.head(top_locality_n))}")
+
+            logger.info("\n=== [rollups] I) Locality concentration: top 1%, 5%, and 10% by retained hours ===")
+            logger.info(f"\n{_df_full_str(locality_concentration_shares)}")
+
+            logger.info(
+                "[rollups] I) Long-tail locality counts: "
+                f"{one_segment_localities:,} localities ({one_segment_localities_pct:.2f}%) have exactly one segment; "
+                f"{one_upload_localities:,} localities ({one_upload_localities_pct:.2f}%) have exactly one unique upload."
+            )
+
+            logger.info(
+                "[rollups] I) Concentration totals: "
+                f"countries={country_concentration.height:,}, localities={n_localities_concentration:,}, "
+                f"segments={concentration_total_segments:,}, unique_uploads={concentration_total_uploads:,}, "
+                f"duration_h={concentration_total_duration_s / 3600:.2f}, "
+                f"top_{top_country_n}_countries_duration_share={top10_country_duration_share_pct:.2f}%."
+            )
+
+            concentration_output_dir = Path(os.getcwd()) / "_output" / "concentration"
+            try:
+                mapping_path_cfg = common.get_configs("mapping")
+                if mapping_path_cfg:
+                    concentration_output_dir = Path(str(mapping_path_cfg)).expanduser().resolve().parent / "_output" / "concentration"
+            except Exception:
+                pass
+
+            try:
+                concentration_output_dir.mkdir(parents=True, exist_ok=True)
+
+                country_concentration.write_csv(concentration_output_dir / "country_concentration.csv")
+                country_concentration.head(top_country_n).write_csv(
+                    concentration_output_dir / "country_concentration_top10.csv"
+                )
+                locality_concentration.write_csv(concentration_output_dir / "locality_concentration.csv")
+                locality_concentration.head(top_locality_n).write_csv(
+                    concentration_output_dir / "locality_concentration_top20.csv"
+                )
+                locality_concentration_shares.write_csv(
+                    concentration_output_dir / "locality_concentration_shares.csv"
+                )
+
+                concentration_summary = {
+                    "total_segment_records": concentration_total_segments,
+                    "total_unique_uploads": concentration_total_uploads,
+                    "total_duration_s": concentration_total_duration_s,
+                    "total_duration_h": round(concentration_total_duration_s / 3600, 2),
+                    "total_countries": int(country_concentration.height),
+                    "total_localities": n_localities_concentration,
+                    "top_country_n": top_country_n,
+                    "top_country_duration_share_pct": top10_country_duration_share_pct,
+                    "top_locality_n": top_locality_n,
+                    "top_countries": country_concentration.head(top_country_n).to_dicts(),
+                    "top_localities": locality_concentration.head(top_locality_n).to_dicts(),
+                    "locality_concentration": locality_concentration_shares.to_dicts(),
+                    "one_segment_localities": one_segment_localities,
+                    "one_segment_localities_pct": one_segment_localities_pct,
+                    "one_upload_localities": one_upload_localities,
+                    "one_upload_localities_pct": one_upload_localities_pct,
+                }
+
+                summary_path = concentration_output_dir / "concentration_summary.json"
+                summary_path.write_text(
+                    json.dumps(concentration_summary, indent=2, ensure_ascii=False),
+                    encoding="utf-8",
+                )
+
+                logger.info(f"[rollups] I) Concentration output written to: {concentration_output_dir}")
+            except Exception as exc:
+                logger.warning(f"[rollups] I) Could not write concentration outputs: {exc!r}")
 
 
 # Execute analysis
