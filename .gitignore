@@ -69,3 +69,4 @@ upgrade_log.json
 
 # cache of country info
 cache_countries.json
+crowd_index.jsonl
