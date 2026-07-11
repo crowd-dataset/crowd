@@ -5,16 +5,16 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = "==3.10.18"
 dependencies = [
-    "bs4>=0.0.2",
-    "ffmpeg-python>=0.2.0",
-    "filterpy>=1.4.5",
+    "bs4==0.0.2",
+    "ffmpeg-python==0.2.0",
+    "filterpy==1.4.5",
     "flake8==7.1.1",
     "flask==3.0.3",
     "geopy==2.4.1",
     "kaleido==0.2.1",
-    "lap>=0.5.12",
+    "lap==0.5.12",
     "moviepy==1.0.3",
-    "nodejs-wheel>=22.20.0",
+    "nodejs-wheel==22.20.0",
     "pandas==2.1.4",
     "plotly==5.24.1",
     "polars>=1.33.1",
