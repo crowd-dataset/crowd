@@ -56,7 +56,11 @@ def is_missing(value):
 
 def get_video_info(video_id):
     try:
-        yt = YouTube(f"https://www.youtube.com/watch?v={video_id}")
+        yt = YouTube(
+            f"https://www.youtube.com/watch?v={video_id}",
+            use_oauth=True,
+            allow_oauth_cache=True,
+        )
         title = yt.title
         description = yt.description
         channel = yt.channel_id
