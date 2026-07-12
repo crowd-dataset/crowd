@@ -8014,4 +8014,4 @@ id,locality,locality_aka,state,country,iso3,continent,lat,lon,gmp,population_loc
 8013,Lourdes,[],,France,FRA,Europe,43.0940904,-0.0464975,0.0,15786,89368.0,5.1,0.0,172.0,41.4,0.0,33.33,[nq44hWq_OBk],[[0]],[[25]],[[569]],[0],[30042026],[UCeLzVekbovWzOg0TJfx_Xjw]
 8014,Saint-Jean-Pied-de-Port,[],,France,FRA,Europe,43.1629528,-1.2380528,0.0,1824,89368.0,5.1,0.0,172.0,41.4,0.0,0.0,[ZyECSbRommQ],[[0]],[[28]],[[254]],[0],[26042026],[UCeLzVekbovWzOg0TJfx_Xjw]
 8015,Saint Jean Pied de Port,[],,France,FRA,Europe,43.1629528,-1.2380528,0.0,1824,89368.0,5.1,0.0,172.0,41.4,0.0,0.0,[T-YjGNdRSks],[[0]],[[5638]],[[5743]],[0],[24042026],[UCeLzVekbovWzOg0TJfx_Xjw]
-8016,Navarrete,[],,Spain,ESP,Asia,42.4289697,-2.5616234,0.0,0,35000000,3.9,99.7,169,45.0,0.0,0.0,[d8cCpfcxAEU],[[0]],[[66]],[[216]],[0],[22042026],[UCeLzVekbovWzOg0TJfx_Xjw]
+8016,Navarrete,[],,Spain,ESP,Europe,42.4289697,-2.5616234,0.0,0,35000000,3.9,99.7,169,45.0,0.0,0.0,[d8cCpfcxAEU],[[0]],[[66]],[[216]],[0],[22042026],[UCeLzVekbovWzOg0TJfx_Xjw]
