@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nearby Cities (within 2.0 km)</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: system-ui, sans-serif; background: #0f172a; color: #e2e8f0; }
+  #header {
+    padding: 14px 20px;
+    background: #1e293b;
+    border-bottom: 1px solid #334155;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+  #header h1 { font-size: 15px; font-weight: 600; color: #f1f5f9; }
+  #header .badge {
+    background: #ef4444;
+    color: white;
+    font-size: 12px;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 99px;
+  }
+  #map { height: calc(100vh - 49px); width: 100%; }
+  .city-label {
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    font-size: 11px;
+    font-weight: 600;
+    color: #1e293b;
+    white-space: nowrap;
+    text-shadow: 0 0 3px #fff, 0 0 3px #fff;
+  }
+</style>
+</head>
+<body>
+<div id="header">
+  <h1>Nearby city pairs — within 2.0 km</h1>
+  <span class="badge">247 pairs &middot; 410 cities</span>
+</div>
+<div id="map"></div>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+  const map = L.map('map').setView([20, 0], 2);
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+    attribution: '&copy; OpenStreetMap &copy; CARTO',
+    maxZoom: 19
+  }).addTo(map);
+</script>
+<script src="nearby_pairs_2.0km.js"></script>
+</body>
+</html>
