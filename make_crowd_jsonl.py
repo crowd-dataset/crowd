@@ -34,6 +34,7 @@ import os
 import re
 import sys
 import tempfile
+import warnings
 from collections import Counter
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
@@ -54,7 +55,6 @@ EXCLUDE_SOURCE_FREE_TEXT_METADATA = True
 SOURCE_FREE_TEXT_METADATA_FIELDS = {
     "title",
     "description",
-    "channel",
     "chapters",
     "tags",
     "categories",
@@ -80,11 +80,12 @@ VEHICLE_TYPE_NAMES = {
     5: "Automated car",
     6: "Electric scooter",
     7: "Monowheel/unicycle",
-    8: "Automated bus",
-    9: "Automated truck",
-    10: "Automated two-wheeler",
-    11: "Non-electric scooter",
-    12: "Pedestrian",
+    8: "Emergency vehicle",
+    9: "Automated bus",
+    10: "Automated truck",
+    11: "Automated two-wheeler",
+    12: "Non-electric scooter",
+    13: "Pedestrian",
     "0": "Car",
     "1": "Bus",
     "2": "Truck",
@@ -93,11 +94,12 @@ VEHICLE_TYPE_NAMES = {
     "5": "Automated car",
     "6": "Electric scooter",
     "7": "Monowheel/unicycle",
-    "8": "Automated bus",
-    "9": "Automated truck",
-    "10": "Automated two-wheeler",
-    "11": "Non-electric scooter",
-    "12": "Pedestrian",
+    "8": "Emergency vehicle",
+    "9": "Automated bus",
+    "10": "Automated truck",
+    "11": "Automated two-wheeler",
+    "12": "Non-electric scooter",
+    "13": "Pedestrian",
 }
 
 # Known fields in mapping.csv that describe per-video or per-segment nested values.
@@ -130,6 +132,14 @@ LOCATION_FIELD_CANDIDATES = [
     "long",
     "longitude",
 ]
+
+REQUIRED_JSONL_FIELDS = {
+    "video_id", "segment_id", "youtube_url", "start_time_s", "end_time_s",
+    "upload_date", "time_of_day_code", "time_of_day_name",
+    "vehicle_type_code", "vehicle_type_name", "location",
+    "mapping_row_number", "metadata", "mapping_extra",
+}
+REQUIRED_LOCATION_FIELDS = {"locality", "country", "iso3", "continent", "lat", "lon"}
 
 # -----------------------------------------------------------------------------
 # CSV and parsing helpers
@@ -236,8 +246,10 @@ def _parse_cell(value: Any) -> Any:
     # Python literal strings, used in the legacy CSV.
     if (s.startswith("[") and s.endswith("]")) or (s.startswith("{") and s.endswith("}")):
         try:
-            return _json_friendly(ast.literal_eval(s))
-        except Exception:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", SyntaxWarning)
+                return _json_friendly(ast.literal_eval(s))
+        except (ValueError, SyntaxError, TypeError):
             pass
 
     # Bare-token list fallback: [abc,def] -> ["abc", "def"].
@@ -372,6 +384,14 @@ def _to_float(value: Any) -> Optional[float]:
     return None
 
 
+def _to_int(value: Any) -> Optional[int]:
+    """Return an integer only when the input is finite and integral."""
+    number = _to_float(value)
+    if number is None or not number.is_integer():
+        return None
+    return int(number)
+
+
 def _format_number_for_id(value: Any) -> str:
     f = _to_float(value)
     if f is None:
@@ -424,6 +444,11 @@ def _build_location(row: Dict[str, Any], fieldnames: Iterable[str]) -> Dict[str,
                 key = "lon"
             location[key] = value
 
+    # These keys are required by the public JSONL schema. Missing source values
+    # are represented explicitly as JSON null rather than by omitting the key.
+    for required in ("locality", "country", "iso3", "continent", "lat", "lon"):
+        location.setdefault(required, None)
+
     return location
 
 
@@ -469,7 +494,9 @@ def _build_metadata_index(metadata_csv: Path) -> Dict[str, Dict[str, Any]]:
 
     for row in rows:
         vid = None
-        for key in ("id", "video_id", "video"):
+        # In mapping_metadata.csv, `id` is the numeric row identifier and
+        # `video` is the YouTube upload identifier. Prefer the latter.
+        for key in ("video_id", "video", "id"):
             if key in row:
                 vid = _extract_youtube_id(row.get(key))
                 if vid:
@@ -513,8 +540,8 @@ def _make_segment_record(
 
     processed_end, processed_duration_s, processed_duration_min = _processed_duration(start_float, end_float)
 
-    time_of_day = _get_segment_value(row, "time_of_day", video_index, n_videos, segment_index)
-    vehicle_type = _get_segment_value(row, "vehicle_type", video_index, n_videos, segment_index)
+    time_of_day = _to_int(_get_segment_value(row, "time_of_day", video_index, n_videos, segment_index))
+    vehicle_type = _to_int(_get_segment_value(row, "vehicle_type", video_index, n_videos, segment_index))
     upload_date_mapping = _get_segment_value(row, "upload_date", video_index, n_videos, segment_index)
 
     metadata = metadata_index.get(video_id, {})
@@ -532,51 +559,26 @@ def _make_segment_record(
     location = _build_location(row, fieldnames)
     mapping_extra = _build_mapping_extra(row, fieldnames)
 
-    record: Dict[str, Any] = {
-        "record_type": "crowd_segment",
-        "schema_version": "1.0",
-        "segment_id": segment_id,
-        "video_id": video_id,
-        "source": {
-            "platform": "YouTube",
-            "watch_url": f"https://www.youtube.com/watch?v={video_id}",
-            "underlying_video_redistributed": False,
-        },
-        "upload": {
-            "upload_date": upload_date,
-            "recording_date": None,
-            "recording_date_provenance": None,
-            "recording_date_uncertainty": "not_available",
-        },
-        "segment": {
-            "start_time_s": start_float,
-            "end_time_s": end_float,
-            "processed_end_time_s": processed_end,
-            "endpoint_adjustment_s": ENDPOINT_ADJUSTMENT_SECONDS,
-            "processed_duration_s": processed_duration_s,
-            "processed_duration_min": processed_duration_min,
-        },
-        "labels": {
-            "time_of_day_code": time_of_day,
-            "time_of_day_name": time_of_day_name,
-            "vehicle_type_code": vehicle_type,
-            "vehicle_type_name": vehicle_type_name,
-        },
-        "location": location,
-        "mapping_row": {
-            "row_number": row_number,
-        },
-        "automatic_outputs": {
-            "bbox_csv_expected_prefix": f"{video_id}_{start_id}_",
-            "type": "YOLOv11x and BoT-SORT detection/tracking pseudo-labels",
-            "object_level_ground_truth": False,
-        },
-    }
+    mapping_row_number = _to_int(row.get("id")) or row_number
 
-    if metadata:
-        record["upload_metadata"] = metadata
-    if mapping_extra:
-        record["mapping_extra"] = mapping_extra
+    # Keep the released representation deliberately flat. These names and
+    # nesting levels match both the manuscript schema and validation_release.py.
+    record: Dict[str, Any] = {
+        "video_id": video_id,
+        "segment_id": segment_id,
+        "youtube_url": f"https://www.youtube.com/watch?v={video_id}",
+        "start_time_s": start_float,
+        "end_time_s": end_float,
+        "upload_date": upload_date,
+        "time_of_day_code": time_of_day,
+        "time_of_day_name": time_of_day_name,
+        "vehicle_type_code": vehicle_type,
+        "vehicle_type_name": vehicle_type_name,
+        "location": location,
+        "mapping_row_number": mapping_row_number,
+        "metadata": metadata,
+        "mapping_extra": mapping_extra,
+    }
 
     return _json_friendly(record)
 
@@ -633,9 +635,8 @@ def build_records(mapping_csv: Path, metadata_csv: Path) -> Tuple[List[Dict[str,
     records.sort(key=lambda r: (str(r.get("video_id", "")), str(r.get("segment_id", ""))))
 
     total_duration_s = sum(
-        float(r.get("segment", {}).get("processed_duration_s") or 0.0)
+        _processed_duration(r.get("start_time_s"), r.get("end_time_s"))[1] or 0.0
         for r in records
-        if isinstance(r.get("segment"), dict)
     )
 
     summary = {
@@ -671,6 +672,25 @@ def write_jsonl_atomic(records: List[Dict[str, Any]], output_path: Path) -> None
         raise
 
 
+def validate_generated_schema(records: List[Dict[str, Any]]) -> None:
+    """Fail before writing if a generated record drifts from the release schema."""
+    for record_number, record in enumerate(records, start=1):
+        missing = sorted(REQUIRED_JSONL_FIELDS - set(record))
+        location = record.get("location")
+        if not isinstance(location, dict):
+            missing.append("location<object>")
+        else:
+            missing.extend(
+                f"location.{field}"
+                for field in sorted(REQUIRED_LOCATION_FIELDS - set(location))
+            )
+        if missing:
+            raise ValueError(
+                f"Generated JSONL record {record_number} ({record.get('segment_id')!r}) "
+                f"is missing required fields: {missing}"
+            )
+
+
 def _resolve_paths_from_argv() -> Tuple[Path, Path, Path]:
     args = sys.argv[1:]
     mapping_csv = Path(args[0]) if len(args) >= 1 else Path(MAPPING_CSV)
@@ -686,6 +706,7 @@ def main() -> None:
         raise FileNotFoundError(f"Mapping CSV not found: {mapping_csv}")
 
     records, summary = build_records(mapping_csv, metadata_csv)
+    validate_generated_schema(records)
     write_jsonl_atomic(records, output_jsonl)
 
     print(f"Wrote {summary['jsonl_records']:,} JSONL records to {output_jsonl}")
