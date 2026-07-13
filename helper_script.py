@@ -715,7 +715,7 @@ class Youtube_Helper:
 
                 yt_dlp_common_opts = {
                     # Same as CLI: --cookies-from-browser chrome
-                    "cookiesfrombrowser": ("chrome",),
+                    "cookiesfrombrowser": ("brave",),
                     # Same as CLI: --remote-components ejs:github
                     "remote_components": ["ejs:github"],
                     "noplaylist": True,

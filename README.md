@@ -13,10 +13,10 @@ If you use this work for academic work please cite the following paper:
 The code is open-source and free to use. It is aimed for, but not limited to, academic research. We welcome forking of this repository, pull requests, and any contributions in the spirit of open science and open-source code. For inquiries about collaboration, you may contact Md Shadab Alam (md_shadab_alam@outlook.com) or Pavlo Bazilinskyy (pavlo.bazilinskyy@gmail.com).
 
 ## Getting started
-[![Python Version](https://img.shields.io/badge/python-3.10.18-blue.svg)](https://www.python.org/downloads/release/python-3919/)
+[![Python Version](https://img.shields.io/badge/python-3.12.13-blue.svg)](https://www.python.org/downloads/release/python-31213/)
 [![Package Manager: uv](https://img.shields.io/badge/package%20manager-uv-green)](https://docs.astral.sh/uv/)
 
-Tested with **Python 3.10.18** and the [`uv`](https://docs.astral.sh/uv/) package manager.
+Tested with **Python 3.12.13** and the [`uv`](https://docs.astral.sh/uv/) package manager.
 Follow these steps to set up the project.
 
 **Step 1:** Install `uv`. `uv` is a fast Python package and environment manager. Install it using one of the following methods:
@@ -74,9 +74,9 @@ git clone https://github.com/crowd-dataset/crowd.git
 cd crowd
 ```
 
-**Step 5:** Ensure correct Python version. If you don’t already have Python 3.10.18 installed, let `uv` fetch it:
+**Step 5:** Ensure correct Python version. If you don’t already have Python 3.12.13 installed, let `uv` fetch it:
 ```command line
-uv python install 3.10.18
+uv python install 3.12.13
 ```
 The repo should contain a .python-version file so `uv` will automatically use this version.
 

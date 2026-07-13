@@ -1,0 +1,59 @@
+id,locality,locality_aka,state,country,iso3,videos,start_time,end_time,vehicle_type,upload_date,channel,time_of_day
+4672,Bussum,[],,Netherlands,NLD,[7Zgu3gSAimw],"[[714],[1938]]","[[826],[3022]]","[0,0]","[20062022,14102025]","[UCcwGwvM5iPB9IvtTnMTVcEg,UCSXSCzMyK5RZ9j1HbO9Fubg]","[[0],[0]]"
+5173,Consuegra,[],,Spain,ESP,"[OPG9W8YKtog,pRcBmESLF_E]","[[50],[39],[7607]]","[[580],[192],[7815]]","[0,0,0]","[9022021,2042026,30032026]","[UCg1sAFKjbgemJnIODXe_2BQ,UCeLzVekbovWzOg0TJfx_Xjw,UCeLzVekbovWzOg0TJfx_Xjw]","[[0],[0],[0]]"
+5849,Durrës,[Durres],,Albania,ALB,[zTMMfIusKNw],"[[13175,26406],[1546],[0]]","[[15216,27497],[2231],[1733]]","[0,0,0]","[17042023,25062023,8092025]","[UCKDi3klSRgweF2ltY0AymSw,UCKDi3klSRgweF2ltY0AymSw,UCSXSCzMyK5RZ9j1HbO9Fubg]","[[0,0],[0],[0]]"
+6012,Rainier,[],WA,United States,USA,[I87zfgybFeU],"[[7],[0]]","[[623],[1321]]","[0,5]","[31072024,22042026]","[UChv3DmLA2hH-d93bGgqjMLg,UCFo5rGajxTrpiwFhDdww6lw]","[[0],[0]]"
+6021,Tukwila,[],WA,United States,USA,[z1nwZLiDQV4],"[[590],[0]]","[[1547],[1267]]","[0,0]","[1072024,18042026]","[UChv3DmLA2hH-d93bGgqjMLg,UCFo5rGajxTrpiwFhDdww6lw]","[[0],[0]]"
+6087,Issaquah,[],WA,United States,USA,[96pFZxKGoXA],"[[50],[0]]","[[1600],[1173]]","[0,5]","[24012023,16052026]","[UChv3DmLA2hH-d93bGgqjMLg,UCFo5rGajxTrpiwFhDdww6lw]","[[0],[0]]"
+6095,Coronado,[],CA,United States,USA,[4GnS6oXtgPg],"[[30],[41]]","[[1568],[2484]]","[0,0]","[3112022,19112022]","[UChv3DmLA2hH-d93bGgqjMLg,UCkptqe5qMgYLy3GIf3c3eiw]","[[0],[0]]"
+6156,Kirkland,[],WA,United States,USA,"[OLQlAVMW4EU,ApgiJQR1omk]","[[12],[0],[0]]","[[1443],[969],[1929]]","[0,5,5]","[9122021,30042026,30042026]","[UChv3DmLA2hH-d93bGgqjMLg,UCFo5rGajxTrpiwFhDdww6lw,UCFo5rGajxTrpiwFhDdww6lw]","[[0],[0],[0]]"
+6163,Everett,[],WA,United States,USA,[H17mV9uf6uY],"[[5],[0]]","[[1122],[431]]","[0,5]","[18112021,24062026]","[UChv3DmLA2hH-d93bGgqjMLg,UCFo5rGajxTrpiwFhDdww6lw]","[[0],[0]]"
+6178,Renton,[],WA,United States,USA,"[JNdip6_puVM,VhJUUNrXgKo,62G1qCJeRlA]","[[10],[0],[0],[0]]","[[1764],[1624],[643],[2560]]","[0,0,0,5]","[31082021,6042026,19042026,19042026]","[UChv3DmLA2hH-d93bGgqjMLg,UCFo5rGajxTrpiwFhDdww6lw,UCFo5rGajxTrpiwFhDdww6lw,UCFo5rGajxTrpiwFhDdww6lw]","[[0],[0],[0],[0]]"
+7111,Kastamonu,[],,Türkiye,TUR,[8_-RDq2OJaE],"[[0],[6157]]","[[1596],[6544]]","[0,0]","[28042023,26042023]","[UCanVy2-8xxmgVWt7cBBSXjg,UCanVy2-8xxmgVWt7cBBSXjg]","[[0],[0]]"
+7901,Marinilla,[],,Colombia,COL,[MIUKOokidds],"[[37098,38827],[513],[915]]","[[38761,39746],[1590],[1481]]","[0,0,0]","[16012024,20012024,22082025]","[UCSMCv9FDp2R9_p1e0k61KwQ,UCSMCv9FDp2R9_p1e0k61KwQ,UCiBD9WJFDe7dGQNa_KRdHug]","[[0,1],[0],[0]]"
+7998,Spetses,[],,Greece,GRC,"[-ZI0b2yT6Do,sgowVpAhy_w]","[[0],[0],[0]]","[[1025],[1601],[1124]]","[4,4,4]","[20052026,19052026,18052026]","[UCSXSCzMyK5RZ9j1HbO9Fubg,UCSXSCzMyK5RZ9j1HbO9Fubg,UCSXSCzMyK5RZ9j1HbO9Fubg]","[[0],[0],[0]]"
+8000,Voorschoten,[],,Netherlands,NLD,"[4kQOgd_37do,gT4kjNYY9lc]","[[0],[1207]]","[[701],[1713]]","[0,4]","[27032026,26032026]","[UCSXSCzMyK5RZ9j1HbO9Fubg,UCSXSCzMyK5RZ9j1HbO9Fubg]","[[0],[0]]"
+8001,Westmaas,[],,Netherlands,NLD,[rzHk0MM_aXA],[[3042]],[[3086]],[0],[19022026],[UCSXSCzMyK5RZ9j1HbO9Fubg],[[0]]
+8002,Laren,[],,Netherlands,NLD,[7Zgu3gSAimw],[[0]],[[1842]],[0],[14102025],[UCSXSCzMyK5RZ9j1HbO9Fubg],[[0]]
+8003,Spijkenisse,[],,Netherlands,NLD,[4FQMywlca34],"[[0],[0]]","[[495],[512]]","[0,0]","[26032025,21032025]","[UCSXSCzMyK5RZ9j1HbO9Fubg,UCSXSCzMyK5RZ9j1HbO9Fubg]","[[0],[0]]"
+8004,Brielle,[],,Netherlands,NLD,[v6E31LtNRxI],[[1963]],[[2152]],[0],[13032025],[UCSXSCzMyK5RZ9j1HbO9Fubg],[[0]]
+8007,Leon,[León],,Nicaragua,NIC,[mqSHE1vOiFY],"[[7219],[47]]","[[7654],[778]]","[0,0]","[20042024,23042024]","[UCSMCv9FDp2R9_p1e0k61KwQ,UCSMCv9FDp2R9_p1e0k61KwQ]","[[1],[0]]"
+8008,Chinandega,[],,Nicaragua,NIC,"[mqSHE1vOiFY,MPPf1LViDyo]","[[3535,3826],[37,513]]","[[3762,5053],[488,1308]]","[0,0]","[23042024,26042024]","[UCSMCv9FDp2R9_p1e0k61KwQ,UCSMCv9FDp2R9_p1e0k61KwQ]","[[0,0],[0,0]]"
+8009,Esteli,"[Estelí,Villa de San Antonio de Pavia de Estelí]",,Nicaragua,NIC,[MPPf1LViDyo],"[[12832,15068],[64]]","[[14783,15523],[553]]","[0,0]","[26042024,26042024]","[UCSMCv9FDp2R9_p1e0k61KwQ,UCSMCv9FDp2R9_p1e0k61KwQ]","[[0,0],[0]]"
+8010,Somoto,[],,Nicaragua,NIC,[ZpCkKvekTCs],"[[49,483]]","[[360,656]]",[0],[28042024],[UCSMCv9FDp2R9_p1e0k61KwQ],"[[0,0]]"
+8011,Choluteca,[],,Honduras,HND,[ZpCkKvekTCs],"[[10385],[39,1310]]","[[10757],[1298,1689]]","[0,0]","[28042024,1052024]","[UCSMCv9FDp2R9_p1e0k61KwQ,UCSMCv9FDp2R9_p1e0k61KwQ]","[[0],[0,0]]"
+8013,Port Elizabeth,[Gqeberha],,South Africa,ZAF,[0zTCt1pbDC4],[[0]],[[542]],[0],[17122025],[UC2A0NmNFtT7IVH1Z9IxYEdw],[[0]]
+8014,Ureki,[],,Georgia,GEO,[hM5c9tCPWCI],[[10]],[[724]],[0],[3122025],[UC2A0NmNFtT7IVH1Z9IxYEdw],[[0]]
+8015,Kobuleti,[],,Georgia,GEO,[hM5c9tCPWCI],[[1431]],[[2989]],[0],[3122025],[UC2A0NmNFtT7IVH1Z9IxYEdw],[[0]]
+8016,Pushkino,[],,Russia,RUS,[43_M0uGDUBM],"[[7,1736]]","[[1705,2914]]",[0],[25022025],[UCeX8IcQGXzKzUx0JKye7RiA],"[[0,0]]"
+8017,Rionegro,[],,Colombia,COL,[MIUKOokidds],[[0]],[[869]],[0],[22082025],[UCiBD9WJFDe7dGQNa_KRdHug],[[0]]
+8018,San Jerónimo,[San Jeronimo],,Colombia,COL,[4cTaR4-2QeU],[[0]],[[272]],[3],[2052022],[UCiBD9WJFDe7dGQNa_KRdHug],[[0]]
+8019,Santa Elena,[],,Colombia,COL,[BRUmpGDU1oU],[[1766]],[[2118]],[3],[6052023],[UCiBD9WJFDe7dGQNa_KRdHug],[[0]]
+8020,Edgewood,[],MD,United States,USA,[W5PERaQfzo4],[[10]],[[524]],[0],[7062026],[UCvXkpzL0ObfACNs_Wv7u4CQ],[[0]]
+8021,Laurel,[],MD,United States,USA,"[7si4MeQtzEU,A6jAPfF3qxA]","[[10],[10]]","[[790],[1574]]","[0,0]","[1062026,31052026]","[UCvXkpzL0ObfACNs_Wv7u4CQ,UCvXkpzL0ObfACNs_Wv7u4CQ]","[[0],[0]]"
+8022,Owings Mills,[],MD,United States,USA,[w33w4fVMTXY],[[29]],[[1207]],[0],[30052026],[UCvXkpzL0ObfACNs_Wv7u4CQ],[[0]]
+8023,Waldorf,[],MD,United States,USA,"[SMYyiZ2OH5k,Mnw3IlSk6bU]","[[10],[10]]","[[1080],[833]]","[0,0]","[30042026,30042026]","[UCvXkpzL0ObfACNs_Wv7u4CQ,UCvXkpzL0ObfACNs_Wv7u4CQ]","[[0],[0]]"
+8024,Rockville,[],MD,United States,USA,[wTYimrjDVeQ],[[10]],[[968]],[0],[21022026],[UCvXkpzL0ObfACNs_Wv7u4CQ],[[0]]
+8025,Suchitoto,[],,El Salvador,SLV,[0-mtmtpm2Ns],"[[384,767]]","[[675,954]]",[0],[18052024],[UCSMCv9FDp2R9_p1e0k61KwQ],"[[0,0]]"
+8026,San Miguel,[],,El Salvador,SLV,[mqHPKF_nj1Y],"[[16864,20407,21247]]","[[19217,21150,21646]]",[0],[19052024],[UCSMCv9FDp2R9_p1e0k61KwQ],"[[0,0,0]]"
+8027,Santa Ana,[],,El Salvador,SLV,"[Sfy_g7fS6Ds,CN7KQP1Tqmg]","[[2645,4149,4596],[66,317]]","[[3713,4281,5447],[274,1133]]","[0,0]","[26052024,26052024]","[UCSMCv9FDp2R9_p1e0k61KwQ,UCSMCv9FDp2R9_p1e0k61KwQ]","[[0,0,0],[0,0]]"
+8028,Ahuachapan,[Ahuachapán],,El Salvador,SLV,"[CN7KQP1Tqmg,FbgIr1TpqHk]","[[5365,6643,8653,9315],[84,265]]","[[6457,8600,9024,9492],[262,1264]]","[0,0]","[26052024,31052024]","[UCSMCv9FDp2R9_p1e0k61KwQ,UCSMCv9FDp2R9_p1e0k61KwQ]","[[0,0,0,0],[0,0]]"
+8029,Antigua Guatemala,"[Antigua,La Antigua]",,Guatemala,GTM,"[G3whvF_eC80,pzOB66Dd_Yw]","[[5746],[55]]","[[6152],[2406]]","[0,0]","[31052024,9062024]","[None,UCSMCv9FDp2R9_p1e0k61KwQ]","[[0],[0]]"
+8030,Santa Cruz del Quiche,[Santa Cruz del Quiché],,Guatemala,GTM,"[pzOB66Dd_Yw,mnjLl9M26mk]","[[23241,24222,26220,27236],[52]]","[[23888,25432,26903,27914],[919]]","[0,0]","[9062024,12062024]","[UCSMCv9FDp2R9_p1e0k61KwQ,UCSMCv9FDp2R9_p1e0k61KwQ]","[[0,0,0,0],[0]]"
+8031,Chichicastenango,[],,Guatemala,GTM,[mnjLl9M26mk],"[[1916,3441]]","[[3038,3893]]",[0],[12062024],[UCSMCv9FDp2R9_p1e0k61KwQ],"[[0,0]]"
+8032,Ayutla,[],,Guatemala,GTM,[DkBV8uqdnWM],[[1876]],[[2371]],[0],[1082024],[UCSMCv9FDp2R9_p1e0k61KwQ],[[0]]
+8033,Tapachula,[],,Mexico,MEX,"[DkBV8uqdnWM,rFuzv6sVm1E]","[[8495,9290,10672,11283],[194]]","[[8880,10250,11094,11970],[1203]]","[0,0]","[1082024,11082024]","[UCSMCv9FDp2R9_p1e0k61KwQ,UCSMCv9FDp2R9_p1e0k61KwQ]","[[0,0,1,1],[0]]"
+8034,Arriaga,[],,Mexico,MEX,"[rFuzv6sVm1E,AlvHJgkQcM8]","[[16536,16941,17757],[44,907]]","[[16805,17323,17908],[482,1108]]","[0,0]","[11082024,11082024]","[UCSMCv9FDp2R9_p1e0k61KwQ,UCSMCv9FDp2R9_p1e0k61KwQ]","[[0,0,0],[0,0]]"
+8035,Tuxtla Gutierrez,"[Tuxtla Gutiérrez,Tuxtla]",,Mexico,MEX,"[AlvHJgkQcM8,39mYqB-7Mj8]","[[7099],[38]]","[[8885],[629]]","[0,0]","[11082024,11082024]","[UCSMCv9FDp2R9_p1e0k61KwQ,UCSMCv9FDp2R9_p1e0k61KwQ]","[[0],[0]]"
+8036,Villahermosa,[],,Mexico,MEX,[39mYqB-7Mj8],[[13824]],[[14061]],[0],[11082024],[UCSMCv9FDp2R9_p1e0k61KwQ],[[0]]
+8037,Newcastle,[],WA,United States,USA,[njpZM-wF31s],[[0]],[[2220]],[0],[6042026],[UCFo5rGajxTrpiwFhDdww6lw],[[0]]
+8038,Binzhou,[],,China,CHN,[tq8uSkKmtoA],[[30]],[[3879]],[5],[19092024],[UCncFjEpUWC7c4zUuDoaLzxA],[[0]]
+8039,Xinxiang,[],,China,CHN,[eZax3-xXhR8],[[25]],[[2754]],[5],[5102018],[UCbn3IVjnCAxzqJdIZ1td8zg],[[0]]
+8040,Lourdes,[],,France,FRA,[nq44hWq_OBk],[[25]],[[569]],[0],[30042026],[UCeLzVekbovWzOg0TJfx_Xjw],[[0]]
+8041,Saint-Jean-Pied-de-Port,[Saint Jean Pied de Port],,France,FRA,"[ZyECSbRommQ,T-YjGNdRSks]","[[28],[5638]]","[[254],[5743]]","[0,0]","[26042026,24042026]","[UCeLzVekbovWzOg0TJfx_Xjw,UCeLzVekbovWzOg0TJfx_Xjw]","[[0],[0]]"
+8042,Navarrete,[],,Spain,ESP,"[d8cCpfcxAEU,5Z333okmXeg,S-1ZdVCJogo,o9D_dzGIFwU]","[[66,601],[21],[154],[10]]","[[216,893],[147],[381],[103]]","[0,0,0,0]","[22042026,20042026,18042026,17042026]","[UCeLzVekbovWzOg0TJfx_Xjw,UCeLzVekbovWzOg0TJfx_Xjw,UCeLzVekbovWzOg0TJfx_Xjw,UCeLzVekbovWzOg0TJfx_Xjw]","[[0,0],[0],[0],[0]]"
+8043,Logroño,[],,Spain,ESP,[5Z333okmXeg],[[669]],[[1015]],[0],[20042026],[UCeLzVekbovWzOg0TJfx_Xjw],[[0]]
+8044,Miranda de Ebro,[],,Spain,ESP,[S-1ZdVCJogo],[[3078]],[[3278]],[0],[18042026],[UCeLzVekbovWzOg0TJfx_Xjw],[[0]]
+8045,Vitoria Gasteiz,[],,Spain,ESP,[o9D_dzGIFwU],[[2583]],[[3145]],[0],[17042026],[UCeLzVekbovWzOg0TJfx_Xjw],[[0]]
+8046,Puerto Lápice,[],,Spain,ESP,[OPG9W8YKtog],[[1027]],[[1128]],[0],[2042026],[UCeLzVekbovWzOg0TJfx_Xjw],[[0]]
+8047,Mijas,[],,Spain,ESP,[y5yHKKoCrT4],[[1889]],[[2021]],[0],[24032026],[UCeLzVekbovWzOg0TJfx_Xjw],[[0]]
