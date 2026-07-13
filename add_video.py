@@ -1221,7 +1221,7 @@ def submit_data():
     return form()
 
 
-def get_country_data(iso3_code: str):
+def get_country_data(iso3_code: str) -> list | None:
     iso3_code = iso3_code.upper()
     cache = _load_cache()
 
@@ -1238,9 +1238,16 @@ def get_country_data(iso3_code: str):
         data = response.json()
         objects = data.get('data', {}).get('objects', [])
 
-        cache[iso3_code] = objects
+        # Filter to exact match only — v5 returns neighboring/related countries too
+        exact = [
+            obj for obj in objects
+            if obj.get('codes', {}).get('alpha_3', '').upper() == iso3_code
+            or obj.get('codes', {}).get('fifa', '').upper() == iso3_code
+        ]
+
+        cache[iso3_code] = exact
         _save_cache(cache)
-        return objects
+        return exact
     except RequestException as e:
         print(f"Error fetching country data for '{iso3_code}': {e}")
         return None
