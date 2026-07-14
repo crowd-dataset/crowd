@@ -44,6 +44,7 @@ secret
 
 mapping_bkp.csv
 mapping_cleaned.csv
+mapping_updated.csv
 
 # Pickle files
 *.pickle
