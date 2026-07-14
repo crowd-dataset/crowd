@@ -831,7 +831,7 @@ def form():
                     'videos': [],
                     'time_of_day': [],
                     'gmp': 0.0,
-                    'population_locality': int(get_locality_population(locality_data)),
+                    'population_locality': int(get_locality_population(locality_data, locality, state)),
                     'population_country': country_population,
                     'traffic_mortality': get_country_traffic_mortality(iso3_code),
                     'start_time': [],
@@ -1309,46 +1309,134 @@ def get_country_traffic_mortality(iso3_code):
 
 
 def get_locality_data(locality, country_code, state=None):
-    """
-    Get economic or locality related data from the Geonames API
-    """
     params = {
         "q": locality,
         "country": country_code,
+        "maxRows": 10,
+        "featureClass": "P",   # populated places only — filters out admin regions, parks, etc.
         "username": common.get_secrets('geonames_username')
     }
-    if state and str(state).strip().lower() not in ('', 'none', 'nan'):
-        params["adminName1"] = state.strip()
+
+    state_clean = str(state).strip() if state and str(state).strip().lower() not in ('', 'none', 'nan') else None
+
+    if state_clean:
+        if country_code.upper() == 'US':
+            code = _resolve_state_code(state_clean)
+            if code:
+                params["adminCode1"] = code
+        else:
+            # for non-US, pass adminName1 as a hint but don't rely on it exclusively
+            params["adminName1"] = state_clean
 
     url = "http://api.geonames.org/searchJSON"
     try:
-        response = requests.get(url, params=params)
+        response = requests.get(url, params=params, timeout=10)
     except requests.exceptions.ConnectionError as e:
         print(f"Connection error while getting locality data for {locality}, {country_code}: {e}.")
         return None
 
-    if response.status_code == 200:
-        return response.json()
-    else:
+    if response.status_code != 200:
         return None
 
+    data = response.json()
 
-def get_locality_population(locality_data):
-    """
-    Get population from Geonames locality data
-    """
-    if not locality_data:
-        return 0
+    # if adminName1 filtering returned nothing, retry without it
+    # (handles cases where local name differs from user input)
+    if state_clean and country_code.upper() != 'US':
+        if not data.get("geonames"):
+            params.pop("adminName1", None)
+            try:
+                response = requests.get(url, params=params, timeout=10)
+                data = response.json()
+            except Exception:
+                pass
 
-    if not isinstance(locality_data, dict):
+    return data
+
+
+US_STATE_CODES = {
+    'alabama': 'AL', 'alaska': 'AK', 'arizona': 'AZ', 'arkansas': 'AR',
+    'california': 'CA', 'colorado': 'CO', 'connecticut': 'CT', 'delaware': 'DE',
+    'florida': 'FL', 'georgia': 'GA', 'hawaii': 'HI', 'idaho': 'ID',
+    'illinois': 'IL', 'indiana': 'IN', 'iowa': 'IA', 'kansas': 'KS',
+    'kentucky': 'KY', 'louisiana': 'LA', 'maine': 'ME', 'maryland': 'MD',
+    'massachusetts': 'MA', 'michigan': 'MI', 'minnesota': 'MN', 'mississippi': 'MS',
+    'missouri': 'MO', 'montana': 'MT', 'nebraska': 'NE', 'nevada': 'NV',
+    'new hampshire': 'NH', 'new jersey': 'NJ', 'new mexico': 'NM', 'new york': 'NY',
+    'north carolina': 'NC', 'north dakota': 'ND', 'ohio': 'OH', 'oklahoma': 'OK',
+    'oregon': 'OR', 'pennsylvania': 'PA', 'rhode island': 'RI', 'south carolina': 'SC',
+    'south dakota': 'SD', 'tennessee': 'TN', 'texas': 'TX', 'utah': 'UT',
+    'vermont': 'VT', 'virginia': 'VA', 'washington': 'WA', 'west virginia': 'WV',
+    'wisconsin': 'WI', 'wyoming': 'WY', 'district of columbia': 'DC',
+}
+
+
+def _resolve_state_code(state: str) -> str | None:
+    if not state:
+        return None
+    s = state.strip()
+    if len(s) == 2:
+        return s.upper()
+    return US_STATE_CODES.get(s.lower())
+
+
+def get_locality_population(locality_data, locality, state=None):
+    if not locality_data or not isinstance(locality_data, dict):
         return 0
 
     geonames = locality_data.get("geonames")
+    if not isinstance(geonames, list) or not geonames:
+        return 0
 
-    if isinstance(geonames, list) and len(geonames) > 0:
-        return geonames[0].get("population", 0)
+    locality_norm = locality.strip().lower()
+    state_clean = str(state).strip() if state and str(state).strip().lower() not in ('', 'none', 'nan') else None
+    state_norm = state_clean.lower() if state_clean else None
 
-    return 0
+    def score(entry):
+        name = str(entry.get("name", "")).strip().lower()
+        toponym = str(entry.get("toponymName", "")).strip().lower()
+        admin1 = str(entry.get("adminName1", "")).strip().lower()
+        admin_code = str(entry.get("adminCode1", "")).strip().upper()
+        fcode = str(entry.get("fcode", ""))
+        s = 0
+
+        # name match
+        if name == locality_norm or toponym == locality_norm:
+            s += 100
+        elif locality_norm in name or name in locality_norm:
+            s += 50
+        elif locality_norm in toponym or toponym in locality_norm:
+            s += 40
+
+        # state match (only when state was provided)
+        if state_norm:
+            state_code = _resolve_state_code(state_norm) or ""
+            if admin_code and state_code and admin_code == state_code:
+                s += 60  # strong: code-level match (reliable for US)
+            elif admin1 == state_norm:
+                s += 50  # strong: exact name match
+            elif state_norm in admin1 or admin1 in state_norm:
+                s += 25  # partial match
+
+        # feature code preference: PPLC (capital) > PPLA (admin) > PPL (town)
+        if fcode == 'PPLC':
+            s += 15
+        elif fcode.startswith('PPLA'):
+            s += 12
+        elif fcode.startswith('PPL'):
+            s += 10
+
+        return s
+
+    scored = sorted(geonames, key=score, reverse=True)
+    best = scored[0]
+    best_score = score(best)
+
+    print(f"Locality match: '{best.get('name')}, {best.get('adminName1')}' "
+          f"fcode={best.get('fcode')} score={best_score} "
+          f"(query: '{locality}, {state}')")
+
+    return best.get("population", 0)
 
 
 def get_country_average_height(iso3_code):

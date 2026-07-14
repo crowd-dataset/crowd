@@ -1,2260 +1,923 @@
-<style>:root {
-  color-scheme: light dark;
-  background-color: transparent !important;
-
-  /* Agent-facing contract; keep in sync with SKILL.md. */
-  --background: var(
-    --main-surface-primary,
-    light-dark(rgb(255 255 255), rgb(24 24 24))
-  );
-  --foreground: light-dark(rgb(26 28 31), rgb(255 255 255));
-  --card: color-mix(in oklab, var(--foreground) 5%, transparent);
-  --card-foreground: var(--foreground);
-  --popover: light-dark(rgb(255 255 255), rgb(45 45 45));
-  --popover-foreground: var(--foreground);
-  --primary: light-dark(rgb(51 156 255), rgb(131 195 255));
-  --primary-foreground: light-dark(rgb(255 255 255), rgb(13 13 13));
-  --secondary: light-dark(rgb(255 255 255 / 96%), rgb(54 54 54 / 96%));
-  --secondary-foreground: var(--foreground);
-  --muted: color-mix(in srgb, var(--foreground) 10%, transparent);
-  --muted-foreground: light-dark(
-    rgb(26 28 31 / 49.4%),
-    rgb(255 255 255 / 49.8%)
-  );
-  --accent: light-dark(rgb(229 242 255), rgb(13 39 63));
-  --accent-foreground: var(--primary);
-  --destructive: light-dark(rgb(226 85 7), rgb(255 133 73));
-  --border: light-dark(rgb(26 28 31 / 8%), rgb(255 255 255 / 8.2%));
-  --input: light-dark(
-    rgb(26 28 31 / 11.8%),
-    color-mix(in oklab, rgb(0 0 0) 10%, transparent)
-  );
-  --ring: light-dark(rgb(51 156 255), rgb(131 195 255 / 76%));
-  --font-size-base: 14px;
-
-  /* Internal implementation variables; not part of the agent contract. */
-  --font-sans: -apple-system, system-ui, "Segoe UI", sans-serif;
-  --font-mono:
-    ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono",
-    monospace;
-  --font-size-normal: max(11px, var(--font-size-base));
-  --font-size-tooltip: calc(var(--font-size-base) - 1px);
-  --font-size-small: max(11px, calc(var(--font-size-base) - 2px));
-  --font-size-h1: calc(var(--font-size-normal) * 1.7142857143);
-  --font-size-h2: calc(var(--font-size-normal) * 1.4285714286);
-  --font-size-h3: calc(var(--font-size-normal) * 1.2857142857);
-  --font-weight-normal: 430;
-  --font-weight-medium: 500;
-  --line-height-normal: calc(var(--font-size-normal) * 1.5);
-  --line-height-tooltip: calc(var(--font-size-tooltip) * 1.4285714286);
-  --line-height-small: calc(var(--font-size-small) + 4px);
-  --radius: 10px;
-  --radius-sm: calc(var(--radius) * 0.6);
-  --radius-md: calc(var(--radius) * 0.8);
-  --radius-lg: var(--radius);
-  --radius-2xl: calc(var(--radius) * 1.6);
-  --radius-full: 9999px;
-  --shadow-sm: 0 1px 2px -1px rgb(0 0 0 / 8%);
-  --checkmark-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 17 17'%3E%3Cpath d='M12.8961 3.64101C13.1297 3.41418 13.4984 3.37523 13.7779 3.56581C14.0571 3.75635 14.1554 4.11331 14.0299 4.41347L13.9615 4.53847L7.71151 13.7045C7.59411 13.8767 7.4063 13.9877 7.19881 14.0072C6.99136 14.0267 6.78564 13.9533 6.63826 13.806L2.88826 10.056L2.79842 9.9457C2.6192 9.67407 2.64927 9.30496 2.88826 9.06581C3.12738 8.82669 3.49647 8.79676 3.76815 8.97597L3.8785 9.06581L7.03084 12.2182L12.8053 3.74941L12.8961 3.64101Z'/%3E%3C/svg%3E");
-
-  /* Legacy aliases; not part of the current agent contract. */
-  --viz-bg: transparent;
-  --viz-panel: var(--card);
-  --viz-border: var(--border);
-  --viz-text: var(--foreground);
-  --viz-muted: var(--muted-foreground);
-  --viz-accent: var(--primary);
-  --viz-accent-text: var(--primary-foreground);
-  --viz-accent-bg: var(--accent);
-  --viz-font-size: var(--font-size-base);
-  --viz-warning: var(--destructive);
-  --color-background-primary: var(--background);
-  --color-text-primary: var(--foreground);
-  --color-border-secondary: var(--border);
-}
-
-:root[data-visualize-standalone] {
-  background-color: var(--background) !important;
-}
-
-/* Generic mobile code-block hosts provide light/dark mode but no series palette.
-   AppBlock hosts set all six variables themselves. */
-:root:not([data-app-block-surface]) {
-  --viz-series-1: var(--primary);
-  --viz-series-2: light-dark(#f3883b, #f59a56);
-  --viz-series-3: light-dark(#5dc977, #74d58b);
-  --viz-series-4: light-dark(#eb77b1, #f08fc0);
-  --viz-series-5: light-dark(#9b79ec, #aa91ef);
-  --viz-series-6: light-dark(#3ab9b1, #5acbc2);
-}
-
-:root[data-theme="light"] {
-  color-scheme: light;
-}
-
-:root[data-theme="dark"] {
-  color-scheme: dark;
-}
-
-* {
-  box-sizing: border-box;
-}
-
-html > body {
-  margin: 0;
-  padding: 5px;
-  color: var(--foreground);
-  background: transparent !important;
-  font-family: var(--font-sans);
-  font-size: var(--font-size-normal);
-  font-weight: var(--font-weight-normal);
-  line-height: var(--line-height-normal);
-}
-
-:root:not([data-app-block-surface]) > body {
-  padding: 12px;
-}
-
-a {
-  color: color-mix(in srgb, var(--viz-accent) 80%, var(--viz-text) 20%);
-  cursor: pointer;
-  font-weight: var(--viz-font-weight-medium);
-  text-decoration: none;
-  text-underline-offset: 2px;
-}
-
-a:is(:hover, :focus-visible) {
-  text-decoration-line: underline;
-  text-decoration-style: dashed;
-  text-decoration-thickness: 0.5px;
-}
-
-h1,
-h2,
-h3,
-h4,
-h5,
-h6,
-p {
-  margin-block: 0;
-}
-
-h1 {
-  font-size: var(--font-size-h1);
-  font-weight: var(--font-weight-medium);
-  line-height: 1.25;
-}
-
-h2 {
-  font-size: var(--font-size-h2);
-  font-weight: var(--font-weight-medium);
-  line-height: 1.25;
-}
-
-h3,
-h4,
-h5,
-h6 {
-  font-size: var(--font-size-h3);
-  font-weight: var(--font-weight-medium);
-  line-height: 1.3;
-}
-
-b,
-strong,
-th {
-  font-weight: var(--font-weight-medium);
-}
-
-code:not(pre code) {
-  display: inline;
-  padding: 1px 6px;
-  border-radius: var(--radius-sm);
-  background: var(--muted);
-  font-family: var(--font-mono);
-  font-size: 0.92em;
-  overflow-wrap: anywhere;
-  -webkit-box-decoration-break: clone;
-  box-decoration-break: clone;
-  word-break: break-word;
-}
-
-#widget {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  width: 100%;
-  padding: 0;
-  background: transparent !important;
-}
-
-.card {
-  min-width: 0;
-  padding: 12px;
-  overflow: hidden;
-  overflow-wrap: break-word;
-  border-radius: var(--radius-2xl);
-  color: var(--card-foreground);
-  background: var(--card);
-}
-
-#widget > :not(.card) {
-  width: 100% !important;
-  max-width: none !important;
-  margin: 0 !important;
-  padding: 0 !important;
-  border: 0 !important;
-  border-radius: 0 !important;
-  background: transparent !important;
-  box-shadow: none !important;
-}
-
-.tooltip {
-  position: fixed;
-  z-index: 50;
-  top: 0;
-  left: 0;
-  width: max-content;
-  max-width: min(
-    20rem,
-    var(--tooltip-available-width, calc(100vw - 10px)),
-    calc(100vw - 10px)
-  );
-  max-height: min(
-    var(--tooltip-available-height, calc(100vh - 10px)),
-    calc(100vh - 10px)
-  );
-  padding: 4px 8px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  color: var(--popover-foreground);
-  background: var(--popover);
-  box-shadow: none;
-  font-size: var(--font-size-tooltip);
-  line-height: var(--line-height-tooltip);
-  overflow-wrap: break-word;
-  white-space: normal;
-  pointer-events: none;
-  user-select: none;
-}
-
-.viz-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(max(180px, 24%), 1fr));
-  gap: 10px;
-}
-
-.viz-stat {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.viz-stat-value {
-  font-size: var(--font-size-h2);
-  font-weight: var(--font-weight-medium);
-  line-height: 1.25;
-}
-
-.viz-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 10px;
-}
-
-.viz-badge {
-  padding: 3px 8px;
-  border-radius: var(--radius-full);
-  color: var(--accent-foreground);
-  background: var(--accent);
-  font-weight: var(--font-weight-medium);
-}
-
-small,
-.text-small,
-.viz-badge {
-  font-size: var(--font-size-small);
-  line-height: var(--line-height-small);
-}
-
-.text-muted {
-  color: var(--muted-foreground);
-}
-
-.sr-only {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-  border: 0;
-}
-
-.viz-legend,
-.viz-controls {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-}
-
-.viz-controls > .form-label {
-  display: grid;
-  min-width: min(100%, 260px);
-  flex: 1 1 280px;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: baseline;
-  gap: 2px 12px;
-  margin-bottom: 0;
-}
-
-.viz-controls > .form-label > :is(.form-control, .form-range, .form-select) {
-  grid-column: 1 / -1;
-}
-
-.btn,
-.form-check-input,
-.form-control,
-.form-range,
-.form-select {
-  font: inherit;
-}
-
-.btn {
-  appearance: button;
-  display: inline-flex;
-  min-height: 28px;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  margin: 0;
-  padding: 0 8px;
-  -webkit-app-region: no-drag;
-  border: 1px solid var(--input);
-  border-radius: var(--radius-lg);
-  color: var(--secondary-foreground);
-  background: var(--secondary);
-  cursor: var(--cursor-interaction, pointer);
-  text-align: center;
-  text-decoration: none;
-  white-space: nowrap;
-  user-select: none;
-  -webkit-font-smoothing: antialiased;
-}
-
-a.btn {
-  cursor: pointer;
-  text-decoration: none;
-}
-
-.btn:not(:disabled):hover {
-  background: color-mix(in srgb, var(--foreground) 6%, var(--secondary));
-}
-
-.btn-primary {
-  border-color: transparent;
-  color: var(--primary-foreground);
-  background: var(--foreground);
-  background-clip: padding-box;
-}
-
-.btn-primary:not(:disabled):hover {
-  background: color-mix(in srgb, var(--foreground) 80%, transparent);
-  background-clip: padding-box;
-}
-
-.btn-ghost {
-  border-color: transparent;
-  color: var(--muted-foreground);
-  background: transparent;
-}
-
-.btn-ghost:not(:disabled):hover {
-  color: var(--foreground);
-  background: color-mix(in srgb, var(--foreground) 6%, var(--secondary));
-}
-
-.btn:disabled {
-  cursor: not-allowed;
-  opacity: 0.4;
-}
-
-[data-lucide] {
-  stroke-width: 1.6;
-}
-
-.form-label {
-  display: block;
-  margin-bottom: 6px;
-  color: var(--foreground);
-}
-
-.form-control {
-  display: block;
-  width: 100%;
-  min-height: 28px;
-  padding: 0 8px;
-  outline: none;
-  border: 1px solid var(--input);
-  border-radius: var(--radius-lg);
-  color: var(--foreground);
-  background: var(--secondary);
-}
-
-.form-control::placeholder {
-  color: var(--muted-foreground);
-}
-
-textarea.form-control {
-  height: auto;
-  min-height: 72px;
-  padding: 8px 10px;
-  resize: vertical;
-}
-
-.form-control:focus-visible {
-  border-color: var(--ring);
-  box-shadow: inset 0 0 0 1px var(--ring);
-}
-
-.form-control:disabled,
-.form-select:disabled {
-  cursor: not-allowed;
-  opacity: 0.4;
-}
-
-.form-select {
-  appearance: none;
-  display: block;
-  width: 100%;
-  min-height: 28px;
-  margin: 0;
-  padding: 0 32px 0 8px;
-  outline: none;
-  border: 1px solid var(--input);
-  border-radius: var(--radius-lg);
-  color: var(--foreground);
-  background-color: var(--secondary);
-  background-image:
-    linear-gradient(45deg, transparent 50%, var(--muted-foreground) 50%),
-    linear-gradient(135deg, var(--muted-foreground) 50%, transparent 50%);
-  background-position:
-    calc(100% - 14px) 50%,
-    calc(100% - 10px) 50%;
-  background-repeat: no-repeat;
-  background-size: 4px 4px;
-  cursor: var(--cursor-interaction, default);
-}
-
-.form-select:not(:disabled):hover {
-  background-color: color-mix(in srgb, var(--foreground) 6%, var(--secondary));
-}
-
-.form-select:focus-visible {
-  border-color: var(--ring);
-  box-shadow: inset 0 0 0 1px var(--ring);
-}
-
-.form-check {
-  display: flex;
-  min-height: 20px;
-  align-items: center;
-  gap: 6px;
-}
-
-.form-check-input {
-  appearance: none;
-  width: 14px;
-  height: 14px;
-  flex: 0 0 auto;
-  margin: 0;
-  border: 1px solid var(--input);
-  color: var(--primary-foreground);
-  background-color: transparent;
-  cursor: var(--cursor-interaction, default);
-  transition:
-    background-color 150ms,
-    border-color 150ms,
-    box-shadow 150ms;
-}
-
-.form-check:not(.form-switch) .form-check-input[type="checkbox"] {
-  border-color: var(--input);
-  border-radius: var(--radius-sm);
-  background-color: var(--secondary);
-  box-shadow: var(--shadow-sm);
-}
-
-.form-check:not(.form-switch)
-  .form-check-input:not(:disabled):not(:checked):hover {
-  background-color: var(--card);
-}
-
-.form-check:not(.form-switch) .form-check-input[type="checkbox"]:checked {
-  border-color: var(--primary);
-  background-color: var(--primary);
-}
-
-.form-check:not(.form-switch)
-  .form-check-input[type="checkbox"]:checked::before {
-  display: block;
-  width: 100%;
-  height: 100%;
-  background: var(--primary-foreground);
-  content: "";
-  mask: var(--checkmark-image) center / 12px 12px no-repeat;
-}
-
-.form-check-input[type="radio"] {
-  width: 14px;
-  height: 14px;
-  border-radius: var(--radius-full);
-}
-
-.form-check-input[type="radio"]:checked {
-  border: 2px solid var(--primary);
-  background:
-    radial-gradient(circle, var(--primary-foreground) 0 2.5px, transparent 3px),
-    var(--primary);
-}
-
-.form-check:not(.form-switch) .form-check-input:focus-visible {
-  outline: 2px solid var(--ring);
-  outline-offset: 2px;
-}
-
-.form-check:not(.form-switch) .form-check-input:disabled {
-  cursor: not-allowed;
-  pointer-events: none;
-}
-
-.form-check:not(.form-switch) .form-check-input:disabled + .form-check-label {
-  cursor: not-allowed;
-}
-
-.form-switch .form-check-input:disabled,
-.form-switch .form-check-input:disabled + .form-check-label {
-  cursor: not-allowed;
-  opacity: 0.6;
-}
-
-.form-check-label {
-  color: var(--foreground);
-  cursor: var(--cursor-interaction, default);
-}
-
-.form-switch .form-check-input {
-  position: relative;
-  width: 32px;
-  height: 20px;
-  border: 0;
-  border-radius: var(--radius-full);
-  background: var(--muted);
-  box-shadow: none;
-  transition: background-color 200ms cubic-bezier(0, 0, 0.2, 1);
-}
-
-.form-switch .form-check-input::before {
-  position: absolute;
-  top: 50%;
-  left: 0;
-  width: 16px;
-  height: 16px;
-  box-sizing: border-box;
-  border: 1px solid light-dark(var(--primary-foreground), var(--foreground));
-  border-radius: var(--radius-full);
-  background: light-dark(var(--primary-foreground), var(--foreground));
-  box-shadow: var(--shadow-sm);
-  content: "";
-  transform: translate(2px, -50%);
-  transition: transform 200ms cubic-bezier(0, 0, 0.2, 1);
-}
-
-.form-switch .form-check-input:checked {
-  background: var(--primary);
-}
-
-.form-switch .form-check-input:checked::before {
-  transform: translate(14px, -50%);
-}
-
-.form-switch .form-check-input:focus-visible {
-  box-shadow: 0 0 0 2px var(--ring);
-}
-
-.form-range {
-  appearance: none;
-  display: block;
-  width: 100%;
-  height: 28px;
-  flex: 1;
-  margin: 0;
-  padding: 0;
-  outline: none;
-  border: 0;
-  accent-color: var(--primary);
-  background: linear-gradient(
-      color-mix(in srgb, var(--foreground) 7%, transparent),
-      color-mix(in srgb, var(--foreground) 7%, transparent)
-    )
-    center / 100% 2px no-repeat;
-}
-
-.form-range::-webkit-slider-runnable-track {
-  height: 28px;
-  background: transparent;
-}
-
-.form-range::-webkit-slider-thumb {
-  appearance: none;
-  width: 20px;
-  height: 20px;
-  margin-top: 4px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-full);
-  background: light-dark(var(--primary-foreground), var(--foreground));
-}
-
-.form-range:focus-visible::-webkit-slider-thumb {
-  border-color: var(--ring);
-  box-shadow: inset 0 0 0 1px var(--ring);
-}
-
-.form-range::-moz-range-track {
-  height: 28px;
-  background: transparent;
-}
-
-.form-range::-moz-range-thumb {
-  width: 20px;
-  height: 20px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-full);
-  background: light-dark(var(--primary-foreground), var(--foreground));
-}
-
-.form-range:focus-visible::-moz-range-thumb {
-  border-color: var(--ring);
-  box-shadow: inset 0 0 0 1px var(--ring);
-}
-
-.form-range:disabled {
-  cursor: not-allowed;
-  opacity: 0.4;
-}
-
-.btn:not(.btn-primary, .viz-tile):is(
-    [aria-pressed="true"],
-    [aria-selected="true"],
-    .is-selected
-  ) {
-  border-color: var(--primary);
-  color: var(--primary-foreground);
-  background: var(--primary);
-}
-
-.btn.viz-tile:is([aria-pressed="true"], [aria-selected="true"], .is-selected) {
-  border-color: var(--primary);
-  box-shadow: inset 0 0 0 1px var(--primary);
-}
-
-.btn:focus-visible {
-  outline: 2px solid var(--ring);
-  outline-offset: 2px;
-}
-
-svg {
-  display: block;
-  max-width: 100%;
-  height: auto;
-}
-
-#widget > svg {
-  width: 100%;
-}
-
-.text-warning,
-.text-destructive {
-  color: var(--destructive);
-}
-</style>
-<script>
-(() => {
-  const root = document.documentElement;
-  const initialGlobals =
-    globalThis.__codexVisualizationInitialGlobals ?? globalThis.openai;
-  delete globalThis.__codexVisualizationInitialGlobals;
-  let appliedProperties = [];
-
-  const applyHostStyleVariables = (styleVariables) => {
-    if (styleVariables == null || typeof styleVariables !== "object") {
-      return;
-    }
-    for (const property of appliedProperties) {
-      root.style.removeProperty(property);
-    }
-    appliedProperties = [];
-    for (const [property, value] of Object.entries(styleVariables)) {
-      if (property.startsWith("--") && typeof value === "string") {
-        root.style.setProperty(property, value);
-        appliedProperties.push(property);
-      }
-    }
-  };
-
-  const syncHostStyles = (globals) => {
-    applyHostStyleVariables(globals?.visualizationStyleVariables);
-  };
-
-  syncHostStyles(initialGlobals);
-  globalThis.addEventListener("openai:set_globals", (event) => {
-    syncHostStyles(event.detail?.globals);
-  });
-})();
-</script>
-
-<div id="city-merge-reviewer">
-  <style>
-    #city-merge-reviewer {
-      color: var(--foreground);
-      width: 100%;
-    }
-
-    #city-merge-reviewer .cmr-stack {
-      display: grid;
-      gap: 1rem;
-    }
-
-    #city-merge-reviewer .cmr-stepper {
-      display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 0.5rem;
-    }
-
-    #city-merge-reviewer .cmr-step {
-      display: flex;
-      align-items: center;
-      gap: 0.5rem;
-      padding: 0.65rem 0.75rem;
-      border: 1px solid var(--border);
-      border-radius: var(--radius-md);
-      color: var(--muted-foreground);
-    }
-
-    #city-merge-reviewer .cmr-step[data-active="true"] {
-      color: var(--foreground);
-      border-color: var(--primary);
-      background: var(--accent);
-    }
-
-    #city-merge-reviewer .cmr-step-number {
-      display: inline-grid;
-      place-items: center;
-      min-width: 1.5rem;
-      min-height: 1.5rem;
-      border-radius: var(--radius-full);
-      background: var(--muted);
-    }
-
-    #city-merge-reviewer .cmr-step[data-active="true"] .cmr-step-number {
-      background: var(--primary);
-      color: var(--primary-foreground);
-    }
-
-    #city-merge-reviewer .cmr-section {
-      display: grid;
-      gap: 0.85rem;
-      padding-block: 0.35rem;
-    }
-
-    #city-merge-reviewer .cmr-section-head,
-    #city-merge-reviewer .cmr-panel-head,
-    #city-merge-reviewer .cmr-actions {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 0.75rem;
-      flex-wrap: wrap;
-    }
-
-    #city-merge-reviewer .cmr-two-column {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 1rem;
-      align-items: start;
-    }
-
-    #city-merge-reviewer .cmr-panel {
-      display: grid;
-      gap: 0.75rem;
-      min-width: 0;
-      padding: 1rem;
-      border: 1px solid var(--border);
-      border-radius: var(--radius-lg);
-      background: var(--card);
-      color: var(--card-foreground);
-    }
-
-    #city-merge-reviewer .cmr-panel[data-tone="proposed"] {
-      border-color: var(--primary);
-    }
-
-    #city-merge-reviewer .cmr-field {
-      display: grid;
-      gap: 0.35rem;
-      min-width: 0;
-    }
-
-    #city-merge-reviewer textarea.form-control {
-      min-height: 6rem;
-      resize: vertical;
-    }
-
-    #city-merge-reviewer .cmr-options {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 0.65rem 1rem;
-    }
-
-    #city-merge-reviewer .cmr-status {
-      min-height: 1.5rem;
-      padding-inline-start: 0.75rem;
-      border-inline-start: 3px solid var(--border);
-    }
-
-    #city-merge-reviewer .cmr-status[data-kind="error"] {
-      color: var(--destructive);
-      border-inline-start-color: var(--destructive);
-    }
-
-    #city-merge-reviewer .cmr-status[data-kind="warn"] {
-      border-inline-start-color: var(--viz-series-3);
-    }
-
-    #city-merge-reviewer .cmr-status[data-kind="ok"] {
-      border-inline-start-color: var(--viz-series-1);
-    }
-
-    #city-merge-reviewer .cmr-record-list,
-    #city-merge-reviewer .cmr-audit-list,
-    #city-merge-reviewer .cmr-bundle-list {
-      display: grid;
-      gap: 0.5rem;
-    }
-
-    #city-merge-reviewer .cmr-record-row,
-    #city-merge-reviewer .cmr-audit-row,
-    #city-merge-reviewer .cmr-bundle-row {
-      display: grid;
-      gap: 0.5rem;
-      padding-block: 0.55rem;
-      border-bottom: 1px solid var(--border);
-    }
-
-    #city-merge-reviewer .cmr-record-row {
-      grid-template-columns: auto minmax(0, 1fr) auto;
-      align-items: center;
-    }
-
-    #city-merge-reviewer .cmr-audit-row {
-      grid-template-columns: minmax(8rem, 0.6fr) minmax(0, 2fr) auto;
-      align-items: center;
-    }
-
-    #city-merge-reviewer .cmr-counts,
-    #city-merge-reviewer .cmr-bundle-values {
-      display: flex;
-      gap: 0.35rem 0.75rem;
-      flex-wrap: wrap;
-    }
-
-    #city-merge-reviewer .cmr-compare {
-      display: grid;
-      grid-template-columns: minmax(9rem, 0.5fr) repeat(2, minmax(0, 1.25fr));
-      border-top: 1px solid var(--border);
-      border-inline-start: 1px solid var(--border);
-    }
-
-    #city-merge-reviewer .cmr-compare-cell {
-      min-width: 0;
-      padding: 0.65rem;
-      border-inline-end: 1px solid var(--border);
-      border-bottom: 1px solid var(--border);
-      overflow-wrap: anywhere;
-    }
-
-    #city-merge-reviewer .cmr-compare-head {
-      background: var(--muted);
-    }
-
-    #city-merge-reviewer .cmr-compare-label {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 0.4rem;
-    }
-
-    #city-merge-reviewer .cmr-compare-row-changed {
-      background: var(--accent);
-    }
-
-    #city-merge-reviewer .cmr-source-value {
-      display: grid;
-      gap: 0.2rem;
-    }
-
-    #city-merge-reviewer .cmr-secondary-values {
-      display: grid;
-      gap: 0.15rem;
-      padding-top: 0.35rem;
-      color: var(--muted-foreground);
-    }
-
-    #city-merge-reviewer .cmr-bundle-row {
-      grid-template-columns: minmax(9rem, 0.65fr) minmax(0, 2.35fr);
-    }
-
-    #city-merge-reviewer .cmr-code {
-      overflow-wrap: anywhere;
-    }
-
-    #city-merge-reviewer .cmr-decision {
-      display: grid;
-      gap: 0.8rem;
-      padding: 1rem;
-      border: 1px solid var(--primary);
-      border-radius: var(--radius-lg);
-      background: var(--accent);
-      color: var(--accent-foreground);
-    }
-
-    #city-merge-reviewer .cmr-divider {
-      border: 0;
-      border-top: 1px solid var(--border);
-      margin: 0;
-    }
-
-    #city-merge-reviewer [hidden] {
-      display: none !important;
-    }
-
-    @media (max-width: 720px) {
-      #city-merge-reviewer .cmr-two-column,
-      #city-merge-reviewer .cmr-options {
-        grid-template-columns: 1fr;
-      }
-
-      #city-merge-reviewer .cmr-compare {
-        grid-template-columns: 1fr;
-      }
-
-      #city-merge-reviewer .cmr-record-row,
-      #city-merge-reviewer .cmr-audit-row,
-      #city-merge-reviewer .cmr-bundle-row {
-        grid-template-columns: 1fr;
-        align-items: start;
-      }
-    }
-  </style>
-
-  <div class="cmr-stack">
-    <div class="cmr-stepper" aria-label="Merge progress">
-      <div id="cmr-step-source" class="cmr-step" data-active="true">
-        <span class="cmr-step-number">1</span>
-        <span>Choose rows</span>
-      </div>
-      <div id="cmr-step-review" class="cmr-step" data-active="false">
-        <span class="cmr-step-number">2</span>
-        <span>Review changes</span>
-      </div>
-      <div id="cmr-step-confirm" class="cmr-step" data-active="false">
-        <span class="cmr-step-number">3</span>
-        <span>Confirm update</span>
-      </div>
+<!doctype html>
+<html lang="en">
+<head>
+    <title>Add dashcam video</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <style>
+        .container {
+            display: flex;
+            justify-content: space-between;
+        }
+        .left, .right {
+            width: 48%;
+        }
+        .left {
+            padding: 15px;
+/*            height: 90vh;*/
+            overflow-y: auto;
+        }
+        .right {
+            width: 48%;
+        }
+        .videos-text {
+            word-wrap: break-word;
+            white-space: normal;
+            flex: 1;
+            font-size: 14px;
+            margin-right: 10px;
+            line-height: 1.2; /* adjust line spacing */
+            padding: 2px 0;   /* reduce top/bottom padding */
+            margin: 0;        /* remove extra margin */
+            overflow: hidden; /* prevent text overflow */
+        }
+        .message {
+            color: green;
+            margin-top: 20px;
+        }
+
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #f9f9f9;
+        }
+        .form-container {
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+        }
+        .form-container h1 {
+            text-align: center;
+            margin-bottom: 20px;
+            font-size: 24px;
+        }
+        .form-group {
+            display: flex;
+            align-items: center;
+            margin-bottom: 2px;
+        }
+        .form-group label {
+            flex: 1;
+            font-size: 16px;
+            margin-right: 10px;
+        }
+        .form-group input,
+        .form-group select {
+            flex: 2;
+            padding: 8px;
+            font-size: 16px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            width: 100%;
+            box-sizing: border-box;
+        }
+        .form-group input[type="text"] {
+            text-align: left;
+        }
+        .form-group select {
+            background-color: #fff;
+        }
+
+        /* This adds space to the container of the buttons */
+        .form-group:has(button) {
+            margin-top: 10px; /* Increased to 10px because 5px is very subtle */
+        }
+        .form-group button {
+            margin: 0; 
+            padding: 10px 20px;
+            font-size: 16px;
+            color: white;
+            background-color: #007bff;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            width: 100%;
+            flex: 1;
+        }
+        .form-group button:hover {
+            background-color: #0056b3;
+        }
+
+        #embeddedVideo {
+            width: 100%;
+            height: 50%;
+            max-height: 500px;
+        }
+
+        #map {
+            width: 100%;
+            height: 40%; /* ensure height is explicitly set */
+            max-height: 400px;
+        }
+
+        .short_row {
+            line-height: 1.2; /* adjust line spacing */
+            padding: 2px 0;   /* reduce top/bottom padding */
+            margin: 0;        /* remove extra margin */
+            font-size: 16px;  /* adjust font size if needed */
+            overflow: hidden; /* prevent text overflow */
+/*            max-height: 20px; /* optional: limit max height */*/
+        }
+
+        #currentTime {
+            color: red;
+        }
+        .input-wrapper {
+            position: relative;     /* needed for locality autocomplete */
+            flex: 2;                /* same flex as before */
+            display: flex;
+        }
+
+        .input-wrapper input,
+        .input-wrapper select {
+            width: 100%;
+            box-sizing: border-box;
+            padding: 8px;
+            font-size: 16px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            background-color: #fff;
+        }
+
+        /* Only for locality suggestions dropdown */
+        #locality-suggestions {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            background: white;
+            border: 1px solid #ccc;
+            border-top: none;
+            border-radius: 0 0 4px 4px;
+            max-height: 250px;
+            overflow-y: auto;
+            z-index: 1000;
+            box-shadow: 0 6px 12px rgba(0, 0, 0, 0.15);
+            display: none;
+        }
+
+        #locality-suggestions.has-items {
+            display: block;
+        }
+
+        #locality-suggestions div {
+            padding: 10px 12px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+
+        #locality-suggestions div:hover {
+            background-color: #f0f8ff;
+        }
+
+        /* make radio row match input height */
+        .radio-wrapper {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex: 2;
+            padding: 8px;              /* same as input padding */
+            box-sizing: border-box;
+        }
+
+        /* ensure the whole label area is clickable and tall */
+        .radio-inline {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            height: 100%;              /* fill the row height */
+        }
+
+        /* radios themselves stay small; wrapper handles height */
+        .radio-wrapper input[type="radio"] {
+            flex: 0 0 auto;
+            width: auto;
+            padding: 0;
+        }
+
+}
+    </style>
+    <script src="https://www.youtube.com/iframe_api"></script>
+    <script>
+        let player; // global youtube player variable
+
+        function onYouTubeIframeAPIReady() {
+            console.log("YouTube API Ready");
+            initializePlayer();
+        }
+
+        function initializePlayer() {
+            const videoElement = document.getElementById('embeddedVideo');
+
+            // check if the iframe exists and has the correct API enabled
+            if (videoElement) {
+                player = new YT.Player('embeddedVideo', {
+                    events: {
+                        'onReady': function() {
+                            console.log("YouTube Player Ready");
+                            updateCurrentTime();
+                        },
+                        'onStateChange': onPlayerStateChange
+                    }
+                });
+            }
+        }
+
+        function onPlayerStateChange(event) {
+            if (event.data === YT.PlayerState.PLAYING) {
+                updateCurrentTime();
+            }
+        }
+
+        function updateCurrentTime() {
+            if (player && player.getCurrentTime && player.getDuration) {
+                let timeDisplay = document.getElementById('currentTime');
+                let lastSecondDisplay = document.getElementById('lastSecond');
+                if (timeDisplay) {
+                    timeDisplay.textContent = Math.floor(player.getCurrentTime());
+                }
+                if (lastSecondDisplay) {
+                    lastSecondDisplay.textContent = Math.floor(player.getDuration()) - 1;
+                }
+                setTimeout(updateCurrentTime, 1000);
+            }
+        }
+
+        document.addEventListener("DOMContentLoaded", function () {
+            const lastSecondEl = document.getElementById("lastSecond");
+            const startTimeEl = document.getElementById("start_time");
+            const endTimeEl = document.getElementById("end_time");
+
+            if (lastSecondEl && startTimeEl && endTimeEl) {
+                lastSecondEl.addEventListener("click", function () {
+                    const value = lastSecondEl.textContent.trim();
+                    if (value) {
+                        // copy to clipboard
+                        navigator.clipboard.writeText(value).then(() => {
+                            console.log("✅ Copied last second:", value);
+                        }).catch(err => {
+                            console.error("❌ Failed to copy:", err);
+                        });
+
+                        // fill form fields
+                        startTimeEl.value = 0;
+                        endTimeEl.value = value;
+
+                        // quick visual feedback
+                        lastSecondEl.style.color = "green";
+                        setTimeout(() => { lastSecondEl.style.color = ""; }, 800);
+                    }
+                });
+            }
+        });
+
+        document.addEventListener('DOMContentLoaded', function() {
+            if (typeof YT !== 'undefined' && YT.Player) {
+                initializePlayer();
+            }
+
+            let lat = parseFloat("{{ existing_data['lat'] or 52.3676 }}");
+            let lon = parseFloat("{{ existing_data['lon'] or 4.9041 }}");
+
+            let mapElement = document.getElementById("map");
+            let latInput = document.getElementById("lat");
+            let lonInput = document.getElementById("lon");
+
+            if (mapElement && latInput && lonInput) {
+                console.log("Initializing map at:", lat, lon);
+
+                let map = L.map("map").setView([lat, lon], 13);
+
+                L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+                    attribution: "&copy; OpenStreetMap contributors",
+                    detectRetina: true,
+                    maxZoom: 18,
+                }).addTo(map);
+
+                let marker = L.marker([lat, lon], { draggable: true }).addTo(map);
+
+                // update input fields when marker is dragged
+                marker.on("dragend", function(event) {
+                    let position = marker.getLatLng();
+                    latInput.value = position.lat.toFixed(6);
+                    lonInput.value = position.lng.toFixed(6);
+                    console.log("Updated position:", position.lat, position.lng);
+                });
+
+                // update marker if user manually changes lat/lon in the inputs
+                function updateMarkerPosition() {
+                    let newLat = parseFloat(latInput.value);
+                    let newLon = parseFloat(lonInput.value);
+                    if (!isNaN(newLat) && !isNaN(newLon)) {
+                        marker.setLatLng([newLat, newLon]);
+                        map.setView([newLat, newLon], 13);
+                    }
+                }
+
+                latInput.addEventListener("change", updateMarkerPosition);
+                lonInput.addEventListener("change", updateMarkerPosition);
+            } else {
+                console.error("Map element or input fields not found!");
+            }
+
+        });
+    </script>
+</head>
+<body>
+    <div class="container">
+        <div class="left">
+            <form method="POST">
+                <div class="form-group">
+                    <label for="locality">Locality:</label>
+                    <div class="input-wrapper">
+                        <input type="text" id="locality" name="locality" value="{{ locality }}" autocomplete="off">
+                        <div id="locality-suggestions"></div>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label for="state">State (optional):</label>
+                    <div class="input-wrapper">
+                        <input type="text" id="state" name="state" value="{{ state }}">
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label for="country">Country:</label>
+                    <div class="input-wrapper">
+                        <select id="country" name="country" required>
+                            <option value="">Select a country</option>
+                            <option value="Afghanistan" {{ "selected" if country == "Afghanistan" else "" }}>Afghanistan 🇦🇫</option>
+                            <option value="Albania" {{ "selected" if country == "Albania" else "" }}>Albania 🇦🇱</option>
+                            <option value="Algeria" {{ "selected" if country == "Algeria" else "" }}>Algeria 🇩🇿</option>
+                            <option value="Åland Islands" {{ "selected" if country == "Åland Islands" else "" }}>Aland Islands 🇦🇽</option>
+                            <option value="American Samoa" {{ "selected" if country == "American Samoa" else "" }}>American Samoa 🇦🇸</option>
+                            <option value="Andorra" {{ "selected" if country == "Andorra" else "" }}>Andorra 🇦🇩</option>
+                            <option value="Angola" {{ "selected" if country == "Angola" else "" }}>Angola 🇦🇴</option>
+                            <option value="Anguilla" {{ "selected" if country == "Anguilla" else "" }}>Anguilla 🇦🇮</option>
+                            <option value="Antarctica" {{ "selected" if country == "Antarctica" else "" }}>Antarctica 🇦🇶</option>
+                            <option value="Antigua and Barbuda" {{ "selected" if country == "Antigua and Barbuda" else "" }}>Antigua and Barbuda 🇦🇬</option>
+                            <option value="Argentina" {{ "selected" if country == "Argentina" else "" }}>Argentina 🇦🇷</option>
+                            <option value="Armenia" {{ "selected" if country == "Armenia" else "" }}>Armenia 🇦🇲</option>
+                            <option value="Aruba" {{ "selected" if country == "Aruba" else "" }}>Aruba 🇦🇼</option>
+                            <option value="Australia" {{ "selected" if country == "Australia" else "" }}>Australia 🇦🇺</option>
+                            <option value="Austria" {{ "selected" if country == "Austria" else "" }}>Austria 🇦🇹</option>
+                            <option value="Azerbaijan" {{ "selected" if country == "Azerbaijan" else "" }}>Azerbaijan 🇦🇿</option>
+                            <option value="Bahamas" {{ "selected" if country == "Bahamas" else "" }}>Bahamas 🇧🇸</option>
+                            <option value="Bahrain" {{ "selected" if country == "Bahrain" else "" }}>Bahrain 🇧🇭</option>
+                            <option value="Bangladesh" {{ "selected" if country == "Bangladesh" else "" }}>Bangladesh 🇧🇩</option>
+                            <option value="Barbados" {{ "selected" if country == "Barbados" else "" }}>Barbados 🇧🇧</option>
+                            <option value="Belarus" {{ "selected" if country == "Belarus" else "" }}>Belarus 🇧🇾</option>
+                            <option value="Belgium" {{ "selected" if country == "Belgium" else "" }}>Belgium 🇧🇪</option>
+                            <option value="Belize" {{ "selected" if country == "Belize" else "" }}>Belize 🇧🇿</option>
+                            <option value="Benin" {{ "selected" if country == "Benin" else "" }}>Benin 🇧🇯</option>
+                            <option value="Bermuda" {{ "selected" if country == "Bermuda" else "" }}>Bermuda 🇧🇲</option>
+                            <option value="Bhutan" {{ "selected" if country == "Bhutan" else "" }}>Bhutan 🇧🇹</option>
+                            <option value="Bolivia" {{ "selected" if country == "Bolivia" else "" }}>Bolivia 🇧🇴</option>
+                            <option value="Bonaire, Sint Eustatius and Saba" {{ "selected" if country == "Bonaire, Sint Eustatius and Saba" else "" }}>Bonaire, Sint Eustatius and Saba 🇧🇶</option>
+                            <option value="Bosnia and Herzegovina" {{ "selected" if country == "Bosnia and Herzegovina" else "" }}>Bosnia and Herzegovina 🇧🇦</option>
+                            <option value="Botswana" {{ "selected" if country == "Botswana" else "" }}>Botswana 🇧🇼</option>
+                            <option value="Bouvet Island" {{ "selected" if country == "Bouvet Island" else "" }}>Bouvet Island 🇧🇻</option>
+                            <option value="Brazil" {{ "selected" if country == "Brazil" else "" }}>Brazil 🇧🇷</option>
+                            <option value="British Indian Ocean Territory" {{ "selected" if country == "British Indian Ocean Territory" else "" }}>British Indian Ocean Territory 🇮🇴</option>
+                            <option value="British Virgin Islands" {{ "selected" if country == "British Virgin Islands" else "" }}>British Virgin Islands 🇻🇬</option>
+                            <option value="Brunei" {{ "selected" if country == "Brunei" else "" }}>Brunei 🇧🇳</option>
+                            <option value="Bulgaria" {{ "selected" if country == "Bulgaria" else "" }}>Bulgaria 🇧🇬</option>
+                            <option value="Burkina Faso" {{ "selected" if country == "Burkina Faso" else "" }}>Burkina Faso 🇧🇫</option>
+                            <option value="Burundi" {{ "selected" if country == "Burundi" else "" }}>Burundi 🇧🇮</option>
+                            <option value="Cabo Verde" {{ "selected" if country == "Cabo Verde" else "" }}>Cabo Verde 🇨🇻</option>
+                            <option value="Cambodia" {{ "selected" if country == "Cambodia" else "" }}>Cambodia 🇰🇭</option>
+                            <option value="Cameroon" {{ "selected" if country == "Cameroon" else "" }}>Cameroon 🇨🇲</option>
+                            <option value="Canada" {{ "selected" if country == "Canada" else "" }}>Canada 🇨🇦</option>
+                            <option value="Cayman Islands" {{ "selected" if country == "Cayman Islands" else "" }}>Cayman Islands 🇰🇾</option>
+                            <option value="Central African Republic" {{ "selected" if country == "Central African Republic" else "" }}>Central African Republic 🇨🇫</option>
+                            <option value="Chad" {{ "selected" if country == "Chad" else "" }}>Chad 🇹🇩</option>
+                            <option value="Chile" {{ "selected" if country == "Chile" else "" }}>Chile 🇨🇱</option>
+                            <option value="China" {{ "selected" if country == "China" else "" }}>China 🇨🇳</option>
+                            <option value="Christmas Island" {{ "selected" if country == "Christmas Island" else "" }}>Christmas Island 🇨🇽</option>
+                            <option value="Cocos Islands" {{ "selected" if country == "Cocos Islands" else "" }}>Cocos Islands 🇨🇨</option>
+                            <option value="Colombia" {{ "selected" if country == "Colombia" else "" }}>Colombia 🇨🇴</option>
+                            <option value="Comoros" {{ "selected" if country == "Comoros" else "" }}>Comoros 🇰🇲</option>
+                            <option value="Congo (Congo-Brazzaville)" {{ "selected" if country == "Congo (Congo-Brazzaville)" else "" }}>Congo (Congo-Brazzaville) 🇨🇬</option>
+                            <option value="Congo (Democratic Republic)" {{ "selected" if country == "Congo (Democratic Republic)" else "" }}>Congo (Democratic Republic) 🇨🇩</option>
+                            <option value="Cook Islands" {{ "selected" if country == "Cook Islands" else "" }}>Cook Islands 🇨🇰</option>
+                            <option value="Costa Rica" {{ "selected" if country == "Costa Rica" else "" }}>Costa Rica 🇨🇷</option>
+                            <option value="Côte d'Ivoire" {{ "selected" if country == "Côte d'Ivoire" else "" }}>Côte d'Ivoire 🇨🇮</option>
+                            <option value="Croatia" {{ "selected" if country == "Croatia" else "" }}>Croatia 🇭🇷</option>
+                            <option value="Cuba" {{ "selected" if country == "Cuba" else "" }}>Cuba 🇨🇺</option>
+                            <option value="Curaçao" {{ "selected" if country == "Curaçao" else "" }}>Curaçao 🇨🇼</option>
+                            <option value="Cyprus" {{ "selected" if country == "Cyprus" else "" }}>Cyprus 🇨🇾</option>
+                            <option value="Czechia" {{ "selected" if country == "Czechia" else "" }}>Czechia 🇨🇿</option>
+                            <option value="Denmark" {{ "selected" if country == "Denmark" else "" }}>Denmark 🇩🇰</option>
+                            <option value="Djibouti" {{ "selected" if country == "Djibouti" else "" }}>Djibouti 🇩🇯</option>
+                            <option value="Dominica" {{ "selected" if country == "Dominica" else "" }}>Dominica 🇩🇲</option>
+                            <option value="Dominican Republic" {{ "selected" if country == "Dominican Republic" else "" }}>Dominican Republic 🇩🇴</option>
+                            <option value="Ecuador" {{ "selected" if country == "Ecuador" else "" }}>Ecuador 🇪🇨</option>
+                            <option value="Egypt" {{ "selected" if country == "Egypt" else "" }}>Egypt 🇪🇬</option>
+                            <option value="El Salvador" {{ "selected" if country == "El Salvador" else "" }}>El Salvador 🇸🇻</option>
+                            <option value="Equatorial Guinea" {{ "selected" if country == "Equatorial Guinea" else "" }}>Equatorial Guinea 🇬🇶</option>
+                            <option value="Eritrea" {{ "selected" if country == "Eritrea" else "" }}>Eritrea 🇪🇷</option>
+                            <option value="Estonia" {{ "selected" if country == "Estonia" else "" }}>Estonia 🇪🇪</option>
+                            <option value="Eswatini" {{ "selected" if country == "Eswatini" else "" }}>Eswatini 🇸🇿</option>
+                            <option value="Ethiopia" {{ "selected" if country == "Ethiopia" else "" }}>Ethiopia 🇪🇹</option>
+                            <option value="Falkland Islands" {{ "selected" if country == "Falkland Islands" else "" }}>Falkland Islands 🇫🇰</option>
+                            <option value="Faroe Islands" {{ "selected" if country == "Faroe Islands" else "" }}>Faroe Islands 🇫🇴</option>
+                            <option value="Fiji" {{ "selected" if country == "Fiji" else "" }}>Fiji 🇫🇯</option>
+                            <option value="Finland" {{ "selected" if country == "Finland" else "" }}>Finland 🇫🇮</option>
+                            <option value="France" {{ "selected" if country == "France" else "" }}>France 🇫🇷</option>
+                            <option value="French Guiana" {{ "selected" if country == "French Guiana" else "" }}>French Guiana 🇬🇫</option>
+                            <option value="French Polynesia" {{ "selected" if country == "French Polynesia" else "" }}>French Polynesia 🇵🇫</option>
+                            <option value="Gabon" {{ "selected" if country == "Gabon" else "" }}>Gabon 🇬🇦</option>
+                            <option value="Gambia" {{ "selected" if country == "Gambia" else "" }}>Gambia 🇬🇲</option>
+                            <option value="Georgia" {{ "selected" if country == "Georgia" else "" }}>Georgia 🇬🇪</option>
+                            <option value="Germany" {{ "selected" if country == "Germany" else "" }}>Germany 🇩🇪</option>
+                            <option value="Ghana" {{ "selected" if country == "Ghana" else "" }}>Ghana 🇬🇭</option>
+                            <option value="Gibraltar" {{ "selected" if country == "Gibraltar" else "" }}>Gibraltar 🇬🇮</option>
+                            <option value="Greece" {{ "selected" if country == "Greece" else "" }}>Greece 🇬🇷</option>
+                            <option value="Greenland" {{ "selected" if country == "Greenland" else "" }}>Greenland 🇬🇱</option>
+                            <option value="Grenada" {{ "selected" if country == "Grenada" else "" }}>Grenada 🇬🇩</option>
+                            <option value="Guadeloupe" {{ "selected" if country == "Guadeloupe" else "" }}>Guadeloupe 🇬🇺</option>
+                            <option value="Guam" {{ "selected" if country == "Guam" else "" }}>Guam 🇬🇺</option>
+                            <option value="Guatemala" {{ "selected" if country == "Guatemala" else "" }}>Guatemala 🇬🇹</option>
+                            <option value="Guernsey" {{ "selected" if country == "Guernsey" else "" }}>Guernsey 🇬🇬</option>
+                            <option value="Guinea" {{ "selected" if country == "Guinea" else "" }}>Guinea 🇬🇳</option>
+                            <option value="Guinea-Bissau" {{ "selected" if country == "Guinea-Bissau" else "" }}>Guinea-Bissau 🇬🇼</option>
+                            <option value="Guyana" {{ "selected" if country == "Guyana" else "" }}>Guyana 🇬🇾</option>
+                            <option value="Haiti" {{ "selected" if country == "Haiti" else "" }}>Haiti 🇭🇹</option>
+                            <option value="Heard Island and McDonald Islands" {{ "selected" if country == "Heard Island and McDonald Islands" else "" }}>Heard Island and McDonald Islands 🇭🇲</option>
+                            <option value="Honduras" {{ "selected" if country == "Honduras" else "" }}>Honduras 🇭🇳</option>
+                            <option value="Hong Kong" {{ "selected" if country == "Hong Kong" else "" }}>Hong Kong 🇭🇰</option>
+                            <option value="Hungary" {{ "selected" if country == "Hungary" else "" }}>Hungary 🇭🇺</option>
+                            <option value="Iceland" {{ "selected" if country == "Iceland" else "" }}>Iceland 🇮🇸</option>
+                            <option value="India" {{ "selected" if country == "India" else "" }}>India 🇮🇳</option>
+                            <option value="Indonesia" {{ "selected" if country == "Indonesia" else "" }}>Indonesia 🇮🇩</option>
+                            <option value="Iran" {{ "selected" if country == "Iran" else "" }}>Iran 🇮🇷</option>
+                            <option value="Iraq" {{ "selected" if country == "Iraq" else "" }}>Iraq 🇮🇶</option>
+                            <option value="Ireland" {{ "selected" if country == "Ireland" else "" }}>Ireland 🇮🇪</option>
+                            <option value="Isle of Man" {{ "selected" if country == "Isle of Man" else "" }}>Isle of Man 🇮🇲</option>
+                            <option value="Israel" {{ "selected" if country == "Israel" else "" }}>Israel 🇮🇱</option>
+                            <option value="Italy" {{ "selected" if country == "Italy" else "" }}>Italy 🇮🇹</option>
+                            <option value="Jamaica" {{ "selected" if country == "Jamaica" else "" }}>Jamaica 🇯🇲</option>
+                            <option value="Japan" {{ "selected" if country == "Japan" else "" }}>Japan 🇯🇵</option>
+                            <option value="Jersey" {{ "selected" if country == "Jersey" else "" }}>Jersey 🇯🇪</option>
+                            <option value="Jordan" {{ "selected" if country == "Jordan" else "" }}>Jordan 🇯🇴</option>
+                            <option value="Kazakhstan" {{ "selected" if country == "Kazakhstan" else "" }}>Kazakhstan 🇰🇿</option>
+                            <option value="Kenya" {{ "selected" if country == "Kenya" else "" }}>Kenya 🇰🇪</option>
+                            <option value="Kiribati" {{ "selected" if country == "Kiribati" else "" }}>Kiribati 🇰🇮</option>
+                            <option value="Kosovo" {{ "selected" if country == "Kosovo" else "" }}>Kosovo 🇽🇰</option>
+                            <option value="Kuwait" {{ "selected" if country == "Kuwait" else "" }}>Kuwait 🇰🇼</option>
+                            <option value="Kyrgyzstan" {{ "selected" if country == "Kyrgyzstan" else "" }}>Kyrgyzstan 🇰🇬</option>
+                            <option value="Laos" {{ "selected" if country == "Laos" else "" }}>Laos 🇱🇦</option>
+                            <option value="Latvia" {{ "selected" if country == "Latvia" else "" }}>Latvia 🇱🇻</option>
+                            <option value="Lebanon" {{ "selected" if country == "Lebanon" else "" }}>Lebanon 🇱🇧</option>
+                            <option value="Lesotho" {{ "selected" if country == "Lesotho" else "" }}>Lesotho 🇱🇸</option>
+                            <option value="Liberia" {{ "selected" if country == "Liberia" else "" }}>Liberia 🇱🇷</option>
+                            <option value="Libya" {{ "selected" if country == "Libya" else "" }}>Libya 🇱🇾</option>
+                            <option value="Liechtenstein" {{ "selected" if country == "Liechtenstein" else "" }}>Liechtenstein 🇱🇮</option>
+                            <option value="Lithuania" {{ "selected" if country == "Lithuania" else "" }}>Lithuania 🇱🇹</option>
+                            <option value="Luxembourg" {{ "selected" if country == "Luxembourg" else "" }}>Luxembourg 🇱🇺</option>
+                            <option value="Macau" {{ "selected" if country == "Macau" else "" }}>Macau 🇲🇴</option>
+                            <option value="Madagascar" {{ "selected" if country == "Madagascar" else "" }}>Madagascar 🇲🇬</option>
+                            <option value="Malawi" {{ "selected" if country == "Malawi" else "" }}>Malawi 🇲🇼</option>
+                            <option value="Malaysia" {{ "selected" if country == "Malaysia" else "" }}>Malaysia 🇲🇾</option>
+                            <option value="Maldives" {{ "selected" if country == "Maldives" else "" }}>Maldives 🇲🇻</option>
+                            <option value="Mali" {{ "selected" if country == "Mali" else "" }}>Mali 🇲🇱</option>
+                            <option value="Malta" {{ "selected" if country == "Malta" else "" }}>Malta 🇲🇹</option>
+                            <option value="Marshall Islands" {{ "selected" if country == "Marshall Islands" else "" }}>Marshall Islands 🇲🇭</option>
+                            <option value="Martinique" {{ "selected" if country == "Martinique" else "" }}>Martinique 🇲🇶</option>
+                            <option value="Mauritania" {{ "selected" if country == "Mauritania" else "" }}>Mauritania 🇲🇷</option>
+                            <option value="Mauritius" {{ "selected" if country == "Mauritius" else "" }}>Mauritius 🇲🇺</option>
+                            <option value="Mayotte" {{ "selected" if country == "Mayotte" else "" }}>Mayotte 🇾🇹</option>
+                            <option value="Mexico" {{ "selected" if country == "Mexico" else "" }}>Mexico 🇲🇽</option>
+                            <option value="Micronesia" {{ "selected" if country == "Micronesia" else "" }}>Micronesia 🇫🇲</option>
+                            <option value="Moldova" {{ "selected" if country == "Moldova" else "" }}>Moldova 🇲🇩</option>
+                            <option value="Monaco" {{ "selected" if country == "Monaco" else "" }}>Monaco 🇲🇨</option>
+                            <option value="Mongolia" {{ "selected" if country == "Mongolia" else "" }}>Mongolia 🇲🇳</option>
+                            <option value="Montenegro" {{ "selected" if country == "Montenegro" else "" }}>Montenegro 🇲🇪</option>
+                            <option value="Montserrat" {{ "selected" if country == "Montserrat" else "" }}>Montserrat 🇲🇸</option>
+                            <option value="Morocco" {{ "selected" if country == "Morocco" else "" }}>Morocco 🇲🇦</option>
+                            <option value="Mozambique" {{ "selected" if country == "Mozambique" else "" }}>Mozambique 🇲🇿</option>
+                            <option value="Myanmar" {{ "selected" if country == "Myanmar" else "" }}>Myanmar (Burma) 🇲🇲</option>
+                            <option value="Namibia" {{ "selected" if country == "Namibia" else "" }}>Namibia 🇳🇦</option>
+                            <option value="Nauru" {{ "selected" if country == "Nauru" else "" }}>Nauru 🇳🇷</option>
+                            <option value="Nepal" {{ "selected" if country == "Nepal" else "" }}>Nepal 🇳🇵</option>
+                            <option value="Netherlands" {{ "selected" if country == "Netherlands" else "" }}>Netherlands 🇳🇱</option>
+                            <option value="New Caledonia" {{ "selected" if country == "New Caledonia" else "" }}>New Caledonia 🇳🇨</option>
+                            <option value="New Zealand" {{ "selected" if country == "New Zealand" else "" }}>New Zealand 🇳🇿</option>
+                            <option value="Nicaragua" {{ "selected" if country == "Nicaragua" else "" }}>Nicaragua 🇳🇮</option>
+                            <option value="Niger" {{ "selected" if country == "Niger" else "" }}>Niger 🇳🇪</option>
+                            <option value="Nigeria" {{ "selected" if country == "Nigeria" else "" }}>Nigeria 🇳🇬</option>
+                            <option value="Niue" {{ "selected" if country == "Niue" else "" }}>Niue 🇳🇺</option>
+                            <option value="Norfolk Island" {{ "selected" if country == "Norfolk Island" else "" }}>Norfolk Island 🇳🇫</option>
+                            <option value="North Korea" {{ "selected" if country == "North Korea" else "" }}>North Korea 🇰🇵</option>
+                            <option value="North Macedonia" {{ "selected" if country == "North Macedonia" else "" }}>North Macedonia 🇲🇰</option>
+                            <option value="Northern Mariana Islands" {{ "selected" if country == "Northern Mariana Islands" else "" }}>Northern Mariana Islands 🇲🇵</option>
+                            <option value="Norway" {{ "selected" if country == "Norway" else "" }}>Norway 🇳🇴</option>
+                            <option value="Oman" {{ "selected" if country == "Oman" else "" }}>Oman 🇴🇲</option>
+                            <option value="Pakistan" {{ "selected" if country == "Pakistan" else "" }}>Pakistan 🇵🇰</option>
+                            <option value="Palau" {{ "selected" if country == "Palau" else "" }}>Palau 🇵🇬</option>
+                            <option value="Palestine" {{ "selected" if country == "Palestine" else "" }}>Palestine 🇵🇸</option>
+                            <option value="Panama" {{ "selected" if country == "Panama" else "" }}>Panama 🇵🇦</option>
+                            <option value="Papua New Guinea" {{ "selected" if country == "Papua New Guinea" else "" }}>Papua New Guinea 🇵🇬</option>
+                            <option value="Paraguay" {{ "selected" if country == "Paraguay" else "" }}>Paraguay 🇵🇾</option>
+                            <option value="Peru" {{ "selected" if country == "Peru" else "" }}>Peru 🇵🇪</option>
+                            <option value="Philippines" {{ "selected" if country == "Philippines" else "" }}>Philippines 🇵🇭</option>
+                            <option value="Pitcairn Islands" {{ "selected" if country == "Pitcairn Islands" else "" }}>Pitcairn Islands 🇵🇬</option>
+                            <option value="Poland" {{ "selected" if country == "Poland" else "" }}>Poland 🇵🇱</option>
+                            <option value="Portugal" {{ "selected" if country == "Portugal" else "" }}>Portugal 🇵🇹</option>
+                            <option value="Puerto Rico" {{ "selected" if country == "Puerto Rico" else "" }}>Puerto Rico 🇵🇷</option>
+                            <option value="Qatar" {{ "selected" if country == "Qatar" else "" }}>Qatar 🇶🇦</option>
+                            <option value="Réunion" {{ "selected" if country == "Réunion" else "" }}>Réunion 🇷🇪</option>
+                            <option value="Romania" {{ "selected" if country == "Romania" else "" }}>Romania 🇷🇴</option>
+                            <option value="Russia" {{ "selected" if country == "Russia" else "" }}>Russia 🇷🇺</option>
+                            <option value="Rwanda" {{ "selected" if country == "Rwanda" else "" }}>Rwanda 🇷🇼</option>
+                            <option value="Saint Barthélemy" {{ "selected" if country == "Saint Barthélemy" else "" }}>Saint Barthélemy 🇧🇱</option>
+                            <option value="Saint Helena" {{ "selected" if country == "Saint Helena" else "" }}>Saint Helena 🇸🇭</option>
+                            <option value="Saint Kitts and Nevis" {{ "selected" if country == "Saint Kitts and Nevis" else "" }}>Saint Kitts and Nevis 🇰🇳</option>
+                            <option value="Saint Lucia" {{ "selected" if country == "Saint Lucia" else "" }}>Saint Lucia 🇱🇨</option>
+                            <option value="Saint Martin" {{ "selected" if country == "Saint Martin" else "" }}>Saint Martin 🇲🇶</option>
+                            <option value="Saint Pierre and Miquelon" {{ "selected" if country == "Saint Pierre and Miquelon" else "" }}>Saint Pierre and Miquelon 🇵🇲</option>
+                            <option value="Saint Vincent and the Grenadines" {{ "selected" if country == "Saint Vincent and the Grenadines" else "" }}>Saint Vincent and the Grenadines 🇻🇨</option>
+                            <option value="Samoa" {{ "selected" if country == "Samoa" else "" }}>Samoa 🇼🇸</option>
+                            <option value="San Marino" {{ "selected" if country == "San Marino" else "" }}>San Marino 🇸🇲</option>
+                            <option value="Sao Tome and Principe" {{ "selected" if country == "Sao Tome and Principe" else "" }}>Sao Tome and Principe 🇸🇹</option>
+                            <option value="Saudi Arabia" {{ "selected" if country == "Saudi Arabia" else "" }}>Saudi Arabia 🇸🇦</option>
+                            <option value="Senegal" {{ "selected" if country == "Senegal" else "" }}>Senegal 🇸🇳</option>
+                            <option value="Serbia" {{ "selected" if country == "Serbia" else "" }}>Serbia 🇷🇸</option>
+                            <option value="Seychelles" {{ "selected" if country == "Seychelles" else "" }}>Seychelles 🇸🇨</option>
+                            <option value="Sierra Leone" {{ "selected" if country == "Sierra Leone" else "" }}>Sierra Leone 🇸🇱</option>
+                            <option value="Singapore" {{ "selected" if country == "Singapore" else "" }}>Singapore 🇸🇬</option>
+                            <option value="Sint Maarten" {{ "selected" if country == "Sint Maarten" else "" }}>Sint Maarten 🇸🇽</option>
+                            <option value="Slovakia" {{ "selected" if country == "Slovakia" else "" }}>Slovakia 🇸🇰</option>
+                            <option value="Slovenia" {{ "selected" if country == "Slovenia" else "" }}>Slovenia 🇸🇮</option>
+                            <option value="Solomon Islands" {{ "selected" if country == "Solomon Islands" else "" }}>Solomon Islands 🇸🇧</option>
+                            <option value="Somalia" {{ "selected" if country == "Somalia" else "" }}>Somalia 🇸🇴</option>
+                            <option value="South Africa" {{ "selected" if country == "South Africa" else "" }}>South Africa 🇿🇦</option>
+                            <option value="South Georgia and the South Sandwich Islands" {{ "selected" if country == "South Georgia and the South Sandwich Islands" else "" }}>South Georgia and the South Sandwich Islands 🇬🇸</option>
+                            <option value="South Korea" {{ "selected" if country == "South Korea" else "" }}>South Korea 🇰🇷</option>
+                            <option value="South Sudan" {{ "selected" if country == "South Sudan" else "" }}>South Sudan 🇸🇸</option>
+                            <option value="Spain" {{ "selected" if country == "Spain" else "" }}>Spain 🇪🇸</option>
+                            <option value="Sri Lanka" {{ "selected" if country == "Sri Lanka" else "" }}>Sri Lanka 🇱🇰</option>
+                            <option value="Sudan" {{ "selected" if country == "Sudan" else "" }}>Sudan 🇸🇩</option>
+                            <option value="Suriname" {{ "selected" if country == "Suriname" else "" }}>Suriname 🇸🇷</option>
+                            <option value="Svalbard and Jan Mayen" {{ "selected" if country == "Svalbard and Jan Mayen" else "" }}>Svalbard and Jan Mayen 🇸🇯</option>
+                            <option value="Sweden" {{ "selected" if country == "Sweden" else "" }}>Sweden 🇸🇪</option>
+                            <option value="Switzerland" {{ "selected" if country == "Switzerland" else "" }}>Switzerland 🇨🇭</option>
+                            <option value="Syria" {{ "selected" if country == "Syria" else "" }}>Syria 🇸🇾</option>
+                            <option value="Taiwan" {{ "selected" if country == "Taiwan" else "" }}>Taiwan 🇹🇼</option>
+                            <option value="Tajikistan" {{ "selected" if country == "Tajikistan" else "" }}>Tajikistan 🇹🇯</option>
+                            <option value="Tanzania" {{ "selected" if country == "Tanzania" else "" }}>Tanzania 🇹🇿</option>
+                            <option value="Thailand" {{ "selected" if country == "Thailand" else "" }}>Thailand 🇹🇭</option>
+                            <option value="Timor-Leste" {{ "selected" if country == "Timor-Leste" else "" }}>Timor-Leste 🇹🇱</option>
+                            <option value="Togo" {{ "selected" if country == "Togo" else "" }}>Togo 🇹🇬</option>
+                            <option value="Tokelau" {{ "selected" if country == "Tokelau" else "" }}>Tokelau 🇹🇰</option>
+                            <option value="Tonga" {{ "selected" if country == "Tonga" else "" }}>Tonga 🇹🇴</option>
+                            <option value="Trinidad and Tobago" {{ "selected" if country == "Trinidad and Tobago" else "" }}>Trinidad and Tobago 🇹🇹</option>
+                            <option value="Tunisia" {{ "selected" if country == "Tunisia" else "" }}>Tunisia 🇹🇳</option>
+                            <option value="Türkiye" {{ "selected" if country == "Türkiye" else "" }}>Türkiye 🇹🇷</option>
+                            <option value="Turkmenistan" {{ "selected" if country == "Turkmenistan" else "" }}>Turkmenistan 🇹🇲</option>
+                            <option value="Turks and Caicos Islands" {{ "selected" if country == "Turks and Caicos Islands" else "" }}>Turks and Caicos Islands 🇹🇨</option>
+                            <option value="Tuvalu" {{ "selected" if country == "Tuvalu" else "" }}>Tuvalu 🇹🇻</option>
+                            <option value="Uganda" {{ "selected" if country == "Uganda" else "" }}>Uganda 🇺🇬</option>
+                            <option value="Ukraine" {{ "selected" if country == "Ukraine" else "" }}>Ukraine 🇺🇦</option>
+                            <option value="United Arab Emirates" {{ "selected" if country == "United Arab Emirates" else "" }}>United Arab Emirates 🇦🇪</option>
+                            <option value="United Kingdom" {{ "selected" if country == "United Kingdom" else "" }}>United Kingdom 🇬🇧</option>
+                            <option value="United States" {{ "selected" if country == "United States" else "" }}>United States 🇺🇸</option>
+                            <option value="United States Virgin Islands" {{ "selected" if country == "United States Virgin Islands" else "" }}>United States Virgin Islands 🇻🇮</option>
+                            <option value="Uruguay" {{ "selected" if country == "Uruguay" else "" }}>Uruguay 🇺🇾</option>
+                            <option value="Uzbekistan" {{ "selected" if country == "Uzbekistan" else "" }}>Uzbekistan 🇺🇿</option>
+                            <option value="Vanuatu" {{ "selected" if country == "Vanuatu" else "" }}>Vanuatu 🇻🇺</option>
+                            <option value="Vatican City" {{ "selected" if country == "Vatican City" else "" }}>Vatican City 🇻🇦</option>
+                            <option value="Venezuela" {{ "selected" if country == "Venezuela" else "" }}>Venezuela 🇻🇪</option>
+                            <option value="Vietnam" {{ "selected" if country == "Vietnam" else "" }}>Vietnam 🇻🇳</option>
+                            <option value="Wallis and Futuna" {{ "selected" if country == "Wallis and Futuna" else "" }}>Wallis and Futuna 🇼🇫</option>
+                            <option value="Western Sahara" {{ "selected" if country == "Western Sahara" else "" }}>Western Sahara 🇪🇭</option>
+                            <option value="Yemen" {{ "selected" if country == "Yemen" else "" }}>Yemen 🇾🇪</option>
+                            <option value="Zambia" {{ "selected" if country == "Zambia" else "" }}>Zambia 🇿🇲</option>
+                            <option value="Zimbabwe" {{ "selected" if country == "Zimbabwe" else "" }}>Zimbabwe 🇿🇼</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label for="video_url">YouTube link:</label>
+                    <div class="input-wrapper">
+                        <input type="url" id="video_url" name="video_url" value="{{ video_url }}" required>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <button type="submit" name="fetch_data" id="fetchDataButton">Fetch data</button>
+                </div>
+            </form>
+
+            <h3>{{ message | safe }}</h3>
+
+            {% if existing_data %}
+            <!-- Form for submitting additional data -->
+            <form method="POST">
+                <input type="hidden" name="locality" value="{{ locality }}">
+                <input type="hidden" name="state" value="{{ state }}">
+                <input type="hidden" name="country" value="{{ country }}">
+                <input type="hidden" name="video_url" value="{{ video_url }}">
+
+                <div class="form-group">
+                    <label for="time_of_day">Time of day:</label>
+                    <div class="input-wrapper radio-wrapper">
+                        <label class="radio-inline">
+                            <input type="radio" name="time_of_day" value="0"
+                                   {{ "checked" if time_of_day_last != 1 else "" }}>
+                            Day
+                        </label>
+                        <label class="radio-inline">
+                            <input type="radio" name="time_of_day" value="1"
+                                   {{ "checked" if time_of_day_last == 1 else "" }}>
+                            Night
+                        </label>
+                    </div>
+                </div>
+
+
+                <div class="form-group">
+                    <label for="vehicle_type">Vehicle:</label>
+                    <select id="vehicle_type" name="vehicle_type">
+                        <option value="0" {{ "selected" if vehicle_type_video == 0 else "" }}>0 (car)</option>
+                        <option value="1" {{ "selected" if vehicle_type_video == 1 else "" }}>1 (bus)</option>
+                        <option value="2" {{ "selected" if vehicle_type_video == 2 else "" }}>2 (truck)</option>
+                        <option value="3" {{ "selected" if vehicle_type_video == 3 else "" }}>3 (two-wheeler)</option>
+                        <option value="4" {{ "selected" if vehicle_type_video == 4 else "" }}>4 (bicycle/e-bicycle)</option>
+                        <option value="5" {{ "selected" if vehicle_type_video == 5 else "" }}>5 (automated car)</option>
+                        <option value="6" {{ "selected" if vehicle_type_video == 6 else "" }}>6 (electric scooter)</option>
+                        <option value="7" {{ "selected" if vehicle_type_video == 7 else "" }}>7 (monowheel/unicycle)</option>
+                        <option value="8" {{ "selected" if vehicle_type_video == 8 else "" }}>8 (emergency vehicle)</option>
+                        <option value="9" {{ "selected" if vehicle_type_video == 9 else "" }}>9 (automated bus)</option>
+                        <option value="10" {{ "selected" if vehicle_type_video == 10 else "" }}>10 (automated truck)</option>
+                        <option value="11" {{ "selected" if vehicle_type_video == 11 else "" }}>11 (automated two-wheeler)</option>
+                        <option value="12" {{ "selected" if vehicle_type_video == 12 else "" }}>12 (non-electric scooter)</option>
+                        <option value="13" {{ "selected" if vehicle_type_video == 13 else "" }}>13 (pedestrian)</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="start_time">Start time (seconds):</label>
+                    <input type="number" id="start_time" name="start_time" value="{{ start_time_input }}" required min="0" step="1">
+                </div>
+
+                <div class="form-group">
+                    <label for="end_time">End time (seconds):</label>
+                    <input type="number" id="end_time" name="end_time" value="{{ end_time_input }}" required min="1" step="1">
+                </div>
+
+                <div class="form-group">
+                    <label for="upload_date_video">Upload date:</label>
+                    <input type="text" id="upload_date_video" name="upload_date_video" value="{{ upload_date_video }}">
+                </div>
+                <div class="form-group">
+                    <label for="channel_video">Channel:</label>
+                    <input type="text" id="channel_video" name="channel_video" value="{{ channel_video or '' }}">
+                </div>
+                <!-- <div class="form-group">
+                    <label for="fps_video">FPS:</label>
+                    <input type="text" id="fps_video" name="fps_video" value="{{ fps_video }}" required min="1" step="1" type="number" pattern="[0-9.]*">
+                </div> -->
+                <div class="form-group">
+                    <label for="lat">Latitude:</label>
+                    <input type="number" id="lat" name="lat" value="{{ existing_data['lat'] }}" step="any">
+                </div>
+                <div class="form-group">
+                    <label for="lon">Longitude:</label>
+                    <input type="number" id="lon" name="lon" value="{{ existing_data['lon'] }}" step="any">
+                </div>
+                <div class="form-group">
+                    <label for="gmp">GDP locality (billion USD):</label>
+                    <input type="number" id="gmp" name="gmp" value="{{ existing_data['gmp'] }}" step="any">
+                </div>
+                <div class="form-group">
+                    <label for="population_locality">Population locality:</label>
+                    <input type="number" id="population_locality" name="population_locality" value="{{ existing_data['population_locality'] }}" step="any">
+                </div>
+                <div class="form-group">
+                    <label for="population_country">Population country:</label>
+                    <input type="number" id="population_country" name="population_country" value="{{ existing_data['population_country'] }}" step="any">
+                </div>
+
+                <div class="form-group">
+                    <label for="traffic_mortality">Traffic mortality:</label>
+                    <input type="number" id="traffic_mortality" name="traffic_mortality" value="{{ existing_data['traffic_mortality'] }}" step="any">
+                </div>
+                <div class="form-group">
+                    <label for="continent">Continent:</label>
+                    <select id="continent" name="continent">
+                        <option value="Africa" {% if existing_data['continent'] == 'Africa' %}selected{% endif %}>Africa</option>
+                        <option value="Asia" {% if existing_data['continent'] == 'Asia' %}selected{% endif %}>Asia</option>
+                        <option value="Europe" {% if existing_data['continent'] == 'Europe' %}selected{% endif %}>Europe</option>
+                        <option value="South America" {% if existing_data['continent'] == 'South America' %}selected{% endif %}>South America</option>
+                        <option value="North America" {% if existing_data['continent'] == 'North America' %}selected{% endif %}>North America</option>
+                        <option value="Oceania" {% if existing_data['continent'] == 'Oceania' %}selected{% endif %}>Oceania</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="locality_aka">Alt. names of locality:</label>
+                    <input id="locality_aka" name="locality_aka" value="{{ existing_data['locality_aka'] }}">
+                </div>
+                <div class="form-group">
+                    <label for="literacy_rate">Literacy rate:</label>
+                    <input type="number" id="literacy_rate" name="literacy_rate" value="{{ existing_data['literacy_rate'] }}" step="any">
+                </div>
+                <div class="form-group">
+                    <label for="avg_height">Average height:</label>
+                    <input type="number" id="avg_height" name="avg_height" value="{{ existing_data['avg_height'] }}" step="any">
+                </div>
+                <div class="form-group">
+                    <label for="med_age">Median age:</label>
+                    <input type="number" id="med_age" name="med_age" value="{{ existing_data['med_age'] }}" step="any">
+                </div>
+                <div class="form-group">
+                    <label for="gini">Gini index:</label>
+                    <input type="number" id="gini" name="gini" value="{{ existing_data['gini'] }}" step="any">
+                </div>
+                <div class="form-group">
+                    <label for="traffic_index">Traffic index:</label>
+                    <input type="number" id="traffic_index" name="traffic_index" value="{{ existing_data['traffic_index'] }}" step="any">
+                </div>
+                <div class="form-group">
+                    <button type="submit" name="submit_data">Submit</button>
+                </div>
+                <p class="videos-text"><strong>Videos:</strong> {{ existing_data['videos'] }}</p>
+                <p class="videos-text"><strong>Time of day:</strong> {{ existing_data['time_of_day'] }}</p>
+                <p class="videos-text"><strong>Vehicle:</strong> {{ existing_data['vehicle_type'] }}</p>
+                <p class="videos-text"><strong>Start time:</strong> {{ existing_data['start_time'] }}</p>
+                <p class="videos-text"><strong>End time:</strong> {{ existing_data['end_time'] }}</p>
+                <p class="videos-text"><strong>Upload date:</strong> {{ existing_data['upload_date'] }}</p>
+                <p class="videos-text"><strong>Channel:</strong> {{ existing_data['channel'] }}</p>
+                <!-- <p class="videos-text"><strong>FPS list:</strong> {{ existing_data['fps_list'] }}</p> -->
+            </form>
+            {% endif %}
+        </div>
+
+        <div class="right">
+            {% if video_id %}
+                <!-- Embed the YouTube video only if a valid video ID is available -->
+                <iframe id="embeddedVideo" src="https://www.youtube.com/embed/{{ video_id }}?start={{ timestamp }}&enablejsapi=1&autoplay=1&mute=1" frameborder="0" allowfullscreen allow="autoplay"></iframe>
+                <p class="short_row"><strong>Current time:</strong> <span id="currentTime">0</span> s. <strong>Last second:</strong> <span id="lastSecond" style="cursor:pointer; text-decoration:underline;" title="Click to copy">0</span> s. <strong>ID:</strong> <span id="videoTitle">{{ video_id }}</span>. <strong>Upload date:</strong> <span id="videoUploadDate">{{ yt_upload_date }}</span>.</p>
+                <p class="short_row"><strong>Type of vehicle</strong>: {{ vehicle_type_video }}</p>
+                <p class="short_row"><strong>Time of day</strong>: {{ time_of_day_video }}</p>
+                <p class="short_row"><strong>Start time</strong>: <span id="currentTime">{{ start_time_video }}</span></p>
+                <p class="short_row"><strong>End time</strong>: <span id="currentTime">{{ end_time_video }}</span></p>
+                <p class="short_row"><strong>Description:</strong> <span id="videoDescription">{{ yt_description }}</span></p>
+                <!-- Map -->
+                <div id="map"></div>
+            {% endif %}
+        </div>
     </div>
+</body>
+</html>
 
-    <section id="cmr-source-stage" class="cmr-section" aria-labelledby="cmr-source-heading">
-      <div class="cmr-section-head">
-        <h2 id="cmr-source-heading">Load mapping data and select duplicate rows</h2>
-        <span id="cmr-file-badge" class="viz-badge">No file loaded</span>
-      </div>
+<script>
+const input = document.getElementById("locality");
+const box = document.getElementById("locality-suggestions");
 
-      <div class="cmr-two-column">
-        <div class="cmr-panel">
-          <div class="cmr-panel-head">
-            <h3>Source CSV</h3>
-            <span id="cmr-source-summary" class="text-small text-muted">Waiting for data</span>
-          </div>
-          <label class="cmr-field form-label" for="cmr-file">
-            Select CSV file
-            <input id="cmr-file" class="form-control" type="file" accept=".csv,text/csv">
-          </label>
-          <details>
-            <summary>Paste CSV content instead</summary>
-            <label class="cmr-field form-label" for="cmr-paste">
-              CSV content
-              <textarea id="cmr-paste" class="form-control" spellcheck="false" placeholder="Paste the header and rows"></textarea>
-            </label>
-            <button id="cmr-load-paste" class="btn" type="button">Load pasted data</button>
-          </details>
-          <div id="cmr-load-status" class="cmr-status text-small" role="status" aria-live="polite">No source data loaded.</div>
-        </div>
+input.addEventListener("input", async () => {
+    const q = input.value.trim();
+    box.innerHTML = "";
+    box.classList.remove("has-items");
 
-        <div class="cmr-panel">
-          <div class="cmr-panel-head">
-            <h3>Rows to combine</h3>
-            <span class="text-small text-muted">The kept row remains in place</span>
-          </div>
-          <label class="cmr-field form-label" for="cmr-keep-spec">
-            Row to keep
-            <input id="cmr-keep-spec" class="form-control" type="text" placeholder="94,Shenyang,China">
-            <span class="text-small text-muted">Use an ID, or ID, locality, country.</span>
-          </label>
-          <label class="cmr-field form-label" for="cmr-delete-specs">
-            Rows to merge and delete
-            <textarea id="cmr-delete-specs" class="form-control" spellcheck="false" placeholder="7350,Shenyang,China"></textarea>
-            <span class="text-small text-muted">Enter one row per line.</span>
-          </label>
-        </div>
-      </div>
+    if (q.length < 2) return;
 
-      <div class="cmr-options">
-        <label class="form-check form-switch" for="cmr-require-place">
-          <input id="cmr-require-place" class="form-check-input" type="checkbox" checked>
-          <span class="form-check-label">Require the same locality and country</span>
-        </label>
-        <label class="form-check form-switch" for="cmr-repeat-channel">
-          <input id="cmr-repeat-channel" class="form-check-input" type="checkbox" checked>
-          <span class="form-check-label">Repeat one channel ID when every video uses it</span>
-        </label>
-        <label class="form-check form-switch" for="cmr-dedupe-videos">
-          <input id="cmr-dedupe-videos" class="form-check-input" type="checkbox" checked>
-          <span class="form-check-label">Remove repeated video IDs and keep the first</span>
-        </label>
-        <label class="form-check form-switch" for="cmr-renumber-ids">
-          <input id="cmr-renumber-ids" class="form-check-input" type="checkbox" checked>
-          <span class="form-check-label">Renumber all remaining IDs after deletion</span>
-        </label>
-      </div>
+    try {
+        const res = await fetch(`/autocomplete/localities?q=${encodeURIComponent(q)}`);
+        const localities = await res.json();
 
-      <div class="cmr-actions">
-        <button id="cmr-build-review" class="btn btn-primary" type="button">Show before and proposed update</button>
-        <button id="cmr-clear" class="btn btn-ghost" type="button">Clear</button>
-      </div>
-      <div id="cmr-select-status" class="cmr-status text-small" role="status" aria-live="polite">Load a CSV and choose the rows to compare.</div>
-    </section>
+        if (localities.length === 0) return;
 
-    <section id="cmr-review-stage" class="cmr-section" aria-labelledby="cmr-review-heading" hidden>
-      <hr class="cmr-divider">
-      <div class="cmr-section-head">
-        <div>
-          <h2 id="cmr-review-heading">Review before applying anything</h2>
-          <div class="text-small text-muted">The source data is unchanged at this stage.</div>
-        </div>
-        <button id="cmr-edit-selection" class="btn btn-ghost" type="button">Edit row selection</button>
-      </div>
+        const seen = new Set();
 
-      <div class="viz-grid" aria-label="Proposed update summary">
-        <div class="card viz-stat">
-          <span class="text-muted">Rows deleted</span>
-          <span id="cmr-stat-deleted" class="viz-stat-value">0</span>
-        </div>
-        <div class="card viz-stat">
-          <span class="text-muted">Videos before</span>
-          <span id="cmr-stat-before" class="viz-stat-value">0</span>
-        </div>
-        <div class="card viz-stat">
-          <span class="text-muted">Videos after</span>
-          <span id="cmr-stat-after" class="viz-stat-value">0</span>
-        </div>
-      </div>
+        localities.forEach(item => {
+            const key = [
+                item.locality?.toLowerCase(),
+                item.state?.toLowerCase() || "",
+                item.country?.toLowerCase()
+            ].join("|");
 
-      <div class="cmr-two-column">
-        <div class="cmr-panel">
-          <div class="cmr-panel-head">
-            <h3>Previous version</h3>
-            <span class="viz-badge">Current CSV</span>
-          </div>
-          <div id="cmr-before-records" class="cmr-record-list"></div>
-        </div>
-        <div class="cmr-panel" data-tone="proposed">
-          <div class="cmr-panel-head">
-            <h3>Updated version</h3>
-            <span class="viz-badge">Proposed only</span>
-          </div>
-          <div id="cmr-after-record" class="cmr-record-list"></div>
-        </div>
-      </div>
+            if (seen.has(key)) return;
+            seen.add(key);
 
-      <div class="cmr-section">
-        <div class="cmr-section-head">
-          <h3>Sequence alignment</h3>
-          <span class="text-small text-muted">All seven sequence columns must have equal counts</span>
-        </div>
-        <div id="cmr-audit-list" class="cmr-audit-list"></div>
-      </div>
+            const div = document.createElement("div");
+            div.textContent = item.label;
 
-      <div class="cmr-section">
-        <div class="cmr-section-head">
-          <h3>Field comparison</h3>
-          <span id="cmr-change-count" class="viz-badge">0 changed fields</span>
-        </div>
-        <div id="cmr-compare-grid" class="cmr-compare" role="table" aria-label="Previous and proposed field values"></div>
-      </div>
+            div.onclick = () => {
+                // Always put only the locality name in the locality field
+                input.value = item.locality;
 
-      <details class="cmr-section">
-        <summary>Preview aligned video bundles</summary>
-        <div id="cmr-bundle-note" class="text-small text-muted"></div>
-        <div id="cmr-bundle-list" class="cmr-bundle-list"></div>
-      </details>
+                // Put state (if any) into the separate state field
+                const stateInput = document.getElementById("state");
+                if (stateInput) {
+                    stateInput.value = item.state || "";   // use || instead of ternary for clarity
+                }
 
-      <div id="cmr-decision" class="cmr-decision">
-        <div>
-          <strong>Apply this proposed update?</strong>
-          <div id="cmr-decision-summary" class="text-small"></div>
-        </div>
-        <div class="cmr-actions">
-          <button id="cmr-apply" class="btn btn-primary" type="button">Yes, update the CSV</button>
-          <button id="cmr-decline" class="btn" type="button">No, do not update</button>
-        </div>
-      </div>
-      <div id="cmr-review-status" class="cmr-status text-small" role="status" aria-live="polite">Review the proposed values and choose yes or no.</div>
-    </section>
+                // Set country dropdown
+                const countrySelect = document.getElementById("country");
+                if (countrySelect) {
+                    for (const option of countrySelect.options) {
+                        if (option.value === item.country) {
+                            option.selected = true;
+                            break;
+                        }
+                    }
+                }
 
-    <section id="cmr-success-stage" class="cmr-section" aria-labelledby="cmr-success-heading" hidden>
-      <hr class="cmr-divider">
-      <div class="cmr-panel" data-tone="proposed">
-        <div class="cmr-panel-head">
-          <h2 id="cmr-success-heading">Update applied</h2>
-          <span class="viz-badge">Ready to download</span>
-        </div>
-        <div id="cmr-success-message"></div>
-        <div class="cmr-actions">
-          <button id="cmr-download" class="btn btn-primary" type="button">Download updated CSV</button>
-          <button id="cmr-review-another" class="btn" type="button">Review another duplicate</button>
-        </div>
-      </div>
-    </section>
-  </div>
+                // Hide suggestions
+                box.innerHTML = "";
+                box.classList.remove("has-items");
+            };
 
-  <script>
-    (() => {
-      "use strict";
-
-      const root = document.getElementById("city-merge-reviewer");
-      const requiredColumns = [
-        "id", "locality", "country", "videos", "time_of_day", "start_time",
-        "end_time", "vehicle_type", "upload_date", "channel"
-      ];
-      const sequenceFields = [
-        "videos", "time_of_day", "start_time", "end_time",
-        "vehicle_type", "upload_date", "channel"
-      ];
-      const fixedIdentityFields = new Set(["id", "locality", "country"]);
-
-      const ui = {
-        stepSource: root.querySelector("#cmr-step-source"),
-        stepReview: root.querySelector("#cmr-step-review"),
-        stepConfirm: root.querySelector("#cmr-step-confirm"),
-        sourceStage: root.querySelector("#cmr-source-stage"),
-        reviewStage: root.querySelector("#cmr-review-stage"),
-        successStage: root.querySelector("#cmr-success-stage"),
-        file: root.querySelector("#cmr-file"),
-        paste: root.querySelector("#cmr-paste"),
-        loadPaste: root.querySelector("#cmr-load-paste"),
-        fileBadge: root.querySelector("#cmr-file-badge"),
-        sourceSummary: root.querySelector("#cmr-source-summary"),
-        loadStatus: root.querySelector("#cmr-load-status"),
-        keepSpec: root.querySelector("#cmr-keep-spec"),
-        deleteSpecs: root.querySelector("#cmr-delete-specs"),
-        requirePlace: root.querySelector("#cmr-require-place"),
-        repeatChannel: root.querySelector("#cmr-repeat-channel"),
-        dedupeVideos: root.querySelector("#cmr-dedupe-videos"),
-        renumberIds: root.querySelector("#cmr-renumber-ids"),
-        buildReview: root.querySelector("#cmr-build-review"),
-        clear: root.querySelector("#cmr-clear"),
-        selectStatus: root.querySelector("#cmr-select-status"),
-        editSelection: root.querySelector("#cmr-edit-selection"),
-        statDeleted: root.querySelector("#cmr-stat-deleted"),
-        statBefore: root.querySelector("#cmr-stat-before"),
-        statAfter: root.querySelector("#cmr-stat-after"),
-        beforeRecords: root.querySelector("#cmr-before-records"),
-        afterRecord: root.querySelector("#cmr-after-record"),
-        auditList: root.querySelector("#cmr-audit-list"),
-        changeCount: root.querySelector("#cmr-change-count"),
-        compareGrid: root.querySelector("#cmr-compare-grid"),
-        bundleNote: root.querySelector("#cmr-bundle-note"),
-        bundleList: root.querySelector("#cmr-bundle-list"),
-        decision: root.querySelector("#cmr-decision"),
-        decisionSummary: root.querySelector("#cmr-decision-summary"),
-        apply: root.querySelector("#cmr-apply"),
-        decline: root.querySelector("#cmr-decline"),
-        reviewStatus: root.querySelector("#cmr-review-status"),
-        successMessage: root.querySelector("#cmr-success-message"),
-        download: root.querySelector("#cmr-download"),
-        reviewAnother: root.querySelector("#cmr-review-another")
-      };
-
-      const state = {
-        fileName: "mapping.csv",
-        headers: [],
-        records: [],
-        selected: [],
-        scalarSources: {},
-        audits: [],
-        proposal: null,
-        appliedUpdates: 0,
-        sourceHadUnclosedQuote: false
-      };
-
-      function setStatus(element, message, kind = "neutral") {
-        element.textContent = message;
-        element.dataset.kind = kind;
-      }
-
-      function setStep(active) {
-        ui.stepSource.dataset.active = String(active === "source");
-        ui.stepReview.dataset.active = String(active === "review");
-        ui.stepConfirm.dataset.active = String(active === "confirm");
-      }
-
-      function normalise(value) {
-        return String(value ?? "").normalize("NFKC").trim().toLocaleLowerCase();
-      }
-
-      function parseCsv(text) {
-        const rows = [];
-        let row = [];
-        let field = "";
-        let quoted = false;
-        let unclosedQuote = false;
-
-        for (let index = 0; index < text.length; index += 1) {
-          const character = text[index];
-          if (quoted) {
-            if (character === '"') {
-              if (text[index + 1] === '"') {
-                field += '"';
-                index += 1;
-              } else {
-                quoted = false;
-              }
-            } else {
-              field += character;
-            }
-          } else if (character === '"' && field.length === 0) {
-            quoted = true;
-          } else if (character === ",") {
-            row.push(field);
-            field = "";
-          } else if (character === "\n") {
-            row.push(field);
-            rows.push(row);
-            row = [];
-            field = "";
-          } else if (character !== "\r") {
-            field += character;
-          }
-        }
-
-        if (quoted) {
-          unclosedQuote = true;
-        }
-        if (field.length > 0 || row.length > 0) {
-          row.push(field);
-          rows.push(row);
-        }
-        while (rows.length > 0 && rows[rows.length - 1].every((cell) => cell === "")) {
-          rows.pop();
-        }
-        return { rows, unclosedQuote };
-      }
-
-      function encodeCsvCell(value) {
-        const text = String(value ?? "");
-        if (/[",\r\n]/.test(text) || /^\s|\s$/.test(text)) {
-          return '"' + text.replaceAll('"', '""') + '"';
-        }
-        return text;
-      }
-
-      function serialiseCsv(headers, records) {
-        const lines = [headers.map(encodeCsvCell).join(",")];
-        for (const record of records) {
-          lines.push(headers.map((header) => encodeCsvCell(record[header])).join(","));
-        }
-        return lines.join("\r\n");
-      }
-
-      function splitOuterList(rawValue) {
-        const raw = String(rawValue ?? "").trim();
-        if (!raw.startsWith("[")) {
-          return { items: [], closed: false, validStart: false };
-        }
-        const closed = raw.endsWith("]");
-        const inner = raw.slice(1, closed ? -1 : raw.length);
-        const items = [];
-        let current = "";
-        let depth = 0;
-        let quoted = false;
-
-        for (let index = 0; index < inner.length; index += 1) {
-          const character = inner[index];
-          if (character === '"') {
-            quoted = !quoted;
-            current += character;
-          } else if (!quoted && character === "[") {
-            depth += 1;
-            current += character;
-          } else if (!quoted && character === "]") {
-            depth -= 1;
-            current += character;
-          } else if (!quoted && character === "," && depth === 0) {
-            if (current.trim() !== "") {
-              items.push(current.trim());
-            }
-            current = "";
-          } else {
-            current += character;
-          }
-        }
-        if (current.trim() !== "") {
-          items.push(current.trim());
-        }
-        return { items, closed, validStart: true };
-      }
-
-      function serialiseList(items) {
-        return "[" + items.join(",") + "]";
-      }
-
-      function safeFileStem(fileName) {
-        return fileName.replace(/\.csv$/i, "").replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "mapping";
-      }
-
-      function clearReview() {
-        state.selected = [];
-        state.scalarSources = {};
-        state.audits = [];
-        state.proposal = null;
-        ui.reviewStage.hidden = true;
-        ui.successStage.hidden = true;
-        ui.beforeRecords.replaceChildren();
-        ui.afterRecord.replaceChildren();
-        ui.auditList.replaceChildren();
-        ui.compareGrid.replaceChildren();
-        ui.bundleList.replaceChildren();
-        setStep("source");
-      }
-
-      function updateSourceSummary() {
-        if (state.records.length === 0) {
-          ui.fileBadge.textContent = "No file loaded";
-          ui.sourceSummary.textContent = "Waiting for data";
-          return;
-        }
-        const groups = new Map();
-        for (const record of state.records) {
-          const key = normalise(record.locality) + "\u0000" + normalise(record.country);
-          groups.set(key, (groups.get(key) || 0) + 1);
-        }
-        const duplicateGroups = Array.from(groups.values()).filter((count) => count > 1).length;
-        ui.fileBadge.textContent = state.fileName;
-        ui.sourceSummary.textContent = state.records.length.toLocaleString() + " rows · " + state.headers.length + " columns · " + duplicateGroups + " duplicate groups";
-      }
-
-      function loadCsvText(text, fileName) {
-        clearReview();
-        if (!text.trim()) {
-          setStatus(ui.loadStatus, "The CSV input is empty.", "error");
-          return false;
-        }
-        const parsed = parseCsv(text.replace(/^\uFEFF/, ""));
-        if (parsed.rows.length < 2) {
-          setStatus(ui.loadStatus, "The CSV needs a header and at least one data row.", "error");
-          return false;
-        }
-
-        const headers = parsed.rows[0].map((header) => header.trim());
-        const duplicateHeaders = headers.filter((header, index) => headers.indexOf(header) !== index);
-        if (duplicateHeaders.length > 0) {
-          setStatus(ui.loadStatus, "Duplicate column names found: " + Array.from(new Set(duplicateHeaders)).join(", ") + ".", "error");
-          return false;
-        }
-        const missing = requiredColumns.filter((column) => !headers.includes(column));
-        if (missing.length > 0) {
-          setStatus(ui.loadStatus, "Required columns are missing: " + missing.join(", ") + ".", "error");
-          return false;
-        }
-
-        const dataRows = parsed.rows.slice(1);
-        const wrongWidth = dataRows.findIndex((cells) => cells.length !== headers.length);
-        if (wrongWidth !== -1) {
-          setStatus(ui.loadStatus, "Row " + (wrongWidth + 2) + " has " + dataRows[wrongWidth].length + " cells; expected " + headers.length + ".", "error");
-          return false;
-        }
-
-        const records = dataRows.map((cells, rowIndex) => {
-          const record = { __rowIndex: rowIndex };
-          headers.forEach((header, columnIndex) => {
-            record[header] = cells[columnIndex];
-          });
-          return record;
+            box.appendChild(div);
         });
-        const ids = new Set();
-        const repeated = new Set();
-        for (const record of records) {
-          if (ids.has(record.id)) {
-            repeated.add(record.id);
-          }
-          ids.add(record.id);
-        }
-        if (repeated.size > 0) {
-          setStatus(ui.loadStatus, "Duplicate IDs already exist: " + Array.from(repeated).slice(0, 8).join(", ") + ".", "error");
-          return false;
-        }
 
-        state.fileName = fileName || "mapping.csv";
-        state.headers = headers;
-        state.records = records;
-        state.appliedUpdates = 0;
-        state.sourceHadUnclosedQuote = parsed.unclosedQuote;
-        updateSourceSummary();
-        const warning = parsed.unclosedQuote ? " The source ends inside a quoted cell; review that final row carefully." : "";
-        setStatus(ui.loadStatus, "Loaded " + records.length.toLocaleString() + " rows." + warning, parsed.unclosedQuote ? "warn" : "ok");
-        setStatus(ui.selectStatus, "Enter the row to keep and at least one row to merge and delete.");
-        return true;
-      }
+        box.classList.add("has-items");
+    } catch (err) {
+        console.error("Autocomplete error:", err);
+    }
+});
 
-      function parseRecordSpec(line) {
-        const parsed = parseCsv(line).rows[0] || [];
-        return parsed.map((part) => part.trim());
-      }
+// Close when clicking outside
+document.addEventListener("click", e => {
+    if (!input.contains(e.target) && !box.contains(e.target)) {
+        box.innerHTML = "";
+        box.classList.remove("has-items");
+    }
+});
 
-      function findRecord(parts) {
-        if (parts.length === 1) {
-          const byId = state.records.find((record) => record.id === parts[0]);
-          if (byId) {
-            return { record: byId };
-          }
-          const byLocality = state.records.filter((record) => normalise(record.locality) === normalise(parts[0]));
-          return byLocality.length === 1
-            ? { record: byLocality[0] }
-            : { error: byLocality.length > 1 ? "Locality is ambiguous: " + parts[0] + ". Add the country or ID." : "No record found for " + parts[0] + "." };
-        }
-        if (parts.length === 2) {
-          const matches = state.records.filter((record) => normalise(record.locality) === normalise(parts[0]) && normalise(record.country) === normalise(parts[1]));
-          return matches.length === 1
-            ? { record: matches[0] }
-            : { error: matches.length > 1 ? "Multiple rows match " + parts.join(", ") + ". Add the ID." : "No row matches " + parts.join(", ") + "." };
-        }
-        if (parts.length === 3) {
-          const record = state.records.find((candidate) => candidate.id === parts[0]);
-          if (!record) {
-            return { error: "No row has ID " + parts[0] + "." };
-          }
-          if (normalise(record.locality) !== normalise(parts[1]) || normalise(record.country) !== normalise(parts[2])) {
-            return { error: "ID " + parts[0] + " is " + record.locality + ", " + record.country + ", not " + parts[1] + ", " + parts[2] + "." };
-          }
-          return { record };
-        }
-        return { error: "Use ID, ID/locality/country, or locality/country." };
-      }
+document.addEventListener("keydown", function (e) {
+    // Do not interfere with typing in form fields
+    const tag = document.activeElement.tagName.toLowerCase();
+    if (["input", "textarea", "select"].includes(tag)) return;
 
-      function analyseSequences(record) {
-        const parsedFields = {};
-        const issues = [];
-        const repairs = [];
-        for (const field of sequenceFields) {
-          parsedFields[field] = splitOuterList(record[field]);
-          if (!parsedFields[field].validStart) {
-            issues.push(field + " is not a bracketed list");
-          }
-        }
-        const videoCount = parsedFields.videos.items.length;
-        if (!parsedFields.videos.closed) {
-          issues.push("videos is not closed");
-        }
-        if (videoCount === 0) {
-          issues.push("videos is empty");
-        }
-        for (const field of sequenceFields.slice(1)) {
-          const parsed = parsedFields[field];
-          const canRepeatChannel = field === "channel" && ui.repeatChannel.checked && parsed.items.length === 1 && videoCount > 1;
-          if (!parsed.closed && !canRepeatChannel) {
-            issues.push(field + " is not closed");
-          }
-          if (parsed.items.length !== videoCount) {
-            if (canRepeatChannel) {
-              parsed.items = Array(videoCount).fill(parsed.items[0]);
-              repairs.push("channel repeated " + videoCount + " times");
-            } else {
-              issues.push(field + " has " + parsed.items.length + " values for " + videoCount + " videos");
-            }
-          }
-        }
-        return { record, parsedFields, videoCount, issues, repairs };
-      }
+    const key = e.key.toLowerCase();
 
-      function buildBundles(audit) {
-        if (audit.issues.length > 0) {
-          return [];
-        }
-        const bundles = [];
-        for (let index = 0; index < audit.videoCount; index += 1) {
-          const bundle = {};
-          for (const field of sequenceFields) {
-            bundle[field] = audit.parsedFields[field].items[index];
-          }
-          bundles.push(bundle);
-        }
-        return bundles;
-      }
+    const start = document.getElementById("start_time");
+    const end = document.getElementById("end_time");
 
-      function initialiseScalarSources() {
-        state.scalarSources = {};
-        const scalarFields = state.headers.filter((header) => !sequenceFields.includes(header));
-        for (const field of scalarFields) {
-          if (fixedIdentityFields.has(field)) {
-            state.scalarSources[field] = 0;
-            continue;
-          }
-          let selectedIndex = 0;
-          if (state.selected[0][field] === "") {
-            const firstNonBlank = state.selected.findIndex((record) => record[field] !== "");
-            selectedIndex = firstNonBlank === -1 ? 0 : firstNonBlank;
-          }
-          state.scalarSources[field] = selectedIndex;
-        }
-      }
+    /* ---------- TIME COPYING (A / S / D) ---------- */
 
-      function makeProposal() {
-        let bundles = [];
-        for (const audit of state.audits) {
-          bundles = bundles.concat(buildBundles(audit));
-        }
-        const videosBefore = bundles.length;
-        if (ui.dedupeVideos.checked) {
-          const seen = new Set();
-          bundles = bundles.filter((bundle) => {
-            if (seen.has(bundle.videos)) {
-              return false;
-            }
-            seen.add(bundle.videos);
-            return true;
-          });
-        }
+    const currentTimeEl = document.getElementById("currentTime");
+    const lastSecondEl = document.getElementById("lastSecond");
 
-        const merged = {};
-        for (const header of state.headers) {
-          if (sequenceFields.includes(header)) {
-            merged[header] = serialiseList(bundles.map((bundle) => bundle[header]));
-          } else {
-            const sourceIndex = fixedIdentityFields.has(header) ? 0 : (state.scalarSources[header] ?? 0);
-            merged[header] = state.selected[sourceIndex][header];
-          }
-        }
+    const currentTime = currentTimeEl
+        ? parseInt(currentTimeEl.textContent, 10)
+        : NaN;
 
-        const canonicalId = state.selected[0].id;
-        const removedIds = new Set(state.selected.slice(1).map((record) => record.id));
-        const cleaned = [];
-        for (const record of state.records) {
-          if (record.id === canonicalId) {
-            cleaned.push(merged);
-          } else if (!removedIds.has(record.id)) {
-            const copy = {};
-            state.headers.forEach((header) => {
-              copy[header] = record[header];
-            });
-            cleaned.push(copy);
-          }
-        }
-        if (ui.renumberIds.checked) {
-          cleaned.forEach((record, index) => {
-            record.id = String(index + 1);
-          });
-        }
-        return {
-          merged,
-          cleaned,
-          bundles,
-          videosBefore,
-          repeatedVideosRemoved: videosBefore - bundles.length,
-          rowsDeleted: state.selected.length - 1
-        };
-      }
+    const lastSecond = lastSecondEl
+        ? parseInt(lastSecondEl.textContent, 10)
+        : NaN;
 
-      function addRecordRow(container, record, roleText, detailText) {
-        const row = document.createElement("div");
-        row.className = "cmr-record-row";
-        const role = document.createElement("span");
-        role.className = "viz-badge";
-        role.textContent = roleText;
-        const identity = document.createElement("div");
-        const name = document.createElement("strong");
-        name.textContent = record.locality + ", " + record.country;
-        const detail = document.createElement("div");
-        detail.className = "text-small text-muted";
-        detail.textContent = detailText;
-        identity.append(name, detail);
-        const id = document.createElement("code");
-        id.className = "cmr-code";
-        id.textContent = "ID " + record.id;
-        row.append(role, identity, id);
-        container.append(row);
-      }
+    // A → current time → start
+    if (key === "a" && start && !isNaN(currentTime)) {
+        start.value = currentTime;
+        start.dispatchEvent(new Event("change", { bubbles: true }));
+    }
 
-      function renderRecordVersions() {
-        ui.beforeRecords.replaceChildren();
-        state.selected.forEach((record, index) => {
-          const audit = state.audits[index];
-          addRecordRow(
-            ui.beforeRecords,
-            record,
-            index === 0 ? "Keep" : "Delete",
-            audit.videoCount.toLocaleString() + " videos" + (index === 0 ? " · current canonical row" : " · merged into kept row")
-          );
-        });
-        ui.afterRecord.replaceChildren();
-        addRecordRow(
-          ui.afterRecord,
-          state.proposal.merged,
-          "Updated",
-          state.proposal.bundles.length.toLocaleString() + " aligned videos · " + state.proposal.cleaned.length.toLocaleString() + " total rows remain"
+    // S → current time → end
+    if (key === "s" && end && !isNaN(currentTime)) {
+        end.value = currentTime;
+        end.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+
+    // D → start = 0, end = TOTAL video duration
+    if (key === "d" && start && end && !isNaN(lastSecond)) {
+        start.value = 0;
+        end.value = lastSecond;
+
+        start.dispatchEvent(new Event("change", { bubbles: true }));
+        end.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+
+    /* ---------- TIME OF DAY (Q / W) ---------- */
+
+    if (key === "q") {
+        const day = document.querySelector(
+            'input[type="radio"][name="time_of_day"][value="0"]'
         );
-      }
-
-      function renderAudit() {
-        const fragment = document.createDocumentFragment();
-        state.audits.forEach((audit) => {
-          const row = document.createElement("div");
-          row.className = "cmr-audit-row";
-          const label = document.createElement("strong");
-          label.textContent = "ID " + audit.record.id;
-          const counts = document.createElement("div");
-          counts.className = "cmr-counts text-small";
-          for (const field of sequenceFields) {
-            const item = document.createElement("span");
-            item.textContent = field + ": " + audit.parsedFields[field].items.length;
-            counts.append(item);
-          }
-          const status = document.createElement("span");
-          status.className = "viz-badge";
-          status.textContent = audit.repairs.length > 0 ? "Aligned with repair" : "Aligned";
-          if (audit.repairs.length > 0) {
-            status.setAttribute("data-tooltip", audit.repairs.join("; "));
-          }
-          row.append(label, counts, status);
-          fragment.append(row);
-        });
-
-        const mergedRow = document.createElement("div");
-        mergedRow.className = "cmr-audit-row";
-        const mergedLabel = document.createElement("strong");
-        mergedLabel.textContent = "Proposed row";
-        const mergedCounts = document.createElement("div");
-        mergedCounts.className = "cmr-counts text-small";
-        for (const field of sequenceFields) {
-          const item = document.createElement("span");
-          item.textContent = field + ": " + state.proposal.bundles.length;
-          mergedCounts.append(item);
+        if (day) {
+            day.checked = true;
+            day.dispatchEvent(new Event("change", { bubbles: true }));
         }
-        const mergedStatus = document.createElement("span");
-        mergedStatus.className = "viz-badge";
-        mergedStatus.textContent = "Aligned";
-        mergedRow.append(mergedLabel, mergedCounts, mergedStatus);
-        fragment.append(mergedRow);
-        ui.auditList.replaceChildren(fragment);
-      }
+    }
 
-      function truncate(value, limit = 120) {
-        const text = String(value ?? "");
-        return text.length > limit ? text.slice(0, limit - 1) + "…" : text;
-      }
-
-      function addCompareCell(content, column, className = "") {
-        const cell = document.createElement("div");
-        cell.className = "cmr-compare-cell " + className;
-        cell.dataset.column = column;
-        if (typeof content === "string") {
-          cell.textContent = content;
-        } else {
-          cell.append(content);
-        }
-        return cell;
-      }
-
-      function renderComparisonGrid() {
-        const fragment = document.createDocumentFragment();
-        fragment.append(
-          addCompareCell("Field", "label", "cmr-compare-head"),
-          addCompareCell("Previous version", "before", "cmr-compare-head"),
-          addCompareCell("Proposed updated version", "after", "cmr-compare-head")
+    if (key === "w") {
+        const night = document.querySelector(
+            'input[type="radio"][name="time_of_day"][value="1"]'
         );
-
-        let changedCount = 0;
-        const scalarFields = state.headers.filter((header) => !sequenceFields.includes(header));
-        for (const field of scalarFields) {
-          const changed = String(state.selected[0][field]) !== String(state.proposal.merged[field]);
-          if (changed) {
-            changedCount += 1;
-          }
-          const rowClass = changed ? "cmr-compare-row-changed" : "";
-
-          const labelWrap = document.createElement("div");
-          labelWrap.className = "cmr-compare-label";
-          const label = document.createElement("strong");
-          label.className = "cmr-code";
-          label.textContent = field;
-          labelWrap.append(label);
-          if (changed) {
-            const badge = document.createElement("span");
-            badge.className = "viz-badge";
-            badge.textContent = "Changed";
-            labelWrap.append(badge);
-          }
-
-          const previous = document.createElement("div");
-          previous.className = "cmr-source-value";
-          const kept = document.createElement("div");
-          kept.textContent = state.selected[0][field] === "" ? "(blank)" : truncate(state.selected[0][field]);
-          previous.append(kept);
-          if (state.selected.length > 1) {
-            const secondary = document.createElement("div");
-            secondary.className = "cmr-secondary-values text-small";
-            state.selected.slice(1).forEach((record) => {
-              const value = document.createElement("span");
-              value.textContent = "Deleted ID " + record.id + ": " + (record[field] === "" ? "(blank)" : truncate(record[field], 70));
-              secondary.append(value);
-            });
-            previous.append(secondary);
-          }
-
-          let proposed;
-          if (fixedIdentityFields.has(field)) {
-            proposed = document.createElement("div");
-            proposed.textContent = state.proposal.merged[field] === "" ? "(blank)" : truncate(state.proposal.merged[field]);
-          } else {
-            proposed = document.createElement("select");
-            proposed.className = "form-select";
-            proposed.setAttribute("aria-label", "Source for " + field);
-            state.selected.forEach((record, index) => {
-              const option = document.createElement("option");
-              option.value = String(index);
-              option.textContent = "ID " + record.id + " · " + (record[field] === "" ? "(blank)" : truncate(record[field], 75));
-              proposed.append(option);
-            });
-            proposed.value = String(state.scalarSources[field] ?? 0);
-            proposed.addEventListener("change", () => {
-              state.scalarSources[field] = Number(proposed.value);
-              refreshProposal();
-            });
-          }
-
-          fragment.append(
-            addCompareCell(labelWrap, "label", rowClass),
-            addCompareCell(previous, "before", rowClass),
-            addCompareCell(proposed, "after", rowClass)
-          );
+        if (night) {
+            night.checked = true;
+            night.dispatchEvent(new Event("change", { bubbles: true }));
         }
-        ui.compareGrid.replaceChildren(fragment);
-        ui.changeCount.textContent = changedCount + (changedCount === 1 ? " changed field" : " changed fields");
-      }
-
-      function renderBundlePreview() {
-        const limit = Math.min(20, state.proposal.bundles.length);
-        const fragment = document.createDocumentFragment();
-        for (let index = 0; index < limit; index += 1) {
-          const bundle = state.proposal.bundles[index];
-          const row = document.createElement("div");
-          row.className = "cmr-bundle-row";
-          const video = document.createElement("div");
-          const position = document.createElement("span");
-          position.className = "text-small text-muted";
-          position.textContent = "Position " + (index + 1);
-          const id = document.createElement("code");
-          id.className = "cmr-code";
-          id.textContent = bundle.videos;
-          video.append(position, document.createElement("br"), id);
-          const values = document.createElement("div");
-          values.className = "cmr-bundle-values text-small";
-          for (const field of sequenceFields.slice(1)) {
-            const value = document.createElement("span");
-            value.textContent = field + ": " + bundle[field];
-            values.append(value);
-          }
-          row.append(video, values);
-          fragment.append(row);
-        }
-        ui.bundleList.replaceChildren(fragment);
-        ui.bundleNote.textContent = "Showing " + limit + " of " + state.proposal.bundles.length.toLocaleString() + " bundles in final order. Each line is one video with all related values kept together.";
-      }
-
-      function renderProposal() {
-        ui.statDeleted.textContent = state.proposal.rowsDeleted.toLocaleString();
-        ui.statBefore.textContent = state.proposal.videosBefore.toLocaleString();
-        ui.statAfter.textContent = state.proposal.bundles.length.toLocaleString();
-        renderRecordVersions();
-        renderAudit();
-        renderComparisonGrid();
-        renderBundlePreview();
-        const renumberNote = ui.renumberIds.checked ? " Remaining IDs will be renumbered sequentially." : " Existing IDs will remain unchanged.";
-        ui.decisionSummary.textContent = state.proposal.rowsDeleted + " row(s) will be deleted, " + state.proposal.repeatedVideosRemoved + " repeated video(s) will be removed, and " + state.proposal.bundles.length + " aligned video bundles will remain." + renumberNote;
-        setStatus(ui.reviewStatus, "Nothing has been updated yet. Choose yes to apply this exact proposal, or no to leave the data unchanged.");
-      }
-
-      function refreshProposal() {
-        state.proposal = makeProposal();
-        renderProposal();
-      }
-
-      function buildReview() {
-        if (state.records.length === 0) {
-          setStatus(ui.selectStatus, "Load the source CSV first.", "error");
-          return false;
-        }
-        const keepLine = ui.keepSpec.value.trim();
-        const deleteLines = ui.deleteSpecs.value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-        if (!keepLine || deleteLines.length === 0) {
-          setStatus(ui.selectStatus, "Choose one row to keep and at least one row to merge and delete.", "error");
-          return false;
-        }
-
-        const resolved = [];
-        const errors = [];
-        const keepResult = findRecord(parseRecordSpec(keepLine));
-        if (keepResult.error) {
-          errors.push(keepResult.error);
-        } else {
-          resolved.push(keepResult.record);
-        }
-        for (const line of deleteLines) {
-          const result = findRecord(parseRecordSpec(line));
-          if (result.error) {
-            errors.push(result.error);
-          } else {
-            resolved.push(result.record);
-          }
-        }
-        if (errors.length > 0) {
-          setStatus(ui.selectStatus, errors.join(" "), "error");
-          return false;
-        }
-        if (new Set(resolved.map((record) => record.id)).size !== resolved.length) {
-          setStatus(ui.selectStatus, "The same row was selected more than once.", "error");
-          return false;
-        }
-        if (ui.requirePlace.checked) {
-          const canonicalKey = normalise(resolved[0].locality) + "\u0000" + normalise(resolved[0].country);
-          const different = resolved.find((record) => normalise(record.locality) + "\u0000" + normalise(record.country) !== canonicalKey);
-          if (different) {
-            setStatus(ui.selectStatus, "ID " + different.id + " is " + different.locality + ", " + different.country + ", which differs from the kept row.", "error");
-            return false;
-          }
-        }
-
-        const audits = resolved.map(analyseSequences);
-        const problems = audits.flatMap((audit) => audit.issues.map((issue) => "ID " + audit.record.id + ": " + issue));
-        if (problems.length > 0) {
-          setStatus(ui.selectStatus, "Cannot build a safe proposal. " + problems.join("; ") + ".", "error");
-          return false;
-        }
-
-        state.selected = resolved;
-        state.audits = audits;
-        initialiseScalarSources();
-        state.proposal = makeProposal();
-        renderProposal();
-        ui.reviewStage.hidden = false;
-        ui.successStage.hidden = true;
-        setStep("review");
-        setStatus(ui.selectStatus, "Comparison ready. The CSV has not been changed.", "ok");
-        ui.reviewStage.scrollIntoView({ behavior: "smooth", block: "start" });
-        return true;
-      }
-
-      function applyProposal() {
-        if (!state.proposal) {
-          setStatus(ui.reviewStatus, "Build a proposal before applying an update.", "error");
-          return false;
-        }
-        const deleted = state.proposal.rowsDeleted;
-        const videos = state.proposal.bundles.length;
-        state.records = state.proposal.cleaned.map((record, rowIndex) => ({ ...record, __rowIndex: rowIndex }));
-        state.appliedUpdates += 1;
-        updateSourceSummary();
-        ui.decision.hidden = true;
-        ui.successStage.hidden = false;
-        ui.successMessage.textContent = "The approved merge deleted " + deleted + " row(s). The updated file contains " + state.records.length.toLocaleString() + " rows, and the merged row contains " + videos.toLocaleString() + " aligned video bundles.";
-        setStatus(ui.reviewStatus, "Update applied to the in-memory CSV. Download it to save the result.", "ok");
-        setStep("confirm");
-        ui.successStage.scrollIntoView({ behavior: "smooth", block: "start" });
-        return true;
-      }
-
-      function declineProposal() {
-        state.selected = [];
-        state.scalarSources = {};
-        state.audits = [];
-        state.proposal = null;
-        ui.reviewStage.hidden = true;
-        ui.successStage.hidden = true;
-        ui.decision.hidden = false;
-        setStep("source");
-        setStatus(ui.selectStatus, "No update was applied. The current CSV is unchanged.", "ok");
-        ui.sourceStage.scrollIntoView({ behavior: "smooth", block: "start" });
-      }
-
-      function reviewAnother() {
-        state.selected = [];
-        state.scalarSources = {};
-        state.audits = [];
-        state.proposal = null;
-        ui.keepSpec.value = "";
-        ui.deleteSpecs.value = "";
-        ui.reviewStage.hidden = true;
-        ui.successStage.hidden = true;
-        ui.decision.hidden = false;
-        setStep("source");
-        setStatus(ui.selectStatus, "The approved update is retained in this session. Choose the next duplicate rows.", "ok");
-        ui.sourceStage.scrollIntoView({ behavior: "smooth", block: "start" });
-      }
-
-      function downloadCsv() {
-        if (state.records.length === 0) {
-          return;
-        }
-        const content = serialiseCsv(state.headers, state.records);
-        const blob = new Blob([content], { type: "text/csv;charset=utf-8" });
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement("a");
-        link.href = url;
-        link.download = safeFileStem(state.fileName) + "-updated.csv";
-        document.body.append(link);
-        link.click();
-        link.remove();
-        URL.revokeObjectURL(url);
-      }
-
-      function resetAll() {
-        state.fileName = "mapping.csv";
-        state.headers = [];
-        state.records = [];
-        state.selected = [];
-        state.scalarSources = {};
-        state.audits = [];
-        state.proposal = null;
-        state.appliedUpdates = 0;
-        ui.file.value = "";
-        ui.paste.value = "";
-        ui.keepSpec.value = "";
-        ui.deleteSpecs.value = "";
-        ui.reviewStage.hidden = true;
-        ui.successStage.hidden = true;
-        ui.decision.hidden = false;
-        updateSourceSummary();
-        setStep("source");
-        setStatus(ui.loadStatus, "No source data loaded.");
-        setStatus(ui.selectStatus, "Load a CSV and choose the rows to compare.");
-      }
-
-      ui.file.addEventListener("change", async () => {
-        const file = ui.file.files && ui.file.files[0];
-        if (!file) {
-          return;
-        }
-        try {
-          loadCsvText(await file.text(), file.name);
-        } catch (error) {
-          setStatus(ui.loadStatus, "Could not read the selected file: " + error.message, "error");
-        }
-      });
-      ui.loadPaste.addEventListener("click", () => loadCsvText(ui.paste.value, "pasted-data.csv"));
-      ui.buildReview.addEventListener("click", buildReview);
-      ui.editSelection.addEventListener("click", () => {
-        ui.reviewStage.hidden = true;
-        ui.successStage.hidden = true;
-        ui.decision.hidden = false;
-        setStep("source");
-        ui.sourceStage.scrollIntoView({ behavior: "smooth", block: "start" });
-      });
-      ui.repeatChannel.addEventListener("change", () => {
-        if (state.selected.length > 0) {
-          buildReview();
-        }
-      });
-      ui.dedupeVideos.addEventListener("change", () => {
-        if (state.selected.length > 0) {
-          refreshProposal();
-        }
-      });
-      ui.renumberIds.addEventListener("change", () => {
-        if (state.selected.length > 0) {
-          refreshProposal();
-        }
-      });
-      ui.apply.addEventListener("click", applyProposal);
-      ui.decline.addEventListener("click", declineProposal);
-      ui.download.addEventListener("click", downloadCsv);
-      ui.reviewAnother.addEventListener("click", reviewAnother);
-      ui.clear.addEventListener("click", resetAll);
-
-      window.cityMergeReviewer = {
-        parseCsv,
-        splitOuterList,
-        serialiseCsv,
-        analyseSequences,
-        loadCsvText,
-        buildReview,
-        makeProposal,
-        applyProposal,
-        declineProposal,
-        state,
-        ui
-      };
-    })();
-  </script>
-</div>
-
-<style id="codex-visualization-document-overflow">html,body{overflow:hidden!important}</style>
-<script id="codex-visualization-floating-ui-core" src="https://unpkg.com/@floating-ui/core@1.7.3/dist/floating-ui.core.umd.min.js"></script>
-<script id="codex-visualization-floating-ui-dom" src="https://unpkg.com/@floating-ui/dom@1.7.4/dist/floating-ui.dom.umd.min.js"></script>
-<script id="codex-visualization-lucide" async src="https://unpkg.com/lucide@1.17.0/dist/umd/lucide.js"></script>
-<script id="codex-visualization-tooltip">/* oxlint-disable typescript/no-unsafe-argument, typescript/no-unsafe-call, typescript/no-unsafe-return */
-// Runs inside the visualization sandbox, not the host webview.
-(() => {
-  if (window.FloatingUIDOM == null) {
-    return;
-  }
-  const { autoUpdate, computePosition, flip, offset, shift, size } =
-    window.FloatingUIDOM;
-  const tooltipPlacements = new Set(["top", "right", "bottom", "left"]);
-  const tooltipId = `codex-visualization-tooltip-${
-    window.crypto?.randomUUID?.() ?? Date.now().toString(36)
-  }`;
-  const tooltipGap = 5;
-  const hoverDelay = 700;
-  const skipDelay = 300;
-  let activeTrigger = null;
-  let pendingTrigger = null;
-  let tooltip = null;
-  let openTimeout = null;
-  let autoUpdateCleanup = null;
-  let positionRequest = 0;
-  let skipDelayUntil = 0;
-
-  const getTrigger = (target) =>
-    target?.nodeType === Node.ELEMENT_NODE
-      ? target.closest("[data-tooltip]")
-      : null;
-  const containsTarget = (trigger, target) =>
-    target?.nodeType != null && trigger.contains(target);
-  const getContent = (trigger) =>
-    trigger.getAttribute("data-tooltip")?.trim() ?? "";
-  const getPlacement = (trigger) => {
-    const placement = trigger.getAttribute("data-tooltip-placement");
-    return tooltipPlacements.has(placement) ? placement : "top";
-  };
-  const getTooltip = () => {
-    if (tooltip == null) {
-      tooltip = document.createElement("div");
-      tooltip.id = tooltipId;
-      tooltip.className = "tooltip";
-      tooltip.setAttribute("role", "tooltip");
     }
-    return tooltip;
-  };
-  const setDescribedBy = (trigger, described) => {
-    const ids = new Set(
-      (trigger.getAttribute("aria-describedby") ?? "")
-        .split(/\s+/)
-        .filter(Boolean),
-    );
-    if (described) {
-      ids.add(tooltipId);
-    } else {
-      ids.delete(tooltipId);
-    }
-    if (ids.size === 0) {
-      trigger.removeAttribute("aria-describedby");
-    } else {
-      trigger.setAttribute("aria-describedby", [...ids].join(" "));
-    }
-  };
-  const clearOpenTimeout = () => {
-    if (openTimeout != null) {
-      window.clearTimeout(openTimeout);
-      openTimeout = null;
-    }
-    pendingTrigger = null;
-  };
-  const closeTooltip = (activateSkipDelay = true) => {
-    clearOpenTimeout();
-    positionRequest += 1;
-    autoUpdateCleanup?.();
-    autoUpdateCleanup = null;
-    if (activeTrigger == null) {
-      return;
-    }
-    setDescribedBy(activeTrigger, false);
-    activeTrigger = null;
-    tooltip?.remove();
-    if (activateSkipDelay) {
-      skipDelayUntil = Date.now() + skipDelay;
-    }
-  };
-  const updatePosition = (trigger, floating) => {
-    const request = ++positionRequest;
-    void computePosition(trigger, floating, {
-      middleware: [
-        offset(tooltipGap),
-        flip({ padding: tooltipGap }),
-        shift({ padding: tooltipGap }),
-        size({
-          padding: tooltipGap,
-          apply({ availableHeight, availableWidth, elements }) {
-            elements.floating.style.setProperty(
-              "--tooltip-available-width",
-              `${Math.max(0, availableWidth)}px`,
-            );
-            elements.floating.style.setProperty(
-              "--tooltip-available-height",
-              `${Math.max(0, availableHeight)}px`,
-            );
-          },
-        }),
-      ],
-      placement: getPlacement(trigger),
-      strategy: "fixed",
-    })
-      .then(({ x, y }) => {
-        if (activeTrigger !== trigger || request !== positionRequest) {
-          return;
-        }
-        const scale = window.devicePixelRatio || 1;
-        floating.style.transform = `translate(${Math.round(x * scale) / scale}px, ${Math.round(y * scale) / scale}px)`;
-        floating.style.visibility = "visible";
-      })
-      .catch(() => {
-        if (activeTrigger === trigger && request === positionRequest) {
-          closeTooltip(false);
-        }
-      });
-  };
-  const openTooltip = (trigger) => {
-    const content = getContent(trigger);
-    if (!trigger.isConnected || content.length === 0) {
-      return;
-    }
-    clearOpenTimeout();
-    if (activeTrigger === trigger) {
-      return;
-    }
-    closeTooltip();
-    const floating = getTooltip();
-    floating.textContent = content;
-    floating.style.visibility = "hidden";
-    floating.style.transform = "translate(0, 0)";
-    document.body.appendChild(floating);
-    activeTrigger = trigger;
-    setDescribedBy(trigger, true);
-    autoUpdateCleanup = autoUpdate(trigger, floating, () => {
-      updatePosition(trigger, floating);
-    });
-  };
-  const requestOpen = (trigger, immediate = false) => {
-    if (
-      getContent(trigger).length === 0 ||
-      activeTrigger === trigger ||
-      pendingTrigger === trigger
-    ) {
-      return;
-    }
-    clearOpenTimeout();
-    pendingTrigger = trigger;
-    const delay =
-      immediate || activeTrigger != null || Date.now() < skipDelayUntil
-        ? 0
-        : hoverDelay;
-    if (delay === 0) {
-      openTooltip(trigger);
-      return;
-    }
-    openTimeout = window.setTimeout(() => {
-      openTimeout = null;
-      pendingTrigger = null;
-      openTooltip(trigger);
-    }, delay);
-  };
-  const handlePointerOpen = (event) => {
-    if (event.pointerType === "touch") {
-      return;
-    }
-    const trigger = getTrigger(event.target);
-    if (trigger == null || containsTarget(trigger, event.relatedTarget)) {
-      return;
-    }
-    requestOpen(trigger);
-  };
-  const handleLeave = (event) => {
-    const trigger = getTrigger(event.target);
-    if (trigger == null || containsTarget(trigger, event.relatedTarget)) {
-      return;
-    }
-    if (activeTrigger === trigger || pendingTrigger === trigger) {
-      closeTooltip();
-    }
-  };
-  const handleFocusIn = (event) => {
-    const trigger = getTrigger(event.target);
-    if (trigger?.matches(":focus-visible")) {
-      requestOpen(trigger, true);
-    }
-  };
-  const handleKeyDown = (event) => {
-    if (event.key === "Escape") {
-      closeTooltip();
-    }
-  };
-  const handleContextMenu = (event) => {
-    const trigger = getTrigger(event.target);
-    if (activeTrigger === trigger || pendingTrigger === trigger) {
-      closeTooltip();
-    }
-  };
-  const destroy = () => {
-    closeTooltip(false);
-    document.removeEventListener("pointerover", handlePointerOpen);
-    document.removeEventListener("pointerout", handleLeave);
-    document.removeEventListener("focusin", handleFocusIn);
-    document.removeEventListener("focusout", handleLeave);
-    document.removeEventListener("keydown", handleKeyDown);
-    document.removeEventListener("contextmenu", handleContextMenu);
-    tooltip = null;
-  };
+});
 
-  document.addEventListener("pointerover", handlePointerOpen);
-  document.addEventListener("pointerout", handleLeave);
-  document.addEventListener("focusin", handleFocusIn);
-  document.addEventListener("focusout", handleLeave);
-  document.addEventListener("keydown", handleKeyDown);
-  document.addEventListener("contextmenu", handleContextMenu);
-  window.addEventListener("pagehide", destroy, { once: true });
-})();
-</script>
-<script id="codex-visualization-lucide-initialization">(() => {
-  const initialize = () => {
-    globalThis.lucide?.createIcons({ attrs: { width: 16, height: 16 } });
-  };
-  if (globalThis.lucide != null) {
-    initialize();
-    return;
-  }
-  document
-    .getElementById("codex-visualization-lucide")
-    ?.addEventListener("load", initialize, { once: true });
-})();
 </script>
