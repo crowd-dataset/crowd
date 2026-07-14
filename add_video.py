@@ -1221,7 +1221,7 @@ def submit_data():
     return form()
 
 
-def get_country_data(iso3_code: str) -> list | None:
+def get_country_data(iso3_code: str):
     iso3_code = iso3_code.upper()
     cache = _load_cache()
 
@@ -1371,7 +1371,7 @@ US_STATE_CODES = {
 }
 
 
-def _resolve_state_code(state: str) -> str | None:
+def _resolve_state_code(state: str):
     if not state:
         return None
     s = state.strip()
