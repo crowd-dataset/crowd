@@ -131,8 +131,6 @@ id_1,locality_1,country_1,lat_1,lon_1,id_2,locality_2,country_2,lat_2,lon_2,dist
 3157,Old Colwyn,United Kingdom,53.2885433,-3.7015251,3158,Colwyn Bay,United Kingdom,53.2953269,-3.7262534,1.808
 3242,Banjar,Indonesia,-3.3187496,114.5925828,3962,Banjarmasin,Indonesia,-3.3187496,114.5925828,0.0
 3243,Purwokerto,Indonesia,-7.4194647,109.2218425,7506,Purwanegara,Indonesia,-7.4076547,109.2329063,1.792
-3292,Rosales,Philippines,15.8924255,120.6329883,3371,Rosales,Philippines,15.8924255,120.6329883,0.0
-3321,Victoria,Philippines,14.2270483,121.3280871,3451,Victoria,Philippines,14.2270483,121.3280871,0.0
 3424,San Pascual,Philippines,13.7878815,121.0210565,3426,Bauan,Philippines,13.7899158,121.0077783,1.452
 3467,Famy,Philippines,14.4354493,121.4491564,3469,Siniloan,Philippines,14.4215284,121.444412,1.63
 3469,Siniloan,Philippines,14.4215284,121.444412,3470,Mabitac,Philippines,14.4259361,121.429439,1.685
@@ -142,27 +140,20 @@ id_1,locality_1,country_1,lat_1,lon_1,id_2,locality_2,country_2,lat_2,lon_2,dist
 3622,Bustos,Philippines,14.9535178,120.9188433,3625,Baliwag,Philippines,14.9542259,120.9009172,1.927
 3683,Leura,Australia,-33.7156888,150.3317665,7845,Katoomba,Australia,-33.713759,150.3121633,1.826
 3687,Kalpetta,India,11.610278,76.08281,3725,Wayanad,India,11.6263889,76.0888889,1.91
-3702,Kozhikode,India,11.2450558,75.7754716,5768,Calicut,India,11.2459092,75.7803858,0.544
 3878,Reusel-De Mierden,Netherlands,51.408201,5.148469,7242,Lage Mierde,Netherlands,51.4066691,5.1491649,0.177
 3915,Elburg,Netherlands,52.4156591,5.8413217,3916,Doornspijk,Netherlands,52.4194984,5.8208683,1.451
 3993,Ten Post,Netherlands,53.2972128,6.7290836,3994,Winneweer,Netherlands,53.3110117,6.7443251,1.838
-4135,Trouville,France,49.3679823,0.0809113,4273,Trouville-sur-Mer,France,49.3679823,0.0809113,0.0
 4135,Trouville,France,49.3679823,0.0809113,4274,Deauville,France,49.3595018,0.0746638,1.046
 4141,Rekem,Belgium,50.922073,5.689395,5505,Neerharen,Belgium,50.907778,5.680982,1.695
-4151,Argelès-sur-Mer,France,42.5476734,3.0253613,4233,Argelès sur-Mer,France,42.5476734,3.0253613,0.0
 4152,Collioure,France,42.52505,3.0831554,4253,Port-Vendres,France,42.5204146,3.1056167,1.912
-4157,Le Barcarès,France,42.7946794,3.0335243,4257,Bacares,France,42.7918334,3.0356643,0.361
 4184,Montigny-le-Bretonneux,France,48.7698937,2.0381228,4187,Voisins-le-Bretonneux,France,48.7586786,2.0509674,1.563
-4204,Saint-Cyprien,France,44.8693315,1.0461817,4232,Saint Cyprien,France,44.8693315,1.0461817,0.0
 4247,Saint-Laurent-sur-Saône,France,46.3046804,4.8410969,4248,Mâcon,France,46.3036683,4.8322266,0.691
 4273,Trouville-sur-Mer,France,49.3679823,0.0809113,4274,Deauville,France,49.3595018,0.0746638,1.046
 4297,Portbou,Spain,42.4274333,3.1588785,4298,Cerbère,France,42.4412951,3.1646952,1.614
 4341,Słubice,Poland,52.3557481,14.5662367,4818,Frankfurt an der Oder,Germany,52.3412273,14.549452,1.977
 4494,Brela,Croatia,43.3684379,16.9321158,5284,Baška Voda,Croatia,43.3585111,16.9487814,1.742
-4495,Plzen,Czechia,49.7477415,13.3775249,6437,Plzeň,Czechia,49.7477415,13.3775249,0.0
 4673,'s-Graveland,Netherlands,52.243148,5.131132,4675,Kortenhoef,Netherlands,52.2401304,5.1130009,1.279
 4677,Loenen aan de Vecht,Netherlands,52.2097841,5.0216458,4678,Nieuwersluis,Netherlands,52.196668,5.0077712,1.738
-4916,Schoorldam,Netherlands,52.7072897,4.7183865,4917,Schoorl,Netherlands,52.7009081,4.693947,1.793
 4918,Groet,Netherlands,52.7210122,4.6684187,4919,Camperduin,Netherlands,52.7255457,4.6514869,1.247
 5005,Macduff,United Kingdom,57.6702105,-2.4944375,5006,Banff,United Kingdom,57.6645459,-2.5217539,1.742
 5175,Guayonje,Spain,28.488531,-16.4178003,5198,Mesa del Mar,Spain,28.5033774,-16.4239192,1.756
@@ -171,14 +162,11 @@ id_1,locality_1,country_1,lat_1,lon_1,id_2,locality_2,country_2,lat_2,lon_2,dist
 5205,Qawra,Malta,35.9541286,14.4198078,5208,Bugibba,Malta,35.9483211,14.4105059,1.057
 5345,Kutna Hora,Czechia,49.9486561,15.2681123,5711,Kutná Hora,Czechia,49.9486561,15.2681123,0.0
 5388,Hem,Netherlands,52.6607793,5.1835446,5389,Venhuizen,Netherlands,52.6626396,5.1997975,1.115
-5460,Egmond aan Zee,Netherlands,52.6183093,4.6256307,5461,Egmond aan den Hoef,Netherlands,52.6212361,4.6525624,1.847
 5651,Durgerdam,Netherlands,52.3779446,4.9904908,5652,Ransdorp,Netherlands,52.3937331,4.9946364,1.778
 5656,Halfweg,Netherlands,52.3826063,4.7546903,5657,Zwanenburg,Netherlands,52.3779288,4.7436402,0.913
 5712,Měchenice,Czechia,49.9081696,14.3892687,5715,Davle,Czechia,49.8921766,14.4003714,1.948
 5716,Severní,Czechia,51.0352246,14.3151887,5717,Lobendava,Czechia,51.0191858,14.3147874,1.784
 5719,Návsí,Czechia,49.590239,18.754518,5720,Jabłonków,Czechia,49.5767408,18.7645761,1.667
-5742,Donji Hadžići,Bosnia and Herzegovina,43.8299412,18.2153155,5779,Hadžići,Bosnia and Herzegovina,43.8223256,18.2031453,1.292
-5742,Donji Hadžići,Bosnia and Herzegovina,43.8299412,18.2153155,5783,Binježevo,Bosnia and Herzegovina,43.8452237,18.2220874,1.784
 5744,Dupovci,Bosnia and Herzegovina,43.8182101,18.1921364,5779,Hadžići,Bosnia and Herzegovina,43.8223256,18.2031453,0.995
 5754,Donja Zimća,Bosnia and Herzegovina,44.0148659,18.1371828,5755,Biskupići,Bosnia and Herzegovina,44.0049573,18.1514533,1.586
 5757,Podlugovi,Bosnia and Herzegovina,43.9695978,18.2604096,5758,Ilijaš,Bosnia and Herzegovina,43.95645,18.2661553,1.533
@@ -186,8 +174,6 @@ id_1,locality_1,country_1,lat_1,lon_1,id_2,locality_2,country_2,lat_2,lon_2,dist
 5773,Duhri,Bosnia and Herzegovina,43.9221291,18.1150281,5774,Brnjaci,Bosnia and Herzegovina,43.9141286,18.1270412,1.31
 5856,Suchovršice,Czechia,50.5234045,15.9982045,5857,Úpice,Czechia,50.5125314,16.0154279,1.716
 5857,Úpice,Czechia,50.5125314,16.0154279,5858,Batňovice,Czechia,50.5175945,16.0366349,1.602
-5913,Mitrovica,Kosovo,42.8790424,20.8657862,6304,Mitrovicë,Kosovo,42.8790424,20.8657862,0.0
-5923,Lezhë,Albania,41.7816638,19.6433538,6119,Lezha,Albania,41.7816638,19.6433538,0.0
 5928,Kozina,Slovenia,45.6085113,13.9353038,5929,Hrpelje,Slovenia,45.6067654,13.94366,0.678
 6043,Saco,United States,43.500739,-70.4429855,6044,Biddeford,United States,43.4925843,-70.4533844,1.235
 6048,West Linn,United States,45.3656761,-122.612314,6205,Oregon City,United States,45.3573429,-122.606758,1.023
@@ -206,9 +192,7 @@ id_1,locality_1,country_1,lat_1,lon_1,id_2,locality_2,country_2,lat_2,lon_2,dist
 6932,Lindale,United States,34.185962,-85.174424,6934,Silver Creek,United States,34.176207,-85.1613389,1.62
 7112,Douar,Lebanon,33.9017932,35.6997263,7120,Dhour El Choueir,Lebanon,33.9140868,35.7139576,1.896
 7112,Douar,Lebanon,33.9017932,35.6997263,7206,Dhour Choueir,Lebanon,33.9140868,35.7139576,1.896
-7120,Dhour El Choueir,Lebanon,33.9140868,35.7139576,7206,Dhour Choueir,Lebanon,33.9140868,35.7139576,0.0
 7122,Moukhtara,Lebanon,33.6573762,35.6133585,7176,Bakaata,Lebanon,33.670367,35.5994472,1.935
-7130,Bikfaya,Lebanon,33.9199751,35.683555,7180,Bickfaya,Lebanon,33.9221677,35.684352,0.255
 7130,Bikfaya,Lebanon,33.9199751,35.683555,7191,Beit Chabab,Lebanon,33.9275343,35.6723258,1.334
 7177,Zakrit,Lebanon,33.9379839,35.6309976,7187,Mazraat Yachouh,Lebanon,33.9300335,35.6327031,0.898
 7177,Zakrit,Lebanon,33.9379839,35.6309976,7188,Qornet el Hamra,Lebanon,33.93472,35.64917,1.715
