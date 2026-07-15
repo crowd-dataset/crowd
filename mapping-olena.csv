@@ -8057,3 +8057,6 @@ id,locality,locality_aka,state,country,iso3,continent,lat,lon,gmp,population_loc
 8056,Loma Plata,[],,Paraguay,PRY,South America,-22.3848499,-59.8382177,0.0,16460,6460159.0,22.0,94.86,167.0,31.3,44.2,0.0,[4rm5Psa0tJw],"[[0,0]]","[[32,371]]","[[350,664]]",[0],[25062023],[UCSMCv9FDp2R9_p1e0k61KwQ]
 8057,Encarnación,[Encarnacion],,Paraguay,PRY,South America,-27.3376114,-55.8669492,0.0,74983,6460159.0,22.0,94.86,167.0,31.3,44.2,0.0,[t7OboVqYzXc],[[0]],[[42]],[[1305]],[0],[17062023],[UCSMCv9FDp2R9_p1e0k61KwQ]
 8058,Pilar,[],,Paraguay,PRY,South America,-26.8582578,-58.3034318,0.0,32810,6460159.0,22.0,94.86,167.0,31.3,44.2,0.0,[t7OboVqYzXc],"[[0,0]]","[[16924,17936]]","[[17705,18138]]",[0],[17062023],[UCSMCv9FDp2R9_p1e0k61KwQ]
+8059,Caaguazú,[],,Paraguay,PRY,South America,-25.460635,-56.019327,0.0,54808,6460159.0,22.0,94.86,167.0,31.3,44.2,0.0,[bXsZtgExt-4],[[0]],[[29]],[[233]],[0],[14062023],[UCSMCv9FDp2R9_p1e0k61KwQ]
+8060,Santa Rosa,[Santa Rosa de Lima],,Paraguay,PRY,South America,-26.8864043,-56.8492668,0.0,7257,6460159.0,22.0,94.86,167.0,31.3,44.2,0.0,[bXsZtgExt-4],"[[0,0]]","[[2393,3860]]","[[3613,4111]]",[0],[14062023],[UCSMCv9FDp2R9_p1e0k61KwQ]
+8061,Villarrica,[],,Paraguay,PRY,South America,-25.7809839,-56.4478765,0.0,41157,6460159,22,94.86,167,31.3,44.2,0.0,[bXsZtgExt-4],[[0]],[[6196]],[[7671]],[0],[14062023],[UCSMCv9FDp2R9_p1e0k61KwQ]
