@@ -819,7 +819,7 @@ def form():
                 else:
                     country_population = get_country_population(country_data)
 
-                lat, lon = get_coordinates(locality, state, common.correct_country(country))
+                lat, lon = get_coordinates(locality, state, common.correct_country(country), locality_data)
                 existing_data_row = {
                     'locality': locality,
                     'locality_aka': locality_aka,
@@ -1570,35 +1570,54 @@ def get_traffic_index(locality, state, country):
         return 0.0
 
 
-def get_coordinates(locality, state, country):
-    """Get locality coordinates."""
+def get_coordinates(locality, state, country, locality_data=None):
+    """Get locality coordinates, with GeoNames fallback."""
+
+    # --- primary: Nominatim ---
     current_time = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    user_agent = f"my_geocoding_script_{current_time}"
-    geolocator = Nominatim(user_agent=user_agent)
+    geolocator = Nominatim(user_agent=f"my_geocoding_script_{current_time}")
 
     try:
-        if state and str(state).lower() != 'nan':
+        if state and str(state).lower() not in ('', 'nan', 'none'):
             location_query = f"{locality}, {state}, {country}"
         else:
             location_query = f"{locality}, {country}"
 
-        location = geolocator.geocode(location_query, timeout=2)  # type: ignore
+        location = geolocator.geocode(location_query, timeout=5)
 
         if location:
-            return location.latitude, location.longitude  # type: ignore
-        else:
-            print(f"Failed to geocode {location_query}")
-            return None, None
+            return location.latitude, location.longitude
 
-    except GeocoderTimedOut:
-        print(f"Geocoding timed out for {location_query}.")
-        return None, None
-    except GeocoderUnavailable:
-        print(f"Geocoding server could not be reached for {location_query}.")
-        return None, None
-    except GeocoderServiceError:
-        print(f"Non successful status for {location_query}.")
-        return None, None
+        print(f"Nominatim returned no result for '{location_query}', trying fallback.")
+
+    except (GeocoderTimedOut, GeocoderUnavailable, GeocoderServiceError) as e:
+        print(f"Nominatim error for '{locality}, {country}': {e}")
+
+    # --- fallback: extract from GeoNames locality_data if available ---
+    if locality_data and isinstance(locality_data, dict):
+        geonames = locality_data.get("geonames")
+        if isinstance(geonames, list) and geonames:
+            locality_norm = locality.strip().lower()
+            # pick the entry whose name best matches
+            for entry in geonames:
+                name = str(entry.get("name", "")).strip().lower()
+                toponym = str(entry.get("toponymName", "")).strip().lower()
+                if name == locality_norm or toponym == locality_norm:
+                    lat = entry.get("lat")
+                    lon = entry.get("lng")
+                    if lat and lon:
+                        print(f"GeoNames fallback coords for '{locality}': {lat}, {lon}")
+                        return float(lat), float(lon)
+
+            # no exact match — take first result
+            first = geonames[0]
+            lat, lon = first.get("lat"), first.get("lng")
+            if lat and lon:
+                print(f"GeoNames fallback (first result) for '{locality}': {lat}, {lon}")
+                return float(lat), float(lon)
+
+    print(f"Failed to geocode '{locality}, {country}' via all methods.")
+    return None, None
 
 
 def extract_last_int(value):
