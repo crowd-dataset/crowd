@@ -8535,4 +8535,5 @@ id,locality,locality_aka,state,country,iso3,continent,lat,lon,gmp,population_loc
 8534,Temuco,[],,Chile,CHL,South America,-38.7358908,-72.590538,0.0,238129,20206953.0,14.9,96.4,166.0,36.6,43.0,0.0,[VAf1KU_XIfw],[[0]],[[5631]],[[8127]],[0],[19052022],[UCSMCv9FDp2R9_p1e0k61KwQ]
 8535,Valdivia,[],,Chile,CHL,South America,-39.8141262,-73.2459859,0.0,133419,20206953.0,14.9,96.4,166.0,36.6,43.0,0.0,"[c8lAS4ABUFs,kHemhBfaWGc]","[[0],[0]]","[[18],[4701]]","[[1154],[4951]]","[0,0]","[11052022,8052022]","[UCSMCv9FDp2R9_p1e0k61KwQ,UCSMCv9FDp2R9_p1e0k61KwQ]"
 8536,Lican Ray,[Licán Ray],,Chile,CHL,South America,-39.489205,-72.155464,0.0,7200,20206953.0,14.9,96.4,166.0,36.6,43.0,0.0,[c8lAS4ABUFs],[[0]],[[7066]],[[7350]],[0],[11052022],[None]
-8537,Paillaco,[],,Chile,CHL,South America,-40.0706633,-72.8726695,0.0,19088,20206953,14.9,96.4,166,36.6,43,0.0,[kHemhBfaWGc],[[0]],[[2617]],[[3003]],[0],[8052022],[UCSMCv9FDp2R9_p1e0k61KwQ]
+8537,Paillaco,[],,Chile,CHL,South America,-40.0706633,-72.8726695,0.0,19088,20206953.0,14.9,96.4,166.0,36.6,43.0,0.0,[kHemhBfaWGc],[[0]],[[2617]],[[3003]],[0],[8052022],[UCSMCv9FDp2R9_p1e0k61KwQ]
+8538,Bariloche,[San Carlos de Bariloche],,Argentina,ARG,South America,-41.1334781,-71.3101474,0.0,95394,46735004,14.1,99.14,168,32.6,42.4,42.5,[gDNjvfzFJ3U],[[0]],[[18]],[[468]],[0],[5052022],[UCSMCv9FDp2R9_p1e0k61KwQ]
