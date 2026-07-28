@@ -675,11 +675,11 @@
 
                 <div class="form-group">
                     <label for="upload_date_video">Upload date:</label>
-                    <input type="text" id="upload_date_video" name="upload_date_video" value="{{ upload_date_video }}">
+                    <input type="text" id="upload_date_video" name="upload_date_video" required value="{{ upload_date_video }}">
                 </div>
                 <div class="form-group">
                     <label for="channel_video">Channel:</label>
-                    <input type="text" id="channel_video" name="channel_video" value="{{ channel_video or '' }}">
+                    <input type="text" id="channel_video" name="channel_video" required value="{{ channel_video or '' }}">
                 </div>
                 <!-- <div class="form-group">
                     <label for="fps_video">FPS:</label>
@@ -687,11 +687,11 @@
                 </div> -->
                 <div class="form-group">
                     <label for="lat">Latitude:</label>
-                    <input type="number" id="lat" name="lat" value="{{ existing_data['lat'] }}" step="any">
+                    <input type="number" id="lat" name="lat" required value="{{ existing_data['lat'] }}" step="any">
                 </div>
                 <div class="form-group">
                     <label for="lon">Longitude:</label>
-                    <input type="number" id="lon" name="lon" value="{{ existing_data['lon'] }}" step="any">
+                    <input type="number" id="lon" name="lon" required value="{{ existing_data['lon'] }}" step="any">
                 </div>
                 <div class="form-group">
                     <label for="gmp">GDP locality (billion USD):</label>
