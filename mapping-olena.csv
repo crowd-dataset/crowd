@@ -8612,4 +8612,4 @@ id,locality,locality_aka,state,country,iso3,continent,lat,lon,gmp,population_loc
 8611,Chalus,[],,Iran,IRN,Asia,36.655,51.4204,0.0,69638,87134000.0,21.5,88.92,168.0,32.0,35.9,0.0,[s1rdebv_rc0],[[0]],[[200]],[[1006]],[0],[17062026],[UCHVmHXaEhHBfm04CZux4v8g]
 8612,Marzanabad,[],,Iran,IRN,Asia,36.453598,51.300659,0.0,6698,87134000.0,21.5,88.92,168.0,32.0,35.9,0.0,[s1rdebv_rc0],[[0]],[[2280]],[[2586]],[0],[17062026],[None]
 8613,Siah Bisheh,[],,Iran,IRN,Asia,31.87042,49.6854,0.0,159,87134000.0,21.5,88.92,168.0,32.0,35.9,0.0,[s1rdebv_rc0],[[0]],[[6055]],[[6163]],[0],[17062026],[UCHVmHXaEhHBfm04CZux4v8g]
-8614,Sarein,[],,Iran,IRN,Asia,,,0.0,5459,87134000,21.5,88.92,168,32.0,35.9,0.0,[8tfgRV0QvSo],[[0]],[[1441]],[[1759]],[0],[3062026],[UCHVmHXaEhHBfm04CZux4v8g]
+8614,Sarein,[Sareyn],,Iran,IRN,Asia,38.152310,48.069220,0.0,5459,87134000,21.5,88.92,168,32.0,35.9,0.0,[8tfgRV0QvSo],[[0]],[[1441]],[[1759]],[0],[3062026],[UCHVmHXaEhHBfm04CZux4v8g]
