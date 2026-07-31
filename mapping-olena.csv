@@ -8608,3 +8608,8 @@ id,locality,locality_aka,state,country,iso3,continent,lat,lon,gmp,population_loc
 8607,Woking,[],,United Kingdom,GBR,Europe,51.3201891,-0.5564726,0.0,103932,66912637.0,3.2,0.0,171.0,40.6,32.4,0.0,"[I-EzXMpRtVU,k4WRHetbPXc,FooSpyFBRuY]","[[0],[0],[0]]","[[0],[861],[0]]","[[512],[1552],[542]]","[0,0,0]","[6082023,5082023,23072023]","[UC1qHA76Td303Zbq30b91rIA,UC1qHA76Td303Zbq30b91rIA,UC1qHA76Td303Zbq30b91rIA]"
 8608,Addlestone,[],,United Kingdom,GBR,Europe,51.3711193,-0.4895776,0.0,14978,66912637.0,3.2,0.0,171.0,40.6,32.4,12.2,[I-EzXMpRtVU],[[0]],[[771]],[[1001]],[0],[6082023],[UC1qHA76Td303Zbq30b91rIA]
 8609,Farnborough,[],,United Kingdom,GBR,Europe,51.2918693,-0.7539836,0.0,60652,66912637.0,3.2,0.0,171.0,40.6,32.4,0.0,[c8m_BXaMDrg],[[0]],[[0]],[[841]],[0],[5092021],[UC1qHA76Td303Zbq30b91rIA]
+8610,Ardabil,[],,Iran,IRN,Asia,38.2498,48.2933,0.0,410753,87134000.0,21.5,88.92,168.0,32.0,35.9,0.0,"[SuEyr9XDU3w,8tfgRV0QvSo]","[[0],[0]]","[[300],[79]]","[[578],[292]]","[0,0]","[20062026,3062026]","[UCHVmHXaEhHBfm04CZux4v8g,UCHVmHXaEhHBfm04CZux4v8g]"
+8611,Chalus,[],,Iran,IRN,Asia,36.655,51.4204,0.0,69638,87134000.0,21.5,88.92,168.0,32.0,35.9,0.0,[s1rdebv_rc0],[[0]],[[200]],[[1006]],[0],[17062026],[UCHVmHXaEhHBfm04CZux4v8g]
+8612,Marzanabad,[],,Iran,IRN,Asia,36.453598,51.300659,0.0,6698,87134000.0,21.5,88.92,168.0,32.0,35.9,0.0,[s1rdebv_rc0],[[0]],[[2280]],[[2586]],[0],[17062026],[None]
+8613,Siah Bisheh,[],,Iran,IRN,Asia,31.87042,49.6854,0.0,159,87134000.0,21.5,88.92,168.0,32.0,35.9,0.0,[s1rdebv_rc0],[[0]],[[6055]],[[6163]],[0],[17062026],[UCHVmHXaEhHBfm04CZux4v8g]
+8614,Sarein,[],,Iran,IRN,Asia,,,0.0,5459,87134000,21.5,88.92,168,32.0,35.9,0.0,[8tfgRV0QvSo],[[0]],[[1441]],[[1759]],[0],[3062026],[UCHVmHXaEhHBfm04CZux4v8g]
