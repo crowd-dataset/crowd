@@ -13,102 +13,195 @@ If you use this work for academic work please cite the following paper:
 The code is open-source and free to use. It is aimed for, but not limited to, academic research. We welcome forking of this repository, pull requests, and any contributions in the spirit of open science and open-source code. For inquiries about collaboration, you may contact Md Shadab Alam (md_shadab_alam@outlook.com) or Pavlo Bazilinskyy (pavlo.bazilinskyy@gmail.com).
 
 ## Getting started
-[![Python Version](https://img.shields.io/badge/python-3.12.13-blue.svg)](https://www.python.org/downloads/release/python-31213/)
-[![Package Manager: uv](https://img.shields.io/badge/package%20manager-uv-green)](https://docs.astral.sh/uv/)
 
 Tested with **Python 3.12.13** and the [`uv`](https://docs.astral.sh/uv/) package manager.
-Follow these steps to set up the project.
 
-**Step 1:** Install `uv`. `uv` is a fast Python package and environment manager. Install it using one of the following methods:
+The project is configured to automatically select the appropriate PyTorch backend. On systems with a supported NVIDIA GPU and CUDA driver, `uv` installs a CUDA enabled version of PyTorch. If no supported GPU is detected, it automatically falls back to the CPU version.
 
-**macOS / Linux (bash/zsh):**
+### Step 1: Install `uv`
+
+`uv` is a fast Python package and environment manager.
+
+**macOS / Linux:**
+
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
-**Windows (PowerShell):**
+**Windows PowerShell:**
+
 ```powershell
 irm https://astral.sh/uv/install.ps1 | iex
 ```
 
-**Alternative (if you already have Python and pip):**
+**Alternative, if Python and pip are already installed:**
+
 ```bash
 pip install uv
 ```
 
-**Step 2:** Fix permissions (if needed):
+### Step 2: Fix permissions if needed
 
-Sometimes `uv` needs to create a folder under `~/.local/share/uv/python` (macOS/Linux) or `%LOCALAPPDATA%\uv\python` (Windows).
-If this folder was created by another tool (e.g. `sudo`), you may see an error like:
-```lua
+In some environments, `uv` may need to create directories under:
+
+**macOS / Linux:**
+
+```text
+~/.local/share/uv/python
+```
+
+**Windows:**
+
+```text
+%LOCALAPPDATA%\uv\python
+```
+
+If these directories were previously created by another user or with elevated privileges, you may encounter an error such as:
+
+```text
 error: failed to create directory ... Permission denied (os error 13)
 ```
 
-To fix it, ensure you own the directory:
+#### macOS / Linux
 
-### macOS / Linux
 ```bash
 mkdir -p ~/.local/share/uv
 chown -R "$(id -un)":"$(id -gn)" ~/.local/share/uv
 chmod -R u+rwX ~/.local/share/uv
 ```
 
-### Windows
+#### Windows PowerShell
+
 ```powershell
-# Create directory if it doesn't exist
 New-Item -ItemType Directory -Force "$env:LOCALAPPDATA\uv"
 
-# Ensure you (the current user) own it
-# (usually not needed, but if permissions are broken)
 icacls "$env:LOCALAPPDATA\uv" /grant "$($env:UserName):(OI)(CI)F"
 ```
 
-**Step 3:** After installing, verify:
+### Step 3: Verify `uv`
+
+Check that `uv` is available:
+
 ```bash
 uv --version
 ```
 
-**Step 4:** Clone the repository:
-```command line
+### Step 4: Clone the repository
+
+```bash
 git clone https://github.com/crowd-dataset/crowd.git
 cd crowd
 ```
 
-**Step 5:** Ensure correct Python version. If you don’t already have Python 3.12.13 installed, let `uv` fetch it:
-```command line
+### Step 5: Install Python 3.12.13
+
+The project is tested with **Python 3.12.13**.
+
+Install it using `uv`:
+
+```bash
 uv python install 3.12.13
 ```
-The repo should contain a .python-version file so `uv` will automatically use this version.
 
-**Step 6:** Create and sync the virtual environment. This will create **.venv** in the project folder and install dependencies exactly as locked in **uv.lock**:
-```command line
-uv sync --frozen
+The repository contains a `.python-version` file so that `uv` can automatically select the correct Python version.
+
+### Step 6: Create the virtual environment
+
+Create a virtual environment in `.venv` using Python 3.12.13:
+
+```bash
+uv venv --python 3.12.13
 ```
 
-**Step 7:** Activate the virtual environment:
+### Step 7: Activate the virtual environment
 
-**macOS / Linux (bash/zsh):**
+**macOS / Linux:**
+
 ```bash
 source .venv/bin/activate
 ```
 
-**Windows (PowerShell):**
+**Windows PowerShell:**
+
 ```powershell
 .\.venv\Scripts\Activate.ps1
 ```
 
-**Windows (cmd.exe):**
+**Windows Command Prompt:**
+
 ```bat
 .\.venv\Scripts\activate.bat
 ```
 
-**Step 8:** Ensure that dataset are present. Place required datasets (including **mapping.csv**) into the **data/** directory:
+### Step 8: Install the dependencies
 
+Install the project dependencies from `pyproject.toml`:
 
-**Step 9:** Run the code:
-```command line
-python3 analysis.py
+```bash
+uv pip install -r pyproject.toml
 ```
+
+The project uses:
+
+```toml
+[tool.uv.pip]
+torch-backend = "auto"
+```
+
+This allows `uv` to automatically select the appropriate PyTorch backend for the current machine.
+
+For example:
+
+* NVIDIA GPU with a compatible CUDA driver → CUDA enabled PyTorch
+* No supported GPU → CPU PyTorch
+
+No manual selection of a CUDA version should normally be required.
+
+> **Note:** Do not use `uv sync` for the initial installation if automatic PyTorch backend detection is required. Automatic `torch-backend` selection currently applies to the `uv pip` interface.
+
+### Step 9: Verify the PyTorch backend
+
+Check which PyTorch backend was installed:
+
+```bash
+python -c "import torch; print('PyTorch:', torch.__version__); print('CUDA available:', torch.cuda.is_available()); print('CUDA version:', torch.version.cuda); print('Device:', torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CPU')"
+```
+
+On an NVIDIA CUDA system, the output should look similar to:
+
+```text
+PyTorch: 2.8.0+cu129
+CUDA available: True
+CUDA version: 12.9
+Device: NVIDIA GeForce RTX 5090
+```
+
+On a machine without a supported GPU, `CUDA available` will be `False` and the CPU version of PyTorch will be used.
+
+### Step 10: Add the datasets
+
+Place the required datasets, including `mapping.csv`, in the `data/` directory.
+
+The expected structure is:
+
+```text
+crowd/
+├── data/
+│   ├── mapping.csv
+│   └── ...
+├── analysis.py
+├── pyproject.toml
+└── ...
+```
+
+### Step 11: Run the analysis
+
+Run:
+
+```bash
+python analysis.py
+```
+
 
 ### Configuration of project
 Configuration of the project needs to be defined in `config`. Please use the `default.config` file for the required structure of the file. If no custom config file is provided, `default.config` is used. The config file has the following parameters:

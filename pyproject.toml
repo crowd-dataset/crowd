@@ -32,3 +32,5 @@ dependencies = [
     "yt-dlp>=2025.0.0",
 ]
 
+[tool.uv.pip]
+torch-backend = "auto"
