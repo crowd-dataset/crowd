@@ -755,6 +755,10 @@ def form():
 
                 yt_upload_date = yt.publish_date
                 yt_channel = _normalize_optional_text(getattr(yt, 'channel_id', None))
+                # if not yt_channel:
+                #     channel_url = getattr(yt, 'channel_url', None)  # e.g. https://www.youtube.com/channel/UC...
+                #     if channel_url:
+                #         yt_channel = channel_url.rstrip('/').split('/')[-1]
 
                 for n in range(6):
                     try:
