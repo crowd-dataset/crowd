@@ -357,5 +357,15 @@ The form accepts the following shortcuts and click events:
 ## Contact
 If you have any questions or suggestions, feel free to reach out to md_shadab_alam@outlook.com or pavlo.bazilinskyy@gmail.com.
 
-## License
-This project is licensed under the MIT License - see the LICENSE file for details.
+## Licence
+
+**Code:** MIT License  
+**CROWD dataset:** Creative Commons Attribution 4.0 International (CC BY 4.0)
+
+The dataset licence covers CROWD generated structured data, annotations,
+and derived computer vision outputs. It does not cover the underlying
+YouTube videos or other third party content.
+
+CROWD does not redistribute the original YouTube videos, extracted frames,
+or images. Source videos remain subject to the rights of their respective
+owners and YouTube's Terms of Service.
