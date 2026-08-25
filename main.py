@@ -7,8 +7,8 @@
 #     * downloads go to videos[-1], and
 #     * if a file already exists in videos[-1] and FTP is available, we refresh it:
 #         download to a temp folder → delete old file → replace with fresh copy.
-# - For each segment, run bbox and/or segmentation only if the corresponding CSV
-#   is missing; otherwise skip work. If both modes are False, still download mp4s.
+# - For each segment, run bounding box tracking only if the corresponding CSV
+#   is missing; otherwise skip work. If tracking is disabled, still download mp4s.
 # - Cleans temp files and emails a summary or crash report.
 # -----------------------------------------------------------------------------
 
@@ -119,8 +119,7 @@ def process_mapping_concurrently(mapping, config, secret, logger) -> int:
     # can accidentally match the old marker pattern "{video_id}_{start_time}_*".
     # That made videos whose IDs start with '-' download successfully, then get
     # finalised without trimming or YOLO processing.  The pipeline now decides
-    # completion only from the actual expected output CSVs in data/*/bbox and
-    # data/*/seg.
+    # completion only from the actual expected output CSVs in data/*/bbox.
 
     # Snellius multi-task sharding (1 task == 1 GPU)
     snellius_mode = bool(getattr(config, "snellius_mode", False))
@@ -185,25 +184,23 @@ def process_mapping_concurrently(mapping, config, secret, logger) -> int:
 
     # ------------------------------------------------------------------
     # Decide which videos actually need downloading/processing.
-    # - If both modes False: always download (archival).
-    # - Otherwise: download only if any required output is missing (wildcard FPS).
+    # - If bbox tracking is disabled: always download (archival).
+    # - Otherwise: download only if any required bbox output is missing (wildcard FPS).
     # ------------------------------------------------------------------
     bbox_mode_cfg = bool(getattr(config, "tracking_mode", False))
-    seg_mode_cfg = bool(getattr(config, "segmentation_mode", False))
 
     vids_to_handle = []
     for vid, info in video_plan.items():
         segments = info["segments"]
 
-        if not (bbox_mode_cfg or seg_mode_cfg):
+        if not bbox_mode_cfg:
             vids_to_handle.append(vid)
             continue
 
         needs_any = False
         for st, _, _ in segments:
             has_bbox = any(glob.glob(os.path.join(folder, "bbox", f"{vid}_{st}_*.csv")) for folder in data_folders)
-            has_seg = any(glob.glob(os.path.join(folder, "seg",  f"{vid}_{st}_*.csv")) for folder in data_folders)
-            if (bbox_mode_cfg and not has_bbox) or (seg_mode_cfg and not has_seg):
+            if bbox_mode_cfg and not has_bbox:
                 needs_any = True
                 break
 
@@ -403,7 +400,7 @@ def process_mapping_concurrently(mapping, config, secret, logger) -> int:
     # ------------------------------------------------------------------
     # Segment processing worker
     # ------------------------------------------------------------------
-    def _process_segment(vid: str, base_video_path: str, output_path: str, video_fps: float, st: int, et: int, tod: str, run_bbox: bool, run_seg: bool) -> int:  # noqa: E501
+    def _process_segment(vid: str, base_video_path: str, output_path: str, video_fps: float, st: int, et: int, tod: str, run_bbox: bool) -> int:  # noqa: E501
         h = _get_worker_helper()
         h.set_video_title(vid)
 
@@ -419,7 +416,7 @@ def process_mapping_concurrently(mapping, config, secret, logger) -> int:
         trimmed_video_path = os.path.join(tmp_dir, f"yt_{vid}_{st}_{et}_{int(video_fps)}_mod_{uuid.uuid4().hex}.mp4")
 
         # Trim as needed
-        if run_bbox or run_seg:
+        if run_bbox:
             end_time_adj = int(et) - 1
             if end_time_adj <= int(st):
                 end_time_adj = int(et)
@@ -434,7 +431,6 @@ def process_mapping_concurrently(mapping, config, secret, logger) -> int:
                 output_path,
                 video_title=annotated_name,
                 video_fps=float(video_fps),
-                seg_mode=bool(run_seg),
                 bbox_mode=bool(run_bbox),
                 flag=int(getattr(config, "save_annotated_video", 0)),
                 run_root=seg_run_root,
@@ -455,16 +451,6 @@ def process_mapping_concurrently(mapping, config, secret, logger) -> int:
                 shutil.copy(new_bbox, dest_bbox)
                 processed = 1
 
-        if run_seg:
-            old_seg = os.path.join(seg_run_root, "segment", f"{vid}.csv")
-            new_seg = os.path.join(seg_run_root, "segment", f"{vid}_{st}_{int(video_fps)}.csv")
-            if os.path.isfile(old_seg):
-                os.rename(old_seg, new_seg)
-            dest_seg = os.path.join(data_path, "seg", os.path.basename(new_seg))
-            os.makedirs(os.path.dirname(dest_seg), exist_ok=True)
-            if os.path.isfile(new_seg):
-                shutil.copy(new_seg, dest_seg)
-                processed = 1
 
         # Cleanup
         if getattr(config, "delete_runs_files", True):
@@ -500,7 +486,7 @@ def process_mapping_concurrently(mapping, config, secret, logger) -> int:
     vid_queue = deque(vids_to_handle)
 
     download_futures = {}          # vid -> Future
-    pending = defaultdict(deque)   # vid -> deque[(st, et, tod, run_bbox, run_seg)]
+    pending = defaultdict(deque)   # vid -> deque[(st, et, tod, run_bbox)]
     active = defaultdict(int)      # vid -> active segment tasks
     seg_futures = {}              # Future -> vid
     video_info = {}               # vid -> prepare dict
@@ -606,7 +592,7 @@ def process_mapping_concurrently(mapping, config, secret, logger) -> int:
                 video_info[v] = info
                 fps = info["video_fps"]  # noqa: F841
 
-                if not (bbox_mode_cfg or seg_mode_cfg):
+                if not bbox_mode_cfg:
                     # Download-only mode: nothing else to do.
                     _finalize_video(v)
                     continue
@@ -614,19 +600,15 @@ def process_mapping_concurrently(mapping, config, secret, logger) -> int:
                 for (st, et, tod) in video_plan[v]["segments"]:
                     has_bbox = any(glob.glob(os.path.join(folder, "bbox",
                                                           f"{v}_{st}_*.csv")) for folder in data_folders)
-                    has_seg = any(glob.glob(os.path.join(folder, "seg",
-                                                         f"{v}_{st}_*.csv")) for folder in data_folders)
                     run_bbox = bool(bbox_mode_cfg and not has_bbox)
-                    run_seg = bool(seg_mode_cfg and not has_seg)
 
                     logger.info(
                         f"{v}: segment {st}-{et}s output status: "
-                        f"has_bbox={has_bbox}, has_seg={has_seg}, "
-                        f"run_bbox={run_bbox}, run_seg={run_seg}"
+                        f"has_bbox={has_bbox}, run_bbox={run_bbox}"
                     )
 
-                    if run_bbox or run_seg:
-                        pending[v].append((int(st), int(et), str(tod), run_bbox, run_seg))
+                    if run_bbox:
+                        pending[v].append((int(st), int(et), str(tod), run_bbox))
 
                 # If nothing is required for this video, finalize immediately.
                 if not pending.get(v):
@@ -661,7 +643,7 @@ def process_mapping_concurrently(mapping, config, secret, logger) -> int:
                             if not pending.get(v):
                                 continue
 
-                            st, et, tod, run_bbox, run_seg = pending[v].popleft()
+                            st, et, tod, run_bbox = pending[v].popleft()
                             info = video_info[v]
                             active[v] += 1
 
@@ -672,7 +654,7 @@ def process_mapping_concurrently(mapping, config, secret, logger) -> int:
                                 info["output_path"],
                                 info["video_fps"],
                                 st, et, tod,
-                                run_bbox, run_seg,
+                                run_bbox,
                             )
                             seg_futures[f] = v
                             scheduled_any = True
@@ -743,7 +725,6 @@ if __name__ == "__main__":
             countries_analyse=common.get_configs("countries_analyse"),
             update_pop_country=common.get_configs("update_pop_country"),
             update_gini_value=common.get_configs("update_gini_value"),
-            segmentation_mode=common.get_configs("segmentation_mode"),
             tracking_mode=common.get_configs("tracking_mode"),
             save_annotated_video=common.get_configs("save_annotated_video"),
             sleep_sec=common.get_configs("sleep_sec"),
@@ -813,7 +794,7 @@ if __name__ == "__main__":
             delete_runs_files = config.delete_runs_files
             delete_youtube_video = config.delete_youtube_video
             data_folders = config.data
-            data_path = config.data[-1]  # final data root (where bbox/seg CSVs land)
+            data_path = config.data[-1]  # final data root (where bbox CSVs land)
             countries_analyse = config.countries_analyse
             counter_processed = 0        # segments processed this pass
 
@@ -832,7 +813,6 @@ if __name__ == "__main__":
             helper.delete_folder(folder_path=getattr(config, "runs_root", "runs"))  # idempotent cleanup
             os.makedirs(data_path, exist_ok=True)
             os.makedirs(os.path.join(data_path, "bbox"), exist_ok=True)
-            os.makedirs(os.path.join(data_path, "seg"), exist_ok=True)
 
             # =========================================================================
             # Iterate mapping rows; each may define multiple videos & segment lists
