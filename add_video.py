@@ -12,6 +12,8 @@ import requests
 from requests.exceptions import RequestException
 import ast
 import json
+import re
+import yt_dlp
 from geopy.geocoders import Nominatim
 from geopy.exc import GeocoderTimedOut, GeocoderUnavailable, GeocoderServiceError
 from datetime import datetime
@@ -310,6 +312,57 @@ def _normalize_optional_text(value):
 
     text = str(value).strip()
     return text or None
+
+
+def _fetch_channel_id_from_html(video_url, timeout=10):
+    """Fallback: fetch the raw video page HTML and regex out channelId.
+
+    pytubefix's channel_id can come back empty depending on which
+    internal client (ANDROID_VR/WEB/etc.) served the response, so as a
+    last resort we scrape the plain video page HTML directly, where
+    YouTube embeds the value as e.g. "channelId":"UCxxxxxxxx".
+    """
+    try:
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/124.0.0.0 Safari/537.36"
+            )
+        }
+        resp = requests.get(video_url, headers=headers, timeout=timeout)
+        resp.raise_for_status()
+        match = re.search(r'"channelId":"(UC[a-zA-Z0-9_-]{10,})"', resp.text)
+        if match:
+            return match.group(1)
+    except Exception:
+        pass
+
+    return None
+
+
+def _fetch_channel_id_from_ytdlp(video_url):
+    """Fallback: use yt-dlp to extract the channel id.
+ 
+    yt-dlp is far more actively maintained against YouTube's changes
+    than pytubefix, so it's tried before falling back to raw HTML
+    scraping.
+    """
+    if yt_dlp is None:
+        return None
+ 
+    try:
+        ydl_opts = {
+            "quiet": True,
+            "no_warnings": True,
+            "skip_download": True,
+            "extract_flat": False,
+        }
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(video_url, download=False)
+        return _normalize_optional_text(info.get("channel_id")) if info else None
+    except Exception:
+        return None
 
 
 def _parse_videos_cell(videos_cell):
@@ -755,10 +808,12 @@ def form():
 
                 yt_upload_date = yt.publish_date
                 yt_channel = _normalize_optional_text(getattr(yt, 'channel_id', None))
-                # if not yt_channel:
-                #     channel_url = getattr(yt, 'channel_url', None)  # e.g. https://www.youtube.com/channel/UC...
-                #     if channel_url:
-                #         yt_channel = channel_url.rstrip('/').split('/')[-1]
+                # fallback using html code
+                if not yt_channel:
+                    yt_channel = _fetch_channel_id_from_html(video_url)
+                # fallback using yt_dlp
+                if not yt_channel:
+                    yt_channel = _fetch_channel_id_from_ytdlp(video_url)
 
                 for n in range(6):
                     try:
@@ -926,6 +981,12 @@ def form():
                 video_matches_anywhere = find_video_occurrences(df, video_id)
                 yt_upload_date = yt.publish_date
                 yt_channel = _normalize_optional_text(getattr(yt, 'channel_id', None))
+                # fallback using html code
+                if not yt_channel:
+                    yt_channel = _fetch_channel_id_from_html(video_url)
+                # fallback using yt_dlp
+                if not yt_channel:
+                    yt_channel = _fetch_channel_id_from_ytdlp(video_url)
 
                 for n in range(6):
                     try:
