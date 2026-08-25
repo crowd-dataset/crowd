@@ -1330,7 +1330,7 @@ class Youtube_Helper:
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')  # type: ignore
         if bbox_mode and self.display_frame_tracking:
             bbox_video_writer = cv2.VideoWriter(
-                bbox_display_video_output_path, fourcc, video_fps, (frame_width, frame_height)
+                bbox_display_video_output_path, fourcc, video_fps, (frame_width, frame_height)  # type: ignore
             )
 
         # Progress bar
@@ -1361,7 +1361,7 @@ class Youtube_Helper:
 
             if bbox_mode:
                 try:
-                    bbox_results = bbox_model.track(
+                    bbox_results = bbox_model.track(  # type: ignore
                         frame,
                         tracker=bbox_tracker_path,
                         persist=True,
@@ -1400,7 +1400,7 @@ class Youtube_Helper:
                             bbox_annotated_frame = frame.copy()
                     else:
                         logger.info(f"[Frame {frame_count}] BBox: No objects found. Using original frame.")
-                        with open(bbox_text_filename, 'w') as file:  # noqa:F841
+                        with open(bbox_text_filename, 'w') as file:  # noqa:F841   # type: ignore
                             pass
                 except Exception as e:
                     logger.error(f"[Frame {frame_count}] BBox failed: {e}. Using original frame.")
@@ -1411,7 +1411,8 @@ class Youtube_Helper:
             # Save annotated frames
             if self.save_annoted_img:
                 if bbox_mode:
-                    bbox_frame_filename = os.path.join(bbox_annotated_frame_output_path, f"frame_{frame_count}.jpg")
+                    bbox_frame_filename = os.path.join(bbox_annotated_frame_output_path,  # type: ignore
+                                                       f"frame_{frame_count}.jpg")
                     cv2.imwrite(bbox_frame_filename, bbox_annotated_frame)
 
             # Save txt files (only if detections found and not failed)
@@ -1469,7 +1470,7 @@ class Youtube_Helper:
                 if bbox_mode and not bbox_failed and bbox_boxes_xywh is not None and bbox_boxes_xywh.size(0) > 0:
                     for box, track_id in zip(bbox_boxes_xywh, bbox_track_ids):
                         x, y, w, h = box
-                        track = bbox_track_history[track_id]
+                        track = bbox_track_history[track_id]  # type: ignore
                         track.append((float(x), float(y)))
                         if len(track) > 30:
                             track.pop(0)
@@ -1483,12 +1484,13 @@ class Youtube_Helper:
             if self.display_frame_tracking:
                 if bbox_mode:
                     cv2.imshow("YOLOv11 Tracking", bbox_annotated_frame)
-                    bbox_video_writer.write(bbox_annotated_frame)
+                    bbox_video_writer.write(bbox_annotated_frame)  # type: ignore
 
             # Save the tracked frame here
             if self.save_tracked_img:
                 if bbox_mode:
-                    bbox_frame_filename = os.path.join(bbox_tracked_frame_output_path, f"frame_tracked_{frame_count}.jpg")  # noqa: E501
+                    bbox_frame_filename = os.path.join(bbox_tracked_frame_output_path,  # type: ignore
+                                                       f"frame_tracked_{frame_count}.jpg")
                     cv2.imwrite(bbox_frame_filename, bbox_annotated_frame)
 
             # Break the loop if 'q' is pressed, only when display is enabled
@@ -1505,7 +1507,7 @@ class Youtube_Helper:
         if flag:
             if bbox_mode:
                 self.create_video_from_images(
-                    image_folder=bbox_tracked_frame_output_path,
+                    image_folder=bbox_tracked_frame_output_path,  # type: ignore
                     output_path=output_video_path,
                     video_title=video_title,
                     bbox_mode=bbox_mode,

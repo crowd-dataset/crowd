@@ -451,7 +451,6 @@ def process_mapping_concurrently(mapping, config, secret, logger) -> int:
                 shutil.copy(new_bbox, dest_bbox)
                 processed = 1
 
-
         # Cleanup
         if getattr(config, "delete_runs_files", True):
             try:
@@ -850,18 +849,19 @@ if __name__ == "__main__":
     # =============================================================================
     except Exception as e:
         try:
-            if config.email_send and (not getattr(config, "snellius_mode", False) or getattr(config, "snellius_rank", 0) == 0):  # noqa: E501
+            if config.email_send and (not getattr(config, "snellius_mode",  # type: ignore
+                                                  False) or getattr(config, "snellius_rank", 0) == 0):  # type: ignore
                 time_now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 # kept from original (fun image): fine to send as plain link or ignore
                 image_url = "https://i.pinimg.com/474x/20/82/0f/20820fd73c946d3e1d2e6efe23e1b2f3.jpg"
                 common.send_email(
-                    subject=f"‼️ Processing job crashed on machine {config.machine_name}",
+                    subject=f"‼️ Processing job crashed on machine {config.machine_name}",  # type: ignore
                     content=(
-                        f"Processing job crashed on {config.machine_name} at {time_now}. "
-                        f"{counter_processed} segments were processed. Error message: {e}."
+                        f"Processing job crashed on {config.machine_name} at {time_now}. "  # type: ignore
+                        f"{counter_processed} segments were processed. Error message: {e}."  # type: ignore
                     ),
-                    sender=config.email_sender,
-                    recipients=config.email_recipients
+                    sender=config.email_sender,  # type: ignore
+                    recipients=config.email_recipients  # type: ignore
                 )
         except Exception:
             # If config/email not ready or mail fails, swallow and re-raise
