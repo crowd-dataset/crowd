@@ -992,7 +992,8 @@ def form():
             try:
                 video_id = _extract_video_id(video_url)  # pyright: ignore[reportArgumentType]
                 video_matches_anywhere = find_video_occurrences(df, video_id)
-                yt_upload_date = ''
+                yt_upload_date = request.form.get('yt_upload_date', '')
+                yt_description = request.form.get('yt_description', '')
                 yt_channel = None
 
                 # Only hit the network if the submitted form is missing
