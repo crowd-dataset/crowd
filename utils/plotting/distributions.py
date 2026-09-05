@@ -378,7 +378,7 @@ class Distributions:
                 showgrid=False
             ),
             yaxis=dict(
-                range=[0, 3250],
+                range=[0, 3400],
                 rangemode='tozero',
                 dtick=250,
                 ticks='outside',

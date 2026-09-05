@@ -19,8 +19,23 @@ io_class = IO()
 
 
 class Maps:
+    _CARTO_TILE = ("https://basemaps.cartocdn.com/rastertiles/light_all"
+                   "/{{z}}/{{x}}/{{y}}.png?key={key}")
+
     def __init__(self) -> None:
-        pass
+        self._carto_key = common.get_secrets("carto_api_key")
+
+    def _apply_carto_key(self, fig) -> None:
+        """Replace built-in CARTO style with a keyed raster layer to remove the watermark."""
+        if not self._carto_key:
+            return
+        tile_url = self._CARTO_TILE.format(key=self._carto_key)
+        layer = dict(below="traces", sourcetype="raster", source=[tile_url])
+        # scatter_map uses 'map' layout; density_mapbox uses 'mapbox' layout
+        if fig.data and "mapbox" in fig.data[0].type:
+            fig.update_layout(mapbox=dict(style="white-bg", layers=[layer]))
+        else:
+            fig.update_layout(map=dict(style="white-bg", layers=[layer]))
 
     @staticmethod
     def _default_locality_image_items() -> list[dict]:
@@ -1405,6 +1420,7 @@ class Maps:
                         )
                     )
 
+        self._apply_carto_key(fig)
         io_class.save_plotly_figure(fig, file_name, save_final=save_final)
 
     def world_map_ss(self, df, *, title=None, projection="natural earth", df_mapping=None, show_images=False,
@@ -1945,6 +1961,7 @@ class Maps:
         )
 
         # Save the figure if requested
+        self._apply_carto_key(fig)
         io_class.save_plotly_figure(fig, file_name, save_final=save_final)
 
     def world_map(self, df_mapping):
