@@ -2134,11 +2134,11 @@ def count_detections(df_mapping: pl.DataFrame) -> tuple[pl.DataFrame, int] | Non
 
 
 def _md_table(df: pl.DataFrame) -> str:
-    """Render a DataFrame as a Markdown table, formatting numbers with thousands separators."""
+    """Render a DataFrame as a numbered Markdown table, formatting numbers with thousands separators."""
     def fmt(v):
         return f"{v:,.1f}" if isinstance(v, float) else f"{v:,}" if isinstance(v, int) else str(v)
-    lines = ["| " + " | ".join(df.columns) + " |", "|" + "---|" * len(df.columns)]
-    lines += ["| " + " | ".join(fmt(v) for v in row) + " |" for row in df.iter_rows()]
+    lines = ["| # | " + " | ".join(df.columns) + " |", "|" + "---|" * (len(df.columns) + 1)]
+    lines += [f"| {i} | " + " | ".join(fmt(v) for v in row) + " |" for i, row in enumerate(df.iter_rows(), 1)]
     return "\n".join(lines)
 
 
@@ -2173,7 +2173,7 @@ def build_readme_stats(df_mapping: pl.DataFrame, detections: tuple[pl.DataFrame,
           .sort("seconds", descending=True)
           .select("Country", "Cities", "Videos", hours, *det_cols)
     )
-    city = pl.concat_str([flag, pl.lit(" "), pl.col("locality"), pl.lit(", ") + pl.col("state")], ignore_nulls=True)
+    city = pl.concat_str([pl.col("locality"), pl.lit(", ") + pl.col("state")], ignore_nulls=True)
     cities = (
         df.sort("seconds", descending=True).head(README_TOP_CITIES)
           .select(city.alias("City"), "Country", "Videos", hours, *det_cols)
