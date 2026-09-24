@@ -17,453 +17,453 @@ The dataset is available on [kaggle](https://www.kaggle.com/datasets/anonymousau
 
 <details><summary><b>All 238 countries and territories</b></summary>
 
-| Country | Cities | Videos | Footage (h) |
-|---|---|---|---|
-| 🇺🇸 United States | 1,818 | 16,107 | 9,119.4 |
-| 🇬🇧 United Kingdom | 354 | 3,112 | 1,650.4 |
-| 🇦🇺 Australia | 204 | 3,462 | 1,483.4 |
-| 🇷🇺 Russia | 170 | 2,530 | 1,308.4 |
-| 🇵🇭 Philippines | 398 | 3,569 | 1,308.2 |
-| 🇨🇦 Canada | 223 | 3,027 | 1,158.6 |
-| 🇻🇳 Vietnam | 68 | 2,918 | 1,134.6 |
-| 🇮🇩 Indonesia | 176 | 3,095 | 997.2 |
-| 🇰🇷 South Korea | 84 | 847 | 816.4 |
-| 🇫🇷 France | 359 | 1,890 | 744.7 |
-| 🇨🇳 China | 148 | 1,224 | 691.2 |
-| 🇩🇪 Germany | 235 | 1,368 | 648.6 |
-| 🇧🇷 Brazil | 129 | 1,415 | 590.4 |
-| 🇯🇵 Japan | 219 | 1,696 | 584.2 |
-| 🇳🇱 Netherlands | 231 | 1,442 | 547.2 |
-| 🇮🇳 India | 294 | 1,489 | 476.7 |
-| 🇺🇦 Ukraine | 94 | 1,083 | 443.1 |
-| 🇹🇭 Thailand | 49 | 790 | 385.1 |
-| 🇲🇲 Myanmar | 19 | 536 | 371.6 |
-| 🇦🇪 United Arab Emirates | 10 | 843 | 350.6 |
-| 🇵🇱 Poland | 280 | 859 | 338.0 |
-| 🇮🇷 Iran | 109 | 980 | 317.3 |
-| 🇲🇾 Malaysia | 65 | 593 | 280.4 |
-| 🇹🇷 Türkiye | 87 | 565 | 268.7 |
-| 🇸🇪 Sweden | 167 | 961 | 266.5 |
-| 🇮🇹 Italy | 168 | 670 | 261.4 |
-| 🇦🇷 Argentina | 64 | 410 | 255.9 |
-| 🇩🇰 Denmark | 22 | 562 | 255.3 |
-| 🇷🇴 Romania | 91 | 633 | 242.6 |
-| 🇫🇮 Finland | 41 | 382 | 238.9 |
-| 🇪🇸 Spain | 251 | 650 | 227.6 |
-| 🇰🇭 Cambodia | 7 | 427 | 222.6 |
-| 🇨🇿 Czechia | 82 | 374 | 214.6 |
-| 🇦🇹 Austria | 45 | 849 | 202.5 |
-| 🇺🇬 Uganda | 19 | 516 | 193.1 |
-| 🇭🇺 Hungary | 34 | 469 | 171.8 |
-| 🇵🇰 Pakistan | 38 | 415 | 163.5 |
-| 🇧🇬 Bulgaria | 89 | 643 | 162.6 |
-| 🇳🇿 New Zealand | 160 | 595 | 159.5 |
-| 🇸🇬 Singapore | 1 | 399 | 155.2 |
-| 🇻🇪 Venezuela | 15 | 599 | 148.2 |
-| 🇮🇪 Ireland | 55 | 491 | 142.4 |
-| 🇧🇾 Belarus | 83 | 281 | 139.3 |
-| 🇳🇴 Norway | 68 | 421 | 139.3 |
-| 🇲🇽 Mexico | 71 | 274 | 135.9 |
-| 🇿🇦 South Africa | 55 | 444 | 133.1 |
-| 🇸🇾 Syria | 13 | 316 | 124.7 |
-| 🇧🇩 Bangladesh | 29 | 298 | 107.3 |
-| 🇵🇹 Portugal | 73 | 226 | 104.4 |
-| 🇨🇭 Switzerland | 94 | 299 | 98.7 |
-| 🇬🇲 Gambia | 29 | 361 | 95.4 |
-| 🇪🇬 Egypt | 20 | 211 | 85.9 |
-| 🇸🇱 Sierra Leone | 46 | 183 | 79.1 |
-| 🇯🇴 Jordan | 13 | 250 | 78.3 |
-| 🇭🇷 Croatia | 89 | 281 | 71.9 |
-| 🇨🇱 Chile | 43 | 160 | 71.9 |
-| 🇲🇳 Mongolia | 4 | 130 | 71.4 |
-| 🇬🇷 Greece | 40 | 196 | 66.9 |
-| 🇨🇾 Cyprus | 17 | 252 | 66.5 |
-| 🇪🇪 Estonia | 6 | 302 | 65.3 |
-| 🇧🇪 Belgium | 61 | 190 | 62.9 |
-| 🇧🇦 Bosnia and Herzegovina | 60 | 291 | 62.0 |
-| 🇭🇰 Hong Kong | 11 | 161 | 60.9 |
-| 🇨🇴 Colombia | 36 | 128 | 60.1 |
-| 🇳🇬 Nigeria | 34 | 152 | 57.5 |
-| 🇺🇿 Uzbekistan | 12 | 178 | 53.7 |
-| 🇵🇪 Peru | 29 | 94 | 53.1 |
-| 🇲🇦 Morocco | 35 | 135 | 47.6 |
-| 🇱🇰 Sri Lanka | 14 | 126 | 47.3 |
-| 🇷🇸 Serbia | 34 | 143 | 47.1 |
-| 🇦🇿 Azerbaijan | 8 | 112 | 45.5 |
-| 🇶🇦 Qatar | 5 | 98 | 44.3 |
-| 🇹🇼 Taiwan | 13 | 91 | 43.7 |
-| 🇸🇦 Saudi Arabia | 11 | 109 | 43.5 |
-| 🇬🇪 Georgia | 11 | 117 | 42.4 |
-| 🇪🇹 Ethiopia | 8 | 72 | 42.4 |
-| 🇳🇵 Nepal | 4 | 120 | 38.2 |
-| 🇱🇻 Latvia | 20 | 123 | 38.0 |
-| 🇱🇧 Lebanon | 60 | 154 | 35.2 |
-| 🇨🇺 Cuba | 25 | 168 | 34.6 |
-| 🇱🇹 Lithuania | 10 | 84 | 33.5 |
-| 🇰🇿 Kazakhstan | 24 | 109 | 30.4 |
-| 🇲🇼 Malawi | 48 | 104 | 29.9 |
-| 🇰🇪 Kenya | 55 | 110 | 26.3 |
-| 🇺🇾 Uruguay | 23 | 90 | 25.3 |
-| 🇲🇰 North Macedonia | 21 | 72 | 24.4 |
-| 🇲🇩 Moldova | 14 | 107 | 24.2 |
-| 🇦🇲 Armenia | 10 | 77 | 23.9 |
-| 🇱🇦 Laos | 10 | 60 | 22.9 |
-| 🇪🇨 Ecuador | 15 | 55 | 22.8 |
-| 🇧🇴 Bolivia | 20 | 55 | 21.5 |
-| 🇲🇨 Monaco | 1 | 44 | 19.5 |
-| 🇮🇱 Israel | 18 | 67 | 19.5 |
-| 🇽🇰 Kosovo | 31 | 93 | 15.4 |
-| 🇬🇹 Guatemala | 9 | 23 | 15.3 |
-| 🇦🇱 Albania | 23 | 62 | 14.8 |
-| 🇩🇿 Algeria | 10 | 35 | 14.5 |
-| 🇱🇾 Libya | 3 | 39 | 13.2 |
-| 🇮🇸 Iceland | 14 | 39 | 12.8 |
-| 🇹🇲 Turkmenistan | 1 | 85 | 12.0 |
-| 🇨🇬 Congo (Congo-Brazzaville) | 3 | 30 | 11.8 |
-| 🇬🇭 Ghana | 10 | 39 | 11.4 |
-| 🇮🇶 Iraq | 10 | 40 | 11.4 |
-| 🇴🇲 Oman | 10 | 32 | 10.9 |
-| 🇵🇷 Puerto Rico | 21 | 40 | 10.8 |
-| 🇸🇻 El Salvador | 6 | 13 | 10.8 |
-| 🇭🇳 Honduras | 8 | 23 | 10.3 |
-| 🇲🇪 Montenegro | 22 | 65 | 10.2 |
-| 🇵🇦 Panama | 7 | 22 | 9.4 |
-| 🇹🇿 Tanzania | 14 | 50 | 9.1 |
-| 🇬🇾 Guyana | 6 | 20 | 9.0 |
-| 🇧🇭 Bahrain | 11 | 42 | 8.8 |
-| 🇸🇮 Slovenia | 25 | 47 | 8.5 |
-| 🇰🇬 Kyrgyzstan | 7 | 40 | 8.4 |
-| 🇯🇲 Jamaica | 10 | 30 | 8.3 |
-| 🇵🇸 Palestine | 10 | 31 | 8.3 |
-| 🇬🇮 Gibraltar | 1 | 21 | 7.9 |
-| 🇲🇹 Malta | 31 | 56 | 7.6 |
-| 🇨🇮 Côte d'Ivoire | 2 | 19 | 7.6 |
-| 🇸🇰 Slovakia | 13 | 26 | 7.4 |
-| 🇱🇺 Luxembourg | 12 | 24 | 7.0 |
-| 🇰🇼 Kuwait | 2 | 21 | 6.9 |
-| 🇱🇷 Liberia | 11 | 43 | 6.8 |
-| 🇸🇷 Suriname | 3 | 19 | 6.7 |
-| 🇿🇼 Zimbabwe | 4 | 26 | 6.3 |
-| 🇬🇳 Guinea | 6 | 26 | 6.3 |
-| 🇦🇬 Antigua and Barbuda | 9 | 21 | 6.1 |
-| 🇵🇾 Paraguay | 8 | 18 | 5.9 |
-| 🇻🇨 Saint Vincent and the Grenadines | 11 | 25 | 5.7 |
-| 🇧🇯 Benin | 10 | 16 | 5.6 |
-| 🇨🇫 Central African Republic | 3 | 18 | 5.4 |
-| 🇦🇫 Afghanistan | 8 | 26 | 5.3 |
-| 🇱🇮 Liechtenstein | 16 | 59 | 5.2 |
-| 🇹🇳 Tunisia | 5 | 15 | 5.1 |
-| 🇹🇹 Trinidad and Tobago | 3 | 5 | 4.6 |
-| 🇪🇷 Eritrea | 11 | 27 | 4.6 |
-| 🇳🇮 Nicaragua | 8 | 17 | 4.6 |
-| 🇦🇩 Andorra | 8 | 45 | 4.6 |
-| 🇬🇺 Guam | 10 | 41 | 4.5 |
-| 🇲🇴 Macau | 2 | 15 | 4.5 |
-| 🇰🇵 North Korea | 1 | 19 | 4.4 |
-| 🇨🇷 Costa Rica | 10 | 19 | 4.3 |
-| 🇲🇬 Madagascar | 3 | 11 | 4.3 |
-| 🇵🇫 French Polynesia | 11 | 17 | 4.3 |
-| 🇸🇳 Senegal | 6 | 16 | 4.3 |
-| 🇰🇾 Cayman Islands | 5 | 17 | 4.2 |
-| 🇬🇵 Guadeloupe | 11 | 30 | 4.1 |
-| 🇦🇴 Angola | 2 | 17 | 4.1 |
-| 🇿🇲 Zambia | 4 | 13 | 3.7 |
-| 🇷🇼 Rwanda | 7 | 14 | 3.5 |
-| 🇬🇱 Greenland | 3 | 11 | 3.5 |
-| 🇸🇲 San Marino | 4 | 13 | 3.5 |
-| 🇨🇩 Congo (Democratic Republic) | 3 | 16 | 3.3 |
-| 🇨🇲 Cameroon | 9 | 16 | 3.2 |
-| 🇫🇯 Fiji | 3 | 9 | 3.2 |
-| 🇬🇬 Guernsey | 8 | 20 | 3.1 |
-| 🇱🇨 Saint Lucia | 7 | 20 | 3.1 |
-| 🇬🇦 Gabon | 6 | 17 | 3.0 |
-| 🇭🇹 Haiti | 1 | 6 | 2.9 |
-| 🇩🇴 Dominican Republic | 7 | 9 | 2.9 |
-| 🇸🇴 Somalia | 4 | 15 | 2.8 |
-| 🇲🇺 Mauritius | 7 | 13 | 2.8 |
-| 🇧🇲 Bermuda | 4 | 5 | 2.7 |
-| 🇳🇨 New Caledonia | 1 | 5 | 2.6 |
-| 🇯🇪 Jersey | 10 | 18 | 2.5 |
-| 🇾🇪 Yemen | 3 | 12 | 2.5 |
-| 🇰🇲 Comoros | 3 | 5 | 2.5 |
-| 🇧🇼 Botswana | 4 | 9 | 2.3 |
-| 🇻🇬 British Virgin Islands | 7 | 17 | 2.2 |
-| 🇰🇳 Saint Kitts and Nevis | 3 | 9 | 2.1 |
-| 🇼🇸 Samoa | 1 | 7 | 2.0 |
-| 🇷🇪 Réunion | 4 | 6 | 2.0 |
-| 🇹🇯 Tajikistan | 2 | 9 | 1.9 |
-| 🇸🇸 South Sudan | 1 | 5 | 1.9 |
-| 🇳🇦 Namibia | 4 | 10 | 1.8 |
-| 🇫🇴 Faroe Islands | 21 | 36 | 1.8 |
-| 🇧🇧 Barbados | 3 | 4 | 1.8 |
-| 🇬🇫 French Guiana | 1 | 3 | 1.7 |
-| 🇮🇲 Isle of Man | 8 | 19 | 1.6 |
-| 🇧🇹 Bhutan | 2 | 6 | 1.6 |
-| 🇩🇯 Djibouti | 3 | 5 | 1.5 |
-| 🇱🇸 Lesotho | 10 | 15 | 1.5 |
-| 🇬🇩 Grenada | 4 | 8 | 1.4 |
-| 🇲🇫 Saint Martin | 6 | 9 | 1.3 |
-| 🇧🇮 Burundi | 6 | 9 | 1.3 |
-| 🇲🇿 Mozambique | 5 | 8 | 1.3 |
-| 🇲🇷 Mauritania | 1 | 3 | 1.3 |
-| 🇪🇭 Western Sahara | 3 | 4 | 1.3 |
-| 🇹🇬 Togo | 6 | 11 | 1.2 |
-| 🇵🇬 Papua New Guinea | 2 | 6 | 1.2 |
-| 🇲🇸 Montserrat | 1 | 3 | 1.2 |
-| 🇦🇸 American Samoa | 9 | 13 | 1.1 |
-| 🇧🇸 Bahamas | 2 | 5 | 1.1 |
-| 🇹🇨 Turks and Caicos Islands | 2 | 4 | 1.0 |
-| 🇻🇺 Vanuatu | 1 | 5 | 1.0 |
-| 🇹🇩 Chad | 1 | 4 | 1.0 |
-| 🇻🇮 United States Virgin Islands | 3 | 5 | 1.0 |
-| 🇲🇱 Mali | 1 | 2 | 0.9 |
-| 🇳🇷 Nauru | 11 | 18 | 0.9 |
-| 🇧🇫 Burkina Faso | 1 | 5 | 0.8 |
-| 🇸🇽 Sint Maarten | 4 | 5 | 0.8 |
-| 🇦🇼 Aruba | 2 | 3 | 0.8 |
-| 🇨🇼 Curaçao | 1 | 3 | 0.8 |
-| 🇦🇽 Åland Islands | 1 | 1 | 0.8 |
-| 🇲🇭 Marshall Islands | 3 | 3 | 0.8 |
-| 🇧🇳 Brunei | 3 | 4 | 0.8 |
-| 🏳️ Svalbard and Jan Mayen | 1 | 3 | 0.7 |
-| 🇧🇿 Belize | 3 | 5 | 0.7 |
-| 🇧🇶 Bonaire, Sint Eustatius and Saba | 1 | 1 | 0.7 |
-| 🇬🇶 Equatorial Guinea | 1 | 5 | 0.7 |
-| 🇫🇲 Micronesia | 3 | 3 | 0.6 |
-| 🇳🇪 Niger | 1 | 2 | 0.6 |
-| 🇵🇼 Palau | 4 | 5 | 0.6 |
-| 🇦🇮 Anguilla | 4 | 5 | 0.6 |
-| 🇸🇩 Sudan | 2 | 6 | 0.6 |
-| 🇧🇱 Saint Barthélemy | 2 | 3 | 0.5 |
-| 🇲🇵 Northern Mariana Islands | 2 | 5 | 0.5 |
-| 🇲🇻 Maldives | 2 | 4 | 0.5 |
-| 🇵🇲 Saint Pierre and Miquelon | 1 | 1 | 0.4 |
-| 🇹🇴 Tonga | 1 | 1 | 0.4 |
-| 🇸🇿 Eswatini | 3 | 3 | 0.4 |
-| 🇩🇲 Dominica | 1 | 2 | 0.4 |
-| 🇹🇻 Tuvalu | 1 | 2 | 0.4 |
-| 🇫🇰 Falkland Islands | 1 | 4 | 0.3 |
-| 🇨🇰 Cook Islands | 2 | 5 | 0.3 |
-| 🇸🇨 Seychelles | 3 | 3 | 0.3 |
-| 🇸🇭 Saint Helena | 2 | 3 | 0.3 |
-| 🇹🇱 Timor-Leste | 5 | 5 | 0.3 |
-| 🇳🇫 Norfolk Island | 1 | 2 | 0.3 |
-| 🇨🇻 Cabo Verde | 2 | 2 | 0.2 |
-| 🇲🇶 Martinique | 3 | 4 | 0.2 |
-| 🇸🇹 Sao Tome and Principe | 1 | 1 | 0.2 |
-| 🇬🇼 Guinea-Bissau | 1 | 1 | 0.2 |
-| 🇾🇹 Mayotte | 2 | 2 | 0.2 |
-| 🇸🇧 Solomon Islands | 1 | 2 | 0.1 |
-| 🇨🇽 Christmas Island | 1 | 1 | 0.1 |
-| 🇳🇺 Niue | 3 | 3 | 0.1 |
-| 🇰🇮 Kiribati | 2 | 2 | 0.1 |
+| # | Country | Cities | Videos | Footage (h) |
+|---|---|---|---|---|
+| 1 | 🇺🇸 United States | 1,818 | 16,107 | 9,119.4 |
+| 2 | 🇬🇧 United Kingdom | 354 | 3,112 | 1,650.4 |
+| 3 | 🇦🇺 Australia | 204 | 3,462 | 1,483.4 |
+| 4 | 🇷🇺 Russia | 170 | 2,530 | 1,308.4 |
+| 5 | 🇵🇭 Philippines | 398 | 3,569 | 1,308.2 |
+| 6 | 🇨🇦 Canada | 223 | 3,027 | 1,158.6 |
+| 7 | 🇻🇳 Vietnam | 68 | 2,918 | 1,134.6 |
+| 8 | 🇮🇩 Indonesia | 176 | 3,095 | 997.2 |
+| 9 | 🇰🇷 South Korea | 84 | 847 | 816.4 |
+| 10 | 🇫🇷 France | 359 | 1,890 | 744.7 |
+| 11 | 🇨🇳 China | 148 | 1,224 | 691.2 |
+| 12 | 🇩🇪 Germany | 235 | 1,368 | 648.6 |
+| 13 | 🇧🇷 Brazil | 129 | 1,415 | 590.4 |
+| 14 | 🇯🇵 Japan | 219 | 1,696 | 584.2 |
+| 15 | 🇳🇱 Netherlands | 231 | 1,442 | 547.2 |
+| 16 | 🇮🇳 India | 294 | 1,489 | 476.7 |
+| 17 | 🇺🇦 Ukraine | 94 | 1,083 | 443.1 |
+| 18 | 🇹🇭 Thailand | 49 | 790 | 385.1 |
+| 19 | 🇲🇲 Myanmar | 19 | 536 | 371.6 |
+| 20 | 🇦🇪 United Arab Emirates | 10 | 843 | 350.6 |
+| 21 | 🇵🇱 Poland | 280 | 859 | 338.0 |
+| 22 | 🇮🇷 Iran | 109 | 980 | 317.3 |
+| 23 | 🇲🇾 Malaysia | 65 | 593 | 280.4 |
+| 24 | 🇹🇷 Türkiye | 87 | 565 | 268.7 |
+| 25 | 🇸🇪 Sweden | 167 | 961 | 266.5 |
+| 26 | 🇮🇹 Italy | 168 | 670 | 261.4 |
+| 27 | 🇦🇷 Argentina | 64 | 410 | 255.9 |
+| 28 | 🇩🇰 Denmark | 22 | 562 | 255.3 |
+| 29 | 🇷🇴 Romania | 91 | 633 | 242.6 |
+| 30 | 🇫🇮 Finland | 41 | 382 | 238.9 |
+| 31 | 🇪🇸 Spain | 251 | 650 | 227.6 |
+| 32 | 🇰🇭 Cambodia | 7 | 427 | 222.6 |
+| 33 | 🇨🇿 Czechia | 82 | 374 | 214.6 |
+| 34 | 🇦🇹 Austria | 45 | 849 | 202.5 |
+| 35 | 🇺🇬 Uganda | 19 | 516 | 193.1 |
+| 36 | 🇭🇺 Hungary | 34 | 469 | 171.8 |
+| 37 | 🇵🇰 Pakistan | 38 | 415 | 163.5 |
+| 38 | 🇧🇬 Bulgaria | 89 | 643 | 162.6 |
+| 39 | 🇳🇿 New Zealand | 160 | 595 | 159.5 |
+| 40 | 🇸🇬 Singapore | 1 | 399 | 155.2 |
+| 41 | 🇻🇪 Venezuela | 15 | 599 | 148.2 |
+| 42 | 🇮🇪 Ireland | 55 | 491 | 142.4 |
+| 43 | 🇧🇾 Belarus | 83 | 281 | 139.3 |
+| 44 | 🇳🇴 Norway | 68 | 421 | 139.3 |
+| 45 | 🇲🇽 Mexico | 71 | 274 | 135.9 |
+| 46 | 🇿🇦 South Africa | 55 | 444 | 133.1 |
+| 47 | 🇸🇾 Syria | 13 | 316 | 124.7 |
+| 48 | 🇧🇩 Bangladesh | 29 | 298 | 107.3 |
+| 49 | 🇵🇹 Portugal | 73 | 226 | 104.4 |
+| 50 | 🇨🇭 Switzerland | 94 | 299 | 98.7 |
+| 51 | 🇬🇲 Gambia | 29 | 361 | 95.4 |
+| 52 | 🇪🇬 Egypt | 20 | 211 | 85.9 |
+| 53 | 🇸🇱 Sierra Leone | 46 | 183 | 79.1 |
+| 54 | 🇯🇴 Jordan | 13 | 250 | 78.3 |
+| 55 | 🇭🇷 Croatia | 89 | 281 | 71.9 |
+| 56 | 🇨🇱 Chile | 43 | 160 | 71.9 |
+| 57 | 🇲🇳 Mongolia | 4 | 130 | 71.4 |
+| 58 | 🇬🇷 Greece | 40 | 196 | 66.9 |
+| 59 | 🇨🇾 Cyprus | 17 | 252 | 66.5 |
+| 60 | 🇪🇪 Estonia | 6 | 302 | 65.3 |
+| 61 | 🇧🇪 Belgium | 61 | 190 | 62.9 |
+| 62 | 🇧🇦 Bosnia and Herzegovina | 60 | 291 | 62.0 |
+| 63 | 🇭🇰 Hong Kong | 11 | 161 | 60.9 |
+| 64 | 🇨🇴 Colombia | 36 | 128 | 60.1 |
+| 65 | 🇳🇬 Nigeria | 34 | 152 | 57.5 |
+| 66 | 🇺🇿 Uzbekistan | 12 | 178 | 53.7 |
+| 67 | 🇵🇪 Peru | 29 | 94 | 53.1 |
+| 68 | 🇲🇦 Morocco | 35 | 135 | 47.6 |
+| 69 | 🇱🇰 Sri Lanka | 14 | 126 | 47.3 |
+| 70 | 🇷🇸 Serbia | 34 | 143 | 47.1 |
+| 71 | 🇦🇿 Azerbaijan | 8 | 112 | 45.5 |
+| 72 | 🇶🇦 Qatar | 5 | 98 | 44.3 |
+| 73 | 🇹🇼 Taiwan | 13 | 91 | 43.7 |
+| 74 | 🇸🇦 Saudi Arabia | 11 | 109 | 43.5 |
+| 75 | 🇪🇹 Ethiopia | 8 | 72 | 42.4 |
+| 76 | 🇬🇪 Georgia | 11 | 117 | 42.4 |
+| 77 | 🇳🇵 Nepal | 4 | 120 | 38.2 |
+| 78 | 🇱🇻 Latvia | 20 | 123 | 38.0 |
+| 79 | 🇱🇧 Lebanon | 60 | 154 | 35.2 |
+| 80 | 🇨🇺 Cuba | 25 | 168 | 34.6 |
+| 81 | 🇱🇹 Lithuania | 10 | 84 | 33.5 |
+| 82 | 🇰🇿 Kazakhstan | 24 | 109 | 30.4 |
+| 83 | 🇲🇼 Malawi | 48 | 104 | 29.9 |
+| 84 | 🇰🇪 Kenya | 55 | 110 | 26.3 |
+| 85 | 🇺🇾 Uruguay | 23 | 90 | 25.3 |
+| 86 | 🇲🇰 North Macedonia | 21 | 72 | 24.4 |
+| 87 | 🇲🇩 Moldova | 14 | 107 | 24.2 |
+| 88 | 🇦🇲 Armenia | 10 | 77 | 23.9 |
+| 89 | 🇱🇦 Laos | 10 | 60 | 22.9 |
+| 90 | 🇪🇨 Ecuador | 15 | 55 | 22.8 |
+| 91 | 🇧🇴 Bolivia | 20 | 55 | 21.5 |
+| 92 | 🇲🇨 Monaco | 1 | 44 | 19.5 |
+| 93 | 🇮🇱 Israel | 18 | 67 | 19.5 |
+| 94 | 🇽🇰 Kosovo | 31 | 93 | 15.4 |
+| 95 | 🇬🇹 Guatemala | 9 | 23 | 15.3 |
+| 96 | 🇦🇱 Albania | 23 | 62 | 14.8 |
+| 97 | 🇩🇿 Algeria | 10 | 35 | 14.5 |
+| 98 | 🇱🇾 Libya | 3 | 39 | 13.2 |
+| 99 | 🇮🇸 Iceland | 14 | 39 | 12.8 |
+| 100 | 🇹🇲 Turkmenistan | 1 | 85 | 12.0 |
+| 101 | 🇨🇬 Congo (Congo-Brazzaville) | 3 | 30 | 11.8 |
+| 102 | 🇬🇭 Ghana | 10 | 39 | 11.4 |
+| 103 | 🇮🇶 Iraq | 10 | 40 | 11.4 |
+| 104 | 🇴🇲 Oman | 10 | 32 | 10.9 |
+| 105 | 🇵🇷 Puerto Rico | 21 | 40 | 10.8 |
+| 106 | 🇸🇻 El Salvador | 6 | 13 | 10.8 |
+| 107 | 🇭🇳 Honduras | 8 | 23 | 10.3 |
+| 108 | 🇲🇪 Montenegro | 22 | 65 | 10.2 |
+| 109 | 🇵🇦 Panama | 7 | 22 | 9.4 |
+| 110 | 🇹🇿 Tanzania | 14 | 50 | 9.1 |
+| 111 | 🇬🇾 Guyana | 6 | 20 | 9.0 |
+| 112 | 🇧🇭 Bahrain | 11 | 42 | 8.8 |
+| 113 | 🇸🇮 Slovenia | 25 | 47 | 8.5 |
+| 114 | 🇰🇬 Kyrgyzstan | 7 | 40 | 8.4 |
+| 115 | 🇯🇲 Jamaica | 10 | 30 | 8.3 |
+| 116 | 🇵🇸 Palestine | 10 | 31 | 8.3 |
+| 117 | 🇬🇮 Gibraltar | 1 | 21 | 7.9 |
+| 118 | 🇲🇹 Malta | 31 | 56 | 7.6 |
+| 119 | 🇨🇮 Côte d'Ivoire | 2 | 19 | 7.6 |
+| 120 | 🇸🇰 Slovakia | 13 | 26 | 7.4 |
+| 121 | 🇱🇺 Luxembourg | 12 | 24 | 7.0 |
+| 122 | 🇰🇼 Kuwait | 2 | 21 | 6.9 |
+| 123 | 🇱🇷 Liberia | 11 | 43 | 6.8 |
+| 124 | 🇸🇷 Suriname | 3 | 19 | 6.7 |
+| 125 | 🇿🇼 Zimbabwe | 4 | 26 | 6.3 |
+| 126 | 🇬🇳 Guinea | 6 | 26 | 6.3 |
+| 127 | 🇦🇬 Antigua and Barbuda | 9 | 21 | 6.1 |
+| 128 | 🇵🇾 Paraguay | 8 | 18 | 5.9 |
+| 129 | 🇻🇨 Saint Vincent and the Grenadines | 11 | 25 | 5.7 |
+| 130 | 🇧🇯 Benin | 10 | 16 | 5.6 |
+| 131 | 🇨🇫 Central African Republic | 3 | 18 | 5.4 |
+| 132 | 🇦🇫 Afghanistan | 8 | 26 | 5.3 |
+| 133 | 🇱🇮 Liechtenstein | 16 | 59 | 5.2 |
+| 134 | 🇹🇳 Tunisia | 5 | 15 | 5.1 |
+| 135 | 🇹🇹 Trinidad and Tobago | 3 | 5 | 4.6 |
+| 136 | 🇪🇷 Eritrea | 11 | 27 | 4.6 |
+| 137 | 🇳🇮 Nicaragua | 8 | 17 | 4.6 |
+| 138 | 🇦🇩 Andorra | 8 | 45 | 4.6 |
+| 139 | 🇬🇺 Guam | 10 | 41 | 4.5 |
+| 140 | 🇲🇴 Macau | 2 | 15 | 4.5 |
+| 141 | 🇰🇵 North Korea | 1 | 19 | 4.4 |
+| 142 | 🇨🇷 Costa Rica | 10 | 19 | 4.3 |
+| 143 | 🇲🇬 Madagascar | 3 | 11 | 4.3 |
+| 144 | 🇵🇫 French Polynesia | 11 | 17 | 4.3 |
+| 145 | 🇸🇳 Senegal | 6 | 16 | 4.3 |
+| 146 | 🇰🇾 Cayman Islands | 5 | 17 | 4.2 |
+| 147 | 🇬🇵 Guadeloupe | 11 | 30 | 4.1 |
+| 148 | 🇦🇴 Angola | 2 | 17 | 4.1 |
+| 149 | 🇿🇲 Zambia | 4 | 13 | 3.7 |
+| 150 | 🇷🇼 Rwanda | 7 | 14 | 3.5 |
+| 151 | 🇬🇱 Greenland | 3 | 11 | 3.5 |
+| 152 | 🇸🇲 San Marino | 4 | 13 | 3.5 |
+| 153 | 🇨🇩 Congo (Democratic Republic) | 3 | 16 | 3.3 |
+| 154 | 🇨🇲 Cameroon | 9 | 16 | 3.2 |
+| 155 | 🇫🇯 Fiji | 3 | 9 | 3.2 |
+| 156 | 🇬🇬 Guernsey | 8 | 20 | 3.1 |
+| 157 | 🇱🇨 Saint Lucia | 7 | 20 | 3.1 |
+| 158 | 🇬🇦 Gabon | 6 | 17 | 3.0 |
+| 159 | 🇭🇹 Haiti | 1 | 6 | 2.9 |
+| 160 | 🇩🇴 Dominican Republic | 7 | 9 | 2.9 |
+| 161 | 🇸🇴 Somalia | 4 | 15 | 2.8 |
+| 162 | 🇲🇺 Mauritius | 7 | 13 | 2.8 |
+| 163 | 🇧🇲 Bermuda | 4 | 5 | 2.7 |
+| 164 | 🇳🇨 New Caledonia | 1 | 5 | 2.6 |
+| 165 | 🇯🇪 Jersey | 10 | 18 | 2.5 |
+| 166 | 🇾🇪 Yemen | 3 | 12 | 2.5 |
+| 167 | 🇰🇲 Comoros | 3 | 5 | 2.5 |
+| 168 | 🇧🇼 Botswana | 4 | 9 | 2.3 |
+| 169 | 🇻🇬 British Virgin Islands | 7 | 17 | 2.2 |
+| 170 | 🇰🇳 Saint Kitts and Nevis | 3 | 9 | 2.1 |
+| 171 | 🇼🇸 Samoa | 1 | 7 | 2.0 |
+| 172 | 🇷🇪 Réunion | 4 | 6 | 2.0 |
+| 173 | 🇹🇯 Tajikistan | 2 | 9 | 1.9 |
+| 174 | 🇸🇸 South Sudan | 1 | 5 | 1.9 |
+| 175 | 🇳🇦 Namibia | 4 | 10 | 1.8 |
+| 176 | 🇫🇴 Faroe Islands | 21 | 36 | 1.8 |
+| 177 | 🇧🇧 Barbados | 3 | 4 | 1.8 |
+| 178 | 🇬🇫 French Guiana | 1 | 3 | 1.7 |
+| 179 | 🇮🇲 Isle of Man | 8 | 19 | 1.6 |
+| 180 | 🇧🇹 Bhutan | 2 | 6 | 1.6 |
+| 181 | 🇩🇯 Djibouti | 3 | 5 | 1.5 |
+| 182 | 🇱🇸 Lesotho | 10 | 15 | 1.5 |
+| 183 | 🇬🇩 Grenada | 4 | 8 | 1.4 |
+| 184 | 🇲🇫 Saint Martin | 6 | 9 | 1.3 |
+| 185 | 🇧🇮 Burundi | 6 | 9 | 1.3 |
+| 186 | 🇲🇿 Mozambique | 5 | 8 | 1.3 |
+| 187 | 🇲🇷 Mauritania | 1 | 3 | 1.3 |
+| 188 | 🇪🇭 Western Sahara | 3 | 4 | 1.3 |
+| 189 | 🇹🇬 Togo | 6 | 11 | 1.2 |
+| 190 | 🇵🇬 Papua New Guinea | 2 | 6 | 1.2 |
+| 191 | 🇲🇸 Montserrat | 1 | 3 | 1.2 |
+| 192 | 🇦🇸 American Samoa | 9 | 13 | 1.1 |
+| 193 | 🇧🇸 Bahamas | 2 | 5 | 1.1 |
+| 194 | 🇹🇨 Turks and Caicos Islands | 2 | 4 | 1.0 |
+| 195 | 🇻🇺 Vanuatu | 1 | 5 | 1.0 |
+| 196 | 🇹🇩 Chad | 1 | 4 | 1.0 |
+| 197 | 🇻🇮 United States Virgin Islands | 3 | 5 | 1.0 |
+| 198 | 🇲🇱 Mali | 1 | 2 | 0.9 |
+| 199 | 🇳🇷 Nauru | 11 | 18 | 0.9 |
+| 200 | 🇧🇫 Burkina Faso | 1 | 5 | 0.8 |
+| 201 | 🇸🇽 Sint Maarten | 4 | 5 | 0.8 |
+| 202 | 🇦🇼 Aruba | 2 | 3 | 0.8 |
+| 203 | 🇨🇼 Curaçao | 1 | 3 | 0.8 |
+| 204 | 🇦🇽 Åland Islands | 1 | 1 | 0.8 |
+| 205 | 🇲🇭 Marshall Islands | 3 | 3 | 0.8 |
+| 206 | 🇧🇳 Brunei | 3 | 4 | 0.8 |
+| 207 | 🏳️ Svalbard and Jan Mayen | 1 | 3 | 0.7 |
+| 208 | 🇧🇿 Belize | 3 | 5 | 0.7 |
+| 209 | 🇧🇶 Bonaire, Sint Eustatius and Saba | 1 | 1 | 0.7 |
+| 210 | 🇬🇶 Equatorial Guinea | 1 | 5 | 0.7 |
+| 211 | 🇫🇲 Micronesia | 3 | 3 | 0.6 |
+| 212 | 🇳🇪 Niger | 1 | 2 | 0.6 |
+| 213 | 🇵🇼 Palau | 4 | 5 | 0.6 |
+| 214 | 🇦🇮 Anguilla | 4 | 5 | 0.6 |
+| 215 | 🇸🇩 Sudan | 2 | 6 | 0.6 |
+| 216 | 🇧🇱 Saint Barthélemy | 2 | 3 | 0.5 |
+| 217 | 🇲🇵 Northern Mariana Islands | 2 | 5 | 0.5 |
+| 218 | 🇲🇻 Maldives | 2 | 4 | 0.5 |
+| 219 | 🇵🇲 Saint Pierre and Miquelon | 1 | 1 | 0.4 |
+| 220 | 🇹🇴 Tonga | 1 | 1 | 0.4 |
+| 221 | 🇸🇿 Eswatini | 3 | 3 | 0.4 |
+| 222 | 🇩🇲 Dominica | 1 | 2 | 0.4 |
+| 223 | 🇹🇻 Tuvalu | 1 | 2 | 0.4 |
+| 224 | 🇫🇰 Falkland Islands | 1 | 4 | 0.3 |
+| 225 | 🇨🇰 Cook Islands | 2 | 5 | 0.3 |
+| 226 | 🇸🇨 Seychelles | 3 | 3 | 0.3 |
+| 227 | 🇸🇭 Saint Helena | 2 | 3 | 0.3 |
+| 228 | 🇹🇱 Timor-Leste | 5 | 5 | 0.3 |
+| 229 | 🇳🇫 Norfolk Island | 1 | 2 | 0.3 |
+| 230 | 🇨🇻 Cabo Verde | 2 | 2 | 0.2 |
+| 231 | 🇲🇶 Martinique | 3 | 4 | 0.2 |
+| 232 | 🇸🇹 Sao Tome and Principe | 1 | 1 | 0.2 |
+| 233 | 🇬🇼 Guinea-Bissau | 1 | 1 | 0.2 |
+| 234 | 🇾🇹 Mayotte | 2 | 2 | 0.2 |
+| 235 | 🇸🇧 Solomon Islands | 1 | 2 | 0.1 |
+| 236 | 🇨🇽 Christmas Island | 1 | 1 | 0.1 |
+| 237 | 🇳🇺 Niue | 3 | 3 | 0.1 |
+| 238 | 🇰🇮 Kiribati | 2 | 2 | 0.1 |
 
 </details>
 
 <details><summary><b>Top 200 cities by footage</b></summary>
 
-| City | Country | Videos | Footage (h) |
-|---|---|---|---|
-| 🇺🇸 New York, NY | 🇺🇸 United States | 2,705 | 1,861.3 |
-| 🇺🇸 Chicago, IL | 🇺🇸 United States | 1,836 | 1,692.5 |
-| 🇬🇧 London | 🇬🇧 United Kingdom | 1,986 | 1,330.1 |
-| 🇺🇸 Los Angeles, CA | 🇺🇸 United States | 1,674 | 949.0 |
-| 🇻🇳 Hanoi | 🇻🇳 Vietnam | 2,057 | 839.2 |
-| 🇵🇭 Manila, Metro Manila | 🇵🇭 Philippines | 2,140 | 780.1 |
-| 🇷🇺 Saint Petersburg, Saint Petersburg city | 🇷🇺 Russia | 689 | 566.0 |
-| 🇰🇷 Seoul | 🇰🇷 South Korea | 290 | 539.5 |
-| 🇦🇺 Sydney, NSW | 🇦🇺 Australia | 984 | 506.7 |
-| 🇮🇩 Jakarta | 🇮🇩 Indonesia | 1,603 | 448.3 |
-| 🇫🇷 Paris | 🇫🇷 France | 973 | 434.7 |
-| 🇨🇦 Toronto, ON | 🇨🇦 Canada | 914 | 391.8 |
-| 🇲🇲 Yangon | 🇲🇲 Myanmar | 488 | 357.1 |
-| 🇷🇺 Moscow, Moscow city | 🇷🇺 Russia | 483 | 320.0 |
-| 🇺🇸 Philadelphia, PA | 🇺🇸 United States | 528 | 307.0 |
-| 🇦🇪 Dubai | 🇦🇪 United Arab Emirates | 732 | 305.5 |
-| 🇹🇭 Bangkok | 🇹🇭 Thailand | 605 | 302.4 |
-| 🇵🇭 Cotabato, Maguindanao del Norte | 🇵🇭 Philippines | 693 | 287.1 |
-| 🇦🇺 Melbourne, VIC | 🇦🇺 Australia | 572 | 280.2 |
-| 🇧🇷 Sao Paulo, SP | 🇧🇷 Brazil | 567 | 251.5 |
-| 🇩🇰 København | 🇩🇰 Denmark | 526 | 243.6 |
-| 🇺🇦 Kyiv, Kyiv | 🇺🇦 Ukraine | 569 | 240.9 |
-| 🇵🇱 Warsaw | 🇵🇱 Poland | 360 | 218.1 |
-| 🇦🇷 Buenos Aires, CABA | 🇦🇷 Argentina | 285 | 216.1 |
-| 🇩🇪 Berlin | 🇩🇪 Germany | 452 | 214.9 |
-| 🇦🇺 Townsville, QLD | 🇦🇺 Australia | 436 | 207.5 |
-| 🇨🇳 Guangzhou, Guangdong | 🇨🇳 China | 245 | 205.8 |
-| 🇨🇦 Montreal, QC | 🇨🇦 Canada | 470 | 202.5 |
-| 🇺🇸 Detroit, MI | 🇺🇸 United States | 548 | 202.4 |
-| 🇰🇭 Phnom Penh | 🇰🇭 Cambodia | 387 | 202.1 |
-| 🇫🇮 Helsinki | 🇫🇮 Finland | 282 | 198.1 |
-| 🇨🇿 Prague | 🇨🇿 Czechia | 239 | 187.1 |
-| 🇧🇷 Rio de Janeiro, RJ | 🇧🇷 Brazil | 419 | 184.4 |
-| 🇺🇸 Miami, FL | 🇺🇸 United States | 456 | 179.4 |
-| 🇺🇬 Kampala | 🇺🇬 Uganda | 466 | 176.4 |
-| 🇦🇹 Vienna | 🇦🇹 Austria | 714 | 173.7 |
-| 🇳🇱 Eindhoven | 🇳🇱 Netherlands | 329 | 171.4 |
-| 🇮🇩 Yogyakarta | 🇮🇩 Indonesia | 298 | 171.0 |
-| 🇹🇷 Istanbul | 🇹🇷 Türkiye | 314 | 169.9 |
-| 🇸🇪 Stockholm | 🇸🇪 Sweden | 545 | 169.6 |
-| 🇦🇺 Perth, WA | 🇦🇺 Australia | 408 | 167.8 |
-| 🇷🇴 Bucharest | 🇷🇴 Romania | 325 | 166.7 |
-| 🇭🇺 Budapest | 🇭🇺 Hungary | 428 | 164.4 |
-| 🇺🇸 Sacramento, CA | 🇺🇸 United States | 412 | 159.4 |
-| 🇲🇾 Kuala Lumpur, KUL | 🇲🇾 Malaysia | 319 | 157.2 |
-| 🇺🇸 Atlanta, GA | 🇺🇸 United States | 366 | 155.3 |
-| 🇸🇬 Singapore | 🇸🇬 Singapore | 399 | 155.2 |
-| 🇯🇵 Tokyo, Tokyo | 🇯🇵 Japan | 243 | 154.4 |
-| 🇩🇪 Oldenburg | 🇩🇪 Germany | 172 | 152.7 |
-| 🇺🇸 Houston, TX | 🇺🇸 United States | 227 | 148.9 |
-| 🇷🇺 Tyumen, Tyumen oblast | 🇷🇺 Russia | 306 | 147.5 |
-| 🇨🇦 Winnipeg, MB | 🇨🇦 Canada | 498 | 136.4 |
-| 🇺🇸 San Jose, CA | 🇺🇸 United States | 285 | 133.8 |
-| 🇧🇬 Sofia | 🇧🇬 Bulgaria | 429 | 132.4 |
-| 🇳🇱 Den Haag | 🇳🇱 Netherlands | 259 | 126.8 |
-| 🇺🇸 Anchorage, AK | 🇺🇸 United States | 347 | 125.2 |
-| 🇮🇷 Tehran | 🇮🇷 Iran | 266 | 122.4 |
-| 🇰🇷 Busan | 🇰🇷 South Korea | 143 | 121.7 |
-| 🇺🇸 Washington, DC | 🇺🇸 United States | 206 | 121.3 |
-| 🇺🇸 Dallas, TX | 🇺🇸 United States | 291 | 120.6 |
-| 🇻🇪 Maracaibo, ZU | 🇻🇪 Venezuela | 505 | 119.6 |
-| 🇺🇸 San Francisco, CA | 🇺🇸 United States | 179 | 119.3 |
-| 🇮🇪 Dublin | 🇮🇪 Ireland | 386 | 118.7 |
-| 🇳🇴 Oslo | 🇳🇴 Norway | 312 | 116.5 |
-| 🇺🇸 Portland, OR | 🇺🇸 United States | 182 | 112.4 |
-| 🇺🇸 Phoenix, AZ | 🇺🇸 United States | 234 | 109.8 |
-| 🇳🇱 Amsterdam | 🇳🇱 Netherlands | 204 | 109.3 |
-| 🇨🇦 Vancouver, BC | 🇨🇦 Canada | 239 | 103.8 |
-| 🇮🇳 Mumbai, MH | 🇮🇳 India | 257 | 97.0 |
-| 🇺🇸 Seattle, WA | 🇺🇸 United States | 194 | 93.2 |
-| 🇮🇷 Kermanshah | 🇮🇷 Iran | 243 | 88.2 |
-| 🇿🇦 Cape Town | 🇿🇦 South Africa | 229 | 86.5 |
-| 🇦🇺 Darwin, NT | 🇦🇺 Australia | 253 | 85.6 |
-| 🇧🇾 Minsk | 🇧🇾 Belarus | 115 | 84.8 |
-| 🇩🇪 München | 🇩🇪 Germany | 169 | 81.8 |
-| 🇺🇸 Las Vegas, NV | 🇺🇸 United States | 127 | 80.0 |
-| 🇺🇸 Baltimore, MD | 🇺🇸 United States | 207 | 79.2 |
-| 🇬🇲 Serrekunda | 🇬🇲 Gambia | 267 | 77.0 |
-| 🇧🇩 Sylhet | 🇧🇩 Bangladesh | 194 | 74.5 |
-| 🇻🇳 Ho Chi Minh City | 🇻🇳 Vietnam | 135 | 72.1 |
-| 🇪🇬 Cairo | 🇪🇬 Egypt | 152 | 70.7 |
-| 🇲🇳 Ulaanbaatar | 🇲🇳 Mongolia | 127 | 70.2 |
-| 🇯🇵 Gamagori, Aichi | 🇯🇵 Japan | 261 | 68.8 |
-| 🇦🇺 Brisbane, QLD | 🇦🇺 Australia | 176 | 67.5 |
-| 🇸🇾 Damascus | 🇸🇾 Syria | 148 | 65.6 |
-| 🇺🇸 San Diego, CA | 🇺🇸 United States | 91 | 65.1 |
-| 🇵🇰 Karachi, SD | 🇵🇰 Pakistan | 140 | 63.2 |
-| 🇯🇴 Amman | 🇯🇴 Jordan | 199 | 61.9 |
-| 🇮🇩 Semarang | 🇮🇩 Indonesia | 322 | 61.7 |
-| 🇳🇿 Auckland | 🇳🇿 New Zealand | 142 | 61.5 |
-| 🇮🇩 Denpasar | 🇮🇩 Indonesia | 28 | 60.6 |
-| 🇪🇪 Tallinn | 🇪🇪 Estonia | 281 | 60.4 |
-| 🇨🇦 Calgary, AB | 🇨🇦 Canada | 170 | 60.0 |
-| 🇺🇸 Denver, CO | 🇺🇸 United States | 170 | 58.4 |
-| 🇭🇰 Hong Kong | 🇭🇰 Hong Kong | 140 | 58.0 |
-| 🇨🇳 Beijing, Beijing | 🇨🇳 China | 130 | 57.2 |
-| 🇮🇹 Catania | 🇮🇹 Italy | 144 | 56.5 |
-| 🇻🇳 Ninh Binh | 🇻🇳 Vietnam | 188 | 55.8 |
-| 🇮🇳 Delhi, DL | 🇮🇳 India | 161 | 55.0 |
-| 🇮🇹 Milan | 🇮🇹 Italy | 101 | 52.9 |
-| 🇺🇸 Boston, MA | 🇺🇸 United States | 104 | 52.8 |
-| 🇸🇾 Aleppo | 🇸🇾 Syria | 137 | 51.0 |
-| 🇨🇳 Shenzhen, Guangdong | 🇨🇳 China | 138 | 50.0 |
-| 🇨🇳 Shanghai, Shanghai | 🇨🇳 China | 65 | 49.1 |
-| 🇨🇱 Santiago | 🇨🇱 Chile | 85 | 48.1 |
-| 🇪🇸 Barcelona | 🇪🇸 Spain | 98 | 47.3 |
-| 🇲🇽 Mexico City, CDMX | 🇲🇽 Mexico | 75 | 47.2 |
-| 🇮🇳 Kolkata, WB | 🇮🇳 India | 149 | 45.9 |
-| 🇻🇳 Ben Tre | 🇻🇳 Vietnam | 87 | 44.6 |
-| 🇯🇵 Ninohe, Iwate | 🇯🇵 Japan | 247 | 44.2 |
-| 🇺🇦 Lviv, Lviv oblast | 🇺🇦 Ukraine | 145 | 44.2 |
-| 🇧🇦 Sarajevo | 🇧🇦 Bosnia and Herzegovina | 158 | 44.0 |
-| 🇱🇰 Colombo | 🇱🇰 Sri Lanka | 105 | 42.8 |
-| 🇯🇵 Toyohashi, Aichi | 🇯🇵 Japan | 153 | 42.6 |
-| 🇦🇺 Adelaide, SA | 🇦🇺 Australia | 123 | 42.5 |
-| 🇮🇷 Mashhad | 🇮🇷 Iran | 224 | 41.4 |
-| 🇺🇸 Orlando, FL | 🇺🇸 United States | 82 | 40.8 |
-| 🇪🇹 Addis Ababa | 🇪🇹 Ethiopia | 63 | 40.4 |
-| 🇨🇳 Zaozhuang, Shandong | 🇨🇳 China | 122 | 39.9 |
-| 🇶🇦 Doha | 🇶🇦 Qatar | 78 | 39.5 |
-| 🇨🇭 Zürich, ZH | 🇨🇭 Switzerland | 76 | 39.4 |
-| 🇪🇸 Madrid | 🇪🇸 Spain | 74 | 38.4 |
-| 🇦🇿 Baku | 🇦🇿 Azerbaijan | 91 | 38.3 |
-| 🇮🇩 Surabaya | 🇮🇩 Indonesia | 98 | 38.2 |
-| 🇵🇹 Lisbon | 🇵🇹 Portugal | 70 | 37.3 |
-| 🇧🇪 Brussels | 🇧🇪 Belgium | 82 | 37.1 |
-| 🇨🇾 Nicosia | 🇨🇾 Cyprus | 126 | 37.1 |
-| 🇮🇹 Rome | 🇮🇹 Italy | 72 | 36.8 |
-| 🇸🇱 Freetown | 🇸🇱 Sierra Leone | 90 | 36.7 |
-| 🇭🇷 Zagreb | 🇭🇷 Croatia | 94 | 35.8 |
-| 🇳🇵 Kathmandu | 🇳🇵 Nepal | 112 | 35.8 |
-| 🇻🇳 Nam Dinh | 🇻🇳 Vietnam | 117 | 35.6 |
-| 🇺🇦 Kharkiv, Kharkiv oblast | 🇺🇦 Ukraine | 75 | 35.1 |
-| 🇳🇬 Lagos, Lagos | 🇳🇬 Nigeria | 72 | 34.8 |
-| 🇳🇿 Wellington | 🇳🇿 New Zealand | 113 | 34.8 |
-| 🇺🇸 Jersey City, NJ | 🇺🇸 United States | 79 | 34.3 |
-| 🇮🇹 Genoa | 🇮🇹 Italy | 71 | 34.3 |
-| 🇮🇳 Chennai, TN | 🇮🇳 India | 46 | 34.0 |
-| 🇱🇻 Riga | 🇱🇻 Latvia | 97 | 33.9 |
-| 🇬🇷 Thessaloniki | 🇬🇷 Greece | 81 | 33.8 |
-| 🇺🇸 Austin, TX | 🇺🇸 United States | 63 | 33.8 |
-| 🇷🇸 Belgrade | 🇷🇸 Serbia | 96 | 32.8 |
-| 🇮🇳 Bengaluru, KA | 🇮🇳 India | 92 | 32.6 |
-| 🇬🇧 Birmingham | 🇬🇧 United Kingdom | 115 | 31.4 |
-| 🇳🇱 Rotterdam | 🇳🇱 Netherlands | 78 | 30.7 |
-| 🇨🇦 Edmonton, AB | 🇨🇦 Canada | 56 | 30.4 |
-| 🇺🇸 Tampa, FL | 🇺🇸 United States | 49 | 30.2 |
-| 🇸🇦 Riyadh | 🇸🇦 Saudi Arabia | 68 | 29.9 |
-| 🇬🇪 Tbilisi | 🇬🇪 Georgia | 75 | 29.6 |
-| 🇨🇳 Chengdu, Sichuan | 🇨🇳 China | 54 | 29.1 |
-| 🇲🇾 Johor Bahru, JHR | 🇲🇾 Malaysia | 26 | 29.1 |
-| 🇧🇷 Goiânia, GO | 🇧🇷 Brazil | 64 | 28.8 |
-| 🇺🇿 Toshkent | 🇺🇿 Uzbekistan | 85 | 28.2 |
-| 🇺🇸 Kansas City, KS | 🇺🇸 United States | 49 | 27.8 |
-| 🇬🇧 Milton Keynes | 🇬🇧 United Kingdom | 50 | 27.7 |
-| 🇺🇸 Honolulu, HI | 🇺🇸 United States | 49 | 26.8 |
-| 🇵🇰 Lahore, PB | 🇵🇰 Pakistan | 88 | 26.8 |
-| 🇨🇺 Havana | 🇨🇺 Cuba | 132 | 26.3 |
-| 🇬🇧 Manchester | 🇬🇧 United Kingdom | 60 | 26.2 |
-| 🇷🇺 Cherepovets, Vologda oblast | 🇷🇺 Russia | 176 | 25.0 |
-| 🇮🇳 Thiruvananthapuram, KL | 🇮🇳 India | 73 | 24.7 |
-| 🇺🇸 Nashville, TN | 🇺🇸 United States | 38 | 24.6 |
-| 🇵🇪 Lima, LI | 🇵🇪 Peru | 36 | 24.3 |
-| 🇩🇪 Frankfurt | 🇩🇪 Germany | 20 | 24.3 |
-| 🇱🇹 Vilnius | 🇱🇹 Lithuania | 60 | 24.2 |
-| 🇰🇷 Daejeon | 🇰🇷 South Korea | 60 | 24.0 |
-| 🇵🇰 Islamabad, ICT | 🇵🇰 Pakistan | 55 | 23.9 |
-| 🇺🇸 Pittsburgh, PA | 🇺🇸 United States | 49 | 23.9 |
-| 🇷🇺 Stavropol, Stavropol krai | 🇷🇺 Russia | 79 | 23.9 |
-| 🇺🇿 Samarkand | 🇺🇿 Uzbekistan | 81 | 23.6 |
-| 🇺🇸 Charleston, SC | 🇺🇸 United States | 38 | 23.0 |
-| 🇯🇵 Sendai, Miyagi | 🇯🇵 Japan | 56 | 22.5 |
-| 🇵🇹 Porto | 🇵🇹 Portugal | 27 | 22.4 |
-| 🇨🇳 Hangzhou, Zhejiang | 🇨🇳 China | 28 | 22.3 |
-| 🇺🇸 New Orleans, LA | 🇺🇸 United States | 32 | 21.8 |
-| 🇯🇵 Ōsaka, Ōsaka | 🇯🇵 Japan | 50 | 21.7 |
-| 🇰🇷 Cheongju | 🇰🇷 South Korea | 64 | 21.4 |
-| 🇨🇦 Ottawa, ON | 🇨🇦 Canada | 37 | 21.3 |
-| 🇹🇭 Chiang Mai | 🇹🇭 Thailand | 53 | 21.0 |
-| 🇨🇦 Halifax, NS | 🇨🇦 Canada | 82 | 20.8 |
-| 🇯🇵 Sapporo, Hokkaidō | 🇯🇵 Japan | 60 | 20.8 |
-| 🇱🇧 Beirut | 🇱🇧 Lebanon | 68 | 20.5 |
-| 🇺🇸 San Antonio, TX | 🇺🇸 United States | 24 | 20.2 |
-| 🇦🇲 Yerevan | 🇦🇲 Armenia | 61 | 20.1 |
-| 🇯🇵 Kyoto, Kyōto | 🇯🇵 Japan | 43 | 19.8 |
-| 🇧🇷 Manaus, AM | 🇧🇷 Brazil | 75 | 19.8 |
-| 🇲🇩 Chișinău | 🇲🇩 Moldova | 70 | 19.7 |
-| 🇹🇼 Taipei | 🇹🇼 Taiwan | 40 | 19.6 |
-| 🇲🇨 Monaco | 🇲🇨 Monaco | 44 | 19.5 |
-| 🇹🇷 Ankara | 🇹🇷 Türkiye | 47 | 19.3 |
-| 🇨🇴 Medellín, ANT | 🇨🇴 Colombia | 50 | 19.2 |
-| 🇫🇷 Nice | 🇫🇷 France | 32 | 19.1 |
-| 🇲🇰 Skopje | 🇲🇰 North Macedonia | 39 | 18.9 |
-| 🇹🇭 Pattaya | 🇹🇭 Thailand | 34 | 18.8 |
-| 🇺🇸 Roseville, CA | 🇺🇸 United States | 46 | 18.4 |
-| 🇿🇦 Johannesburg | 🇿🇦 South Africa | 74 | 18.2 |
-| 🇷🇺 Borovskii, Tyumen oblast | 🇷🇺 Russia | 221 | 17.8 |
-| 🇺🇸 Malibu, CA | 🇺🇸 United States | 30 | 17.3 |
-| 🇺🇸 Savannah, GA | 🇺🇸 United States | 25 | 17.0 |
-| 🇱🇦 Vientiane | 🇱🇦 Laos | 34 | 16.8 |
+| # | City | Country | Videos | Footage (h) |
+|---|---|---|---|---|
+| 1 | New York, NY | 🇺🇸 United States | 2,705 | 1,861.3 |
+| 2 | Chicago, IL | 🇺🇸 United States | 1,836 | 1,692.5 |
+| 3 | London | 🇬🇧 United Kingdom | 1,986 | 1,330.1 |
+| 4 | Los Angeles, CA | 🇺🇸 United States | 1,674 | 949.0 |
+| 5 | Hanoi | 🇻🇳 Vietnam | 2,057 | 839.2 |
+| 6 | Manila, Metro Manila | 🇵🇭 Philippines | 2,140 | 780.1 |
+| 7 | Saint Petersburg, Saint Petersburg city | 🇷🇺 Russia | 689 | 566.0 |
+| 8 | Seoul | 🇰🇷 South Korea | 290 | 539.5 |
+| 9 | Sydney, NSW | 🇦🇺 Australia | 984 | 506.7 |
+| 10 | Jakarta | 🇮🇩 Indonesia | 1,603 | 448.3 |
+| 11 | Paris | 🇫🇷 France | 973 | 434.7 |
+| 12 | Toronto, ON | 🇨🇦 Canada | 914 | 391.8 |
+| 13 | Yangon | 🇲🇲 Myanmar | 488 | 357.1 |
+| 14 | Moscow, Moscow city | 🇷🇺 Russia | 483 | 320.0 |
+| 15 | Philadelphia, PA | 🇺🇸 United States | 528 | 307.0 |
+| 16 | Dubai | 🇦🇪 United Arab Emirates | 732 | 305.5 |
+| 17 | Bangkok | 🇹🇭 Thailand | 605 | 302.4 |
+| 18 | Cotabato, Maguindanao del Norte | 🇵🇭 Philippines | 693 | 287.1 |
+| 19 | Melbourne, VIC | 🇦🇺 Australia | 572 | 280.2 |
+| 20 | Sao Paulo, SP | 🇧🇷 Brazil | 567 | 251.5 |
+| 21 | København | 🇩🇰 Denmark | 526 | 243.6 |
+| 22 | Kyiv, Kyiv | 🇺🇦 Ukraine | 569 | 240.9 |
+| 23 | Warsaw | 🇵🇱 Poland | 360 | 218.1 |
+| 24 | Buenos Aires, CABA | 🇦🇷 Argentina | 285 | 216.1 |
+| 25 | Berlin | 🇩🇪 Germany | 452 | 214.9 |
+| 26 | Townsville, QLD | 🇦🇺 Australia | 436 | 207.5 |
+| 27 | Guangzhou, Guangdong | 🇨🇳 China | 245 | 205.8 |
+| 28 | Montreal, QC | 🇨🇦 Canada | 470 | 202.5 |
+| 29 | Detroit, MI | 🇺🇸 United States | 548 | 202.4 |
+| 30 | Phnom Penh | 🇰🇭 Cambodia | 387 | 202.1 |
+| 31 | Helsinki | 🇫🇮 Finland | 282 | 198.1 |
+| 32 | Prague | 🇨🇿 Czechia | 239 | 187.1 |
+| 33 | Rio de Janeiro, RJ | 🇧🇷 Brazil | 419 | 184.4 |
+| 34 | Miami, FL | 🇺🇸 United States | 456 | 179.4 |
+| 35 | Kampala | 🇺🇬 Uganda | 466 | 176.4 |
+| 36 | Vienna | 🇦🇹 Austria | 714 | 173.7 |
+| 37 | Eindhoven | 🇳🇱 Netherlands | 329 | 171.4 |
+| 38 | Yogyakarta | 🇮🇩 Indonesia | 298 | 171.0 |
+| 39 | Istanbul | 🇹🇷 Türkiye | 314 | 169.9 |
+| 40 | Stockholm | 🇸🇪 Sweden | 545 | 169.6 |
+| 41 | Perth, WA | 🇦🇺 Australia | 408 | 167.8 |
+| 42 | Bucharest | 🇷🇴 Romania | 325 | 166.7 |
+| 43 | Budapest | 🇭🇺 Hungary | 428 | 164.4 |
+| 44 | Sacramento, CA | 🇺🇸 United States | 412 | 159.4 |
+| 45 | Kuala Lumpur, KUL | 🇲🇾 Malaysia | 319 | 157.2 |
+| 46 | Atlanta, GA | 🇺🇸 United States | 366 | 155.3 |
+| 47 | Singapore | 🇸🇬 Singapore | 399 | 155.2 |
+| 48 | Tokyo, Tokyo | 🇯🇵 Japan | 243 | 154.4 |
+| 49 | Oldenburg | 🇩🇪 Germany | 172 | 152.7 |
+| 50 | Houston, TX | 🇺🇸 United States | 227 | 148.9 |
+| 51 | Tyumen, Tyumen oblast | 🇷🇺 Russia | 306 | 147.5 |
+| 52 | Winnipeg, MB | 🇨🇦 Canada | 498 | 136.4 |
+| 53 | San Jose, CA | 🇺🇸 United States | 285 | 133.8 |
+| 54 | Sofia | 🇧🇬 Bulgaria | 429 | 132.4 |
+| 55 | Den Haag | 🇳🇱 Netherlands | 259 | 126.8 |
+| 56 | Anchorage, AK | 🇺🇸 United States | 347 | 125.2 |
+| 57 | Tehran | 🇮🇷 Iran | 266 | 122.4 |
+| 58 | Busan | 🇰🇷 South Korea | 143 | 121.7 |
+| 59 | Washington, DC | 🇺🇸 United States | 206 | 121.3 |
+| 60 | Dallas, TX | 🇺🇸 United States | 291 | 120.6 |
+| 61 | Maracaibo, ZU | 🇻🇪 Venezuela | 505 | 119.6 |
+| 62 | San Francisco, CA | 🇺🇸 United States | 179 | 119.3 |
+| 63 | Dublin | 🇮🇪 Ireland | 386 | 118.7 |
+| 64 | Oslo | 🇳🇴 Norway | 312 | 116.5 |
+| 65 | Portland, OR | 🇺🇸 United States | 182 | 112.4 |
+| 66 | Phoenix, AZ | 🇺🇸 United States | 234 | 109.8 |
+| 67 | Amsterdam | 🇳🇱 Netherlands | 204 | 109.3 |
+| 68 | Vancouver, BC | 🇨🇦 Canada | 239 | 103.8 |
+| 69 | Mumbai, MH | 🇮🇳 India | 257 | 97.0 |
+| 70 | Seattle, WA | 🇺🇸 United States | 194 | 93.2 |
+| 71 | Kermanshah | 🇮🇷 Iran | 243 | 88.2 |
+| 72 | Cape Town | 🇿🇦 South Africa | 229 | 86.5 |
+| 73 | Darwin, NT | 🇦🇺 Australia | 253 | 85.6 |
+| 74 | Minsk | 🇧🇾 Belarus | 115 | 84.8 |
+| 75 | München | 🇩🇪 Germany | 169 | 81.8 |
+| 76 | Las Vegas, NV | 🇺🇸 United States | 127 | 80.0 |
+| 77 | Baltimore, MD | 🇺🇸 United States | 207 | 79.2 |
+| 78 | Serrekunda | 🇬🇲 Gambia | 267 | 77.0 |
+| 79 | Sylhet | 🇧🇩 Bangladesh | 194 | 74.5 |
+| 80 | Ho Chi Minh City | 🇻🇳 Vietnam | 135 | 72.1 |
+| 81 | Cairo | 🇪🇬 Egypt | 152 | 70.7 |
+| 82 | Ulaanbaatar | 🇲🇳 Mongolia | 127 | 70.2 |
+| 83 | Gamagori, Aichi | 🇯🇵 Japan | 261 | 68.8 |
+| 84 | Brisbane, QLD | 🇦🇺 Australia | 176 | 67.5 |
+| 85 | Damascus | 🇸🇾 Syria | 148 | 65.6 |
+| 86 | San Diego, CA | 🇺🇸 United States | 91 | 65.1 |
+| 87 | Karachi, SD | 🇵🇰 Pakistan | 140 | 63.2 |
+| 88 | Amman | 🇯🇴 Jordan | 199 | 61.9 |
+| 89 | Semarang | 🇮🇩 Indonesia | 322 | 61.7 |
+| 90 | Auckland | 🇳🇿 New Zealand | 142 | 61.5 |
+| 91 | Denpasar | 🇮🇩 Indonesia | 28 | 60.6 |
+| 92 | Tallinn | 🇪🇪 Estonia | 281 | 60.4 |
+| 93 | Calgary, AB | 🇨🇦 Canada | 170 | 60.0 |
+| 94 | Denver, CO | 🇺🇸 United States | 170 | 58.4 |
+| 95 | Hong Kong | 🇭🇰 Hong Kong | 140 | 58.0 |
+| 96 | Beijing, Beijing | 🇨🇳 China | 130 | 57.2 |
+| 97 | Catania | 🇮🇹 Italy | 144 | 56.5 |
+| 98 | Ninh Binh | 🇻🇳 Vietnam | 188 | 55.8 |
+| 99 | Delhi, DL | 🇮🇳 India | 161 | 55.0 |
+| 100 | Milan | 🇮🇹 Italy | 101 | 52.9 |
+| 101 | Boston, MA | 🇺🇸 United States | 104 | 52.8 |
+| 102 | Aleppo | 🇸🇾 Syria | 137 | 51.0 |
+| 103 | Shenzhen, Guangdong | 🇨🇳 China | 138 | 50.0 |
+| 104 | Shanghai, Shanghai | 🇨🇳 China | 65 | 49.1 |
+| 105 | Santiago | 🇨🇱 Chile | 85 | 48.1 |
+| 106 | Barcelona | 🇪🇸 Spain | 98 | 47.3 |
+| 107 | Mexico City, CDMX | 🇲🇽 Mexico | 75 | 47.2 |
+| 108 | Kolkata, WB | 🇮🇳 India | 149 | 45.9 |
+| 109 | Ben Tre | 🇻🇳 Vietnam | 87 | 44.6 |
+| 110 | Ninohe, Iwate | 🇯🇵 Japan | 247 | 44.2 |
+| 111 | Lviv, Lviv oblast | 🇺🇦 Ukraine | 145 | 44.2 |
+| 112 | Sarajevo | 🇧🇦 Bosnia and Herzegovina | 158 | 44.0 |
+| 113 | Colombo | 🇱🇰 Sri Lanka | 105 | 42.8 |
+| 114 | Toyohashi, Aichi | 🇯🇵 Japan | 153 | 42.6 |
+| 115 | Adelaide, SA | 🇦🇺 Australia | 123 | 42.5 |
+| 116 | Mashhad | 🇮🇷 Iran | 224 | 41.4 |
+| 117 | Orlando, FL | 🇺🇸 United States | 82 | 40.8 |
+| 118 | Addis Ababa | 🇪🇹 Ethiopia | 63 | 40.4 |
+| 119 | Zaozhuang, Shandong | 🇨🇳 China | 122 | 39.9 |
+| 120 | Doha | 🇶🇦 Qatar | 78 | 39.5 |
+| 121 | Zürich, ZH | 🇨🇭 Switzerland | 76 | 39.4 |
+| 122 | Madrid | 🇪🇸 Spain | 74 | 38.4 |
+| 123 | Baku | 🇦🇿 Azerbaijan | 91 | 38.3 |
+| 124 | Surabaya | 🇮🇩 Indonesia | 98 | 38.2 |
+| 125 | Lisbon | 🇵🇹 Portugal | 70 | 37.3 |
+| 126 | Brussels | 🇧🇪 Belgium | 82 | 37.1 |
+| 127 | Nicosia | 🇨🇾 Cyprus | 126 | 37.1 |
+| 128 | Rome | 🇮🇹 Italy | 72 | 36.8 |
+| 129 | Freetown | 🇸🇱 Sierra Leone | 90 | 36.7 |
+| 130 | Zagreb | 🇭🇷 Croatia | 94 | 35.8 |
+| 131 | Kathmandu | 🇳🇵 Nepal | 112 | 35.8 |
+| 132 | Nam Dinh | 🇻🇳 Vietnam | 117 | 35.6 |
+| 133 | Kharkiv, Kharkiv oblast | 🇺🇦 Ukraine | 75 | 35.1 |
+| 134 | Lagos, Lagos | 🇳🇬 Nigeria | 72 | 34.8 |
+| 135 | Wellington | 🇳🇿 New Zealand | 113 | 34.8 |
+| 136 | Jersey City, NJ | 🇺🇸 United States | 79 | 34.3 |
+| 137 | Genoa | 🇮🇹 Italy | 71 | 34.3 |
+| 138 | Chennai, TN | 🇮🇳 India | 46 | 34.0 |
+| 139 | Riga | 🇱🇻 Latvia | 97 | 33.9 |
+| 140 | Thessaloniki | 🇬🇷 Greece | 81 | 33.8 |
+| 141 | Austin, TX | 🇺🇸 United States | 63 | 33.8 |
+| 142 | Belgrade | 🇷🇸 Serbia | 96 | 32.8 |
+| 143 | Bengaluru, KA | 🇮🇳 India | 92 | 32.6 |
+| 144 | Birmingham | 🇬🇧 United Kingdom | 115 | 31.4 |
+| 145 | Rotterdam | 🇳🇱 Netherlands | 78 | 30.7 |
+| 146 | Edmonton, AB | 🇨🇦 Canada | 56 | 30.4 |
+| 147 | Tampa, FL | 🇺🇸 United States | 49 | 30.2 |
+| 148 | Riyadh | 🇸🇦 Saudi Arabia | 68 | 29.9 |
+| 149 | Tbilisi | 🇬🇪 Georgia | 75 | 29.6 |
+| 150 | Chengdu, Sichuan | 🇨🇳 China | 54 | 29.1 |
+| 151 | Johor Bahru, JHR | 🇲🇾 Malaysia | 26 | 29.1 |
+| 152 | Goiânia, GO | 🇧🇷 Brazil | 64 | 28.8 |
+| 153 | Toshkent | 🇺🇿 Uzbekistan | 85 | 28.2 |
+| 154 | Kansas City, KS | 🇺🇸 United States | 49 | 27.8 |
+| 155 | Milton Keynes | 🇬🇧 United Kingdom | 50 | 27.7 |
+| 156 | Honolulu, HI | 🇺🇸 United States | 49 | 26.8 |
+| 157 | Lahore, PB | 🇵🇰 Pakistan | 88 | 26.8 |
+| 158 | Havana | 🇨🇺 Cuba | 132 | 26.3 |
+| 159 | Manchester | 🇬🇧 United Kingdom | 60 | 26.2 |
+| 160 | Cherepovets, Vologda oblast | 🇷🇺 Russia | 176 | 25.0 |
+| 161 | Thiruvananthapuram, KL | 🇮🇳 India | 73 | 24.7 |
+| 162 | Nashville, TN | 🇺🇸 United States | 38 | 24.6 |
+| 163 | Lima, LI | 🇵🇪 Peru | 36 | 24.3 |
+| 164 | Frankfurt | 🇩🇪 Germany | 20 | 24.3 |
+| 165 | Vilnius | 🇱🇹 Lithuania | 60 | 24.2 |
+| 166 | Daejeon | 🇰🇷 South Korea | 60 | 24.0 |
+| 167 | Islamabad, ICT | 🇵🇰 Pakistan | 55 | 23.9 |
+| 168 | Pittsburgh, PA | 🇺🇸 United States | 49 | 23.9 |
+| 169 | Stavropol, Stavropol krai | 🇷🇺 Russia | 79 | 23.9 |
+| 170 | Samarkand | 🇺🇿 Uzbekistan | 81 | 23.6 |
+| 171 | Charleston, SC | 🇺🇸 United States | 38 | 23.0 |
+| 172 | Sendai, Miyagi | 🇯🇵 Japan | 56 | 22.5 |
+| 173 | Porto | 🇵🇹 Portugal | 27 | 22.4 |
+| 174 | Hangzhou, Zhejiang | 🇨🇳 China | 28 | 22.3 |
+| 175 | New Orleans, LA | 🇺🇸 United States | 32 | 21.8 |
+| 176 | Ōsaka, Ōsaka | 🇯🇵 Japan | 50 | 21.7 |
+| 177 | Cheongju | 🇰🇷 South Korea | 64 | 21.4 |
+| 178 | Ottawa, ON | 🇨🇦 Canada | 37 | 21.3 |
+| 179 | Chiang Mai | 🇹🇭 Thailand | 53 | 21.0 |
+| 180 | Halifax, NS | 🇨🇦 Canada | 82 | 20.8 |
+| 181 | Sapporo, Hokkaidō | 🇯🇵 Japan | 60 | 20.8 |
+| 182 | Beirut | 🇱🇧 Lebanon | 68 | 20.5 |
+| 183 | San Antonio, TX | 🇺🇸 United States | 24 | 20.2 |
+| 184 | Yerevan | 🇦🇲 Armenia | 61 | 20.1 |
+| 185 | Kyoto, Kyōto | 🇯🇵 Japan | 43 | 19.8 |
+| 186 | Manaus, AM | 🇧🇷 Brazil | 75 | 19.8 |
+| 187 | Chișinău | 🇲🇩 Moldova | 70 | 19.7 |
+| 188 | Taipei | 🇹🇼 Taiwan | 40 | 19.6 |
+| 189 | Monaco | 🇲🇨 Monaco | 44 | 19.5 |
+| 190 | Ankara | 🇹🇷 Türkiye | 47 | 19.3 |
+| 191 | Medellín, ANT | 🇨🇴 Colombia | 50 | 19.2 |
+| 192 | Nice | 🇫🇷 France | 32 | 19.1 |
+| 193 | Skopje | 🇲🇰 North Macedonia | 39 | 18.9 |
+| 194 | Pattaya | 🇹🇭 Thailand | 34 | 18.8 |
+| 195 | Roseville, CA | 🇺🇸 United States | 46 | 18.4 |
+| 196 | Johannesburg | 🇿🇦 South Africa | 74 | 18.2 |
+| 197 | Borovskii, Tyumen oblast | 🇷🇺 Russia | 221 | 17.8 |
+| 198 | Malibu, CA | 🇺🇸 United States | 30 | 17.3 |
+| 199 | Savannah, GA | 🇺🇸 United States | 25 | 17.0 |
+| 200 | Vientiane | 🇱🇦 Laos | 34 | 16.8 |
 
 </details>
 <!-- dataset-stats:end -->
