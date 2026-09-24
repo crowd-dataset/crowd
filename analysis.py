@@ -1728,7 +1728,6 @@ def log_rollups(df_mapping: "pl.DataFrame") -> None:
     logger.info("\n=== [rollups] H) Max/Min COUNTRY by duration ===")
     logger.info(f"\nMAX:\n{_df_full_str(top_ctry_t)}\nMIN (non-zero):\n{_df_full_str(bot_ctry_t)}")
 
-
     # =========================================================================
     # I) Country and locality concentration analysis
     # =========================================================================
@@ -1812,8 +1811,9 @@ def log_rollups(df_mapping: "pl.DataFrame") -> None:
                 if video_index >= len(start_lol) or video_index >= len(end_lol):
                     continue
 
-                starts = start_lol[video_index] if isinstance(start_lol[video_index], list) else [start_lol[video_index]]
-                ends = end_lol[video_index] if isinstance(end_lol[video_index], list) else [end_lol[video_index]]
+                starts, ends = start_lol[video_index], end_lol[video_index]
+                starts = starts if isinstance(starts, list) else [starts]
+                ends = ends if isinstance(ends, list) else [ends]
 
                 for start_time, end_time in zip(starts, ends):
                     duration_s = processed_segment_duration_seconds(start_time, end_time)
@@ -1955,7 +1955,8 @@ def log_rollups(df_mapping: "pl.DataFrame") -> None:
             n_localities_concentration = int(locality_concentration.height)
             locality_concentration_share_rows = []
             for percentile in concentration_percentiles:
-                n_top = int(math.ceil(n_localities_concentration * percentile / 100.0)) if n_localities_concentration else 0
+                n_top = (int(math.ceil(n_localities_concentration * percentile / 100.0))
+                         if n_localities_concentration else 0)
                 top_duration_s = int(locality_concentration.head(n_top).select(pl.sum("duration_s")).item() or 0)
                 locality_concentration_share_rows.append(
                     {
@@ -1963,7 +1964,8 @@ def log_rollups(df_mapping: "pl.DataFrame") -> None:
                         "n_localities": int(n_top),
                         "duration_h": round(top_duration_s / 3600, 2),
                         "duration_share_pct": round(
-                            (top_duration_s / concentration_duration_denom * 100) if concentration_duration_denom else 0.0,
+                            (top_duration_s / concentration_duration_denom * 100)
+                            if concentration_duration_denom else 0.0,
                             2,
                         ),
                     }
@@ -1982,16 +1984,21 @@ def log_rollups(df_mapping: "pl.DataFrame") -> None:
                 2,
             )
 
-            top10_country_duration_s = int(country_concentration.head(top_country_n).select(pl.sum("duration_s")).item() or 0)
+            top10_country_duration_s = int(
+                country_concentration.head(top_country_n).select(pl.sum("duration_s")).item() or 0
+            )
             top10_country_duration_share_pct = round(
-                (top10_country_duration_s / concentration_duration_denom * 100) if concentration_duration_denom else 0.0,
+                (top10_country_duration_s / concentration_duration_denom * 100)
+                if concentration_duration_denom else 0.0,
                 2,
             )
 
-            logger.info("\n=== [rollups] I) Country concentration: largest contributors by retained processed duration ===")
+            logger.info("\n=== [rollups] I) Country concentration: "
+                        "largest contributors by retained processed duration ===")
             logger.info(f"\n{_df_full_str(country_concentration.head(top_country_n))}")
 
-            logger.info("\n=== [rollups] I) Locality concentration: largest contributors by retained processed duration ===")
+            logger.info("\n=== [rollups] I) Locality concentration: "
+                        "largest contributors by retained processed duration ===")
             logger.info(f"\n{_df_full_str(locality_concentration.head(top_locality_n))}")
 
             logger.info("\n=== [rollups] I) Locality concentration: top 1%, 5%, and 10% by retained hours ===")
@@ -2000,7 +2007,8 @@ def log_rollups(df_mapping: "pl.DataFrame") -> None:
             logger.info(
                 "[rollups] I) Long-tail locality counts: "
                 f"{one_segment_localities:,} localities ({one_segment_localities_pct:.2f}%) have exactly one segment; "
-                f"{one_upload_localities:,} localities ({one_upload_localities_pct:.2f}%) have exactly one unique upload."
+                f"{one_upload_localities:,} localities ({one_upload_localities_pct:.2f}%) "
+                "have exactly one unique upload."
             )
 
             logger.info(
@@ -2015,7 +2023,8 @@ def log_rollups(df_mapping: "pl.DataFrame") -> None:
             try:
                 mapping_path_cfg = common.get_configs("mapping")
                 if mapping_path_cfg:
-                    concentration_output_dir = Path(str(mapping_path_cfg)).expanduser().resolve().parent / "_output" / "concentration"
+                    mapping_dir = Path(str(mapping_path_cfg)).expanduser().resolve().parent
+                    concentration_output_dir = mapping_dir / "_output" / "concentration"
             except Exception:
                 pass
 
