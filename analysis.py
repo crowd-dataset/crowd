@@ -9,20 +9,24 @@ Authors:
 from __future__ import annotations
 
 import ast
+import glob
 import json
 import math
 import os
 import pickle
 import warnings
+from datetime import date
 from pathlib import Path
 from typing import Set
 
 import polars as pl
+from tqdm import tqdm
 
 import common
 from custom_logger import CustomLogger
 from logmod import logs
-from utils.analytics.metrics_cache import MetricsCache
+from utils.analytics.metrics_cache import (YOLO_BICYCLE, YOLO_BUS, YOLO_CAR, YOLO_MOTORCYCLE, YOLO_PERSON,
+                                           YOLO_TRUCK, MetricsCache)
 from utils.core.dataset_stats import Dataset_Stats
 from utils.plotting.bivariate import Bivariate
 from utils.plotting.distributions import Distributions
@@ -2061,6 +2065,176 @@ def log_rollups(df_mapping: "pl.DataFrame") -> None:
 
 
 # Execute analysis
+# ---------------------------------------------------------------------
+# README dataset statistics (regenerated on every run)
+# ---------------------------------------------------------------------
+README_FILE = os.path.join(common.root_dir, "README.md")
+README_STATS_START = "<!-- dataset-stats:start -->"
+README_STATS_END = "<!-- dataset-stats:end -->"
+README_TOP_CITIES = 200
+
+# README column name -> YOLO class ID
+README_DETECTIONS = {
+    "Persons": YOLO_PERSON,
+    "Cars": YOLO_CAR,
+    "Bicycles": YOLO_BICYCLE,
+    "Motorcycles": YOLO_MOTORCYCLE,
+    "Buses": YOLO_BUS,
+    "Trucks": YOLO_TRUCK,
+}
+
+
+def count_detections(df_mapping: pl.DataFrame) -> tuple[pl.DataFrame, int] | None:
+    """Count unique tracked objects per mapping row and YOLO class from the data/*/bbox CSVs.
+
+    Returns (DataFrame with `id` plus one column per README_DETECTIONS entry, number of CSVs read),
+    or None if no CSV could be read.
+    """
+    files = [f for d in common.get_configs("data") for f in glob.glob(os.path.join(d, "bbox", "*.csv"))]
+    if not files:
+        return None
+
+    # "{vid}_{start_time}" -> mapping row id (CSV files are named {vid}_{start_time}_{fps}.csv)
+    segment_to_id = {}
+    for row in df_mapping.select(["id", "videos", "start_time"]).iter_rows(named=True):
+        vids = MetricsCache._parse_videos_cell(row["videos"])
+        for vid, starts in zip(vids, Dataset_Stats._parse_nested_list(row["start_time"])):
+            for st in starts if isinstance(starts, list) else [starts]:
+                segment_to_id[f"{vid}_{int(st)}"] = row["id"]
+
+    min_conf = float(common.get_configs("min_confidence"))
+    id_to_class = {v: k for k, v in README_DETECTIONS.items()}
+    counts: dict = {}
+    n_read = 0
+    for f in tqdm(files, desc="Counting detections for README"):
+        row_id = segment_to_id.get(os.path.basename(f)[:-4].rsplit("_", 1)[0])
+        if row_id is None:
+            continue
+        try:
+            df = pl.read_csv(f, columns=["yolo-id", "unique-id", "confidence"])
+        except Exception as e:
+            logger.warning(f"Skipping unreadable detection file {f}: {e}")
+            continue
+        n_read += 1
+        per_class = (
+            df.filter((pl.col("confidence") >= min_conf) & pl.col("yolo-id").is_in(list(id_to_class)))
+              .group_by("yolo-id")
+              .agg(pl.col("unique-id").drop_nulls().n_unique())
+        )
+        row_counts = counts.setdefault(row_id, dict.fromkeys(README_DETECTIONS, 0))
+        for yolo_id, n in per_class.iter_rows():
+            row_counts[id_to_class[yolo_id]] += n
+
+    if not n_read:
+        return None
+    return pl.DataFrame(
+        [{"id": k, **v} for k, v in counts.items()],
+        schema={"id": df_mapping.schema["id"], **dict.fromkeys(README_DETECTIONS, pl.Int64)},
+    ), n_read
+
+
+def _md_table(df: pl.DataFrame) -> str:
+    """Render a DataFrame as a Markdown table, formatting numbers with thousands separators."""
+    def fmt(v):
+        return f"{v:,.1f}" if isinstance(v, float) else f"{v:,}" if isinstance(v, int) else str(v)
+    lines = ["| " + " | ".join(df.columns) + " |", "|" + "---|" * len(df.columns)]
+    lines += ["| " + " | ".join(fmt(v) for v in row) + " |" for row in df.iter_rows()]
+    return "\n".join(lines)
+
+
+def build_readme_stats(df_mapping: pl.DataFrame, detections: tuple[pl.DataFrame, int] | None) -> str:
+    """Build the Markdown block with the dataset summary, country table and top-cities table."""
+    flag = pl.col("iso3").replace_strict(analysis_class.iso3_to_flag, default="🏳️", return_dtype=pl.Utf8)
+    df = df_mapping.with_columns(
+        pl.col("videos").map_elements(MetricsCache._parse_videos_cell, return_dtype=pl.List(pl.Utf8))
+          .alias("video_list"),
+        pl.struct(["start_time", "end_time"]).map_elements(
+            lambda r: Dataset_Stats._sum_durations(Dataset_Stats._parse_nested_list(r["start_time"]),
+                                                   Dataset_Stats._parse_nested_list(r["end_time"])),
+            return_dtype=pl.Int64,
+        ).alias("seconds"),
+        pl.col("start_time").map_elements(
+            lambda s: sum(len(x) if isinstance(x, list) else 1 for x in Dataset_Stats._parse_nested_list(s)),
+            return_dtype=pl.Int64,
+        ).alias("segments"),
+        pl.concat_str([flag, pl.col("country")], separator=" ").alias("Country"),
+    ).with_columns(pl.col("video_list").list.len().alias("Videos")).filter(pl.col("seconds") > 0)
+
+    det_cols = []
+    if detections is not None:
+        df_det, n_csv = detections
+        det_cols = list(README_DETECTIONS)
+        df = df.join(df_det, on="id", how="left").with_columns(pl.col(det_cols).fill_null(0))
+
+    hours = (pl.col("seconds") / 3600).round(1).alias("Footage (h)")
+    countries = (
+        df.group_by("Country")
+          .agg(pl.len().alias("Cities"), pl.sum("Videos"), pl.sum("seconds"), *[pl.sum(c) for c in det_cols])
+          .sort("seconds", descending=True)
+          .select("Country", "Cities", "Videos", hours, *det_cols)
+    )
+    city = pl.concat_str([flag, pl.lit(" "), pl.col("locality"), pl.lit(", ") + pl.col("state")], ignore_nulls=True)
+    cities = (
+        df.sort("seconds", descending=True).head(README_TOP_CITIES)
+          .select(city.alias("City"), "Country", "Videos", hours, *det_cols)
+    )
+
+    total_s = int(df["seconds"].sum())
+    summary = [
+        f"- **Footage:** {total_s / 3600:,.1f} hours ({total_s / 86400:,.1f} days)",
+        f"- **Videos:** {df['video_list'].explode().drop_nulls().n_unique():,} unique videos "
+        f"split into {int(df['segments'].sum()):,} segments",
+        f"- **Cities / localities:** {df.height:,}",
+        f"- **Countries and territories:** {df['iso3'].n_unique():,}",
+        f"- **Continents:** {df['continent'].n_unique():,}",
+    ]
+    if det_cols:
+        summary.append(f"- **YOLO detection files:** {n_csv:,} CSV files (one per processed segment)")
+        summary.append("- **Detected objects** (unique tracked objects, confidence ≥ "
+                       f"{common.get_configs('min_confidence')}): "
+                       + ", ".join(f"{int(df[c].sum()):,} {c.lower()}" for c in det_cols))
+    summary.append(f"- **Last updated:** {date.today().isoformat()}")
+
+    return "\n".join([
+        README_STATS_START,
+        "<!-- Generated by analysis.py, do not edit by hand. -->",
+        "## Dataset overview",
+        *summary,
+        "",
+        f"<details><summary><b>All {countries.height} countries and territories</b></summary>",
+        "",
+        _md_table(countries),
+        "",
+        "</details>",
+        "",
+        f"<details><summary><b>Top {cities.height} cities by footage</b></summary>",
+        "",
+        _md_table(cities),
+        "",
+        "</details>",
+        README_STATS_END,
+    ])
+
+
+def update_readme_stats(df_mapping: pl.DataFrame) -> None:
+    """Replace the dataset-stats block in README.md with freshly computed statistics."""
+    detections = count_detections(df_mapping)
+    if detections is None:
+        logger.warning("No readable bbox CSVs in configured data folders; README stats written without detections.")
+
+    with open(README_FILE, encoding="utf-8") as f:
+        readme = f.read()
+    start, end = readme.find(README_STATS_START), readme.find(README_STATS_END)
+    if start == -1 or end == -1:
+        logger.warning(f"README stats markers not found in {README_FILE}; README stats not updated.")
+        return
+
+    readme = readme[:start] + build_readme_stats(df_mapping, detections) + readme[end + len(README_STATS_END):]
+    with open(README_FILE, "w", encoding="utf-8") as f:
+        f.write(readme)
+    logger.info("Updated dataset statistics in README.md.")
+
+
 if __name__ == "__main__":
     logger.info("Analysis started.")
 
@@ -2637,3 +2811,5 @@ if __name__ == "__main__":
         log_rollups(df_mapping)
 
         logger.info("Analysis complete.")
+
+    update_readme_stats(df_mapping)
