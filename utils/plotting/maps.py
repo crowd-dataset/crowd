@@ -1964,6 +1964,22 @@ class Maps:
         self._apply_carto_key(fig)
         io_class.save_plotly_figure(fig, file_name, save_final=save_final)
 
+    # State -> ((lon, lat) inside the state, (lon, lat) of its label off the coast),
+    # for states whose label does not fit inside the state
+    US_STATE_CALLOUTS = {
+        "VT": ((-72.7, 44.0), (-75.0, 46.6)),
+        "NH": ((-71.6, 43.6), (-69.2, 43.2)),
+        "MA": ((-71.9, 42.3), (-68.6, 42.0)),
+        "RI": ((-71.5, 41.7), (-69.2, 40.9)),
+        "CT": ((-72.7, 41.6), (-69.8, 39.9)),
+        "NJ": ((-74.5, 40.1), (-70.6, 38.9)),
+        "DE": ((-75.5, 39.0), (-71.4, 37.9)),
+        "MD": ((-76.6, 39.2), (-72.2, 36.9)),
+        "DC": ((-77.0, 38.9), (-73.0, 35.9)),
+        "FL": ((-81.4, 27.6), (-78.6, 26.4)),
+        "HI": ((-155.5, 19.6), (-159.8, 19.2)),
+    }
+
     def us_states_map(self, df, *, state_col="state", value_col="footage_h", colorbar_title="Footage (hours)",
                       color_scale="YlOrRd", file_name="map_us_states", save_final=True):
         """
@@ -1986,16 +2002,29 @@ class Maps:
         fig = px.choropleth(df, locations=state_col, locationmode="USA-states", scope="usa", color="log_value",
                             color_continuous_scale=color_scale, hover_name=state_col,
                             hover_data={value_col: ":,.1f", "log_value": False})
+        # Labels of states too small to hold them are drawn off the coast with a leader line.
+        callout = df[state_col].isin(self.US_STATE_CALLOUTS)
+        inside = df[~callout]
         fig.add_trace(go.Scattergeo(
-            locations=df[state_col],
+            locations=inside[state_col],
             locationmode="USA-states",
-            text=[f"{s}<br>{v:,.0f}" for s, v in zip(df[state_col], df[value_col])],
+            text=[f"{s}<br>{v:,.0f}" for s, v in zip(inside[state_col], inside[value_col])],
             mode="text",
             # white text on the darkest third of the colour scale, black elsewhere
             textfont=dict(size=11, color=np.where(
-                df["log_value"] > df["log_value"].min() + 2 / 3 * np.ptp(df["log_value"]), "white", "black").tolist()),
+                inside["log_value"] > df["log_value"].min() + 2 / 3 * np.ptp(df["log_value"]), "white", "black"
+            ).tolist()),
             hoverinfo="skip",
         ))
+        for s, v in zip(df.loc[callout, state_col], df.loc[callout, value_col]):
+            (lon0, lat0), (lon1, lat1) = self.US_STATE_CALLOUTS[s]
+            fig.add_trace(go.Scattergeo(lon=[lon0, lon1], lat=[lat0, lat1], mode="lines",
+                                        line=dict(width=1, color="grey"), hoverinfo="skip"))
+            fig.add_trace(go.Scattergeo(lon=[lon1], lat=[lat1], text=[f"{s} {v:,.0f}"], mode="text",
+                                        textposition="middle right" if lon1 > lon0 else "middle left",
+                                        textfont=dict(size=11, color="black"),
+                                        hoverinfo="skip"))
+        fig.update_layout(showlegend=False)
         fig.update_layout(
             margin=dict(l=0, r=0, t=0, b=0),
             font=dict(family=common.get_configs('font_family'), size=common.get_configs('font_size')),
