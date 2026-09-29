@@ -1964,6 +1964,46 @@ class Maps:
         self._apply_carto_key(fig)
         io_class.save_plotly_figure(fig, file_name, save_final=save_final)
 
+    def us_states_map(self, df, *, state_col="state", value_col="footage_h", colorbar_title="Footage (hours)",
+                      color_scale="YlOrRd", file_name="map_us_states", save_final=True):
+        """
+        Choropleth of US states on a log colour scale, with each state's value printed on the state.
+
+        Args:
+            df (pd.DataFrame): One row per state; `state_col` holds two-letter USPS codes (e.g., 'CA').
+            state_col (str): Column with state codes.
+            value_col (str): Column with positive values to colour by.
+            colorbar_title (str): Title of the colour bar.
+            color_scale (str|list): Plotly colour scale.
+            file_name (str): Name of the saved file (without extension).
+            save_final (bool): Passed to `save_plotly_figure`.
+        """
+        df = df[df[value_col] > 0].copy()
+        # Log colour scale: a few states hold most of the footage, which would wash out the rest.
+        df["log_value"] = np.log10(df[value_col])
+        ticks = [10 ** p for p in range(int(np.floor(df["log_value"].min())), int(np.ceil(df["log_value"].max())) + 1)]
+
+        fig = px.choropleth(df, locations=state_col, locationmode="USA-states", scope="usa", color="log_value",
+                            color_continuous_scale=color_scale, hover_name=state_col,
+                            hover_data={value_col: ":,.1f", "log_value": False})
+        fig.add_trace(go.Scattergeo(
+            locations=df[state_col],
+            locationmode="USA-states",
+            text=[f"{s}<br>{v:,.0f}" for s, v in zip(df[state_col], df[value_col])],
+            mode="text",
+            # white text on the darkest third of the colour scale, black elsewhere
+            textfont=dict(size=11, color=np.where(
+                df["log_value"] > df["log_value"].min() + 2 / 3 * np.ptp(df["log_value"]), "white", "black").tolist()),
+            hoverinfo="skip",
+        ))
+        fig.update_layout(
+            margin=dict(l=0, r=0, t=0, b=0),
+            font=dict(family=common.get_configs('font_family'), size=common.get_configs('font_size')),
+            coloraxis_colorbar=dict(title=colorbar_title, tickvals=np.log10(ticks).tolist(),
+                                    ticktext=[f"{t:,}" for t in ticks]),
+        )
+        io_class.save_plotly_figure(fig, file_name, save_final=save_final)
+
     def world_map(self, df_mapping):
         """
         Generate a world map with highlighted countries and red markers for cities using Plotly.

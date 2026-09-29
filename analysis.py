@@ -2518,6 +2518,13 @@ if __name__ == "__main__":
                         density_radius=10,
                         file_name='mapbox_map_all_time')
 
+        # map of US states coloured by amount of footage
+        maps.us_states_map(df=df.filter(pl.col("iso3") == "USA")
+                                .group_by("state")
+                                .agg((pl.sum("total_time") / 3600).alias("footage_h"))
+                                .to_pandas(),
+                           file_name="map_us_states_footage")
+
         # Type of vehicle over time of day
         df = df_mapping.clone()  # copy df to manipulate for output
 
