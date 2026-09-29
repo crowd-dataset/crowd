@@ -2518,12 +2518,34 @@ if __name__ == "__main__":
                         density_radius=10,
                         file_name='mapbox_map_all_time')
 
+        # maps of countries in each continent coloured by amount of footage
+        # countries split across continents (e.g., Russia) are labelled at the part shown, not the country's centre
+        split_countries = (df.group_by("iso3").agg(pl.col("continent").n_unique())
+                             .filter(pl.col("continent") > 1)["iso3"].to_list())
+        for continent in df["continent"].drop_nulls().unique().sort():
+            maps.footage_map(df=df.filter(pl.col("continent") == continent)
+                                  .group_by(["iso3", "flag_country"])
+                                  .agg((pl.sum("total_time") / 3600).alias("footage_h"),
+                                       pl.mean("lat"), pl.mean("lon"))  # anchors for outside labels
+                                  .to_pandas(),
+                             location_col="iso3",
+                             locationmode="ISO-3",
+                             label_col="flag_country",
+                             scope="world",
+                             view=maps.CONTINENT_VIEWS[continent],
+                             anchor_labels=split_countries,
+                             file_name=f"map_footage_{continent.lower().replace(' ', '_')}")
+
         # map of US states coloured by amount of footage
-        maps.us_states_map(df=df.filter(pl.col("iso3") == "USA")
-                                .group_by("state")
-                                .agg((pl.sum("total_time") / 3600).alias("footage_h"))
-                                .to_pandas(),
-                           file_name="map_us_states_footage")
+        maps.footage_map(df=df.filter(pl.col("iso3") == "USA")
+                              .group_by("state")
+                              .agg((pl.sum("total_time") / 3600).alias("footage_h"))
+                              .to_pandas(),
+                         location_col="state",
+                         locationmode="USA-states",
+                         scope="usa",
+                         callouts=maps.US_STATE_CALLOUTS,
+                         file_name="map_us_states_footage")
 
         # Type of vehicle over time of day
         df = df_mapping.clone()  # copy df to manipulate for output

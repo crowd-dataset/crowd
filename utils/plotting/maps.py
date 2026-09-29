@@ -7,6 +7,7 @@ import plotly.express as px
 from PIL import Image, ImageFont, ImageDraw, ImageColor
 import common
 from utils.plotting.io import IO
+from utils.plotting import map_labels
 import warnings
 from custom_logger import CustomLogger
 
@@ -1980,57 +1981,130 @@ class Maps:
         "HI": ((-155.5, 19.6), (-159.8, 19.2)),
     }
 
-    def us_states_map(self, df, *, state_col="state", value_col="footage_h", colorbar_title="Footage (hours)",
-                      color_scale="YlOrRd", file_name="map_us_states", save_final=True):
+    # Continent -> map extent (lon/lat ranges, optional projection centre for views crossing 180°)
+    CONTINENT_VIEWS = {
+        "Africa": dict(lon=(-30, 65), lat=(-36, 38)),
+        "Asia": dict(lon=(10, 150), lat=(-11, 75)),
+        "Europe": dict(lon=(-25, 45), lat=(34, 71)),
+        "North America": dict(lon=(-170, -20), lat=(3, 80)),
+        "Oceania": dict(lon=(110, 235), lat=(-48, 20), rotation=170),
+        "South America": dict(lon=(-90, -30), lat=(-56, 16)),
+    }
+    MAP_SIZE = (1600, 900)  # size of saved maps (px); labels are laid out for it
+    MAP_WIDTH_SHARE = 0.86  # share of the width used by the map, the rest holds the colour bar
+
+    @staticmethod
+    def _fmt_value(v):
+        return f"{v:,.0f}" if v >= 10 else f"{v:.1f}"
+
+    def footage_map(self, df, *, location_col, locationmode, scope, label_col=None, value_col="footage_h",
+                    callouts=None, view=None, anchor_labels=None, colorbar_title="Footage (hours)",
+                    color_scale="YlOrRd", file_name="map_footage", save_final=True):
         """
-        Choropleth of US states on a log colour scale, with each state's value printed on the state.
+        Choropleth of regions (US states or countries) on a log colour scale, labelled with each region's name and
+        value.
+
+        With `view` (country maps), labels are placed automatically without overlaps: inside the country if it fits,
+        otherwise next to a dot coloured like the country, or with a leader line if there is no room next to the dot.
+        Without `view` (US states), labels are centred on each region and `callouts` move the ones that do not fit.
 
         Args:
-            df (pd.DataFrame): One row per state; `state_col` holds two-letter USPS codes (e.g., 'CA').
-            state_col (str): Column with state codes.
+            df (pd.DataFrame): One row per region; for country maps also `lon`/`lat` (a point inside the region,
+                used for countries plotly does not draw and for `anchor_labels`).
+            location_col (str): Column with region codes matching `locationmode` (e.g., 'CA', 'DEU').
+            locationmode (str): Plotly location mode, e.g. 'USA-states' or 'ISO-3'.
+            scope (str): Plotly geo scope ('usa', 'world', ...).
+            label_col (str|None): Column with the label text; defaults to `location_col`.
             value_col (str): Column with positive values to colour by.
+            callouts (dict|None): Without `view`: region code -> ((lon, lat) inside the region, (lon, lat) of its
+                label) for regions too small to hold their label.
+            view (dict|None): Map extent as dict(lon=(min, max), lat=(min, max), rotation=lon of projection centre).
+            anchor_labels (list|None): Codes labelled at their `lon`/`lat` instead of the country's centre, e.g.
+                countries split across continents whose part shown is far from the country's centre.
             colorbar_title (str): Title of the colour bar.
             color_scale (str|list): Plotly colour scale.
             file_name (str): Name of the saved file (without extension).
             save_final (bool): Passed to `save_plotly_figure`.
         """
-        df = df[df[value_col] > 0].copy()
-        # Log colour scale: a few states hold most of the footage, which would wash out the rest.
+        label_col = label_col or location_col
+        df = df[df[value_col] > 0].sort_values(value_col, ascending=False).copy()
+        # Log colour scale: a few regions hold most of the footage, which would wash out the rest.
         df["log_value"] = np.log10(df[value_col])
         ticks = [10 ** p for p in range(int(np.floor(df["log_value"].min())), int(np.ceil(df["log_value"].max())) + 1)]
+        df["value_text"] = [self._fmt_value(v) for v in df[value_col]]
+        rows = df.set_index(location_col, drop=False)
 
-        fig = px.choropleth(df, locations=state_col, locationmode="USA-states", scope="usa", color="log_value",
-                            color_continuous_scale=color_scale, hover_name=state_col,
-                            hover_data={value_col: ":,.1f", "log_value": False})
-        # Labels of states too small to hold them are drawn off the coast with a leader line.
-        callout = df[state_col].isin(self.US_STATE_CALLOUTS)
-        inside = df[~callout]
-        fig.add_trace(go.Scattergeo(
-            locations=inside[state_col],
-            locationmode="USA-states",
-            text=[f"{s}<br>{v:,.0f}" for s, v in zip(inside[state_col], inside[value_col])],
-            mode="text",
-            # white text on the darkest third of the colour scale, black elsewhere
-            textfont=dict(size=11, color=np.where(
-                inside["log_value"] > df["log_value"].min() + 2 / 3 * np.ptp(df["log_value"]), "white", "black"
-            ).tolist()),
-            hoverinfo="skip",
-        ))
-        for s, v in zip(df.loc[callout, state_col], df.loc[callout, value_col]):
-            (lon0, lat0), (lon1, lat1) = self.US_STATE_CALLOUTS[s]
-            fig.add_trace(go.Scattergeo(lon=[lon0, lon1], lat=[lat0, lat1], mode="lines",
-                                        line=dict(width=1, color="grey"), hoverinfo="skip"))
-            fig.add_trace(go.Scattergeo(lon=[lon1], lat=[lat1], text=[f"{s} {v:,.0f}"], mode="text",
-                                        textposition="middle right" if lon1 > lon0 else "middle left",
-                                        textfont=dict(size=11, color="black"),
-                                        hoverinfo="skip"))
-        fig.update_layout(showlegend=False)
+        fig = px.choropleth(df, locations=location_col, locationmode=locationmode, scope=scope, color="log_value",
+                            color_continuous_scale=color_scale, hover_name=label_col,
+                            hover_data={value_col: ":,.1f", "log_value": False, location_col: False})
+        # black text with a white halo stays readable on any fill and on the sea
+        halo = "1px 1px 1px white, -1px -1px 1px white, 1px -1px 1px white, -1px 1px 1px white"
+        font = dict(size=11, color="black", shadow=halo)
+
+        def add_text(lon, lat, text, position="middle center"):
+            fig.add_trace(go.Scattergeo(lon=lon, lat=lat, text=text, mode="text", textposition=position,
+                                        textfont=font, hoverinfo="skip"))
+
+        def add_lines(segments):
+            fig.add_trace(go.Scattergeo(lon=[v for a, b in segments for v in (a[0], b[0], None)],
+                                        lat=[v for a, b in segments for v in (a[1], b[1], None)],
+                                        mode="lines", line=dict(width=1, color="grey"), hoverinfo="skip"))
+
+        def add_dots(codes, points, text=None, positions="middle right"):
+            fig.add_trace(go.Scattergeo(
+                lon=[p[0] for p in points], lat=[p[1] for p in points], mode="markers+text",
+                text=text or [""] * len(codes), textposition=positions, textfont=font,
+                marker=dict(size=6, color=rows.loc[codes, "log_value"], coloraxis="coloraxis",
+                            line=dict(width=0.5, color="grey")),
+                hovertext=[f"{rows.at[c, label_col]} {rows.at[c, 'value_text']}" for c in codes], hoverinfo="text",
+            ))
+
+        if view:
+            width, height = self.MAP_SIZE
+            proj = map_labels.Projection(view, width * self.MAP_WIDTH_SHARE, height)
+            placed = map_labels.layout_countries(
+                [(code, [r[label_col], r["value_text"]], (r["lon"], r["lat"])) for code, r in rows.iterrows()],
+                proj, split=anchor_labels)
+            inside = [c for c, p in placed.items() if p[0] == "inside"]
+            dots = [c for c, p in placed.items() if p[0] == "dot"]
+            lined = [c for c, p in placed.items() if p[0] == "line"]
+            add_text([placed[c][1][0] for c in inside], [placed[c][1][1] for c in inside],
+                     [f"{rows.at[c, label_col]}<br>{rows.at[c, 'value_text']}" for c in inside])
+            if lined:
+                add_lines([(placed[c][1], placed[c][2]) for c in lined])
+                add_text([placed[c][2][0] for c in lined], [placed[c][2][1] for c in lined],
+                         [f"{rows.at[c, label_col]} {rows.at[c, 'value_text']}" for c in lined],
+                         [placed[c][3] for c in lined])
+            if dots or lined:
+                add_dots(dots + lined, [placed[c][1] for c in dots + lined],
+                         [f"{rows.at[c, label_col]}{'<br>' if placed[c][3] else ' '}{rows.at[c, 'value_text']}"
+                          for c in dots] + [""] * len(lined),
+                         [placed[c][2] for c in dots] + ["middle right"] * len(lined))
+            fig.update_geos(domain=dict(x=[0, self.MAP_WIDTH_SHARE], y=[0, 1]),
+                            lonaxis_range=view["lon"], lataxis_range=view["lat"],
+                            projection_rotation_lon=view.get("rotation", sum(view["lon"]) / 2))
+            fig.update_layout(width=width, height=height,
+                              coloraxis_colorbar=dict(x=self.MAP_WIDTH_SHARE + 0.02, xanchor="left"))
+        else:
+            callouts = {c: ab for c, ab in (callouts or {}).items() if c in rows.index}
+            inside = rows.index.difference(list(callouts))
+            fig.add_trace(go.Scattergeo(
+                locations=inside, locationmode=locationmode, mode="text", hoverinfo="skip", textfont=font,
+                text=[f"{rows.at[c, label_col]}<br>{rows.at[c, 'value_text']}" for c in inside]))
+            if callouts:
+                codes = list(callouts)
+                add_lines([callouts[c] for c in codes])
+                add_text([callouts[c][1][0] for c in codes], [callouts[c][1][1] for c in codes],
+                         [f"{rows.at[c, label_col]} {rows.at[c, 'value_text']}" for c in codes],
+                         ["middle right" if callouts[c][1][0] > callouts[c][0][0] else "middle left" for c in codes])
+                add_dots(codes, [callouts[c][0] for c in codes])
         fig.update_layout(
+            showlegend=False,
             margin=dict(l=0, r=0, t=0, b=0),
             font=dict(family=common.get_configs('font_family'), size=common.get_configs('font_size')),
-            coloraxis_colorbar=dict(title=colorbar_title, tickvals=np.log10(ticks).tolist(),
-                                    ticktext=[f"{t:,}" for t in ticks]),
         )
+        fig.update_layout(coloraxis_colorbar=dict(title=colorbar_title, tickvals=np.log10(ticks).tolist(),
+                                                  ticktext=[f"{t:,}" for t in ticks]))
         io_class.save_plotly_figure(fig, file_name, save_final=save_final)
 
     def world_map(self, df_mapping):
