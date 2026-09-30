@@ -1,6 +1,5 @@
 import os
 import common
-import plotly as py
 import plotly.graph_objects as go
 import plotly.io as pio
 import shutil
@@ -24,8 +23,17 @@ class IO:
         except KeyError:
             return False
 
+    @staticmethod
+    def _static_basemap(fig) -> None:
+        """Static images use the map background without place labels: at world scale they mix local languages.
+        The interactive HTML keeps them, so place names show when zooming in."""
+        if fig.layout.map.style == "carto-positron":
+            fig.layout.map.style = "carto-positron-nolabels"
+        for layer in fig.layout.map.layers or ():
+            layer.source = [src.replace("/light_all/", "/light_nolabels/") for src in layer.source or ()]
+
     def save_plotly_figure(self, fig, filename, width=1600, height=900, scale=1, save_final=True, save_png=True,
-                           save_eps=True):
+                           save_eps=True, post_script=None):
         """
         Saves a Plotly figure as HTML, PNG, SVG, and EPS formats.
 
@@ -36,6 +44,7 @@ class IO:
             height (int, optional): height of the PNG and EPS images in pixels. Defaults to 900.
             scale (int, optional): Scaling factor for the PNG image. Defaults to 3.
             save_final (bool, optional): whether to save the "good" final figure.
+            post_script (str, optional): JavaScript run after the HTML figure loads (`{plot_id}` is its div id).
         """
         # Create directory if it doesn't exist
         output_final = os.path.join(common.root_dir, 'figures')
@@ -45,17 +54,22 @@ class IO:
         # Save as HTML. plotly.js is not embedded (~4.6 MB per file) but written once as plotly.min.js next to the
         # figures and loaded by relative path: htmlpreview.github.io, used for the README links, only loads scripts
         # hosted on GitHub, so plotly's CDN would not work there.
+        # The HTML fills the browser window: a size set for the static images (e.g., for label layout) is dropped.
         logger.info(f"Saving html file for {filename}.")
-        py.offline.plot(fig, filename=os.path.join(common.output_dir, filename + ".html"),
-                        include_plotlyjs="directory", auto_open=self._open_html())
+        interactive = go.Figure(fig)
+        interactive.layout.width = None
+        interactive.layout.height = None
+        interactive.write_html(os.path.join(common.output_dir, filename + ".html"), include_plotlyjs="directory",
+                               auto_open=self._open_html(), post_script=post_script)
         # also save the final figure
         if save_final:
-            py.offline.plot(fig, filename=os.path.join(output_final, filename + ".html"), auto_open=False,
-                            include_plotlyjs="directory")
+            interactive.write_html(os.path.join(output_final, filename + ".html"), include_plotlyjs="directory",
+                                   post_script=post_script)
 
         # static images cannot use interactive menus (e.g., dropdowns), so leave them out
         static = go.Figure(fig)
         static.layout.updatemenus = ()  # assignment: update_layout(updatemenus=[]) would keep the existing menus
+        self._static_basemap(static)
 
         try:
             # Save as PNG

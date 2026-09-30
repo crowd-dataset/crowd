@@ -48,8 +48,32 @@ def _style(fig, **layout):
     return fig
 
 
-def _save(fig, name):
-    io.save_plotly_figure(fig, name, save_final=True)
+def _save(fig, name, post_script=None):
+    io.save_plotly_figure(fig, name, save_final=True, post_script=post_script)
+
+
+# Interactive scatter plots: when zoomed in to at most ZOOM_LABELS points, label every point in view (a hidden
+# trace with all labels) instead of only the largest ones.
+ZOOM_LABELS = 40
+ZOOM_LABELS_JS = """
+var gd = document.getElementById('{plot_id}');
+function zoomLabels() {
+  var all = gd.data.findIndex(function (t) { return t.meta === 'zoom-labels'; });
+  if (all < 0) return;
+  var t = gd.data[all], xr = gd._fullLayout.xaxis.range, yr = gd._fullLayout.yaxis.range, n = 0;
+  for (var i = 0; i < t.x.length; i++) {
+    var x = Math.log10(t.x[i]), y = Math.log10(t.y[i]);
+    if (x >= xr[0] && x <= xr[1] && y >= yr[0] && y <= yr[1]) n++;
+  }
+  var show = n <= %d;
+  if (!!t.visible === show) return;
+  var top = [];
+  gd.data.forEach(function (d, i) { if (d.meta === 'top-labels') top.push(i); });
+  Plotly.restyle(gd, {visible: show}, [all]);
+  if (top.length) Plotly.restyle(gd, {visible: !show}, top);
+}
+gd.on('plotly_relayout', zoomLabels);
+""" % ZOOM_LABELS
 
 
 def _literal_list(cell) -> list:
@@ -89,6 +113,15 @@ def segments(df_mapping: pl.DataFrame, vehicle_map: dict) -> pl.DataFrame:
                     channel=_item(channels, i),
                 ))
     return pl.DataFrame(rows).filter(pl.col("seconds") > 0)
+
+
+def _bar_totals(fig, df: pl.DataFrame, x: str, y: str, fmt: str = "{:,.0f}", vertical: bool = False):
+    """Write each stacked bar's total above it (vertically when bars are narrow)."""
+    totals = df.group_by(x).agg(pl.sum(y)).sort(x)
+    for xv, yv in totals.iter_rows():
+        fig.add_annotation(x=xv, y=yv, text=fmt.format(yv), showarrow=False, textangle=-90 if vertical else 0,
+                           yanchor="bottom", yshift=3, font=dict(size=11 if vertical else 16))
+    fig.update_yaxes(range=[0, totals[y].max() * (1.15 if vertical else 1.08)])  # room for the labels
 
 
 def _country_indicators(df_mapping: pl.DataFrame) -> pl.DataFrame:
@@ -186,17 +219,22 @@ def _footage_vs_videos(df: pl.DataFrame, label: str, name: str):
         if p[0] == "dot":  # invisible marker so the text sits beside the point like on the maps
             fig.add_trace(go.Scatter(x=[10 ** ax], y=[10 ** ay], mode="markers+text", text=[names[code]],
                                      textposition=p[2], textfont=font, marker=dict(size=8, opacity=0),
-                                     showlegend=False, hoverinfo="skip"))
+                                     showlegend=False, hoverinfo="skip", meta="top-labels"))
         else:
             (lx, ly), pos = p[2], p[3]
             fig.add_trace(go.Scatter(x=[10 ** ax, 10 ** lx], y=[10 ** ay, 10 ** ly], mode="lines",
-                                     line=dict(color="grey", width=1), showlegend=False, hoverinfo="skip"))
+                                     line=dict(color="grey", width=1), showlegend=False, hoverinfo="skip",
+                                     meta="top-labels"))
             fig.add_trace(go.Scatter(x=[10 ** lx], y=[10 ** ly], mode="text", text=[names[code]],
-                                     textposition=pos, textfont=font, showlegend=False, hoverinfo="skip"))
+                                     textposition=pos, textfont=font, showlegend=False, hoverinfo="skip",
+                                     meta="top-labels"))
+    # every point's label, shown in the HTML only when zoomed in (see ZOOM_LABELS_JS)
+    fig.add_trace(go.Scatter(x=df["hours"], y=df["videos"], mode="text", text=df[label], textposition="top center",
+                             textfont=font, visible=False, showlegend=False, hoverinfo="skip", meta="zoom-labels"))
     fig.update_xaxes(type="log", range=x_range, title_text="Footage (hours)", automargin=False)
     fig.update_yaxes(type="log", range=y_range, title_text="Number of videos", automargin=False)
     _save(_style(fig, width=size[0], height=size[1], margin=margin,
-                 legend=dict(x=0.01, y=0.99, bgcolor="rgba(255,255,255,0.7)")), name)
+                 legend=dict(x=0.01, y=0.99, bgcolor="rgba(255,255,255,0.7)")), name, post_script=ZOOM_LABELS_JS)
 
 
 def dataset_figures(df_mapping: pl.DataFrame, seg: pl.DataFrame, flags: dict) -> None:
@@ -220,6 +258,7 @@ def dataset_figures(df_mapping: pl.DataFrame, seg: pl.DataFrame, flags: dict) ->
                  category_orders={"continent": CONTINENT_ORDER, "time": ["Day", "Night"]},
                  color_discrete_map={"Day": "#E69F00", "Night": "#0072B2"},
                  labels={"hours": "Footage (hours)", "continent": "", "time": ""})
+    _bar_totals(fig, tod, "continent", "hours")
     _save(_style(fig), "bar_continent_time_of_day")
 
     # vehicle the footage is filmed from: cars are ~90% of footage, so a log axis with the share written on each bar
@@ -278,14 +317,6 @@ def dataset_figures(df_mapping: pl.DataFrame, seg: pl.DataFrame, flags: dict) ->
                  labels={"share": "Share of footage (%)", "continent": "", "vehicle": "Type of vehicle"})
     _save(_style(fig), "bar_vehicle_type_continent")
 
-    # 5) upload year per continent
-    years = (seg.drop_nulls("year").filter(pl.col("year").is_between(2005, 2100))  # YouTube started in 2005
-                .group_by("year", "continent").agg(hours))
-    fig = px.bar(years.sort("year").to_pandas(), x="year", y="hours", color="continent",
-                 **CONTINENT_STYLE,
-                 labels={"year": "Year of upload", "hours": "Footage (hours)"})
-    _save(_style(fig, legend_title_text=""), "bar_upload_year_continent")
-
     # videos uploaded per quarter, by continent; the quarter still in progress is hatched
     videos = (seg.drop_nulls(["year", "month"]).filter(pl.col("year").is_between(2005, 2100),
                                                        pl.col("month").is_between(1, 12))
@@ -303,6 +334,11 @@ def dataset_figures(df_mapping: pl.DataFrame, seg: pl.DataFrame, flags: dict) ->
     fig.update_layout(bargap=0.1)
     fig.add_annotation(text="Hatched: current quarter, not complete yet", x=0.01, y=0.98, xref="paper",
                        yref="paper", showarrow=False, xanchor="left", font=dict(size=14, color="#666666"))
+    _bar_totals(fig, videos, "quarter", "len", vertical=True)
+    # a tick every year and a grid in both directions, so each bar can be read off
+    fig.update_xaxes(dtick="M12", tickformat="%Y", tickangle=-45, showgrid=True, gridcolor="#e5e5e5",
+                     ticklabelmode="period")
+    fig.update_yaxes(showgrid=True, gridcolor="#e5e5e5")
     _save(_style(fig, legend_title_text=""), "hist_months")
 
     # 6) how concentrated the footage is in a few YouTube channels

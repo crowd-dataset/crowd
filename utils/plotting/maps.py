@@ -21,7 +21,7 @@ io_class = IO()
 
 
 class Maps:
-    _CARTO_TILE = ("https://basemaps.cartocdn.com/rastertiles/light_nolabels"  # labels mix local languages
+    _CARTO_TILE = ("https://basemaps.cartocdn.com/rastertiles/light_all"  # io.py uses light_nolabels for images
                    "/{{z}}/{{x}}/{{y}}.png?key={key}")
 
     def __init__(self) -> None:
@@ -1971,8 +1971,8 @@ class Maps:
             legend_title_text=""  # Remove legend title
         )
 
-        # Save the figure if requested (basemap without place labels, which mix local languages)
-        fig.update_layout(map_style="carto-positron-nolabels")
+        # Save the figure if requested (static images drop the basemap's place labels, see IO._static_basemap)
+        fig.update_layout(map_style="carto-positron")
         self._apply_carto_key(fig)
         io_class.save_plotly_figure(fig, file_name, save_final=save_final)
 
