@@ -322,18 +322,30 @@ def safe_eval_list(x: Any) -> List[Any]:
     if s == "" or s == "[]":
         return []
 
-    try:
-        v = ast.literal_eval(s)
-        return v if isinstance(v, list) else []
-    except Exception:
-        # Fallback: [a,b,c] with bare tokens
-        if s.startswith("[") and s.endswith("]"):
-            inner = s[1:-1].strip()
-            if inner == "":
-                return []
-            parts = [p.strip().strip('"').strip("'") for p in inner.split(",")]
-            return [p for p in parts if p != ""]
-        return []
+    # Only evaluate cells that are Python literals: quoted strings, or bare tokens that are all
+    # numbers/None/nan. Bare text such as unquoted video IDs ([4Xk9abc,123_456_789]) must not be
+    # evaluated: IDs starting with a digit raise a SyntaxWarning and digit/underscore IDs become ints.
+    tokens = [t.strip() for t in re.split(r"[\[\],]", s) if t.strip()]
+    is_literal = ("'" in s or '"' in s) or all(_LITERAL_TOKEN_RE.match(t) for t in tokens)
+
+    if is_literal:
+        try:
+            v = ast.literal_eval(s)
+            return v if isinstance(v, list) else []
+        except Exception:
+            pass
+
+    # Fallback: [a,b,c] with bare tokens
+    if s.startswith("[") and s.endswith("]"):
+        inner = s[1:-1].strip()
+        if inner == "":
+            return []
+        parts = [p.strip().strip('"').strip("'") for p in inner.split(",")]
+        return [p for p in parts if p != ""]
+    return []
+
+
+_LITERAL_TOKEN_RE = re.compile(r"^(?:[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?|None|True|False)$")
 
 
 # =============================================================================
