@@ -30,13 +30,16 @@ class IO:
         os.makedirs(common.output_dir, exist_ok=True)
         os.makedirs(output_final, exist_ok=True)
 
-        # Save as HTML; plotly.js is loaded from its CDN instead of being embedded (~4.6 MB per file)
+        # Save as HTML. plotly.js is not embedded (~4.6 MB per file) but written once as plotly.min.js next to the
+        # figures and loaded by relative path: htmlpreview.github.io, used for the README links, only loads scripts
+        # hosted on GitHub, so plotly's CDN would not work there.
         logger.info(f"Saving html file for {filename}.")
-        py.offline.plot(fig, filename=os.path.join(common.output_dir, filename + ".html"), include_plotlyjs="cdn")
+        py.offline.plot(fig, filename=os.path.join(common.output_dir, filename + ".html"),
+                        include_plotlyjs="directory")
         # also save the final figure
         if save_final:
             py.offline.plot(fig, filename=os.path.join(output_final, filename + ".html"), auto_open=False,
-                            include_plotlyjs="cdn")
+                            include_plotlyjs="directory")
 
         # static images cannot use interactive menus (e.g., dropdowns), so leave them out
         static = go.Figure(fig)
