@@ -898,7 +898,7 @@ def form():
                     'state': state,
                     'videos': [],
                     'time_of_day': [],
-                    'gmp': 0.0,
+                    'gmp': '',  # no source for locality GDP: left empty, filled in by hand
                     'population_locality': int(get_locality_population(locality_data, locality, state)),
                     'population_country': country_population,
                     'traffic_mortality': get_country_traffic_mortality(iso3_code),
@@ -1203,13 +1203,13 @@ def form():
                         df.at[idx, 'time_of_day'] = compact_nested_list(time_of_day_list)
                         df.at[idx, 'start_time'] = compact_nested_list(start_time_list)
                         df.at[idx, 'end_time'] = compact_nested_list(end_time_list)
-                        df.at[idx, 'gmp'] = to_float_safe(gmp)
+                        df.at[idx, 'gmp'] = to_optional_float(gmp)
                         df.at[idx, 'population_locality'] = to_int_safe(population_locality)
                         df.at[idx, 'population_country'] = to_int_safe(population_country)
-                        df.at[idx, 'traffic_mortality'] = to_float_safe(traffic_mortality)
+                        df.at[idx, 'traffic_mortality'] = to_optional_float(traffic_mortality)
                         df.at[idx, 'continent'] = continent
                         df.at[idx, 'locality_aka'] = locality_aka
-                        df.at[idx, 'literacy_rate'] = to_float_safe(literacy_rate)
+                        df.at[idx, 'literacy_rate'] = to_optional_float(literacy_rate)
                         df.at[idx, 'avg_height'] = to_float_safe(avg_height)
                         df.at[idx, 'med_age'] = to_float_safe(med_age)
                         df.at[idx, 'lat'] = to_float_safe(lat)
@@ -1228,10 +1228,7 @@ def form():
                         vehicle_type_list = [int(x) for x in vehicle_type_list]
                         df.at[idx, 'vehicle_type'] = compact_flat_list(vehicle_type_list)
 
-                        if gini:
-                            df.at[idx, 'gini'] = float(gini)
-                        else:
-                            df.at[idx, 'gini'] = 0.0
+                        df.at[idx, 'gini'] = to_optional_float(gini)
 
                         if traffic_index:
                             df.at[idx, 'traffic_index'] = float(traffic_index)
@@ -1352,7 +1349,7 @@ def get_country_gini(country_data: list):
         gini_data = country_data[0].get('economy', {}).get('gini_coefficient', {})
         if gini_data:
             return list(gini_data.values())[-1]  # most recent year
-    return 0.0
+    return ''  # unknown: empty, not 0
 
 
 def get_country_literacy_rate(iso3_code):
@@ -1365,12 +1362,12 @@ def get_country_literacy_rate(iso3_code):
                 for entry in data[1]:
                     if entry['value'] is not None:
                         return round(entry['value'], 2)
-            return 0.0
+            return ''
         else:
-            return 0.0
+            return ''
     except Exception as e:
         print(f"Error fetching literacy rate: {e}")
-        return 0.0
+        return ''
 
 
 def get_country_traffic_mortality(iso3_code):
@@ -1383,10 +1380,10 @@ def get_country_traffic_mortality(iso3_code):
                 for entry in data[1]:
                     if entry['value'] is not None:
                         return round(entry['value'], 2)
-            return 0.0
+            return ''
     except Exception as e:
         print(f"Error fetching traffic mortality rate: {e}")
-        return 0.0
+        return ''
 
 
 def get_locality_data(locality, country_code, state=None):
@@ -1740,6 +1737,14 @@ def to_int_safe(value):
         return int(f)
     except Exception:
         return 0
+
+
+def to_optional_float(value):
+    """Float for a filled-in value; None (an empty cell) for a missing one, so it is not mistaken for 0."""
+    try:
+        return float(value) if value not in (None, '') else None
+    except (TypeError, ValueError):
+        return None
 
 
 def to_float_safe(value):
