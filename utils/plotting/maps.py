@@ -1939,13 +1939,14 @@ class Maps:
                 size=value_title,
                 size_max=30,
                 color="log_value",
-                color_continuous_scale="YlOrRd",
+                # YlOrRd without its three palest steps: pale yellow vanishes on the white land when zoomed in
+                color_continuous_scale=px.colors.sequential.YlOrRd[3:],
                 hover_name=hover_name,
                 hover_data={**{c: True for c in hover_data or [] if c in df.columns}, value_title: ":,.1f",
                             "log_value": False},
                 zoom=1.3  # pyright: ignore[reportArgumentType]
             )
-            fig.update_traces(marker=dict(sizemin=2, opacity=0.8))
+            fig.update_traces(marker=dict(sizemin=2, opacity=0.85))
             ticks = [10 ** p for p in range(int(np.floor(df["log_value"].min())),
                                             int(np.ceil(df["log_value"].max())) + 1)]
             fig.update_layout(coloraxis_colorbar=dict(title=value_title, tickvals=np.log10(ticks).tolist(),

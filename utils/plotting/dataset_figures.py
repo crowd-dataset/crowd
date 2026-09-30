@@ -191,26 +191,28 @@ def _country_map(df: pl.DataFrame, value: str, title: str, scale: str, name: str
     _save(_style(fig, margin=dict(l=0, r=0, t=0, b=0)), name)
 
 
-def _footage_vs_videos(df: pl.DataFrame, label: str, name: str):
-    """Footage against number of videos (log-log), coloured by continent, the largest points labelled without
-    overlaps (next to the point, or with a leader line when there is no room)."""
+def _labelled_scatter(df: pl.DataFrame, x_col: str, y_col: str, label: str, labelled: pl.Expr, x_title: str,
+                      y_title: str, name: str):
+    """Log-log scatter coloured by continent. Rows where `labelled` is true get a label placed without overlaps
+    (next to the point, or with a leader line when there is no room); in the HTML, zooming in labels every point."""
     size, margin = (1600, 900), dict(l=90, r=30, t=30, b=80)
-    x = np.log10(df["hours"].to_numpy())
-    y = np.log10(df["videos"].to_numpy())
+    x = np.log10(df[x_col].to_numpy())
+    y = np.log10(df[y_col].to_numpy())
     x_range = (x.min() - 0.1, x.max() + 0.35)  # room on the right for the largest points' labels
     y_range = (y.min() - 0.15, y.max() + 0.2)
     fig = go.Figure()
     for continent in CONTINENT_ORDER:
         d = df.filter(pl.col("continent") == continent)
-        fig.add_trace(go.Scatter(x=d["hours"], y=d["videos"], mode="markers", name=continent, text=d[label],
+        fig.add_trace(go.Scatter(x=d[x_col], y=d[y_col], mode="markers", name=continent, text=d[label],
                                  marker=dict(color=CONTINENT_COLORS[continent], size=8, opacity=0.75),
-                                 hovertemplate="%{text}<br>%{x:,.1f} hours, %{y:,} videos<extra></extra>"))
-    # rank rows, not names: same-named places (e.g., two Philadelphias) must not share a label
-    top = df.with_row_index("_i").sort("hours", descending=True).head(LABEL_TOP)
+                                 hovertemplate=f"%{{text}}<br>{x_title}: %{{x:,.1f}}<br>{y_title}: %{{y:,.1f}}"
+                                               "<extra></extra>"))
+    # select rows, not names: same-named places (e.g., two Philadelphias) must not share a label
+    top = df.with_row_index("_i").filter(labelled)
     proj = map_labels.AxisProjection(x_range, y_range, size[0] - margin["l"] - margin["r"],
                                      size[1] - margin["t"] - margin["b"])
-    items = [dict(code=str(r["_i"]), lines=[r[label]], anchor=(math.log10(r["hours"]), math.log10(r["videos"])),
-                  ct=None) for r in top.iter_rows(named=True)]
+    items = [dict(code=str(r["_i"]), lines=[r[label]], anchor=(math.log10(r[x_col]), math.log10(r[y_col])),
+                  ct=None) for r in top.sort(y_col, descending=True).iter_rows(named=True)]
     placed = map_labels.place_labels(items, proj, {})
     names = {str(r["_i"]): r[label] for r in top.iter_rows(named=True)}
     font = dict(size=11, color="black")
@@ -229,10 +231,10 @@ def _footage_vs_videos(df: pl.DataFrame, label: str, name: str):
                                      textposition=pos, textfont=font, showlegend=False, hoverinfo="skip",
                                      meta="top-labels"))
     # every point's label, shown in the HTML only when zoomed in (see ZOOM_LABELS_JS)
-    fig.add_trace(go.Scatter(x=df["hours"], y=df["videos"], mode="text", text=df[label], textposition="top center",
+    fig.add_trace(go.Scatter(x=df[x_col], y=df[y_col], mode="text", text=df[label], textposition="top center",
                              textfont=font, visible=False, showlegend=False, hoverinfo="skip", meta="zoom-labels"))
-    fig.update_xaxes(type="log", range=x_range, title_text="Footage (hours)", automargin=False)
-    fig.update_yaxes(type="log", range=y_range, title_text="Number of videos", automargin=False)
+    fig.update_xaxes(type="log", range=x_range, title_text=x_title, automargin=False)
+    fig.update_yaxes(type="log", range=y_range, title_text=y_title, automargin=False)
     _save(_style(fig, width=size[0], height=size[1], margin=margin,
                  legend=dict(x=0.01, y=0.99, bgcolor="rgba(255,255,255,0.7)")), name, post_script=ZOOM_LABELS_JS)
 
@@ -246,10 +248,13 @@ def dataset_figures(df_mapping: pl.DataFrame, seg: pl.DataFrame, flags: dict) ->
     city = (seg.group_by("id").agg(hours, pl.col("video").n_unique().alias("videos"))
                .join(df_mapping.select("id", "locality", "iso3", "continent"), on="id")
                .with_columns(pl.concat_str([flag, pl.col("locality")], separator=" ").alias("name")))
-    _footage_vs_videos(city, "name", "scatter_all_total_time-video_count")
+    top_hours = pl.col("hours").rank("ordinal", descending=True) <= LABEL_TOP
+    _labelled_scatter(city, "hours", "videos", "name", top_hours, "Footage (hours)", "Number of videos",
+                      "scatter_all_total_time-video_count")
     country = (seg.group_by("iso3").agg(hours, pl.col("video").n_unique().alias("videos"), pl.first("continent"))
                   .with_columns(pl.concat_str([flag, pl.col("iso3")], separator=" ").alias("name")))
-    _footage_vs_videos(country, "name", "scatter_all_country_total_time-video_count")
+    _labelled_scatter(country, "hours", "videos", "name", pl.lit(True), "Footage (hours)", "Number of videos",
+                      "scatter_all_country_total_time-video_count")  # every country labelled
 
     # day and night footage per continent
     tod = (seg.with_columns(pl.when(pl.col("night")).then(pl.lit("Night")).otherwise(pl.lit("Day")).alias("time"))
@@ -274,13 +279,15 @@ def dataset_figures(df_mapping: pl.DataFrame, seg: pl.DataFrame, flags: dict) ->
     _save(_style(fig, margin=dict(r=260)), "bar_vehicle_type_time_of_day")
 
     # 1) footage against city population: which large cities are under-sampled
+    # labelled: the localities with the most footage and the largest ones by population
     city = (seg.group_by("id").agg(hours)
-               .join(df_mapping.select("id", "locality", "country", "continent", "population_locality"), on="id")
-               .filter(pl.col("population_locality") > 0))
-    fig = px.scatter(city.to_pandas(), x="population_locality", y="hours", color="continent", log_x=True, log_y=True,
-                     hover_name="locality", hover_data=["country"], **CONTINENT_STYLE,
-                     labels={"population_locality": "Population of locality", "hours": "Footage (hours)"})
-    _save(_style(fig, legend_title_text=""), "scatter_population_footage")
+               .join(df_mapping.select("id", "locality", "iso3", "continent", "population_locality"), on="id")
+               .filter(pl.col("population_locality") > 0)
+               .with_columns(pl.concat_str([flag, pl.col("locality")], separator=" ").alias("name")))
+    notable = ((pl.col("hours").rank("ordinal", descending=True) <= 8)
+               | (pl.col("population_locality").rank("ordinal", descending=True) <= 8))
+    _labelled_scatter(city, "population_locality", "hours", "name", notable, "Population of locality",
+                      "Footage (hours)", "scatter_population_footage")
 
     # 2) footage against country indicators: is the dataset biased towards some kinds of countries
     # countries split across continents (e.g., Russia) count as one country, shown with their first continent
