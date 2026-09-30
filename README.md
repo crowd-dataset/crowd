@@ -10,7 +10,7 @@ The dataset is available on [kaggle](https://www.kaggle.com/datasets/anonymousau
 ## Dataset overview
 - **Footage:** 33,616.1 hours (1,400.7 days)
 - **Videos:** 74,005 unique videos split into 94,473 segments
-- **Cities / localities:** 9,574
+- **Cities / localities:** 9,575
 - **Countries and territories:** 238
 - **Continents:** 6
 - **Last updated:** 2026-09-30
@@ -22,7 +22,7 @@ The dataset is available on [kaggle](https://www.kaggle.com/datasets/anonymousau
 | 1 | 🇺🇸 United States | 1,824 | 16,450 | 9,199.2 |
 | 2 | 🇬🇧 United Kingdom | 358 | 3,152 | 1,669.5 |
 | 3 | 🇦🇺 Australia | 204 | 3,856 | 1,620.0 |
-| 4 | 🇷🇺 Russia | 180 | 2,671 | 1,342.0 |
+| 4 | 🇷🇺 Russia | 181 | 2,671 | 1,342.0 |
 | 5 | 🇵🇭 Philippines | 398 | 3,570 | 1,308.3 |
 | 6 | 🇨🇦 Canada | 223 | 3,030 | 1,165.2 |
 | 7 | 🇻🇳 Vietnam | 68 | 2,918 | 1,134.6 |
@@ -155,8 +155,8 @@ The dataset is available on [kaggle](https://www.kaggle.com/datasets/anonymousau
 | 134 | 🇹🇳 Tunisia | 5 | 15 | 5.1 |
 | 135 | 🇹🇹 Trinidad and Tobago | 3 | 5 | 4.6 |
 | 136 | 🇪🇷 Eritrea | 11 | 27 | 4.6 |
-| 137 | 🇳🇮 Nicaragua | 8 | 17 | 4.6 |
-| 138 | 🇦🇩 Andorra | 8 | 45 | 4.6 |
+| 137 | 🇦🇩 Andorra | 8 | 45 | 4.6 |
+| 138 | 🇳🇮 Nicaragua | 8 | 17 | 4.6 |
 | 139 | 🇬🇺 Guam | 10 | 41 | 4.5 |
 | 140 | 🇲🇴 Macau | 2 | 15 | 4.5 |
 | 141 | 🇰🇵 North Korea | 1 | 19 | 4.4 |
