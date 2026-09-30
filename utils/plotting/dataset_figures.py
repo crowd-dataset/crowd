@@ -448,22 +448,47 @@ def dataset_figures(df_mapping: pl.DataFrame, seg: pl.DataFrame, flags: dict) ->
     dots = (seg.group_by("id").agg(hours).join(df_mapping.select("id", "locality", "country", "continent", "lat",
                                                                  "lon"), on="id")
                .drop_nulls(["lat", "lon"]).sort("hours", descending=True))
-    fig = go.Figure()
-    for continent in CONTINENT_ORDER:
-        d = dots.filter(pl.col("continent") == continent)
-        fig.add_trace(go.Scattergeo(lon=d["lon"], lat=d["lat"], name=continent, text=d["locality"],
-                                    customdata=d["hours"],
-                                    marker=dict(size=np.clip(2 + 1.3 * np.sqrt(d["hours"].to_numpy()), 2, 32),
-                                                color=CONTINENT_COLORS[continent], opacity=0.6, line_width=0),
-                                    hovertemplate="%{text}<br>%{customdata:,.1f} hours<extra></extra>"))
-    fig.update_geos(projection_type="natural earth", showland=True, landcolor="#eeeeee", showcountries=True,
-                    countrycolor="#cccccc", showocean=True, oceancolor="white", showframe=False,
-                    lataxis_range=[-57, 84], coastlinecolor="#bbbbbb")
+    fig = go.Figure(_dot_traces(dots))
+    fig.update_geos(projection_type="natural earth", lataxis_range=[-57, 84], **GEO_STYLE)
     fig.add_annotation(text="Dot area proportional to hours of footage", x=0.01, y=0.02, xref="paper",
                        yref="paper", showarrow=False, font=dict(size=14, color="#666666"))
     _save(_style(fig, margin=dict(l=0, r=0, t=0, b=0),
                  legend=dict(x=0.01, y=0.35, itemsizing="constant", bgcolor="rgba(255,255,255,0.7)")),
           "map_localities_footage")
+
+    # the same dots on a globe; the HTML spins until it is touched, then can be dragged
+    fig = go.Figure(_dot_traces(dots))
+    fig.update_geos(projection_type="orthographic", projection_rotation=dict(lon=10, lat=25),
+                    showlakes=False, **GEO_STYLE)
+    _save(_style(fig, width=1200, height=1000, margin=dict(l=0, r=190, t=0, b=0),
+                 legend=dict(x=1.0, y=0.5, yanchor="middle", itemsizing="constant")),
+          "globe_localities_footage", post_script=SPIN_JS)
+
+    # footprints of the channels with the most footage: where each one films (travel channels vs local drivers);
+    # channels are numbered by footage, their YouTube IDs are in the hover of the HTML
+    per_channel = (seg.drop_nulls("channel").group_by("channel", "id").agg(hours)
+                      .join(dots.select("id", "locality", "country", "continent", "lat", "lon"), on="id"))
+    top = (per_channel.group_by("channel").agg(pl.sum("hours"), pl.col("country").n_unique().alias("countries"))
+                      .sort("hours", descending=True).head(20))
+    cols = 5
+    rows = math.ceil(top.height / cols)
+    titles = [f"#{i} · {r['countries']} {'country' if r['countries'] == 1 else 'countries'} · {r['hours']:,.0f} h"
+              for i, r in enumerate(top.iter_rows(named=True), 1)]
+    fig = make_subplots(rows=rows, cols=cols, specs=[[{"type": "scattergeo"}] * cols] * rows,
+                        subplot_titles=titles, horizontal_spacing=0.01, vertical_spacing=0.04)
+    for i, r in enumerate(top.iter_rows(named=True)):
+        d = per_channel.filter(pl.col("channel") == r["channel"]).sort("hours", descending=True)
+        for t in _dot_traces(d, scale=0.45, hover=f"Channel {r['channel']}<br>"):
+            fig.add_trace(t, row=i // cols + 1, col=i % cols + 1)
+    seen = set()  # each continent once in the legend
+    for t in fig.data:
+        t.showlegend = t.legendgroup not in seen
+        seen.add(t.legendgroup)
+    fig.update_geos(projection_type="natural earth", lataxis_range=[-57, 84], **GEO_STYLE)
+    fig.update_annotations(font_size=15)
+    _save(_style(fig, width=1600, height=260 * rows + 80, margin=dict(l=5, r=5, t=40, b=5),
+                 legend=dict(orientation="h", x=0.5, xanchor="center", y=-0.01, yanchor="top",
+                             itemsizing="constant")), "map_channel_footprints")
 
     # length of segments by continent and by type of vehicle, as boxes from precomputed quantiles (the HTML stays
     # small with ~100k segments); whiskers at the 5th and 95th percentiles
@@ -483,6 +508,43 @@ def dataset_figures(df_mapping: pl.DataFrame, seg: pl.DataFrame, flags: dict) ->
     fig.update_yaxes(type="log")
     fig.update_yaxes(title_text="Length of segment (minutes)", col=1)
     _save(_style(fig), "box_segment_length")
+
+
+GEO_STYLE = dict(showland=True, landcolor="#eeeeee", showcountries=True, countrycolor="#cccccc", showocean=True,
+                 oceancolor="white", showframe=False, coastlinecolor="#bbbbbb")
+# Rotate a globe (orthographic geo) slowly until the reader grabs it.
+SPIN_JS = """
+var gd = document.getElementById('{plot_id}'), lon = gd._fullLayout.geo.projection.rotation.lon, spinning = true;
+var last = performance.now();
+function spin() {  // 6 degrees a second, however long each redraw takes
+  if (!spinning) return;
+  var now = performance.now();
+  lon = (lon + (now - last) * 0.006) % 360;
+  last = now;
+  Plotly.relayout(gd, {'geo.projection.rotation.lon': lon}).then(function () { requestAnimationFrame(spin); });
+}
+['mousedown', 'touchstart', 'wheel'].forEach(function (e) {
+  gd.addEventListener(e, function () { spinning = false; }, {passive: true});
+});
+spin();
+"""
+
+
+def _dot_traces(d: pl.DataFrame, scale: float = 1.3, legend: bool = True, hover: str = "") -> list:
+    """One Scattergeo trace per continent with a dot per locality in `d` (columns lat, lon, locality, continent,
+    hours); dot area proportional to hours."""
+    traces = []
+    for continent in CONTINENT_ORDER:
+        c = d.filter(pl.col("continent") == continent)
+        if not c.height:
+            continue
+        traces.append(go.Scattergeo(
+            lon=c["lon"], lat=c["lat"], name=continent, text=c["locality"], customdata=c["hours"],
+            legendgroup=continent, showlegend=legend, legendrank=CONTINENT_ORDER.index(continent),
+            marker=dict(size=np.clip(2 + scale * np.sqrt(c["hours"].to_numpy()), 2, 32),
+                        color=CONTINENT_COLORS[continent], opacity=0.6, line_width=0),
+            hovertemplate=hover + "%{text}<br>%{customdata:,.1f} hours<extra></extra>"))
+    return traces
 
 
 def _dumbbell(df: pl.DataFrame, label: str, values: dict, x_title: str, name: str, log: bool = False,
