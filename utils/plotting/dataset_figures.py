@@ -19,7 +19,7 @@ import common
 from utils.analytics.metrics_cache import MetricsCache
 from utils.core.dataset_stats import Dataset_Stats
 from utils.plotting import map_labels
-from utils.plotting.constants import CONTINENT_COLORS
+from utils.plotting.constants import CONTINENT_COLORS, MAP_TOP_SHARE, colorbar_top
 from utils.plotting.io import IO
 
 io = IO()
@@ -49,12 +49,14 @@ def _style(fig, **layout):
 
 
 def _save(fig, name, post_script=None):
-    io.save_plotly_figure(fig, name, save_final=True, post_script=post_script)
+    # static images at the figure's own size where it sets one (e.g., a taller scatter), else 1600x900
+    io.save_plotly_figure(fig, name, width=fig.layout.width or 1600, height=fig.layout.height or 900,
+                          save_final=True, post_script=post_script)
 
 
 # Interactive scatter plots: when zoomed in to at most ZOOM_LABELS points, label every point in view (a hidden
 # trace with all labels) instead of only the largest ones.
-ZOOM_LABELS = 40
+ZOOM_LABELS = 150
 ZOOM_LABELS_JS = """
 var gd = document.getElementById('{plot_id}');
 function zoomLabels() {
@@ -115,13 +117,17 @@ def segments(df_mapping: pl.DataFrame, vehicle_map: dict) -> pl.DataFrame:
     return pl.DataFrame(rows).filter(pl.col("seconds") > 0)
 
 
-def _bar_totals(fig, df: pl.DataFrame, x: str, y: str, fmt: str = "{:,.0f}", vertical: bool = False):
-    """Write each stacked bar's total above it (vertically when bars are narrow)."""
+def _bar_totals(fig, df: pl.DataFrame, x: str, y: str, fmt: str = "{:,.0f}", vertical: bool = False,
+                plot_width: float = 1400):
+    """Write each stacked bar's total above it. Vertical labels (narrow bars) are as large as one bar's width allows
+    (`plot_width`: width of the plot area in pixels)."""
     totals = df.group_by(x).agg(pl.sum(y)).sort(x)
+    size = min(20, int(plot_width / totals.height * 0.85)) if vertical else 16
     for xv, yv in totals.iter_rows():
         fig.add_annotation(x=xv, y=yv, text=fmt.format(yv), showarrow=False, textangle=-90 if vertical else 0,
-                           yanchor="bottom", yshift=3, font=dict(size=11 if vertical else 16))
-    fig.update_yaxes(range=[0, totals[y].max() * (1.15 if vertical else 1.08)])  # room for the labels
+                           yanchor="bottom", yshift=2, font=dict(size=size))
+    # room above the tallest bar for its label (about 4.5 characters of the label's font size)
+    fig.update_yaxes(range=[0, totals[y].max() * ((1.08 + size * 0.012) if vertical else 1.08)])
 
 
 def _country_indicators(df_mapping: pl.DataFrame) -> pl.DataFrame:
@@ -180,7 +186,8 @@ def _country_map(df: pl.DataFrame, value: str, title: str, scale: str, name: str
         ticks = [10 ** p for p in range(math.floor(d["_c"].min()), math.ceil(d["_c"].max()) + 1)]
         fig.update_layout(coloraxis_colorbar=dict(tickvals=np.log10(ticks).tolist(),
                                                   ticktext=[f"{t:,g}" for t in ticks]))
-    fig.update_layout(coloraxis_colorbar_title=title.replace(" (", "<br>("))
+    fig.update_layout(coloraxis_colorbar=colorbar_top(title))
+    fig.update_geos(domain=dict(x=[0, 1], y=[0, MAP_TOP_SHARE]))
     if few.height:
         fig.add_trace(go.Choropleth(locations=few["iso3"], z=[0] * few.height, locationmode="ISO-3",
                                     colorscale=[[0, "#cfcfcf"], [1, "#cfcfcf"]], showscale=False,
@@ -188,14 +195,15 @@ def _country_map(df: pl.DataFrame, value: str, title: str, scale: str, name: str
                                     "footage<extra></extra>", marker_line_width=0.5))
         fig.add_annotation(text=f"Grey: under {MIN_HOURS} hours of footage", x=0.01, y=0.02, xref="paper",
                            yref="paper", showarrow=False, font=dict(size=14, color="#666666"))
-    _save(_style(fig, margin=dict(l=0, r=0, t=0, b=0)), name)
+    _save(_style(fig, margin=dict(l=0, r=0, t=10, b=0)), name)
 
 
 def _labelled_scatter(df: pl.DataFrame, x_col: str, y_col: str, label: str, labelled: pl.Expr, x_title: str,
-                      y_title: str, name: str):
+                      y_title: str, name: str, size=(1600, 900), emphasis: pl.Expr = pl.lit(True)):
     """Log-log scatter coloured by continent. Rows where `labelled` is true get a label placed without overlaps
-    (next to the point, or with a leader line when there is no room); in the HTML, zooming in labels every point."""
-    size, margin = (1600, 900), dict(l=90, r=30, t=30, b=80)
+    (next to the point, or with a leader line when there is no room); in the HTML, zooming in labels every point.
+    Labels of rows where `emphasis` is false are smaller and grey, so the eye goes to the emphasised ones first."""
+    margin = dict(l=90, r=30, t=30, b=80)
     x = np.log10(df[x_col].to_numpy())
     y = np.log10(df[y_col].to_numpy())
     x_range = (x.min() - 0.1, x.max() + 0.35)  # room on the right for the largest points' labels
@@ -208,16 +216,20 @@ def _labelled_scatter(df: pl.DataFrame, x_col: str, y_col: str, label: str, labe
                                  hovertemplate=f"%{{text}}<br>{x_title}: %{{x:,.1f}}<br>{y_title}: %{{y:,.1f}}"
                                                "<extra></extra>"))
     # select rows, not names: same-named places (e.g., two Philadelphias) must not share a label
-    top = df.with_row_index("_i").filter(labelled)
+    top = df.with_row_index("_i").with_columns(emphasis.alias("_emphasis")).filter(labelled)
     proj = map_labels.AxisProjection(x_range, y_range, size[0] - margin["l"] - margin["r"],
                                      size[1] - margin["t"] - margin["b"])
     items = [dict(code=str(r["_i"]), lines=[r[label]], anchor=(math.log10(r[x_col]), math.log10(r[y_col])),
-                  ct=None) for r in top.sort(y_col, descending=True).iter_rows(named=True)]
-    placed = map_labels.place_labels(items, proj, {})
+                  ct=None, scale=1 if r["_emphasis"] else 9 / 11)
+             for r in top.sort(y_col, descending=True).iter_rows(named=True)]
+    # labels with no free spot are left out of the static image; hover and zoom in the HTML still show them
+    placed = map_labels.place_labels(items, proj, {}, stack_clusters=False, drop_unplaced=True)
     names = {str(r["_i"]): r[label] for r in top.iter_rows(named=True)}
-    font = dict(size=11, color="black")
+    emphasised = {str(r["_i"]) for r in top.iter_rows(named=True) if r["_emphasis"]}
+    strong, faint = dict(size=11, color="black"), dict(size=9, color="#8a8a8a")
     for code, p in placed.items():
         (ax, ay) = p[1]
+        font = strong if code in emphasised else faint
         if p[0] == "dot":  # invisible marker so the text sits beside the point like on the maps
             fig.add_trace(go.Scatter(x=[10 ** ax], y=[10 ** ay], mode="markers+text", text=[names[code]],
                                      textposition=p[2], textfont=font, marker=dict(size=8, opacity=0),
@@ -225,14 +237,15 @@ def _labelled_scatter(df: pl.DataFrame, x_col: str, y_col: str, label: str, labe
         else:
             (lx, ly), pos = p[2], p[3]
             fig.add_trace(go.Scatter(x=[10 ** ax, 10 ** lx], y=[10 ** ay, 10 ** ly], mode="lines",
-                                     line=dict(color="grey", width=1), showlegend=False, hoverinfo="skip",
+                                     line=dict(color="#bbbbbb" if font is faint else "grey", width=1),
+                                     showlegend=False, hoverinfo="skip",
                                      meta="top-labels"))
             fig.add_trace(go.Scatter(x=[10 ** lx], y=[10 ** ly], mode="text", text=[names[code]],
                                      textposition=pos, textfont=font, showlegend=False, hoverinfo="skip",
                                      meta="top-labels"))
     # every point's label, shown in the HTML only when zoomed in (see ZOOM_LABELS_JS)
     fig.add_trace(go.Scatter(x=df[x_col], y=df[y_col], mode="text", text=df[label], textposition="top center",
-                             textfont=font, visible=False, showlegend=False, hoverinfo="skip", meta="zoom-labels"))
+                             textfont=strong, visible=False, showlegend=False, hoverinfo="skip", meta="zoom-labels"))
     fig.update_xaxes(type="log", range=x_range, title_text=x_title, automargin=False)
     fig.update_yaxes(type="log", range=y_range, title_text=y_title, automargin=False)
     _save(_style(fig, width=size[0], height=size[1], margin=margin,
@@ -248,13 +261,15 @@ def dataset_figures(df_mapping: pl.DataFrame, seg: pl.DataFrame, flags: dict) ->
     city = (seg.group_by("id").agg(hours, pl.col("video").n_unique().alias("videos"))
                .join(df_mapping.select("id", "locality", "iso3", "continent"), on="id")
                .with_columns(pl.concat_str([flag, pl.col("locality")], separator=" ").alias("name")))
-    top_hours = pl.col("hours").rank("ordinal", descending=True) <= LABEL_TOP
-    _labelled_scatter(city, "hours", "videos", "name", top_hours, "Footage (hours)", "Number of videos",
-                      "scatter_all_total_time-video_count")
-    country = (seg.group_by("iso3").agg(hours, pl.col("video").n_unique().alias("videos"), pl.first("continent"))
-                  .with_columns(pl.concat_str([flag, pl.col("iso3")], separator=" ").alias("name")))
-    _labelled_scatter(country, "hours", "videos", "name", pl.lit(True), "Footage (hours)", "Number of videos",
-                      "scatter_all_country_total_time-video_count")  # every country labelled
+    # the 40 localities with most footage labelled, the top ones in larger black text; zoom in the HTML for more
+    rank = pl.col("hours").rank("ordinal", descending=True)
+    _labelled_scatter(city, "hours", "videos", "name", rank <= 40, "Footage (hours)", "Number of videos",
+                      "scatter_all_total_time-video_count", emphasis=rank <= LABEL_TOP)
+    # every country labelled with its ISO3 code; the 30 with the most footage in larger black text
+    country = seg.group_by("iso3").agg(hours, pl.col("video").n_unique().alias("videos"), pl.first("continent"))
+    _labelled_scatter(country, "hours", "videos", "iso3", pl.lit(True), "Footage (hours)", "Number of videos",
+                      "scatter_all_country_total_time-video_count", size=(1600, 1300),
+                      emphasis=pl.col("hours").rank("ordinal", descending=True) <= 30)
 
     # day and night footage per continent
     tod = (seg.with_columns(pl.when(pl.col("night")).then(pl.lit("Night")).otherwise(pl.lit("Day")).alias("time"))
@@ -305,7 +320,7 @@ def dataset_figures(df_mapping: pl.DataFrame, seg: pl.DataFrame, flags: dict) ->
                                           .first())
     per_capita = (seg.group_by("iso3", "country").agg(hours).join(pop, on="iso3")
                      .with_columns((pl.col("hours") / pl.col("population_country") * 1e6).alias("per_million")))
-    _country_map(per_capita, "per_million", "Footage (hours per million inhabitants)", "YlOrRd",
+    _country_map(per_capita, "per_million", "Hours per million people", "YlOrRd",
                  "map_footage_per_capita", ":,.1f", log=True)
 
     # share of each country's footage from its largest channel: where one uploader dominates the data
@@ -313,7 +328,7 @@ def dataset_figures(df_mapping: pl.DataFrame, seg: pl.DataFrame, flags: dict) ->
     top_channel = (by_channel.group_by("iso3", "country")
                              .agg((pl.max("seconds") / pl.sum("seconds") * 100).alias("top_channel_pct"),
                                   (pl.sum("seconds") / 3600).alias("hours"), pl.len().alias("channels")))
-    _country_map(top_channel, "top_channel_pct", "Footage from the largest channel (%)", "Purples",
+    _country_map(top_channel, "top_channel_pct", "From largest channel (%)", "Purples",
                  "map_top_channel_share", ":.0f")
 
     # 4) type of vehicle the footage is filmed from, per continent (share of footage)
@@ -338,10 +353,11 @@ def dataset_figures(df_mapping: pl.DataFrame, seg: pl.DataFrame, flags: dict) ->
     # px makes one trace per continent and hatching; show each continent once in the legend
     fig.for_each_trace(lambda t: t.update(name=t.name.split(", ")[0], legendgroup=t.name.split(", ")[0],
                                           showlegend=t.name.endswith("False")))
-    fig.update_layout(bargap=0.1)
-    fig.add_annotation(text="Hatched: current quarter, not complete yet", x=0.01, y=0.98, xref="paper",
-                       yref="paper", showarrow=False, xanchor="left", font=dict(size=14, color="#666666"))
-    _bar_totals(fig, videos, "quarter", "len", vertical=True)
+    # legend inside the empty top-left corner, so the bars (and their labels) get the full width
+    margin = dict(l=80, r=20, t=20, b=90)
+    fig.update_layout(bargap=0.1, margin=margin, legend=dict(x=0.01, y=0.99, bgcolor="rgba(255,255,255,0.8)"))
+    fig.update_xaxes(title_text="Quarter of upload (hatched: the current quarter, not complete yet)")
+    _bar_totals(fig, videos, "quarter", "len", vertical=True, plot_width=1600 - margin["l"] - margin["r"])
     # a tick every year and a grid in both directions, so each bar can be read off
     fig.update_xaxes(dtick="M12", tickformat="%Y", tickangle=-45, showgrid=True, gridcolor="#e5e5e5",
                      ticklabelmode="period")
@@ -398,7 +414,9 @@ def detection_figures(df_mapping: pl.DataFrame, det: pl.DataFrame, classes: list
     fig = px.choropleth(country.with_columns(per_min).to_pandas(), locations="iso3", color="per_minute",
                         hover_name="country", color_continuous_scale="YlOrRd", projection="natural earth",
                         labels={"per_minute": "Pedestrians per minute"})
-    _save(_style(fig, margin=dict(l=0, r=0, t=0, b=0)), "map_pedestrians_per_minute")
+    fig.update_layout(coloraxis_colorbar=colorbar_top("Pedestrians per minute"))
+    fig.update_geos(domain=dict(x=[0, 1], y=[0, MAP_TOP_SHARE]))
+    _save(_style(fig, margin=dict(l=0, r=0, t=10, b=0)), "map_pedestrians_per_minute")
 
     fig = px.box(det.with_columns(per_min).to_pandas(), x="continent", y="per_minute", color="continent",
                  points="outliers",

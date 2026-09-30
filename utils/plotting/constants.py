@@ -35,6 +35,16 @@ CONTINENT_COLORS: Final[dict] = {
     "South America": "#56B4E9",
 }
 
+# Colour bars of maps: horizontal, centred above the map
+MAP_TOP_SHARE: Final[float] = 0.88  # maps use the lower 88% of the figure height; the colour bar sits above
+
+
+def colorbar_top(title: str) -> dict:
+    """Plotly colour bar layout: horizontal, centred above the map, title above it."""
+    return dict(orientation="h", x=0.5, xanchor="center", y=MAP_TOP_SHARE + 0.02, yanchor="bottom", len=0.5,
+                thickness=14, title=dict(text=title, side="top"))
+
+
 # -----------------------------------------------------------------------------
 # Layout and rendering defaults
 # -----------------------------------------------------------------------------

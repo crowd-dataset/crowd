@@ -66,14 +66,37 @@ def country_shapes() -> dict:
         return pts
 
     shapes = {}
-    for g in topo["objects"]["countries"]["geometries"]:
-        if "id" not in g or "properties" not in g:  # a few unnamed polygons
-            continue
+    for n, g in enumerate(topo["objects"]["countries"]["geometries"]):
         polygons = [g["arcs"]] if g["type"] == "Polygon" else g.get("arcs", [])
         rings = [ring(p[0]) for p in polygons if p]  # outer rings only, holes ignored
-        if rings:
+        if not rings:
+            continue
+        if "id" in g and "properties" in g:
             shapes[g["id"]] = dict(ct=tuple(g["properties"]["ct"]), rings=rings)
+        else:  # a few shapes without an ISO code (e.g., Kosovo); kept so territory_ring() can find them
+            shapes[f"_unnamed{n}"] = dict(ct=None, rings=rings)
     return shapes
+
+
+def territory_ring(anchor, shapes: dict, owner_points: dict):
+    """
+    Outline of a territory that plotly draws only as part of another country (e.g., French Guiana, part of France)
+    or as a shape without an ISO code (e.g., Kosovo), so it can be coloured by its own value.
+
+    Returns the ring holding `anchor` (a point in the territory) when it is an unnamed shape, or a part of another
+    country that holds none of that country's own cities (`owner_points`: ISO3 -> [(lon, lat)] of the mapping's
+    localities). None otherwise, e.g. Singapore inside peninsular Malaysia or Monaco inside France, where colouring
+    the ring would colour the other country.
+    """
+    lon, lat = anchor
+    for code, shape in shapes.items():
+        for ring in shape["rings"]:
+            if _inside(lon, lat, [ring]):
+                if code.startswith("_unnamed"):
+                    return ring
+                owner_inside = any(_inside(x, y, [ring]) for x, y in owner_points.get(code, []))
+                return None if owner_inside else ring
+    return None
 
 
 class Projection:
@@ -153,16 +176,22 @@ def _inside(x, y, rings):
     return hit
 
 
-def place_labels(items: list, proj: Projection, shapes: dict) -> dict:
+def place_labels(items: list, proj: Projection, shapes: dict, stack_clusters: bool = True,
+                 drop_unplaced: bool = False) -> dict:
     """
     Place labels without overlaps.
 
     Args:
-        items: dicts with `code`, `lines` (label as [name, value]), `anchor` ((lon, lat) inside the part of the
+        items: dicts with `code`, `lines` (label as [name, value]), optional `scale` (font size relative to 11px),
+            `anchor` ((lon, lat) inside the part of the
             country shown) and `ct` ((lon, lat) where plotly would centre the label, or None if plotly does not draw
             the country), in order of priority.
         proj: Projection of the map.
         shapes: Output of `country_shapes()`.
+        stack_clusters: Stack the labels of dense clusters in a column (maps, e.g. the Lesser Antilles); on scatter
+            plots each label is placed on its own instead.
+        drop_unplaced: Leave out labels with no free spot (scatter plots, where hover and zoom still show them)
+            instead of placing them next to their dot, overlapping other labels (maps, where every region needs one).
 
     Returns:
         code -> ("inside", (lon, lat)) | ("dot", (lon, lat) of the dot, textposition, value on its own line)
@@ -284,7 +313,8 @@ def place_labels(items: list, proj: Projection, shapes: dict) -> dict:
         position = "middle right" if east else "middle left"
         n_labels, n_lines = len(labels), len(lines)
         for c in group:
-            box = _box(*slot[c], text_width(" ".join(by_code[c]["lines"])), LINE_H, position, pad=1)
+            k = by_code[c].get("scale", 1)
+            box = _box(*slot[c], text_width(" ".join(by_code[c]["lines"])) * k, LINE_H * k, position, pad=1)
             pts = line_free(points[c], slot[c]) if free(box) else None
             if pts is None:
                 del labels[n_labels:], lines[n_lines:]
@@ -295,15 +325,16 @@ def place_labels(items: list, proj: Projection, shapes: dict) -> dict:
             result[c] = ("line", by_code[c]["anchor"], proj.invert(*slot[c]), position)
         return True
 
-    for group in sorted(clusters, key=len, reverse=True):  # largest first: they need the most room
+    for group in sorted(clusters, key=len, reverse=True) if stack_clusters else []:  # largest first
         prefer_east = sum(points[c][0] for c in group) / len(group) >= (proj.frame[0] + proj.frame[2]) / 2
         any(stack(group, east, shift) for east in (prefer_east, not prefer_east) for shift in range(30, 300, 15))
 
     # most constrained first (fewest free spots next to the dot), then by priority
     def free_spots(item):
         x, y = points[item["code"]]
-        w = text_width(" ".join(item["lines"]))
-        return sum(free(_box(x, y, w, LINE_H, position)) for position in NEAR)
+        k = item.get("scale", 1)
+        w = text_width(" ".join(item["lines"])) * k
+        return sum(free(_box(x, y, w, LINE_H * k, position)) for position in NEAR)
 
     todo = [item for item in rest if item["code"] not in result]
     order = {item["code"]: i for i, item in enumerate(todo)}
@@ -316,8 +347,9 @@ def place_labels(items: list, proj: Projection, shapes: dict) -> dict:
             x, y = points[item["code"]]
             o = out[item["code"]]
             # one line ("name value"), or if that does not fit anywhere next to the dot, two narrower lines
-            one = (text_width(" ".join(item["lines"])), LINE_H, False)
-            two = (max(text_width(t) for t in item["lines"]), 2 * LINE_H, True)
+            k = item.get("scale", 1)  # labels drawn in a smaller font take less room
+            one = (text_width(" ".join(item["lines"])) * k, LINE_H * k, False)
+            two = (max(text_width(t) for t in item["lines"]) * k, 2 * LINE_H * k, True)
             near = sorted(NEAR, key=lambda pos: -(NEAR[pos][0] * o[0] + NEAR[pos][1] * o[1])) if o else NEAR
             w, h = one[:2]
             for (bw, bh, stacked), position in ((size, pos) for size in (one, two) for pos in near):
@@ -356,7 +388,7 @@ def place_labels(items: list, proj: Projection, shapes: dict) -> dict:
         if not failed:
             break
         todo = sorted(todo, key=lambda item: item["code"] not in failed)
-    for code in failed:  # nowhere free even so: keep the label next to its dot
+    for code in [] if drop_unplaced else failed:  # nowhere free even so: keep the label next to its dot
         logger.warning(f"No free spot for the label of {code}; it may overlap other labels.")
         result[code] = ("dot", next(i["anchor"] for i in todo if i["code"] == code), "middle right", False)
     return result

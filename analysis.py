@@ -2459,6 +2459,9 @@ if __name__ == "__main__":
         per_country = df.group_by(["continent", "iso3"]).agg((pl.sum("total_time") / 3600).alias("h"))
         per_country = per_country.filter(pl.col("h") > 0)
         continent_range = (per_country["h"].min(), per_country["h"].max())
+        owner_points = {}
+        for iso3, lon, lat in df.select("iso3", "lon", "lat").iter_rows():
+            owner_points.setdefault(iso3, []).append((lon, lat))
         for continent in df["continent"].drop_nulls().unique().sort():
             maps.footage_map(df=df.filter(pl.col("continent") == continent)
                                   .group_by(["iso3", "flag_country"])
@@ -2472,6 +2475,7 @@ if __name__ == "__main__":
                              view=maps.CONTINENT_VIEWS[continent],
                              anchor_labels=split_countries,
                              value_range=continent_range,
+                             owner_points=owner_points,
                              file_name=f"map_footage_{continent.lower().replace(' ', '_')}")
 
         # map of US states coloured by amount of footage

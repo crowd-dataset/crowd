@@ -8,7 +8,7 @@ from PIL import Image, ImageFont, ImageDraw, ImageColor
 import common
 from utils.plotting.io import IO
 from utils.plotting import map_labels
-from utils.plotting.constants import CONTINENT_COLORS
+from utils.plotting.constants import CONTINENT_COLORS, MAP_TOP_SHARE, colorbar_top
 import warnings
 from custom_logger import CustomLogger
 
@@ -1949,8 +1949,9 @@ class Maps:
             fig.update_traces(marker=dict(sizemin=2, opacity=0.85))
             ticks = [10 ** p for p in range(int(np.floor(df["log_value"].min())),
                                             int(np.ceil(df["log_value"].max())) + 1)]
-            fig.update_layout(coloraxis_colorbar=dict(title=value_title, tickvals=np.log10(ticks).tolist(),
-                                                      ticktext=[f"{t:,.0f}" if t >= 1 else f"{t:g}" for t in ticks]))
+            fig.update_layout(coloraxis_colorbar=dict(**colorbar_top(value_title), tickvals=np.log10(ticks).tolist(),
+                                                      ticktext=[f"{t:,.0f}" if t >= 1 else f"{t:g}" for t in ticks]),
+                              map_domain=dict(x=[0, 1], y=[0, MAP_TOP_SHARE]))
 
         # Update map layout to improve appearance
         fig.update_layout(
@@ -2003,7 +2004,6 @@ class Maps:
         "South America": dict(lon=(-90, -30), lat=(-56, 16)),
     }
     MAP_SIZE = (1600, 900)  # size of saved maps (px); labels are laid out for it
-    MAP_WIDTH_SHARE = 0.86  # share of the width used by the map, the rest holds the colour bar
 
     @staticmethod
     def _fmt_value(v):
@@ -2011,7 +2011,8 @@ class Maps:
 
     def footage_map(self, df, *, location_col, locationmode, scope, label_col=None, value_col="footage_h",
                     callouts=None, view=None, anchor_labels=None, colorbar_title="Footage (hours)",
-                    color_scale="YlOrRd", value_range=None, file_name="map_footage", save_final=True):
+                    color_scale="YlOrRd", value_range=None, owner_points=None, file_name="map_footage",
+                    save_final=True):
         """
         Choropleth of regions (US states or countries) on a log colour scale, labelled with each region's name and
         value.
@@ -2035,6 +2036,8 @@ class Maps:
                 countries split across continents whose part shown is far from the country's centre.
             colorbar_title (str): Title of the colour bar and of the value in the hover text.
             color_scale (str|list): Plotly colour scale.
+            owner_points (dict|None): ISO3 -> [(lon, lat)] of all localities, used to colour territories plotly draws
+                only as part of another country (e.g., French Guiana), see map_labels.territory_ring.
             value_range (tuple|None): (min, max) of the colour scale; pass the same range to maps that are compared
                 with each other (e.g., all continents) so a colour means the same value on each. Default: this map's.
             file_name (str): Name of the saved file (without extension).
@@ -2077,7 +2080,21 @@ class Maps:
 
         if view:
             width, height = self.MAP_SIZE
-            proj = map_labels.Projection(view, width * self.MAP_WIDTH_SHARE, height)
+            proj = map_labels.Projection(view, width, height * MAP_TOP_SHARE)
+            # territories plotly draws only as part of another country (e.g., French Guiana) or without an ISO code
+            # (e.g., Kosovo): colour their own outline
+            shapes = map_labels.country_shapes()
+            territories = {c: map_labels.territory_ring((r["lon"], r["lat"]), shapes, owner_points or {})
+                           for c, r in rows.iterrows() if c not in shapes}
+            territories = {c: ring for c, ring in territories.items() if ring}
+            if territories:
+                fig.add_trace(go.Choropleth(
+                    geojson=dict(type="FeatureCollection", features=[
+                        dict(type="Feature", id=c,
+                             geometry=dict(type="Polygon", coordinates=[[list(p) for p in ring]]))
+                        for c, ring in territories.items()]),
+                    locations=list(territories), z=rows.loc[list(territories), "log_value"], coloraxis="coloraxis",
+                    marker_line=dict(width=0.5, color="#444444"), hoverinfo="skip"))
             placed = map_labels.layout_countries(
                 [(code, [r[label_col], r["value_text"]], (r["lon"], r["lat"])) for code, r in rows.iterrows()],
                 proj, split=anchor_labels)
@@ -2096,11 +2113,10 @@ class Maps:
                          [f"{rows.at[c, label_col]}{'<br>' if placed[c][3] else ' '}{rows.at[c, 'value_text']}"
                           for c in dots] + [""] * len(lined),
                          [placed[c][2] for c in dots] + ["middle right"] * len(lined))
-            fig.update_geos(domain=dict(x=[0, self.MAP_WIDTH_SHARE], y=[0, 1]),
+            fig.update_geos(domain=dict(x=[0, 1], y=[0, MAP_TOP_SHARE]),
                             lonaxis_range=view["lon"], lataxis_range=view["lat"],
                             projection_rotation_lon=view.get("rotation", sum(view["lon"]) / 2))
-            fig.update_layout(width=width, height=height,
-                              coloraxis_colorbar=dict(x=self.MAP_WIDTH_SHARE + 0.02, xanchor="left"))
+            fig.update_layout(width=width, height=height)
         else:
             callouts = {c: ab for c, ab in (callouts or {}).items() if c in rows.index}
             inside = rows.index.difference(list(callouts))
@@ -2119,7 +2135,9 @@ class Maps:
             margin=dict(l=0, r=0, t=0, b=0),
             font=dict(family=common.get_configs('font_family'), size=common.get_configs('font_size')),
         )
-        fig.update_layout(coloraxis_colorbar=dict(title=colorbar_title, tickvals=np.log10(ticks).tolist(),
+        if not view:
+            fig.update_geos(domain=dict(x=[0, 1], y=[0, MAP_TOP_SHARE]))
+        fig.update_layout(coloraxis_colorbar=dict(**colorbar_top(colorbar_title), tickvals=np.log10(ticks).tolist(),
                                                   ticktext=[f"{t:,}" for t in ticks]))
         io_class.save_plotly_figure(fig, file_name, save_final=save_final)
 
