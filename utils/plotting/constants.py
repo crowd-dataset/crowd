@@ -25,6 +25,16 @@ BAR_COLOR_2: Final[str] = BAR_COLORS[1]
 BAR_COLOR_3: Final[str] = BAR_COLORS[2]
 BAR_COLOR_4: Final[str] = BAR_COLORS[3]
 
+# Continent colours used in every figure (Okabe-Ito palette, distinguishable with colour-blindness)
+CONTINENT_COLORS: Final[dict] = {
+    "Africa": "#E69F00",
+    "Asia": "#D55E00",
+    "Europe": "#0072B2",
+    "North America": "#009E73",
+    "Oceania": "#CC79A7",
+    "South America": "#56B4E9",
+}
+
 # -----------------------------------------------------------------------------
 # Layout and rendering defaults
 # -----------------------------------------------------------------------------

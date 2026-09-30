@@ -1,0 +1,68 @@
+---
+############################
+# Refresh README statistics and dataset figures when the mapping changes.
+# Runs analysis.py without YOLO data (no data folders), so detection
+# figures and object counts are left as they are in the repository.
+############################
+name: Dataset figures
+
+on:
+  push:
+    branches: [main]
+    paths: [mapping.csv]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: dataset-figures
+  cancel-in-progress: true
+
+jobs:
+  figures:
+    name: Update README and figures
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
+      # Default settings, analysis forced, no data or video folders,
+      # empty API keys (not needed for the mapping-only figures).
+      - name: Create config and secret
+        run: |
+          python3 - <<'EOF'
+          import json
+          c = json.load(open("default.config"))
+          c.update(always_analyse=True, data=[], videos=[])
+          json.dump(c, open("config", "w"), indent=2)
+          keys = json.load(open("default.secret"))
+          json.dump({k: "" for k in keys}, open("secret", "w"), indent=2)
+          EOF
+
+      # Only the packages the analysis and figures need (not torch/YOLO).
+      - name: Run analysis
+        run: >-
+          uv run --no-project --python 3.12
+          --with polars --with pyarrow --with pandas==2.2.3
+          --with plotly==5.24.1 --with kaleido==0.2.1
+          --with pillow --with tqdm --with numpy --with pycountry
+          python analysis.py
+
+      # Commits made with GITHUB_TOKEN do not trigger further workflow runs.
+      - name: Commit updated README and figures
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email \
+            "41898283+github-actions[bot]@users.noreply.github.com"
+          git add README.md figures
+          if git diff --staged --quiet; then
+            echo "Nothing changed."
+          else
+            git commit -m "Update README statistics and dataset figures"
+            git push
+          fi

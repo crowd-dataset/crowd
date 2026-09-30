@@ -70,6 +70,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
+import make_crowd_jsonl
+
 # Progress bars
 try:
     from tqdm import tqdm
@@ -1813,6 +1815,7 @@ def check_metadata_presence(
 
     return missing_meta
 
+
 def _valid_upload_ymd(year: int, month: int, day: int) -> Optional[Tuple[int, int, int]]:
     """Return a validated (year, month, day), otherwise None."""
     if year < 1900 or year > 2100 or month < 1 or month > 12:
@@ -2112,6 +2115,7 @@ def export_validation_video_issues_csv(
 
     logger.info(f"Validation video issues CSV written: {out_csv_path}")
 
+
 def _json_get(obj: Dict[str, Any], path: Sequence[str]) -> Any:
     cur: Any = obj
     for part in path:
@@ -2128,6 +2132,769 @@ def _float_close(a: Any, b: Any, tol: float = 1e-6) -> bool:
         return math.isfinite(af) and math.isfinite(bf) and abs(af - bf) <= tol
     except Exception:
         return False
+
+
+@dataclass
+class YoloFileInfo:
+    path: str
+    video_id: str
+    start_time: float
+    fps: float
+    n_rows: int
+    n_cols: int
+    header: List[str]
+
+
+# --- functions restored from before commit beefa3e8, which removed them while their callers stayed ---
+def _package_version(package_name: str) -> str:
+    """Return the installed package version, or a clear missing value."""
+    try:
+        return importlib_metadata.version(package_name)
+    except importlib_metadata.PackageNotFoundError:
+        return "not installed"
+    except Exception as exc:
+        return f"unavailable: {exc}"
+
+
+def _run_command_quiet(command: List[str]) -> Dict[str, Any]:
+    """Run a command and return stdout/stderr without raising."""
+    try:
+        result = subprocess.run(command, check=False, text=True, capture_output=True)
+        return {
+            "command": command,
+            "returncode": result.returncode,
+            "stdout": result.stdout.strip(),
+            "stderr": result.stderr.strip(),
+        }
+    except Exception as exc:
+        return {"command": command, "returncode": None, "stdout": "", "stderr": f"failed: {exc}"}
+
+
+def _candidate_search_roots(data_dir: Path, yolo_dir: Path) -> List[Path]:
+    roots: List[Path] = []
+    for candidate in [Path.cwd(), data_dir, data_dir.parent, yolo_dir.parent]:
+        try:
+            resolved = candidate.resolve()
+        except Exception:
+            continue
+        if resolved.exists() and resolved not in roots:
+            roots.append(resolved)
+    return roots
+
+
+def _find_named_file(filename: str, roots: Sequence[Path]) -> Optional[Path]:
+    """Find a named file while pruning large generated folders."""
+    direct = Path(filename).expanduser()
+    if direct.exists() and direct.is_file():
+        return direct.resolve()
+
+    skip_dirs = {".git", "__pycache__", "_output", "bbox", "seg", "frames", "videos", ".venv", "venv"}
+    for root in roots:
+        direct_under_root = root / filename
+        if direct_under_root.exists() and direct_under_root.is_file():
+            return direct_under_root.resolve()
+
+        try:
+            for current_root, dirnames, filenames in os.walk(root):
+                dirnames[:] = [d for d in dirnames if d not in skip_dirs]
+                if filename in filenames:
+                    return (Path(current_root) / filename).resolve()
+        except Exception:
+            continue
+    return None
+
+
+def _read_small_text(path: Path, max_chars: int = 20000) -> Dict[str, Any]:
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+        truncated = len(text) > max_chars
+        if truncated:
+            text = text[:max_chars]
+        return {"path": str(path), "sha256": sha256_file(path), "text": text, "truncated": truncated}
+    except Exception as exc:
+        return {"path": str(path), "error": str(exc)}
+
+
+def _extract_yaml_like_values(text: str, keys: Sequence[str]) -> Dict[str, str]:
+    """Extract simple key: value lines from tracker/config text without interpreting the file."""
+    out: Dict[str, str] = {}
+    wanted = set(keys)
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or ":" not in line:
+            continue
+        key, value = line.split(":", 1)
+        key = key.strip()
+        if key in wanted:
+            out[key] = value.strip()
+    return out
+
+
+def _ultralytics_default_settings() -> Dict[str, Any]:
+    keys = [
+        "imgsz",
+        "iou",
+        "max_det",
+        "agnostic_nms",
+        "classes",
+        "rect",
+        "half",
+        "dnn",
+        "augment",
+        "vid_stride",
+        "stream_buffer",
+        "visualize",
+        "retina_masks",
+        "embed",
+        "conf",
+        "tracker",
+        "device",
+    ]
+
+    defaults: Dict[str, Any] = {}
+    try:
+        from ultralytics.cfg import DEFAULT_CFG_DICT  # type: ignore
+        if isinstance(DEFAULT_CFG_DICT, dict):
+            defaults.update(DEFAULT_CFG_DICT)
+    except Exception:
+        pass
+
+    if not defaults:
+        try:
+            from ultralytics.utils import DEFAULT_CFG  # type: ignore
+            if isinstance(DEFAULT_CFG, dict):
+                defaults.update(DEFAULT_CFG)
+            elif hasattr(DEFAULT_CFG, "__dict__"):
+                defaults.update(DEFAULT_CFG.__dict__)
+        except Exception:
+            pass
+
+    return {key: defaults.get(key, "not found") for key in keys}
+
+
+def _collect_torch_cuda_environment() -> Dict[str, Any]:
+    info: Dict[str, Any] = {}
+    try:
+        import torch  # type: ignore
+
+        info["torch_cuda_available"] = bool(torch.cuda.is_available())
+        info["torch_cuda_version"] = str(torch.version.cuda)
+        info["torch_cudnn_version"] = torch.backends.cudnn.version()
+        info["torch_cudnn_enabled"] = bool(torch.backends.cudnn.enabled)
+        info["torch_cudnn_benchmark"] = bool(torch.backends.cudnn.benchmark)
+        info["torch_cudnn_deterministic"] = bool(torch.backends.cudnn.deterministic)
+        try:
+            info["torch_use_deterministic_algorithms"] = bool(torch.are_deterministic_algorithms_enabled())
+        except Exception as exc:
+            info["torch_use_deterministic_algorithms"] = f"unavailable: {exc}"
+        try:
+            info["torch_allow_tf32_matmul"] = bool(torch.backends.cuda.matmul.allow_tf32)
+            info["torch_allow_tf32_cudnn"] = bool(torch.backends.cudnn.allow_tf32)
+        except Exception as exc:
+            info["torch_tf32_settings"] = f"unavailable: {exc}"
+
+        devices: List[Dict[str, Any]] = []
+        if torch.cuda.is_available():
+            for idx in range(torch.cuda.device_count()):
+                props = torch.cuda.get_device_properties(idx)
+                devices.append(
+                    {
+                        "index": idx,
+                        "name": props.name,
+                        "total_memory_bytes": int(props.total_memory),
+                        "compute_capability": f"{props.major}.{props.minor}",
+                    }
+                )
+        info["cuda_devices"] = devices
+    except Exception as exc:
+        info["error"] = str(exc)
+    return info
+
+
+def _collect_model_weight_info(model_name: str, roots: Sequence[Path]) -> Dict[str, Any]:
+    path = _find_named_file(model_name, roots)
+    if path is None:
+        return {"requested": model_name, "found": False, "path": None, "sha256": None}
+
+    item: Dict[str, Any] = {
+        "requested": model_name,
+        "found": True,
+        "path": str(path),
+        "size_bytes": path.stat().st_size,
+        "sha256": sha256_file(path),
+    }
+    try:
+        from ultralytics import YOLO  # type: ignore
+
+        model = YOLO(str(path))
+        item["model_task"] = str(getattr(model, "task", "not available"))
+        item["model_overrides"] = getattr(model, "overrides", {})
+    except Exception as exc:
+        item["model_load_error"] = str(exc)
+    return item
+
+
+def _collect_tracker_info(tracker_name: str, roots: Sequence[Path]) -> Dict[str, Any]:
+    path = _find_named_file(tracker_name, roots)
+    if path is None:
+        return {"requested": tracker_name, "found": False, "path": None}
+
+    text_info = _read_small_text(path)
+    important = [
+        "tracker_type",
+        "track_high_thresh",
+        "track_low_thresh",
+        "new_track_thresh",
+        "track_buffer",
+        "match_thresh",
+        "fuse_score",
+        "gmc_method",
+        "proximity_thresh",
+        "appearance_thresh",
+        "with_reid",
+        "model",
+    ]
+    return {
+        "requested": tracker_name,
+        "found": True,
+        "path": str(path),
+        "sha256": text_info.get("sha256"),
+        "important_fields": _extract_yaml_like_values(str(text_info.get("text", "")), important),
+        "raw_text": text_info.get("text", ""),
+        "raw_text_truncated": text_info.get("truncated", False),
+    }
+
+
+def _format_reproducibility_text(info: Dict[str, Any]) -> str:
+    lines: List[str] = []
+
+    def section(title: str) -> None:
+        lines.append("")
+        lines.append("=" * 90)
+        lines.append(title)
+        lines.append("=" * 90)
+
+    section("SYSTEM")
+    for key, value in info.get("system", {}).items():
+        lines.append(f"{key}: {value}")
+
+    section("PACKAGE VERSIONS")
+    for key, value in info.get("packages", {}).items():
+        lines.append(f"{key}: {value}")
+
+    section("CUDA, cuDNN, GPU")
+    lines.append(json.dumps(info.get("cuda", {}), indent=2, default=str))
+    lines.append("nvidia-smi:")
+    lines.append(json.dumps(info.get("nvidia_smi", {}), indent=2, default=str))
+    lines.append("nvcc:")
+    lines.append(json.dumps(info.get("nvcc", {}), indent=2, default=str))
+
+    section("MODEL WEIGHTS")
+    for item in info.get("model_weights", []):
+        lines.append(json.dumps(item, indent=2, default=str))
+
+    section("ULTRALYTICS DEFAULT INFERENCE SETTINGS")
+    lines.append(json.dumps(info.get("ultralytics_defaults", {}), indent=2, default=str))
+
+    section("EXPLICIT TRACK CALL PARAMETERS")
+    lines.append(json.dumps(info.get("explicit_track_call_parameters", {}), indent=2, default=str))
+
+    section("TRACKER CONFIGURATION")
+    for item in info.get("trackers", []):
+        lines.append(json.dumps(item, indent=2, default=str))
+
+    section("PROJECT CONFIG FILES")
+    for item in info.get("project_config_files", []):
+        lines.append(json.dumps(item, indent=2, default=str))
+
+    section("DETERMINISTIC ENVIRONMENT VARIABLES")
+    for key, value in info.get("deterministic_environment_variables", {}).items():
+        lines.append(f"{key}: {value}")
+
+    return "\n".join(lines).lstrip() + "\n"
+
+
+def collect_reproducibility_environment(
+    data_dir: Path,
+    yolo_dir: Path,
+    out_dir: Path,
+    logger: logging.Logger,
+    report: Report,
+) -> Dict[str, Any]:
+    """Capture exact detection/tracking environment details requested by reviewers."""
+    repro_cfg = CONFIG.get("reproducibility", {})
+    roots = _candidate_search_roots(data_dir, yolo_dir)
+
+    packages = [
+        "ultralytics",
+        "torch",
+        "torchvision",
+        "torchaudio",
+        "opencv-python",
+        "opencv-contrib-python",
+        "numpy",
+        "pandas",
+        "polars",
+        "pytubefix",
+        "yt-dlp",
+        "moviepy",
+        "PyYAML",
+        "scipy",
+        "plotly",
+    ]
+
+    project_config_files: List[Dict[str, Any]] = []
+    for name in repro_cfg.get("project_config_candidates", []):
+        found = _find_named_file(str(name), roots)
+        if found is not None:
+            project_config_files.append(_read_small_text(found))
+
+    model_infos = [
+        _collect_model_weight_info(str(name), roots)
+        for name in repro_cfg.get("model_candidates", [])
+    ]
+
+    tracker_infos = [
+        _collect_tracker_info(str(name), roots)
+        for name in repro_cfg.get("tracker_candidates", [])
+    ]
+
+    info: Dict[str, Any] = {
+        "system": {
+            "python": sys.version,
+            "python_executable": sys.executable,
+            "platform": platform.platform(),
+            "machine": platform.machine(),
+            "processor": platform.processor(),
+            "working_directory": str(Path.cwd()),
+            "data_dir": str(data_dir),
+            "yolo_dir": str(yolo_dir),
+        },
+        "packages": {package: _package_version(package) for package in packages},
+        "cuda": _collect_torch_cuda_environment(),
+        "nvidia_smi": _run_command_quiet(
+            ["nvidia-smi", "--query-gpu=name,driver_version,cuda_version,memory.total", "--format=csv,noheader"]
+        ) if shutil.which("nvidia-smi") else {"available": False, "reason": "nvidia-smi not found"},
+        "nvcc": _run_command_quiet(["nvcc", "--version"]) if shutil.which("nvcc") else {
+            "available": False,
+            "reason": "nvcc not found",
+        },
+        "project_config_files": project_config_files,
+        "model_weights": model_infos,
+        "ultralytics_defaults": _ultralytics_default_settings(),
+        "explicit_track_call_parameters": {
+            "call": "YOLO(model).track",
+            "tracker": "bbox_tracker or seg_tracker YAML from project configuration",
+            "persist": True,
+            "conf": 0.0,
+            "save": False,
+            "device": "cuda when available, otherwise cpu",
+            "track_buffer": "track_buffer_sec * rounded_video_fps when configured by the project code",
+            "note": ("Any setting not listed here should be copied from ultralytics_defaults or the tracker YAML "
+                     "above."),
+        },
+        "trackers": tracker_infos,
+        "deterministic_environment_variables": {
+            "PYTHONHASHSEED": os.environ.get("PYTHONHASHSEED", "not set"),
+            "CUBLAS_WORKSPACE_CONFIG": os.environ.get("CUBLAS_WORKSPACE_CONFIG", "not set"),
+            "CUDA_VISIBLE_DEVICES": os.environ.get("CUDA_VISIBLE_DEVICES", "not set"),
+            "OMP_NUM_THREADS": os.environ.get("OMP_NUM_THREADS", "not set"),
+            "MKL_NUM_THREADS": os.environ.get("MKL_NUM_THREADS", "not set"),
+        },
+    }
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    json_path = out_dir / str(repro_cfg.get("output_json", "reproducibility_environment.json"))
+    txt_path = out_dir / str(repro_cfg.get("output_txt", "reproducibility_environment.txt"))
+    json_path.write_text(json.dumps(info, indent=2, default=str), encoding="utf-8")
+    txt_path.write_text(_format_reproducibility_text(info), encoding="utf-8")
+
+    logger.info(f"Reproducibility environment JSON written: {json_path}")
+    logger.info(f"Reproducibility environment text written: {txt_path}")
+    logger.info("\n=== Reproducibility summary ===")
+    logger.info(f"Ultralytics: {info['packages'].get('ultralytics')}")
+    logger.info(f"PyTorch: {info['packages'].get('torch')}")
+    logger.info(f"OpenCV: {info['packages'].get('opencv-python')}")
+    logger.info(f"CUDA available: {info.get('cuda', {}).get('torch_cuda_available')}")
+    logger.info(f"Ultralytics defaults: {json.dumps(info.get('ultralytics_defaults', {}), default=str)}")
+
+    report.add(
+        "reproducibility_environment_written",
+        ok=True,
+        details={
+            "json_path": str(json_path),
+            "txt_path": str(txt_path),
+            "ultralytics_version": info["packages"].get("ultralytics"),
+            "torch_version": info["packages"].get("torch"),
+            "opencv_python_version": info["packages"].get("opencv-python"),
+            "cuda": info.get("cuda", {}),
+            "model_weights": [
+                {k: v for k, v in item.items() if k in {"requested", "found", "path", "sha256", "size_bytes"}}
+                for item in model_infos
+            ],
+            "trackers": [
+                {k: v for k, v in item.items() if k in {"requested", "found", "path", "sha256", "important_fields"}}
+                for item in tracker_infos
+            ],
+        },
+    )
+
+    return info
+
+
+def iter_csv_rowcount(path: Path, max_rows: Optional[int] = None) -> Tuple[int, int, List[str]]:
+    """Count rows quickly without loading whole file; returns (rows, cols, header)."""
+    n_rows = 0
+    header: List[str] = []
+    n_cols = 0
+    with path.open("r", encoding="utf-8", errors="replace", newline="") as f:
+        reader = csv.reader(f)
+        try:
+            header = next(reader)
+        except StopIteration:
+            return 0, 0, []
+        n_cols = len(header)
+        for _ in reader:
+            n_rows += 1
+            if max_rows is not None and n_rows >= max_rows:
+                break
+    return n_rows, n_cols, header
+
+
+def check_yolo_folder(
+    yolo_dir: Path,
+    video_aggs: Dict[str, VideoAgg],
+    report: Report,
+    logger: logging.Logger,
+) -> Tuple[List[YoloFileInfo], Dict[str, Any]]:
+    rex = re.compile(CONFIG["yolo_filename_regex"])
+    tol = float(YOLO_START_MATCH_TOLERANCE_S)
+
+    # Build per-video set of known start times (from mapping)
+    starts_by_video: Dict[str, Set[float]] = {}
+    for vid, agg in video_aggs.items():
+        starts_by_video[vid] = {s for (s, _e) in agg.segments}
+
+    infos: List[YoloFileInfo] = []
+
+    bad_name: List[str] = []
+    unknown_video: List[str] = []
+    unmatched_start: List[Dict[str, Any]] = []
+
+    matched_segments: Set[Tuple[str, float]] = set()
+    duplicate_match: List[Dict[str, Any]] = []
+
+    if not yolo_dir.exists() or not yolo_dir.is_dir():
+        report.add("yolo_dir.exists", ok=False, details={"path": str(yolo_dir)}, warn=False)
+        return [], {"coverage": None}
+
+    csv_files = sorted([p for p in yolo_dir.iterdir() if p.is_file() and p.suffix.lower() == ".csv"])
+    report.add("yolo_dir.exists", ok=True, details={"path": str(yolo_dir), "n_csv": len(csv_files)})
+
+    for p in tqdm(csv_files, total=len(csv_files), desc="Scanning YOLO CSVs", unit="file"):
+        m = rex.match(p.name)
+        if not m:
+            bad_name.append(p.name)
+            continue
+
+        vid = m.group("video_id")
+        st = float(m.group("start"))
+        fps = float(m.group("fps"))
+
+        if vid not in video_aggs:
+            unknown_video.append(p.name)
+
+        n_rows, n_cols, header = iter_csv_rowcount(p)
+        infos.append(
+            YoloFileInfo(
+                path=str(p),
+                video_id=vid,
+                start_time=st,
+                fps=fps,
+                n_rows=n_rows,
+                n_cols=n_cols,
+                header=header[:50],
+            )
+        )
+
+        if n_rows == 0:
+            report.add("yolo_csv.non_empty", ok=False, details={"file": p.name}, warn=True)
+
+        # Match start time to known segment start times
+        known_starts = starts_by_video.get(vid, set())
+        if known_starts:
+            nearest = min(known_starts, key=lambda x: abs(x - st))
+            if abs(nearest - st) <= tol:
+                key = (vid, nearest)
+                if key in matched_segments:
+                    duplicate_match.append({"file": p.name, "video": vid, "start": st, "matched_start": nearest})
+                matched_segments.add(key)
+            else:
+                unmatched_start.append(
+                    {"file": p.name, "video": vid, "start": st,
+                     "nearest_known_start": nearest, "delta": abs(nearest - st)}
+                )
+        else:
+            unmatched_start.append({"file": p.name, "video": vid, "start": st, "reason": "no_known_segment_starts"})
+
+    report.add(
+        "yolo_filenames.pattern_match",
+        ok=(len(bad_name) == 0),
+        details={"bad_count": len(bad_name), "examples": bad_name[:50], "regex": CONFIG["yolo_filename_regex"]},
+        warn=(len(bad_name) > 0),
+    )
+
+    report.add(
+        "yolo_integrity.unknown_video_ids",
+        ok=(len(unknown_video) == 0),
+        details={"unknown_count": len(unknown_video), "examples": unknown_video[:50]},
+        warn=(len(unknown_video) > 0),
+    )
+
+    report.add(
+        "yolo_integrity.start_time_match",
+        ok=(len(unmatched_start) == 0),
+        details={"unmatched_count": len(unmatched_start), "examples": unmatched_start[:25], "tolerance_s": tol},
+        warn=(len(unmatched_start) > 0),
+    )
+
+    report.add(
+        "yolo_integrity.duplicate_segment_matches",
+        ok=(len(duplicate_match) == 0),
+        details={"duplicate_count": len(duplicate_match), "examples": duplicate_match[:25]},
+        warn=(len(duplicate_match) > 0),
+    )
+
+    total_segments = sum(len(agg.segments) for agg in video_aggs.values())
+    covered_segments = len(matched_segments)
+    coverage = covered_segments / max(total_segments, 1)
+
+    cov = {
+        "total_segments": total_segments,
+        "covered_segments": covered_segments,
+        "coverage_pct": round(coverage * 100, 2),
+    }
+    report.add(
+        "yolo_coverage.segment_coverage",
+        ok=(coverage > 0.98) if total_segments > 0 else False,
+        details=cov,
+        warn=True,
+    )
+
+    return infos, cov
+
+
+def _extract_numbers_from_latex(tex_path: Path, checks: List[Tuple[str, str, str]], report: Report) -> None:
+    """Try to find paper-claimed numbers from main.tex using regex patterns."""
+    text = tex_path.read_text(encoding="utf-8", errors="replace")
+
+    for name, pattern, expected_key in checks:
+        rex = re.compile(pattern)
+        matches = rex.findall(text)
+        if not matches:
+            report.add(f"latex_claim:{name}", ok=False, details={"pattern": pattern, "reason": "no_match"}, warn=True)
+            continue
+
+        flat: List[str] = []
+        for m in matches:
+            if isinstance(m, tuple):
+                flat.append(m[0])
+            else:
+                flat.append(m)
+
+        if len(flat) > 1:
+            report.add(
+                f"latex_claim:{name}",
+                ok=False,
+                details={"pattern": pattern, "matches": flat[:25], "reason": "multiple_matches"},
+                warn=True,
+            )
+            continue
+
+        claimed_raw = flat[0]
+        claimed_num = _num_from_str(claimed_raw)
+        expected = CONFIG.get("expected", {}).get(expected_key)
+
+        if claimed_num is None:
+            report.add(f"latex_claim:{name}", ok=False, details={"claimed_raw": claimed_raw,
+                                                                 "reason": "not_numeric"}, warn=True)
+            continue
+
+        if expected is None:
+            report.add(f"latex_claim:{name}", ok=True, details={"claimed": claimed_num,
+                                                                "expected": None, "note": "no_expected_config"})
+            continue
+
+        if isinstance(expected, int):
+            ok = int(round(claimed_num)) == int(expected)
+            report.add(f"latex_claim:{name}", ok=ok, details={"claimed": claimed_num,
+                                                              "expected": expected}, warn=not ok)
+        else:
+            ok = abs(float(claimed_num) - float(expected)) <= 0.01
+            report.add(
+                f"latex_claim:{name}",
+                ok=ok,
+                details={"claimed": claimed_num, "expected": expected, "delta": float(claimed_num) - float(expected)},
+                warn=not ok,
+            )
+
+
+def _print_mapping_summary(agg: MappingAgg, logger: logging.Logger) -> None:
+    logger.info("\n=== Dataset summary (from mapping.csv) ===")
+    logger.info(f"Rows (mapping): {fmt_int(agg.rows)}")
+    logger.info(f"Unique locality+state+iso3 keys: {fmt_int(agg.unique_locality_state_iso3)}")
+    logger.info(f"Unique countries/territories: {fmt_int(agg.unique_countries)}")
+    logger.info(f"Upload records (sum of videos per row): {fmt_int(agg.upload_records)}")
+    logger.info(f"Unique videos (global uploads): {fmt_int(agg.unique_videos)}")
+    logger.info(f"Segment records (label entries): {fmt_int(agg.segment_records)}")
+    logger.info(f"Duration: {fmt_int(int(round(agg.duration_s)))} s | {fmt_float(agg.duration_s/3600.0, 2)} h")
+
+
+def _print_continent_table(agg: MappingAgg, logger: logging.Logger) -> None:
+    order = CONFIG["allowed"]["continents"]
+    seg_tot = sum(agg.continent_segment_records.get(c, 0) for c in order)
+    dur_tot = sum(agg.continent_duration_s.get(c, 0.0) for c in order)
+
+    logger.info("\n=== A) Continent segment distribution (label-entries; paper) ===")
+    header = f"{'Continent':<14} {'Segments':>10} {'Seg%':>7} {'Dur(h)':>10} {'Dur%':>7}"
+    logger.info(header)
+    logger.info("-" * len(header))
+
+    for c in order:
+        seg = int(agg.continent_segment_records.get(c, 0))
+        dur_h = float(agg.continent_duration_s.get(c, 0.0)) / 3600.0
+        seg_pct = 100.0 * seg / max(seg_tot, 1)
+        dur_pct = 100.0 * (dur_h * 3600.0) / max(dur_tot, 1e-9)
+        logger.info(f"{c:<14} {seg:>10} {seg_pct:>6.2f} {dur_h:>10.2f} {dur_pct:>6.2f}")
+
+    logger.info(f"{'Total':<14} {seg_tot:>10} {100.0:>6.2f} {dur_tot/3600.0:>10.2f} {100.0:>6.2f}")
+
+
+def _print_daynight_entries(agg: MappingAgg, logger: logging.Logger) -> None:
+    order = CONFIG["allowed"]["continents"]
+    logger.info("\n=== D) Continent x time-of-day label entries (paper) ===")
+    header = f"{'Continent':<14} {'Day':>12} {'Night':>12} {'Total':>12}"
+    logger.info(header)
+    logger.info("-" * len(header))
+
+    tot_day = 0
+    tot_night = 0
+    for c in order:
+        d = int(agg.continent_day_entries.get(c, 0))
+        n = int(agg.continent_night_entries.get(c, 0))
+        t = d + n
+        tot_day += d
+        tot_night += n
+        d_pct = (100.0 * d / max(t, 1))
+        n_pct = (100.0 * n / max(t, 1))
+        logger.info(
+            f"{c:<14} {fmt_int(d):>12} ({d_pct:>6.2f}%) {fmt_int(n):>12} ({n_pct:>6.2f}%) {fmt_int(t):>12}"
+        )
+
+    tot = tot_day + tot_night
+    logger.info(
+        f"{'Total':<14} {fmt_int(tot_day):>12} ({100.0*tot_day/max(tot, 1):>6.2f}%) "
+        f"{fmt_int(tot_night):>12} ({100.0*tot_night/max(tot, 1):>6.2f}%) {fmt_int(tot):>12}"
+    )
+
+
+def _print_upload_daynight(agg: MappingAgg, logger: logging.Logger) -> None:
+    cats = ["only_day", "only_night", "both_day_night", "unknown"]
+    tot = sum(int(agg.global_upload_daynight.get(k, 0)) for k in cats)
+    logger.info("\n=== E) Upload day/night composition (global; paper) ===")
+    for k in cats:
+        v = int(agg.global_upload_daynight.get(k, 0))
+        logger.info(f"{k:<16} {fmt_int(v):>10} ({100.0*v/max(tot, 1):.2f}%)")
+    logger.info(f"{'Total':<16} {fmt_int(tot):>10} (100.00%)")
+
+
+def _resolve_path_maybe_absolute(base: Path, p: Any) -> Path:
+    """If p is absolute, return it; else return base/p. Always .resolve()'d."""
+    pp = Path(p).expanduser()
+    if pp.is_absolute():
+        return pp.resolve()
+    return (base / pp).resolve()
+
+
+def _infer_yolo_root(yolo_dir: Path) -> Path:
+    """
+    Try to create a nicer 'root' for manifest paths.
+    If yolo_dir looks like .../data/bbox, root becomes the parent of 'data'.
+    """
+    try:
+        if yolo_dir.parent.name == "data":
+            return yolo_dir.parent.parent
+    except Exception:
+        pass
+    return yolo_dir
+
+
+def _manifest_relpath(p_abs: Path, data_dir: Path, yolo_root: Path, yolo_dir: Path) -> str:
+    """
+    Avoid ValueError from Path.relative_to when files aren't under data_dir.
+    Prefer relative_to(data_dir), then yolo_root, then yolo_dir, else filename.
+    """
+    try:
+        return p_abs.relative_to(data_dir).as_posix()
+    except ValueError:
+        pass
+    try:
+        return p_abs.relative_to(yolo_root).as_posix()
+    except ValueError:
+        pass
+    try:
+        return p_abs.relative_to(yolo_dir).as_posix()
+    except ValueError:
+        return p_abs.name
+
+
+# --- crowd_index.jsonl helpers: expected records come from make_crowd_jsonl.py itself, so segment ids and
+# --- durations are computed exactly as when the file was generated.
+def _jsonl_processed_duration_seconds(start: float, end: float) -> Optional[float]:
+    """Processed duration of a segment (end - 1 s, as the detector pipeline trims it)."""
+    return make_crowd_jsonl._processed_duration(start, end)[1]
+
+
+def _jsonl_read_existing(jsonl_path: Path, report: "Report") -> Tuple[Dict[str, Dict[str, Any]], Dict[str, Any]]:
+    """Read crowd_index.jsonl into segment_id -> record, reporting unreadable lines and duplicate ids."""
+    records: Dict[str, Dict[str, Any]] = {}
+    bad_lines: List[int] = []
+    duplicates: List[str] = []
+    n_lines = 0
+    if jsonl_path.exists():
+        with jsonl_path.open(encoding="utf-8") as f:
+            for n_lines, line in enumerate(f, start=1):
+                if not line.strip():
+                    continue
+                try:
+                    obj = json.loads(line)
+                except json.JSONDecodeError:
+                    bad_lines.append(n_lines)
+                    continue
+                segment_id = obj.get("segment_id") if isinstance(obj, dict) else None
+                if not segment_id:
+                    bad_lines.append(n_lines)
+                elif segment_id in records:
+                    duplicates.append(segment_id)
+                else:
+                    records[segment_id] = obj
+    summary = {"exists": jsonl_path.exists(), "lines": n_lines, "records": len(records),
+               "unreadable_lines": len(bad_lines), "duplicate_segment_ids": len(duplicates)}
+    report.add("crowd_index_jsonl.readable", ok=jsonl_path.exists() and not bad_lines and not duplicates,
+               details={**summary, "unreadable_line_examples": bad_lines[:25], "duplicate_examples": duplicates[:25]})
+    return records, summary
+
+
+def _jsonl_expected_records_from_mapping(mapping_path: Path, logger: logging.Logger,
+                                         report: "Report") -> Dict[str, Dict[str, Any]]:
+    """segment_id -> the fields the JSONL must carry for it, rebuilt from the mapping with make_crowd_jsonl."""
+    records, summary = make_crowd_jsonl.build_records(mapping_path, mapping_path.with_name("mapping_metadata.csv"))
+    logger.info(f"Expected {summary['jsonl_records']} JSONL records from {mapping_path.name}.")
+    return {r["segment_id"]: {"video_id": r["video_id"], "start_time_s": r["start_time_s"],
+                              "end_time_s": r["end_time_s"],
+                              "processed_duration_s": _jsonl_processed_duration_seconds(r["start_time_s"],
+                                                                                        r["end_time_s"])}
+            for r in records}
 
 
 def validate_crowd_index_jsonl(
@@ -2159,7 +2926,8 @@ def validate_crowd_index_jsonl(
         warn=False,
     )
 
-    required_top = {"record_type", "schema_version", "segment_id", "video_id", "source", "upload", "segment", "labels", "location", "automatic_outputs"}
+    required_top = {"record_type", "schema_version", "segment_id", "video_id", "source", "upload", "segment",
+                    "labels", "location", "automatic_outputs"}
     required_nested = [
         ("source", "platform"),
         ("source", "watch_url"),
@@ -2195,7 +2963,8 @@ def validate_crowd_index_jsonl(
 
         missing_for_record = [k for k in sorted(required_top) if k not in obj]
         for path in required_nested:
-            if _json_get(obj, path) is None and path not in {("upload", "recording_date"), ("upload", "recording_date_provenance")}:
+            nullable = {("upload", "recording_date"), ("upload", "recording_date_provenance")}
+            if _json_get(obj, path) is None and path not in nullable:
                 missing_for_record.append(".".join(path))
             elif path in {("upload", "recording_date"), ("upload", "recording_date_provenance")}:
                 # These fields must exist and be null, so distinguish missing from null.
@@ -2216,7 +2985,8 @@ def validate_crowd_index_jsonl(
         if _json_get(obj, ("automatic_outputs", "object_level_ground_truth")) is not False:
             n_bad_governance_values += 1
             if len(bad_value_examples) < 25:
-                bad_value_examples.append({"segment_id": segment_id, "field": "automatic_outputs.object_level_ground_truth"})
+                bad_value_examples.append({"segment_id": segment_id,
+                                           "field": "automatic_outputs.object_level_ground_truth"})
         if _json_get(obj, ("upload", "recording_date")) is not None:
             n_bad_governance_values += 1
             if len(bad_value_examples) < 25:
@@ -2242,25 +3012,30 @@ def validate_crowd_index_jsonl(
             n_value_mismatches += 1
             if len(mismatch_examples) < 25:
                 mismatch_examples.append(
-                    {"segment_id": segment_id, "field": "video_id", "jsonl": obj.get("video_id"), "expected": exp["video_id"]}
+                    {"segment_id": segment_id, "field": "video_id", "jsonl": obj.get("video_id"),
+                     "expected": exp["video_id"]}
                 )
         if not _float_close(_json_get(obj, ("segment", "start_time_s")), exp["start_time_s"]):
             n_value_mismatches += 1
             if len(mismatch_examples) < 25:
                 mismatch_examples.append(
-                    {"segment_id": segment_id, "field": "segment.start_time_s", "jsonl": _json_get(obj, ("segment", "start_time_s")), "expected": exp["start_time_s"]}
+                    {"segment_id": segment_id, "field": "segment.start_time_s",
+                     "jsonl": _json_get(obj, ("segment", "start_time_s")), "expected": exp["start_time_s"]}
                 )
         if not _float_close(_json_get(obj, ("segment", "end_time_s")), exp["end_time_s"]):
             n_value_mismatches += 1
             if len(mismatch_examples) < 25:
                 mismatch_examples.append(
-                    {"segment_id": segment_id, "field": "segment.end_time_s", "jsonl": _json_get(obj, ("segment", "end_time_s")), "expected": exp["end_time_s"]}
+                    {"segment_id": segment_id, "field": "segment.end_time_s",
+                     "jsonl": _json_get(obj, ("segment", "end_time_s")), "expected": exp["end_time_s"]}
                 )
         if not _float_close(_json_get(obj, ("segment", "processed_duration_s")), exp["processed_duration_s"]):
             n_value_mismatches += 1
             if len(mismatch_examples) < 25:
                 mismatch_examples.append(
-                    {"segment_id": segment_id, "field": "segment.processed_duration_s", "jsonl": _json_get(obj, ("segment", "processed_duration_s")), "expected": exp["processed_duration_s"]}
+                    {"segment_id": segment_id, "field": "segment.processed_duration_s",
+                     "jsonl": _json_get(obj, ("segment", "processed_duration_s")),
+                     "expected": exp["processed_duration_s"]}
                 )
 
     report.add(

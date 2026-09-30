@@ -15,6 +15,7 @@ import polars as pl
 import common
 from utils.analytics.metrics_cache import MetricsCache
 from utils.core.dataset_stats import Dataset_Stats
+from utils.plotting.constants import CONTINENT_COLORS
 from utils.plotting.io import IO
 
 io = IO()
@@ -28,6 +29,9 @@ INDICATORS = {
     "literacy_rate": "Literacy rate (%)",
 }
 CONTINENT_ORDER = ["Africa", "Asia", "Europe", "North America", "Oceania", "South America"]
+# the same order and colour for each continent in every figure
+CONTINENT_STYLE = dict(category_orders={"continent": CONTINENT_ORDER}, color_discrete_map=CONTINENT_COLORS)
+LABEL_TOP = 12  # scatter plots label only the largest points; the rest show on hover
 
 
 def _style(fig, **layout):
@@ -95,22 +99,67 @@ def _vs_indicators(df: pl.DataFrame, value: str, value_title: str, name: str, lo
     long = long.with_columns(pl.col("indicator").replace(INDICATORS))
     fig = px.scatter(long.to_pandas(), x="indicator_value", y=value, color="continent", facet_col="indicator",
                      facet_col_wrap=3, facet_col_spacing=0.06, facet_row_spacing=0.12, log_y=log_y,
-                     hover_name="country", category_orders={"continent": CONTINENT_ORDER}, labels={value: value_title})
+                     hover_name="country", **CONTINENT_STYLE, labels={value: value_title})
     fig.update_xaxes(matches=None, showticklabels=True, title_text="")
     fig.for_each_annotation(lambda a: a.update(text=a.text.split("=")[-1]))
     _save(_style(fig, legend_title_text=""), name)
 
 
-def dataset_figures(df_mapping: pl.DataFrame, seg: pl.DataFrame) -> None:
-    """Figures based on the mapping only."""
+def _footage_vs_videos(df: pl.DataFrame, label: str, name: str):
+    """Footage against number of videos (log-log), coloured by continent, the largest points labelled."""
+    # rank rows, not names: same-named places (e.g., two Philadelphias) must not share a label
+    df = df.with_columns(pl.when(pl.col("hours").rank("ordinal", descending=True) <= LABEL_TOP)
+                         .then(pl.col(label)).otherwise(pl.lit("")).alias("text"))
+    # SVG rendering: with many points plotly switches to WebGL, which cannot draw emoji flags
+    fig = px.scatter(df.to_pandas(), x="hours", y="videos", color="continent", text="text", log_x=True, log_y=True,
+                     render_mode="svg",
+                     hover_name=label, hover_data={"text": False, "hours": ":,.1f"}, **CONTINENT_STYLE,
+                     labels={"hours": "Footage (hours)", "videos": "Number of videos"})
+    fig.update_traces(textposition="top center", textfont_size=12, marker=dict(size=8, opacity=0.75))
+    _save(_style(fig, legend_title_text=""), name)
+
+
+def dataset_figures(df_mapping: pl.DataFrame, seg: pl.DataFrame, flags: dict) -> None:
+    """Figures based on the mapping only. `flags` maps ISO3 codes to emoji flags for labels."""
     hours = (pl.sum("seconds") / 3600).alias("hours")
+    flag = pl.col("iso3").replace_strict(flags, default="🏳️", return_dtype=pl.Utf8)
+
+    # footage against number of videos, per locality and per country
+    city = (seg.group_by("id").agg(hours, pl.col("video").n_unique().alias("videos"))
+               .join(df_mapping.select("id", "locality", "iso3", "continent"), on="id")
+               .with_columns(pl.concat_str([flag, pl.col("locality")], separator=" ").alias("name")))
+    _footage_vs_videos(city, "name", "scatter_all_total_time-video_count")
+    country = (seg.group_by("iso3").agg(hours, pl.col("video").n_unique().alias("videos"), pl.first("continent"))
+                  .with_columns(pl.concat_str([flag, pl.col("iso3")], separator=" ").alias("name")))
+    _footage_vs_videos(country, "name", "scatter_all_country_total_time-video_count")
+
+    # day and night footage per continent
+    tod = (seg.with_columns(pl.when(pl.col("night")).then(pl.lit("Night")).otherwise(pl.lit("Day")).alias("time"))
+              .group_by("continent", "time").agg(hours))
+    fig = px.bar(tod.to_pandas(), x="continent", y="hours", color="time",
+                 category_orders={"continent": CONTINENT_ORDER, "time": ["Day", "Night"]},
+                 color_discrete_map={"Day": "#E69F00", "Night": "#0072B2"},
+                 labels={"hours": "Footage (hours)", "continent": "", "time": ""})
+    _save(_style(fig), "bar_continent_time_of_day")
+
+    # vehicle the footage is filmed from: cars are ~90% of footage, so a log axis with the share written on each bar
+    veh = (seg.drop_nulls("vehicle").group_by("vehicle")
+              .agg(hours, (pl.col("seconds").filter(pl.col("night")).sum() / pl.sum("seconds") * 100).alias("night"))
+              .with_columns((pl.col("hours") / pl.col("hours").sum() * 100).alias("share"))
+              .sort("hours"))
+    veh = veh.with_columns(pl.format("{}% of footage, {}% at night", pl.col("share").round(1),
+                                     pl.col("night").round(0).cast(pl.Int64)).alias("text"))
+    fig = px.bar(veh.to_pandas(), y="vehicle", x="hours", orientation="h", text="text", log_x=True,
+                 labels={"hours": "Footage (hours, log scale)", "vehicle": ""})
+    fig.update_traces(textposition="outside", marker_color="#0072B2", cliponaxis=False)
+    _save(_style(fig, margin=dict(r=260)), "bar_vehicle_type_time_of_day")
 
     # 1) footage against city population: which large cities are under-sampled
     city = (seg.group_by("id").agg(hours)
                .join(df_mapping.select("id", "locality", "country", "continent", "population_locality"), on="id")
                .filter(pl.col("population_locality") > 0))
     fig = px.scatter(city.to_pandas(), x="population_locality", y="hours", color="continent", log_x=True, log_y=True,
-                     hover_name="locality", hover_data=["country"], category_orders={"continent": CONTINENT_ORDER},
+                     hover_name="locality", hover_data=["country"], **CONTINENT_STYLE,
                      labels={"population_locality": "Population of locality", "hours": "Footage (hours)"})
     _save(_style(fig, legend_title_text=""), "scatter_population_footage")
 
@@ -132,7 +181,7 @@ def dataset_figures(df_mapping: pl.DataFrame, seg: pl.DataFrame) -> None:
     veh = (seg.drop_nulls("vehicle").group_by("continent", "vehicle").agg(hours)
               .with_columns((pl.col("hours") / pl.col("hours").sum().over("continent") * 100).alias("share")))
     fig = px.bar(veh.sort("hours", descending=True).to_pandas(), x="continent", y="share", color="vehicle",
-                 category_orders={"continent": CONTINENT_ORDER},
+                 **CONTINENT_STYLE,
                  labels={"share": "Share of footage (%)", "continent": "", "vehicle": "Type of vehicle"})
     _save(_style(fig), "bar_vehicle_type_continent")
 
@@ -140,7 +189,7 @@ def dataset_figures(df_mapping: pl.DataFrame, seg: pl.DataFrame) -> None:
     years = (seg.drop_nulls("year").filter(pl.col("year").is_between(2005, 2100))  # YouTube started in 2005
                 .group_by("year", "continent").agg(hours))
     fig = px.bar(years.sort("year").to_pandas(), x="year", y="hours", color="continent",
-                 category_orders={"continent": CONTINENT_ORDER},
+                 **CONTINENT_STYLE,
                  labels={"year": "Year of upload", "hours": "Footage (hours)"})
     _save(_style(fig, legend_title_text=""), "bar_upload_year_continent")
 
@@ -196,8 +245,9 @@ def detection_figures(df_mapping: pl.DataFrame, det: pl.DataFrame, classes: list
                         labels={"per_minute": "Pedestrians per minute"})
     _save(_style(fig, margin=dict(l=0, r=0, t=0, b=0)), "map_pedestrians_per_minute")
 
-    fig = px.box(det.with_columns(per_min).to_pandas(), x="continent", y="per_minute", points="outliers",
-                 hover_name="locality", category_orders={"continent": CONTINENT_ORDER},
+    fig = px.box(det.with_columns(per_min).to_pandas(), x="continent", y="per_minute", color="continent",
+                 points="outliers",
+                 hover_name="locality", **CONTINENT_STYLE,
                  labels={"per_minute": "Pedestrians per minute", "continent": ""})
     _save(_style(fig), "box_pedestrians_per_minute_continent")
 

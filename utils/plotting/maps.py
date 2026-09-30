@@ -8,6 +8,7 @@ from PIL import Image, ImageFont, ImageDraw, ImageColor
 import common
 from utils.plotting.io import IO
 from utils.plotting import map_labels
+from utils.plotting.constants import CONTINENT_COLORS
 import warnings
 from custom_logger import CustomLogger
 
@@ -20,7 +21,7 @@ io_class = IO()
 
 
 class Maps:
-    _CARTO_TILE = ("https://basemaps.cartocdn.com/rastertiles/light_all"
+    _CARTO_TILE = ("https://basemaps.cartocdn.com/rastertiles/light_nolabels"  # labels mix local languages
                    "/{{z}}/{{x}}/{{y}}.png?key={key}")
 
     def __init__(self) -> None:
@@ -1917,6 +1918,7 @@ class Maps:
                 hover_data=hover_data,
                 hover_name=hover_name,
                 color=df["continent"],
+                color_discrete_map=CONTINENT_COLORS,
                 zoom=1.3  # pyright: ignore[reportArgumentType]
             )
 
@@ -1969,7 +1971,8 @@ class Maps:
             legend_title_text=""  # Remove legend title
         )
 
-        # Save the figure if requested
+        # Save the figure if requested (basemap without place labels, which mix local languages)
+        fig.update_layout(map_style="carto-positron-nolabels")
         self._apply_carto_key(fig)
         io_class.save_plotly_figure(fig, file_name, save_final=save_final)
 

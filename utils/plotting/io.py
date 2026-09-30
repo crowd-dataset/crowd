@@ -12,6 +12,14 @@ class IO:
     def __init__(self) -> None:
         pass
 
+    @staticmethod
+    def _open_html() -> bool:
+        """Open each saved HTML figure in the browser only if the optional `open_html_figures` config is true."""
+        try:
+            return bool(common.get_configs("open_html_figures"))
+        except KeyError:
+            return False
+
     def save_plotly_figure(self, fig, filename, width=1600, height=900, scale=1, save_final=True, save_png=True,
                            save_eps=True):
         """
@@ -35,7 +43,7 @@ class IO:
         # hosted on GitHub, so plotly's CDN would not work there.
         logger.info(f"Saving html file for {filename}.")
         py.offline.plot(fig, filename=os.path.join(common.output_dir, filename + ".html"),
-                        include_plotlyjs="directory")
+                        include_plotlyjs="directory", auto_open=self._open_html())
         # also save the final figure
         if save_final:
             py.offline.plot(fig, filename=os.path.join(output_final, filename + ".html"), auto_open=False,

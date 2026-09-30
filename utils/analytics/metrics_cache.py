@@ -197,7 +197,7 @@ class MetricsCache:
         """
         # 1) Build an index of available detection CSVs
         data_folders = common.get_configs("data")
-        subfolders = common.get_configs("sub_domain")
+        subfolders = ["bbox"]  # detection CSVs are in <data folder>/bbox (as written by main.py)
         csv_files = cls._index_csv_files(data_folders, subfolders)
 
         # 2) Prepare metric layers as raw per-video dictionaries (video_key -> metric_value)

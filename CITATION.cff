@@ -1,0 +1,39 @@
+cff-version: 1.2.0
+message: "If you use this code or the CROWD dataset, please cite the paper below."
+title: "CROWD: City Road Observations With Dashcams"
+type: software
+authors:
+  - family-names: Alam
+    given-names: Md Shadab
+    email: md_shadab_alam@outlook.com
+  - family-names: Bazilinska
+    given-names: Olena
+  - family-names: Bazilinskyy
+    given-names: Pavlo
+    email: pavlo.bazilinskyy@gmail.com
+repository-code: "https://github.com/crowd-dataset/crowd"
+license: MIT
+keywords:
+  - dashcam
+  - driving
+  - pedestrians
+  - YOLO
+  - dataset
+  - cross-cultural
+preferred-citation:
+  type: article
+  title: "A global dataset of continuous urban dashcam driving"
+  authors:
+    - family-names: Alam
+      given-names: Md Shadab
+    - family-names: Bazilinska
+      given-names: Olena
+    - family-names: Bazilinskyy
+      given-names: Pavlo
+  year: 2026
+  journal: "arXiv preprint"
+  identifiers:
+    - type: other
+      value: "arXiv:2604.01044"
+  doi: 10.48550/arXiv.2604.01044
+  url: "https://arxiv.org/abs/2604.01044"

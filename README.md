@@ -10,7 +10,7 @@ The dataset is available on [kaggle](https://www.kaggle.com/datasets/anonymousau
 ## Dataset overview
 - **Footage:** 33,616.1 hours (1,400.7 days)
 - **Videos:** 74,005 unique videos split into 94,473 segments
-- **Cities / localities:** 9,575
+- **Localities (cities):** 9,575
 - **Countries and territories:** 238
 - **Continents:** 6
 - **Last updated:** 2026-09-30
@@ -155,8 +155,8 @@ The dataset is available on [kaggle](https://www.kaggle.com/datasets/anonymousau
 | 134 | 🇹🇳 Tunisia | 5 | 15 | 5.1 |
 | 135 | 🇹🇹 Trinidad and Tobago | 3 | 5 | 4.6 |
 | 136 | 🇪🇷 Eritrea | 11 | 27 | 4.6 |
-| 137 | 🇦🇩 Andorra | 8 | 45 | 4.6 |
-| 138 | 🇳🇮 Nicaragua | 8 | 17 | 4.6 |
+| 137 | 🇳🇮 Nicaragua | 8 | 17 | 4.6 |
+| 138 | 🇦🇩 Andorra | 8 | 45 | 4.6 |
 | 139 | 🇬🇺 Guam | 10 | 41 | 4.5 |
 | 140 | 🇲🇴 Macau | 2 | 15 | 4.5 |
 | 141 | 🇰🇵 North Korea | 1 | 19 | 4.4 |
@@ -473,6 +473,8 @@ If you use this work for academic work please cite the following paper:
 
 > Alam, M. S., Bazilinska, O., & Bazilinskyy, P. (2026). A global dataset of continuous urban dashcam driving. arXiv preprint arXiv:2604.01044. Under review. Available at https://arxiv.org/abs/2604.01044
 
+What the dataset contains, how it was collected and its known biases are described in the [datasheet](DATASHEET.md). Citation metadata is in [CITATION.cff](CITATION.cff).
+
 The code is open-source and free to use. It is aimed for, but not limited to, academic research. We welcome forking of this repository, pull requests, and any contributions in the spirit of open science and open-source code. For inquiries about collaboration, you may contact Md Shadab Alam (md_shadab_alam@outlook.com) or Pavlo Bazilinskyy (pavlo.bazilinskyy@gmail.com).
 
 ## Getting started
@@ -699,6 +701,7 @@ Configuration of the project needs to be defined in `config`. Please use the `de
 - **`font_family`**: Specifies the font family to be used in outputs.
 - **`font_size`**: Specifies the font size to be used in outputs.
 - **`plotly_template`**: Defines the template for Plotly figures.
+- **`open_html_figures`** (optional): Set to `true` to open every saved HTML figure in the browser. Off when absent.
 - **`logger_level`**: Level of console output. Can be: debug, info, warning, error.
 - **`sleep_sec`**: Amount of seconds of pause in the end of the loop in `main.py`.
 - **`git_pull`**: Pull changes from git repository in the end of the loop in `main.py`.

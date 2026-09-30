@@ -29,7 +29,6 @@ from utils.analytics.metrics_cache import (YOLO_BICYCLE, YOLO_BUS, YOLO_CAR, YOL
                                            YOLO_TRUCK, MetricsCache)
 from utils.core.dataset_stats import Dataset_Stats
 from utils.plotting import dataset_figures
-from utils.plotting.bivariate import Bivariate
 from utils.plotting.distributions import Distributions
 from utils.plotting.maps import Maps
 
@@ -47,7 +46,6 @@ logger = CustomLogger(__name__)  # use custom logger
 # Class instances (singletons for this module)
 # ---------------------------------------------------------------------
 maps = Maps()
-bivariate = Bivariate()
 distribution = Distributions()
 
 dataset_stats = Dataset_Stats()
@@ -2200,7 +2198,7 @@ def build_readme_stats(df_mapping: pl.DataFrame, detections: tuple[pl.DataFrame,
         f"- **Footage:** {total_s / 3600:,.1f} hours ({total_s / 86400:,.1f} days)",
         f"- **Videos:** {df['video_list'].explode().drop_nulls().n_unique():,} unique videos "
         f"split into {int(df['segments'].sum()):,} segments",
-        f"- **Cities / localities:** {df.height:,}",
+        f"- **Localities (cities):** {df.height:,}",
         f"- **Countries and territories:** {df['iso3'].n_unique():,}",
         f"- **Continents:** {df['continent'].n_unique():,}",
     ]
@@ -2428,84 +2426,8 @@ if __name__ == "__main__":
         # Sort by continent and locality, both in ascending order
         df = df.sort(["country", "locality"])
 
-        # scatter plot for cities with number of videos over total time
-        bivariate.scatter(df=df,
-                          x="total_time",
-                          y="video_count",
-                          color="flag_country",
-                          text="flag_locality",
-                          xaxis_title='Total time of footage (s)',
-                          yaxis_title='Number of videos',
-                          pretty_text=False,
-                          marker_size=10,
-                          save_file=True,
-                          hover_data=hover_data,
-                          hover_name="flag_locality",
-                          legend_title="",
-                          # legend_x=0.01,
-                          # legend_y=1.0,
-                          label_distance_factor=5.0,
-                          marginal_x=None,  # type: ignore
-                          marginal_y=None,  # type: ignore
-                          file_name='scatter_all_total_time-video_count')  # type: ignore
-        # scatter plot for countries with number of videos over total time
-
-        # Reuse the already computed locality-level values.
-        # total_time was computed above by summing processed segment durations:
-        # processed duration = (end_time - 1 second) - start_time, with fallback
-        # to the original end_time for very short segments.
-        df = df.with_columns([
-            pl.col("video_count").cast(pl.Int64).alias("locality_video_count"),
-            pl.col("total_time").cast(pl.Int64).alias("locality_total_time"),
-        ])
-
-        # ---------- Aggregate to country level ----------
-        df_country = (
-            df.group_by(["country", "iso3", "continent"])
-              .agg([
-                  pl.col("locality_total_time").sum().alias("total_time"),
-                  pl.col("locality_video_count").sum().alias("video_count"),
-              ])
-        )
-
-        # add flag + iso3 label
-        df_country = df_country.with_columns(
-            pl.concat_str(
-                [
-                    pl.col("iso3").map_elements(
-                        lambda x: analysis_class.iso3_to_flag.get(x, "🏳️"),
-                        return_dtype=pl.Utf8,
-                    ),
-                    pl.col("iso3").cast(pl.Utf8),
-                ],
-                separator=" ",
-            ).alias("flag_country")
-        )
-
-        # sort for readability
-        df_country = df_country.sort(["continent", "country"])
-
-        # define hover data
+        # scatter plots of footage against number of videos are made by dataset_figures (log axes, hours)
         hover_data = ["country", "continent", "total_time", "video_count"]
-
-        # plot (convert at plotting boundary)
-        bivariate.scatter(df=df_country,
-                          x="total_time",
-                          y="video_count",
-                          color="continent",
-                          text="flag_country",
-                          xaxis_title="Total time of footage (s)",
-                          yaxis_title="Number of videos",
-                          pretty_text=False,
-                          marker_size=12,
-                          save_file=True,
-                          hover_data=hover_data,
-                          hover_name="flag_country",
-                          legend_title="",
-                          label_distance_factor=0.1,
-                          marginal_x=None,  # type: ignore
-                          marginal_y=None,  # type: ignore
-                          file_name="scatter_all_country_total_time-video_count")
 
         # histogram of dates of videos
         distribution.video_histogram_by_month(df=df.to_pandas(),
@@ -2567,271 +2489,7 @@ if __name__ == "__main__":
                          callouts=maps.US_STATE_CALLOUTS,
                          file_name="map_us_states_footage")
 
-        # Type of vehicle over time of day
-        df = df_mapping.clone()  # copy df to manipulate for output
-
-        # --- expand rows so each video becomes one row ---
-        # Return type: List[Struct{vehicle_type: Utf8, time_of_day: Utf8}]
-        pair_dtype = pl.List(
-            pl.Struct([
-                pl.Field("vehicle_type", pl.Utf8),
-                pl.Field("time_of_day", pl.Utf8),
-            ])
-        )
-
-        def expand_pairs(vs: str | None, ts: str | None) -> list[dict]:
-            """Parse stringified lists (possibly nested) and emit expanded (vehicle_type,
-               time_of_day) pairs as strings."""
-            try:
-                vehicle_types = ast.literal_eval(vs) if isinstance(vs, str) else None
-                times_of_day = ast.literal_eval(ts) if isinstance(ts, str) else None
-                if not (isinstance(vehicle_types, list) and isinstance(times_of_day, list)):
-                    return []
-            except Exception:
-                return []
-
-            out: list[dict] = []
-            for v_type, tod in zip(vehicle_types, times_of_day):
-                v_list = v_type if isinstance(v_type, list) else [v_type]
-                t_list = tod if isinstance(tod, list) else [tod]
-                for vt in v_list:
-                    for t in t_list:
-                        out.append({"vehicle_type": str(vt), "time_of_day": str(t)})
-            return out
-
-        def map_with_fallback(dct: dict, v):
-            """
-            Robust dict lookup for values that may arrive as str/int/float (or numeric strings).
-            Tries:
-              1) direct key
-              2) string key (stripped)
-              3) int key (from int(v) or int(float(v)) for "1.0")
-              4) float key (rare, but safe)
-            Returns None if no match.
-            """
-            if v is None:
-                return None
-
-            # 1) direct key
-            if v in dct:
-                return dct[v]
-
-            # Normalize string form
-            sv = v.strip() if isinstance(v, str) else str(v).strip()
-
-            # 2) string key
-            if sv in dct:
-                return dct[sv]
-
-            # 3) int key (handle "1" and "1.0")
-            try:
-                iv = int(sv)
-                if iv in dct:
-                    return dct[iv]
-            except Exception:
-                try:
-                    iv = int(float(sv))
-                    if iv in dct:
-                        return dct[iv]
-                except Exception:
-                    pass
-
-            # 4) float key (less common, but harmless)
-            try:
-                fv = float(sv)
-                if fv in dct:
-                    return dct[fv]
-            except Exception:
-                pass
-
-            return None
-
-        # --- expand rows ---
-        df_expanded = (
-            df.select(["vehicle_type", "time_of_day"])
-              .with_columns(
-                  pl.struct(["vehicle_type", "time_of_day"])
-                  .map_elements(
-                        lambda r: expand_pairs(r["vehicle_type"], r["time_of_day"]),
-                        return_dtype=pair_dtype,
-                    ).alias("pairs")
-              ).select("pairs")               # avoid duplicate column name collisions
-               .explode("pairs")
-               .with_columns([
-                  pl.col("pairs").struct.field("vehicle_type").alias("vehicle_type"),
-                  pl.col("pairs").struct.field("time_of_day").alias("time_of_day"),
-                  ]).drop("pairs")
-        )
-
-        # --- map to human-readable labels ---
-        df_expanded = df_expanded.with_columns([
-            pl.col("vehicle_type").map_elements(
-                lambda x: map_with_fallback(analysis_class.vehicle_map, x),
-                return_dtype=pl.Utf8,
-            ).alias("vehicle_type_name"),
-            pl.col("time_of_day").map_elements(
-                lambda x: map_with_fallback(analysis_class.time_map, x),
-                return_dtype=pl.Utf8,
-            ).alias("time_of_day_name"),
-        ])
-
-        # drop rows where mapping failed
-        df_expanded = df_expanded.filter(
-            pl.col("vehicle_type_name").is_not_null() & pl.col("time_of_day_name").is_not_null()
-        )
-
-        # --- aggregate counts ---
-        df_summary = (
-            df_expanded
-            .group_by(["vehicle_type_name", "time_of_day_name"])
-            .len()
-            .rename({"len": "count"})
-        )
-
-        # --- pivot into wide format for stacked bar plot ---
-        df_pivot = df_summary.pivot(
-            index="vehicle_type_name",
-            on="time_of_day_name",      # renamed from `columns`
-            values="count",
-            aggregate_function="first",
-        ).fill_null(0)
-
-        # ensure consistent order of vehicle types
-        vehicle_order = [
-            "Car", "Bus", "Truck", "Two-wheeler", "Bicycle", "Automated car", "Automated bus", "Automated truck",
-            "Automated two-wheeler", "Electric scooter"
-        ]
-        order_map = {name: i for i, name in enumerate(vehicle_order)}
-
-        df_pivot = (
-            df_pivot
-            .with_columns(
-                pl.col("vehicle_type_name")
-                  .map_elements(lambda x: order_map.get(x, 10**9), return_dtype=pl.Int64)
-                  .alias("_order")
-            )
-            .sort("_order")
-            .drop("_order")
-        )
-        # --- plot ---
-        distribution.bar(
-            df=df_pivot.to_pandas(),
-            x=df_pivot["vehicle_type_name"],
-            y=[col for col in ["Day", "Night"] if col in df_pivot.columns],
-            y_legend=["Day", "Night"],
-            stacked=True,
-            pretty_text=False,
-            orientation="v",
-            xaxis_title="Type of vehicle",
-            yaxis_title="Number of segments",
-            show_text_labels=False,
-            save_file=True,
-            save_final=True,
-            name_file="bar_vehicle_type_time_of_day"
-        )
-
-        # Continent over time of day
-        df = df_mapping.clone()  # copy df to manipulate for output
-
-        # --- expand rows so each video becomes one row ---
-        pair_dtype = pl.List(
-            pl.Struct([
-                pl.Field("continent", pl.Utf8),
-                pl.Field("time_of_day", pl.Utf8),
-            ])
-        )
-
-        def expand_continent_tod(continent: str | None, ts: str | None) -> list[dict]:
-            try:
-                times_of_day = ast.literal_eval(ts) if isinstance(ts, str) else None
-                if not isinstance(times_of_day, list):
-                    return []
-            except Exception:
-                return []
-
-            cont = "" if continent is None else str(continent)
-
-            out: list[dict] = []
-            for tod in times_of_day:
-                t_list = tod if isinstance(tod, list) else [tod]
-                for t in t_list:
-                    out.append({"continent": cont, "time_of_day": str(t)})
-            return out
-
-        # --- expand rows so each time-of-day entry becomes one row ---
-        df_expanded = (
-            df.select(["continent", "time_of_day"])
-              .with_columns(
-                  pl.struct(["continent", "time_of_day"])
-                  .map_elements(
-                        lambda r: expand_continent_tod(r["continent"], r["time_of_day"]),
-                        return_dtype=pair_dtype,
-                    ).alias("pairs")
-              ).select("pairs").explode("pairs").with_columns([
-                  pl.col("pairs").struct.field("continent").alias("continent"),
-                  pl.col("pairs").struct.field("time_of_day").alias("time_of_day"),
-              ]).drop("pairs")
-        )
-
-        # --- map to human-readable labels ---
-        df_expanded = df_expanded.with_columns(
-            pl.col("time_of_day").map_elements(
-                lambda x: map_with_fallback(analysis_class.time_map, x),
-                return_dtype=pl.Utf8,
-            ).alias("time_of_day_name")
-        )
-
-        # drop rows where mapping failed
-        df_expanded = df_expanded.filter(
-            pl.col("time_of_day_name").is_not_null() & pl.col("continent").is_not_null() & (pl.col("continent") != "")
-        )
-
-        # --- aggregate counts ---
-        df_summary = (
-            df_expanded
-            .group_by(["continent", "time_of_day_name"])
-            .len()
-            .rename({"len": "count"})
-        )
-
-        # --- pivot into wide format for stacked bar plot ---
-        df_pivot = (
-            df_summary
-            .pivot(
-                index="continent",
-                on="time_of_day_name",   # Polars >= 1.0.0 uses `on` (not `columns`)
-                values="count",
-                aggregate_function="first",
-            )
-            .fill_null(0)
-        )
-
-        # ensure only expected columns (and ensure they exist)
-        for col in ["Day", "Night"]:
-            if col not in df_pivot.columns:
-                df_pivot = df_pivot.with_columns(pl.lit(0).alias(col))
-
-        # --- enforce alphabetical continent order ---
-        df_pivot = df_pivot.sort("continent")
-
-        time_columns = [col for col in ["Day", "Night"] if col in df_pivot.columns]
-
-        # --- plot ---
-        distribution.bar(
-            df=df_pivot.to_pandas(),
-            x=df_pivot["continent"],
-            y=time_columns,
-            y_legend=time_columns,
-            stacked=True,
-            pretty_text=False,
-            orientation="v",
-            xaxis_title="Continent",
-            yaxis_title="Number of segments",
-            show_text_labels=False,
-            save_file=True,
-            save_final=True,
-            name_file="bar_continent_time_of_day"
-        )
+        # day/night footage per vehicle type and per continent are made by dataset_figures (in hours)
 
         total_duration = dataset_stats.calculate_total_seconds(df_mapping)
 
@@ -2871,7 +2529,8 @@ if __name__ == "__main__":
         logger.info("Analysis complete.")
 
     # figures of the dataset, and of what is detected in it when the YOLO detection CSVs are available
-    dataset_figures.dataset_figures(df_mapping, dataset_figures.segments(df_mapping, analysis_class.vehicle_map))
+    dataset_figures.dataset_figures(df_mapping, dataset_figures.segments(df_mapping, analysis_class.vehicle_map),
+                                    analysis_class.iso3_to_flag)
     detections = count_detections(df_mapping)
     if detections is None:
         logger.warning("No readable bbox CSVs in configured data folders; figures and README stats based on "
