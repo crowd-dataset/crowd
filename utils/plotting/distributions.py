@@ -317,12 +317,17 @@ class Distributions:
             axis=1
         )
 
+        # the quarter that has not ended yet is incomplete: shown hatched and marked in the hover
+        partial = quarter_counts['quarter_start'] + pd.DateOffset(months=3) > pd.Timestamp.today()
+        quarter_counts.loc[partial, 'hover_label'] += ' (incomplete, quarter not over yet)'
+
         # Create bar chart
         try:
             fig = go.Figure(
                 go.Bar(
                     x=quarter_counts['quarter_start'],
                     y=quarter_counts['video_count'],
+                    marker_pattern_shape=np.where(partial, '/', ''),
                     text=quarter_counts['video_count'].astype(str),
                     texttemplate='%{text}',
                     textposition='outside',
@@ -378,9 +383,9 @@ class Distributions:
                 showgrid=False
             ),
             yaxis=dict(
-                range=[0, 3500],
+                # headroom above the tallest bar for its label
+                range=[0, quarter_counts['video_count'].max() * 1.12],
                 rangemode='tozero',
-                dtick=250,
                 ticks='outside',
                 ticklen=5,
                 tickwidth=1,
@@ -558,7 +563,7 @@ class Distributions:
             buttons = list([dict(label='All',
                                  method='update',
                                  args=[{'visible': [True] * df[y].shape[0]},
-                                       {'title': 'All', 'showlegend': True}])])
+                                       {'title': '', 'showlegend': True}])])
             # counter for traversing through stimuli
             counter_rows = 0
             for variable in y:
@@ -572,7 +577,6 @@ class Distributions:
                 counter_rows = counter_rows + 1
             updatemenus = [dict(x=-0.15, buttons=buttons, showactive=True)]
             fig['layout']['updatemenus'] = updatemenus  # pyright: ignore[reportIndexIssue]
-            fig['layout']['title'] = 'All'  # pyright: ignore[reportIndexIssue]
 
         # update layout
         fig.update_layout(template=common.get_configs('plotly_template'), xaxis_title=xaxis_title,

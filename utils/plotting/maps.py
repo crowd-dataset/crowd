@@ -1884,20 +1884,20 @@ class Maps:
 
         io_class.save_plotly_figure(fig, name_file, save_final=save_final)
 
-    def mapbox_map(self, df, density_col=None, density_radius=30, hover_data=None, hover_name=None,
+    def mapbox_map(self, df, value_col=None, value_title=None, value_factor=1, hover_data=None, hover_name=None,
                    marker_size=5, file_name="mapbox_map", save_final=True):
-        """Generates a world map of cities using Mapbox, with optional density visualization.
+        """Generates a world map of cities using Mapbox, with optional bubbles sized by a value.
 
         This method can create either:
             1. A simple scatter map showing locality locations colored by continent.
-            2. A density map showing intensity values based on a specified column.
+            2. A bubble map: each locality a circle whose area and (log) colour show `value_col`.
 
         Args:
             df (pandas.DataFrame): DataFrame containing mapping information.
                 Required columns: "lat", "lon", "locality", "continent".
-            density_col (str, optional): Column name for density values.
-                If provided, a density map is generated. Defaults to None.
-            density_radius (int, optional): The pixel radius for density spread. Defaults to 30.
+            value_col (str, optional): Column with the value shown by the bubbles. Defaults to None (scatter map).
+            value_title (str, optional): Name of the value in the colour bar and hover. Defaults to `value_col`.
+            value_factor (float, optional): Factor applied to the value, e.g. 1 / 3600 for seconds to hours.
             hover_data (list, optional): List of additional DataFrame columns to display when hovering.
                 Defaults to None.
             hover_name (list, optional): title on top of hover popup.
@@ -1908,8 +1908,8 @@ class Maps:
         Returns:
             None: The Plotly figure is created, displayed, and optionally saved.
         """
-        # Draw scatter map if no density column is provided
-        if not density_col:
+        # Draw scatter map if no value column is provided
+        if not value_col:
             fig = px.scatter_map(
                 df,
                 lat="lat",
@@ -1923,23 +1923,31 @@ class Maps:
             # Apply marker size
             fig.update_traces(marker=dict(size=marker_size))
 
-        # Draw density map if density column is provided
+        # Draw bubble map if a value column is provided. A density heatmap on a linear scale shows only the few
+        # largest values, so the value is shown by circle area and on a log colour scale instead.
         else:
-            fig = px.density_mapbox(
+            value_title = value_title or value_col
+            df = df.assign(**{value_title: df[value_col] * value_factor})
+            df = df[df[value_title] > 0].sort_values(value_title, ascending=False)  # small circles on top
+            df["log_value"] = np.log10(df[value_title])
+            fig = px.scatter_map(
                 df,
                 lat="lat",
                 lon="lon",
-                z=density_col,  # Use density column for intensity
-                radius=density_radius,  # Control the spread of density
-                zoom=2.5,  # Initial zoom level for density view # pyright: ignore[reportArgumentType]
-                center=dict(
-                    lat=df["lat"].mean(),
-                    lon=df["lon"].mean()
-                ),  # Center map on mean coordinates
-                mapbox_style="carto-positron",  # Light and clean map style
-                hover_data=hover_data,
-                hover_name=hover_name
+                size=value_title,
+                size_max=30,
+                color="log_value",
+                color_continuous_scale="YlOrRd",
+                hover_name=hover_name,
+                hover_data={**{c: True for c in hover_data or [] if c in df.columns}, value_title: ":,.1f",
+                            "log_value": False},
+                zoom=1.3  # pyright: ignore[reportArgumentType]
             )
+            fig.update_traces(marker=dict(sizemin=2, opacity=0.8))
+            ticks = [10 ** p for p in range(int(np.floor(df["log_value"].min())),
+                                            int(np.ceil(df["log_value"].max())) + 1)]
+            fig.update_layout(coloraxis_colorbar=dict(title=value_title, tickvals=np.log10(ticks).tolist(),
+                                                      ticktext=[f"{t:,.0f}" if t >= 1 else f"{t:g}" for t in ticks]))
 
         # Update map layout to improve appearance
         fig.update_layout(

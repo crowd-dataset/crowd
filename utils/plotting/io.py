@@ -1,6 +1,7 @@
 import os
 import common
 import plotly as py
+import plotly.graph_objects as go
 import shutil
 from custom_logger import CustomLogger
 
@@ -29,19 +30,24 @@ class IO:
         os.makedirs(common.output_dir, exist_ok=True)
         os.makedirs(output_final, exist_ok=True)
 
-        # Save as HTML
+        # Save as HTML; plotly.js is loaded from its CDN instead of being embedded (~4.6 MB per file)
         logger.info(f"Saving html file for {filename}.")
-        py.offline.plot(fig, filename=os.path.join(common.output_dir, filename + ".html"))
+        py.offline.plot(fig, filename=os.path.join(common.output_dir, filename + ".html"), include_plotlyjs="cdn")
         # also save the final figure
         if save_final:
-            py.offline.plot(fig, filename=os.path.join(output_final, filename + ".html"),  auto_open=False)
+            py.offline.plot(fig, filename=os.path.join(output_final, filename + ".html"), auto_open=False,
+                            include_plotlyjs="cdn")
+
+        # static images cannot use interactive menus (e.g., dropdowns), so leave them out
+        static = go.Figure(fig)
+        static.layout.updatemenus = ()  # assignment: update_layout(updatemenus=[]) would keep the existing menus
 
         try:
             # Save as PNG
             if save_png:
                 logger.info(f"Saving png file for {filename}.")
-                fig.write_image(os.path.join(common.output_dir, filename + ".png"), width=width, height=height,
-                                scale=scale)
+                static.write_image(os.path.join(common.output_dir, filename + ".png"), width=width, height=height,
+                                   scale=scale)
                 # also save the final figure
                 if save_final:
                     shutil.copy(os.path.join(common.output_dir, filename + ".png"),
@@ -50,7 +56,7 @@ class IO:
             # Save as EPS
             if save_eps:
                 logger.info(f"Saving eps file for {filename}.")
-                fig.write_image(os.path.join(common.output_dir, filename + ".eps"), width=width, height=height)
+                static.write_image(os.path.join(common.output_dir, filename + ".eps"), width=width, height=height)
                 # also save the final figure
                 if save_final:
                     shutil.copy(os.path.join(common.output_dir, filename + ".eps"),

@@ -2515,25 +2515,27 @@ if __name__ == "__main__":
                                               yaxis_title='Number of videos',
                                               save_file=True)
 
-        # maps with all cities and population heatmap
+        # maps with all cities as bubbles sized by population, number of videos and amount of footage
         maps.mapbox_map(df=df.to_pandas(),
                         hover_data=hover_data,
-                        density_col='population_locality',
-                        density_radius=10,
+                        hover_name='locality',
+                        value_col='population_locality',
+                        value_title='Population',
                         file_name='mapbox_map_all_pop')
 
-        # maps with all cities and video count heatmap
         maps.mapbox_map(df=df.to_pandas(),
                         hover_data=hover_data,
-                        density_col='video_count',
-                        density_radius=10,
+                        hover_name='locality',
+                        value_col='video_count',
+                        value_title='Number of videos',
                         file_name='mapbox_map_all_videos')
 
-        # maps with all cities and total time heatmap
         maps.mapbox_map(df=df.to_pandas(),
                         hover_data=hover_data,
-                        density_col='total_time',
-                        density_radius=10,
+                        hover_name='locality',
+                        value_col='total_time',
+                        value_title='Footage (hours)',
+                        value_factor=1 / 3600,
                         file_name='mapbox_map_all_time')
 
         # maps of countries in each continent coloured by amount of footage
