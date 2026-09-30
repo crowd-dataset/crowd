@@ -2095,28 +2095,34 @@ README_DETECTIONS = {
 def count_detections(df_mapping: pl.DataFrame) -> tuple[pl.DataFrame, int] | None:
     """Count unique tracked objects per mapping row and YOLO class from the data/*/bbox CSVs.
 
-    Returns (DataFrame with `id`, one column per README_DETECTIONS entry and `detected_seconds` (processed footage
-    covered by the CSVs), number of CSVs read), or None if no CSV could be read.
+    Returns (DataFrame with `id`, one column per README_DETECTIONS entry, `detected_seconds` (processed footage
+    covered by the CSVs), and `night_seconds` and `night_persons` (the part of those at night), number of CSVs
+    read), or None if no CSV could be read.
     """
     files = [f for d in common.get_configs("data") for f in glob.glob(os.path.join(d, "bbox", "*.csv"))]
     if not files:
         return None
 
-    # "{vid}_{start_time}" -> (mapping row id, processed seconds) (CSV files are named {vid}_{start_time}_{fps}.csv)
+    # "{vid}_{start_time}" -> (mapping row id, processed seconds, night) (CSV files are named
+    # {vid}_{start_time}_{fps}.csv)
     segment_to_id = {}
-    for row in df_mapping.select(["id", "videos", "start_time", "end_time"]).iter_rows(named=True):
+    for row in df_mapping.select(["id", "videos", "start_time", "end_time", "time_of_day"]).iter_rows(named=True):
         vids = MetricsCache._parse_videos_cell(row["videos"])
-        for vid, starts, ends in zip(vids, Dataset_Stats._parse_nested_list(row["start_time"]),
-                                     Dataset_Stats._parse_nested_list(row["end_time"])):
-            for st, et in zip(starts, ends):
-                segment_to_id[f"{vid}_{int(st)}"] = (row["id"], processed_segment_duration_seconds(st, et))
+        tods = Dataset_Stats._parse_nested_list(row["time_of_day"])
+        for i, (vid, starts, ends) in enumerate(zip(vids, Dataset_Stats._parse_nested_list(row["start_time"]),
+                                                    Dataset_Stats._parse_nested_list(row["end_time"]))):
+            video_tods = tods[i] if i < len(tods) and isinstance(tods[i], list) else []
+            for j, (st, et) in enumerate(zip(starts, ends)):
+                night = j < len(video_tods) and video_tods[j] == 1
+                segment_to_id[f"{vid}_{int(st)}"] = (row["id"], processed_segment_duration_seconds(st, et), night)
 
     min_conf = float(common.get_configs("min_confidence"))
     id_to_class = {v: k for k, v in README_DETECTIONS.items()}
+    columns = [*README_DETECTIONS, "detected_seconds", "night_seconds", "night_persons"]
     counts: dict = {}
     n_read = 0
     for f in tqdm(files, desc="Counting detections for README"):
-        row_id, seconds = segment_to_id.get(os.path.basename(f)[:-4].rsplit("_", 1)[0], (None, 0))
+        row_id, seconds, night = segment_to_id.get(os.path.basename(f)[:-4].rsplit("_", 1)[0], (None, 0, False))
         if row_id is None:
             continue
         try:
@@ -2132,16 +2138,19 @@ def count_detections(df_mapping: pl.DataFrame) -> tuple[pl.DataFrame, int] | Non
               .group_by("yolo-id")
               .agg(pl.col("unique-id").drop_nulls().n_unique())
         )
-        row_counts = counts.setdefault(row_id, dict.fromkeys([*README_DETECTIONS, "detected_seconds"], 0))
+        row_counts = counts.setdefault(row_id, dict.fromkeys(columns, 0))
         row_counts["detected_seconds"] += seconds
+        row_counts["night_seconds"] += seconds if night else 0
         for yolo_id, n in per_class.iter_rows():
             row_counts[id_to_class[yolo_id]] += n
+            if night and yolo_id == YOLO_PERSON:
+                row_counts["night_persons"] += n
 
     if not n_read:
         return None
     return pl.DataFrame(
         [{"id": k, **v} for k, v in counts.items()],
-        schema={"id": df_mapping.schema["id"], **dict.fromkeys([*README_DETECTIONS, "detected_seconds"], pl.Int64)},
+        schema={"id": df_mapping.schema["id"], **dict.fromkeys(columns, pl.Int64)},
     ), n_read
 
 

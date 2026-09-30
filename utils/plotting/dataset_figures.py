@@ -183,7 +183,11 @@ def _country_map(df: pl.DataFrame, value: str, title: str, scale: str, name: str
                         hover_data={value: fmt, "_c": False, "iso3": False}, color_continuous_scale=scale,
                         projection="natural earth", labels={value: title})
     if log:
-        ticks = [10 ** p for p in range(math.floor(d["_c"].min()), math.ceil(d["_c"].max()) + 1)]
+        lo, hi = d["_c"].min(), d["_c"].max()
+        # powers of ten, and 2 and 5 times them when the values span only a few of those
+        steps = (1,) if hi - lo > 2 else (1, 2, 5)
+        ticks = [s * 10 ** p for p in range(math.floor(lo), math.ceil(hi) + 1) for s in steps
+                 if lo <= math.log10(s * 10 ** p) <= hi]
         fig.update_layout(coloraxis_colorbar=dict(tickvals=np.log10(ticks).tolist(),
                                                   ticktext=[f"{t:,g}" for t in ticks]))
     fig.update_layout(coloraxis_colorbar=colorbar_top(title))
@@ -386,6 +390,122 @@ def dataset_figures(df_mapping: pl.DataFrame, seg: pl.DataFrame, flags: dict) ->
     fig.update_traces(width=np.diff(edges))
     _save(_style(fig), "hist_segment_length")
 
+    # share of footage against share of population per country: which countries are over- or under-represented
+    # (population share of all countries in the dataset); the 25 largest by either share
+    shares = (seg.group_by("iso3", "country").agg(hours).join(pop, on="iso3")
+                 .with_columns((pl.col("hours") / pl.col("hours").sum() * 100).alias("footage"),
+                               (pl.col("population_country") / pl.col("population_country").sum() * 100)
+                               .alias("population"),
+                               pl.concat_str([flag, pl.col("country")], separator=" ").alias("name")))
+    shares = shares.filter((pl.col("footage").rank("ordinal", descending=True) <= 25)
+                           | (pl.col("population").rank("ordinal", descending=True) <= 25)).sort("population")
+    _dumbbell(shares, "name", {"footage": ("Footage", "#D55E00"), "population": ("Population", "#0072B2")},
+              "Share (%, log scale)", "dumbbell_footage_population_share", log=True, fmt=":.2f")
+
+    # footage by size of locality, per continent: what "urban" means in each part of the dataset
+    bands = ["Under 10k", "10k–100k", "100k–1M", "1M–10M", "Over 10M"]
+    size = (seg.join(df_mapping.select("id", "population_locality"), on="id")
+               .with_columns(pl.when(pl.col("population_locality") > 0)
+                               .then(pl.col("population_locality").cut([1e4, 1e5, 1e6, 1e7], labels=bands,
+                                                                       left_closed=True).cast(pl.Utf8))
+                               .otherwise(pl.lit("Unknown")).alias("band")))
+    size = pl.concat([size, size.with_columns(pl.lit("All").alias("continent"))])
+    size = (size.group_by("continent", "band").agg(hours)
+                .with_columns((pl.col("hours") / pl.col("hours").sum().over("continent") * 100).alias("share")))
+    fig = px.bar(size.to_pandas(), x="continent", y="share", color="band",
+                 category_orders={"continent": CONTINENT_ORDER + ["All"], "band": bands + ["Unknown"]},
+                 color_discrete_map={**dict(zip(bands, px.colors.sequential.Viridis_r[1::2])), "Unknown": "#cccccc"},
+                 labels={"share": "Share of footage (%)", "continent": "", "band": "Population of locality"},
+                 hover_data={"hours": ":,.0f", "share": ":.1f"})
+    _save(_style(fig), "bar_footage_population_band")
+
+    # effective number of channels (inverse Herfindahl index of channel shares): 1 means a single uploader,
+    # n means as diverse as n channels with equal shares
+    effective = (by_channel.with_columns((pl.col("seconds") / pl.col("seconds").sum().over("iso3")).alias("s"))
+                           .group_by("iso3", "country")
+                           .agg((1 / (pl.col("s") ** 2).sum()).alias("effective"),
+                                (pl.sum("seconds") / 3600).alias("hours")))
+    _country_map(effective, "effective", "Effective number of channels", "Greens", "map_effective_channels",
+                 ":.1f", log=True)
+
+    # continent -> country -> locality, sized by footage and coloured by the share at night; the HTML drills down
+    place = pl.concat_str([pl.col("locality"), pl.col("state")], separator=", ", ignore_nulls=True)
+    tree = (seg.join(df_mapping.select("id", "state"), on="id")
+               .with_columns(place.alias("place"), pl.concat_str([flag, pl.col("country")], separator=" ")
+                             .alias("country"))
+               .group_by("continent", "country", "place")  # same-named places in one state are merged
+               .agg(hours, (pl.col("seconds").filter(pl.col("night")).sum() / pl.sum("seconds") * 100)
+                    .alias("night")))
+    fig = px.treemap(tree.to_pandas(), path=[px.Constant("All footage"), "continent", "country", "place"],
+                     values="hours", color="night", color_continuous_scale="Blues", maxdepth=3,
+                     labels={"night": "Night (%)", "hours": "Footage (hours)"})
+    fig.update_traces(texttemplate="%{label}<br>%{value:,.0f} h", root_color="#f5f5f5",
+                      hovertemplate="%{label}<br>%{value:,.1f} hours<br>%{color:.0f}% at night<extra></extra>")
+    fig.update_layout(coloraxis_colorbar=dict(title="Night (%)"))
+    _save(_style(fig, margin=dict(l=5, r=5, t=5, b=5)), "treemap_footage")
+
+    # every locality as a dot sized by footage (area proportional to hours), for print where the tile maps are weak
+    dots = (seg.group_by("id").agg(hours).join(df_mapping.select("id", "locality", "country", "continent", "lat",
+                                                                 "lon"), on="id")
+               .drop_nulls(["lat", "lon"]).sort("hours", descending=True))
+    fig = go.Figure()
+    for continent in CONTINENT_ORDER:
+        d = dots.filter(pl.col("continent") == continent)
+        fig.add_trace(go.Scattergeo(lon=d["lon"], lat=d["lat"], name=continent, text=d["locality"],
+                                    customdata=d["hours"],
+                                    marker=dict(size=np.clip(2 + 1.3 * np.sqrt(d["hours"].to_numpy()), 2, 32),
+                                                color=CONTINENT_COLORS[continent], opacity=0.6, line_width=0),
+                                    hovertemplate="%{text}<br>%{customdata:,.1f} hours<extra></extra>"))
+    fig.update_geos(projection_type="natural earth", showland=True, landcolor="#eeeeee", showcountries=True,
+                    countrycolor="#cccccc", showocean=True, oceancolor="white", showframe=False,
+                    lataxis_range=[-57, 84], coastlinecolor="#bbbbbb")
+    fig.add_annotation(text="Dot area proportional to hours of footage", x=0.01, y=0.02, xref="paper",
+                       yref="paper", showarrow=False, font=dict(size=14, color="#666666"))
+    _save(_style(fig, margin=dict(l=0, r=0, t=0, b=0),
+                 legend=dict(x=0.01, y=0.35, itemsizing="constant", bgcolor="rgba(255,255,255,0.7)")),
+          "map_localities_footage")
+
+    # length of segments by continent and by type of vehicle, as boxes from precomputed quantiles (the HTML stays
+    # small with ~100k segments); whiskers at the 5th and 95th percentiles
+    fig = make_subplots(rows=1, cols=2, shared_yaxes=True, horizontal_spacing=0.03,
+                        column_widths=[0.45, 0.55], subplot_titles=["By continent", "By type of vehicle"])
+    by_vehicle = seg.drop_nulls("vehicle").group_by("vehicle").agg(pl.sum("seconds")).sort("seconds", descending=True)
+    for col, key, groups in [(1, "continent", CONTINENT_ORDER), (2, "vehicle", by_vehicle["vehicle"].to_list())]:
+        for g in groups:
+            m = seg.filter(pl.col(key) == g)["seconds"].to_numpy() / 60
+            if not len(m):
+                continue
+            q = np.percentile(m, [5, 25, 50, 75, 95])
+            color = CONTINENT_COLORS[g] if key == "continent" else "#0072B2"
+            fig.add_trace(go.Box(x=[g], q1=[q[1]], median=[q[2]], q3=[q[3]], lowerfence=[q[0]], upperfence=[q[4]],
+                                 name=g, marker_color=color, showlegend=False,
+                                 hovertext=f"{g}: {len(m):,} segments"), row=1, col=col)
+    fig.update_yaxes(type="log")
+    fig.update_yaxes(title_text="Length of segment (minutes)", col=1)
+    _save(_style(fig), "box_segment_length")
+
+
+def _dumbbell(df: pl.DataFrame, label: str, values: dict, x_title: str, name: str, log: bool = False,
+              fmt: str = ":.1f"):
+    """One row per `label`, a dot per column of `values` (column -> (legend name, colour)) joined by a line;
+    rows in the order of `df`, the first at the bottom."""
+    cols = list(values)
+    fig = go.Figure()
+    xs, ys = [], []
+    for r in df.iter_rows(named=True):
+        xs += [r[cols[0]], r[cols[-1]], None]
+        ys += [r[label], r[label], None]
+    fig.add_trace(go.Scatter(x=xs, y=ys, mode="lines", line=dict(color="#bbbbbb", width=2), showlegend=False,
+                             hoverinfo="skip"))
+    for col, (legend, color) in values.items():
+        fig.add_trace(go.Scatter(x=df[col], y=df[label], mode="markers", name=legend,
+                                 marker=dict(color=color, size=11),
+                                 hovertemplate=f"%{{y}}<br>{legend}: %{{x{fmt}}}<extra></extra>"))
+    fig.update_xaxes(type="log" if log else "linear", title_text=x_title, showgrid=True, gridcolor="#e5e5e5")
+    fig.update_yaxes(categoryorder="array", categoryarray=df[label].to_list(), title_text="", dtick=1)
+    _save(_style(fig, height=max(500, 24 * df.height + 150), margin=dict(l=10, r=20, t=20, b=70),
+                 legend=dict(orientation="h", x=0.5, xanchor="center", y=1.0, yanchor="bottom")), name)
+
 
 # Figures based on YOLO detections, with their README captions, in the order they appear in the README.
 DETECTION_FIGURES = {
@@ -393,6 +513,12 @@ DETECTION_FIGURES = {
     "box_pedestrians_per_minute_continent": "Pedestrians per minute of footage per locality, by continent.",
     "bar_road_user_mix": "Mix of detected road users in the 30 countries with the most analysed footage.",
     "scatter_indicators_pedestrians": "Pedestrians per minute of footage per country against country indicators.",
+    "dot_pedestrians_per_minute": "Pedestrians per minute of footage per country, with a 95% bootstrap interval over "
+                                  "its localities (countries with at least 10 hours in at least 3 localities).",
+    "dumbbell_pedestrians_day_night": "Pedestrians per minute of footage by day and by night per country (countries "
+                                      "with at least an hour of each).",
+    "bar_road_user_mix_continent": "Mix of detected road users per continent.",
+    "scatter_pedestrians_population": "Pedestrians per minute of footage per locality against its population.",
 }
 
 
@@ -402,8 +528,8 @@ def detection_figures(df_mapping: pl.DataFrame, det: pl.DataFrame, classes: list
 
     Args:
         df_mapping: The mapping.
-        det: Per mapping row: `id`, one count column per class in `classes` and `detected_seconds` (footage covered
-            by the detection CSVs).
+        det: Per mapping row: `id`, one count column per class in `classes`, `detected_seconds` (footage covered
+            by the detection CSVs), and `night_seconds` and `night_persons` (the part of those at night).
         classes: Detection count columns, the first one being persons.
     """
     person = classes[0]
@@ -435,6 +561,70 @@ def detection_figures(df_mapping: pl.DataFrame, det: pl.DataFrame, classes: list
 
     rates = country.with_columns(per_min).join(_country_indicators(df_mapping), on="iso3", how="left")
     _vs_indicators(rates, "per_minute", "Pedestrians per minute", "scatter_indicators_pedestrians", log_y=False)
+
+    # pedestrians per minute per country with a 95% bootstrap interval over its localities; countries with at least
+    # MIN_HOURS of analysed footage in at least 3 localities
+    rng = np.random.default_rng(0)
+    rows = []
+    for (iso3, name), d in det.group_by("iso3", "country"):
+        if d.height < 3 or d["detected_seconds"].sum() < MIN_HOURS * 3600:
+            continue
+        continent = d["continent"][0]  # countries split across continents are shown once
+        p, m = d[person].to_numpy(), d["detected_seconds"].to_numpy() / 60
+        i = rng.integers(0, d.height, (1000, d.height))
+        lo, hi = np.percentile(p[i].sum(1) / m[i].sum(1), [2.5, 97.5])
+        rows.append(dict(country=name, continent=continent, rate=p.sum() / m.sum(), lo=lo, hi=hi))
+    if rows:
+        ci = pl.DataFrame(rows).sort("rate")
+        fig = go.Figure()
+        for continent in CONTINENT_ORDER:
+            d = ci.filter(pl.col("continent") == continent)
+            fig.add_trace(go.Scatter(x=d["rate"], y=d["country"], mode="markers", name=continent,
+                                     marker=dict(color=CONTINENT_COLORS[continent], size=9),
+                                     error_x=dict(type="data", symmetric=False, array=d["hi"] - d["rate"],
+                                                  arrayminus=d["rate"] - d["lo"], color="#999999", thickness=1.5),
+                                     hovertemplate="%{y}: %{x:.2f} per minute<extra></extra>"))
+        fig.update_xaxes(title_text="Pedestrians per minute (95% bootstrap interval over localities)",
+                         showgrid=True, gridcolor="#e5e5e5", rangemode="tozero")
+        fig.update_yaxes(categoryorder="array", categoryarray=ci["country"].to_list(), dtick=1)
+        _save(_style(fig, height=max(500, 22 * ci.height + 150), margin=dict(l=10, r=20, t=20, b=70),
+                     legend=dict(x=0.99, xanchor="right", y=0.01, yanchor="bottom")), "dot_pedestrians_per_minute")
+
+    # pedestrians per minute by day and by night, in countries with at least an hour of analysed footage of each
+    day_night = (country.join(det.group_by("iso3").agg(pl.sum("night_seconds", "night_persons")), on="iso3")
+                        .with_columns(((pl.col(person) - pl.col("night_persons"))
+                                       / ((pl.col("detected_seconds") - pl.col("night_seconds")) / 60)).alias("day"),
+                                      (pl.col("night_persons") / (pl.col("night_seconds") / 60)).alias("night"))
+                        .filter(pl.col("night_seconds") >= 3600,
+                                pl.col("detected_seconds") - pl.col("night_seconds") >= 3600)
+                        .sort("day"))
+    if day_night.height:
+        _dumbbell(day_night, "country", {"day": ("Day", "#E69F00"), "night": ("Night", "#0072B2")},
+                  "Pedestrians per minute", "dumbbell_pedestrians_day_night", fmt=":.2f")
+
+    # mix of detected road users per continent and overall
+    continent = det.group_by("continent").agg(pl.col(classes).sum())
+    continent = pl.concat([continent, continent.select(pl.lit("All").alias("continent"), pl.col(classes).sum())])
+    mix = (continent.unpivot(index="continent", on=classes, variable_name="Road user", value_name="count")
+                    .with_columns((pl.col("count") / pl.col("count").sum().over("continent") * 100).alias("share")))
+    fig = px.bar(mix.to_pandas(), x="continent", y="share", color="Road user",
+                 category_orders={"continent": CONTINENT_ORDER + ["All"], "Road user": classes},
+                 labels={"share": "Share of detected road users (%)", "continent": ""},
+                 hover_data={"count": ":,", "share": ":.1f"})
+    _save(_style(fig), "bar_road_user_mix_continent")
+
+    # pedestrians per minute per locality against its population: whether more pedestrians just means a larger city
+    loc = (det.join(df_mapping.select("id", "population_locality"), on="id").with_columns(per_min)
+              .filter(pl.col("population_locality") > 0, pl.col("per_minute") > 0))
+    if loc.height > 2:
+        rho = loc.select(pl.corr("population_locality", "per_minute", method="spearman")).item()
+        fig = px.scatter(loc.to_pandas(), x="population_locality", y="per_minute", color="continent",
+                         hover_name="locality", log_x=True, log_y=True, opacity=0.7, **CONTINENT_STYLE,
+                         labels={"population_locality": "Population of locality",
+                                 "per_minute": "Pedestrians per minute", "continent": ""})
+        fig.add_annotation(text=f"Spearman ρ = {rho:.2f}, n = {loc.height:,} localities", x=0.99, y=0.02,
+                           xref="paper", yref="paper", xanchor="right", showarrow=False, font=dict(size=16))
+        _save(_style(fig), "scatter_pedestrians_population")
 
 
 if __name__ == "__main__":

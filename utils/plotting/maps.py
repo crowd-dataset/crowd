@@ -1949,9 +1949,8 @@ class Maps:
             fig.update_traces(marker=dict(sizemin=2, opacity=0.85))
             ticks = [10 ** p for p in range(int(np.floor(df["log_value"].min())),
                                             int(np.ceil(df["log_value"].max())) + 1)]
-            fig.update_layout(coloraxis_colorbar=dict(**colorbar_top(value_title), tickvals=np.log10(ticks).tolist(),
-                                                      ticktext=[f"{t:,.0f}" if t >= 1 else f"{t:g}" for t in ticks]),
-                              map_domain=dict(x=[0, 1], y=[0, MAP_TOP_SHARE]))
+            fig.update_layout(coloraxis_colorbar=dict(title=value_title, tickvals=np.log10(ticks).tolist(),
+                                                      ticktext=[f"{t:,.0f}" if t >= 1 else f"{t:g}" for t in ticks]))
 
         # Update map layout to improve appearance
         fig.update_layout(

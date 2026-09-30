@@ -802,10 +802,10 @@ Amount of footage (hours) per country in Oceania. *Note:* the colour scale is lo
 Amount of footage (hours) per country in South America. *Note:* the colour scale is logarithmic; countries are grouped by the continent of their cities in the dataset.
 
 [![Number of videos over the total number of seconds of footage in the dataset on the city level](figures/scatter_all_total_time-video_count.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/scatter_all_total_time-video_count.html)
-Number of videos against the total amount of footage per locality (log scales). The 12 localities with the most footage are labelled.
+Number of videos against the total amount of footage per locality (log scales). The 40 localities with the most footage are labelled, the top 12 in larger black text; in the HTML version, zoom in to label every point.
 
 [![Number of videos over the total number of seconds of footage in the dataset on the country level](figures/scatter_all_country_total_time-video_count.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/scatter_all_country_total_time-video_count.html)
-Number of videos against the total amount of footage per country (log scales). The 12 countries with the most footage are labelled.
+Number of videos against the total amount of footage per country (log scales). Countries are labelled with their flag and ISO3 code, the 30 with the most footage in larger black text; in the HTML version, zoom in to label every point.
 
 [![Distribution by continent](figures/bar_continent_time_of_day.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/bar_continent_time_of_day.html)
 Distribution of videos by continent. *Note:* continents are based on geography, i.e., the cities in Russia east from Ural mountains are shown as Asia.
@@ -839,6 +839,24 @@ Share of footage coming from the largest YouTube channels.
 
 [![Distribution of the length of segments (parts of videos included in the dataset)](figures/hist_segment_length.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/hist_segment_length.html)
 Distribution of the length of segments (parts of videos included in the dataset).
+
+[![Localities in the dataset, sized by footage](figures/map_localities_footage.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/map_localities_footage.html)
+Every locality in the dataset as a dot coloured by continent; the dot area is proportional to the hours of footage.
+
+[![Footage by continent, country and locality](figures/treemap_footage.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/treemap_footage.html)
+Footage by continent, country and locality, coloured by the share recorded at night. In the HTML version, click a box to zoom in down to the localities.
+
+[![Share of footage against share of population per country](figures/dumbbell_footage_population_share.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/dumbbell_footage_population_share.html)
+Share of footage against share of population (of all countries in the dataset) for the 25 largest countries by either share (log scale). Where the orange dot is left of the blue one, the country is under-represented.
+
+[![Footage by population of locality per continent](figures/bar_footage_population_band.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/bar_footage_population_band.html)
+Share of footage by population of the locality, per continent and overall: what "urban" means in each part of the dataset.
+
+[![Effective number of YouTube channels per country](figures/map_effective_channels.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/map_effective_channels.html)
+Effective number of YouTube channels per country (inverse Herfindahl index of the channels' shares of footage): 1 means a single uploader; n means as diverse as n channels with equal shares. Countries with less than 10 hours of footage are grey.
+
+[![Length of segments by continent and type of vehicle](figures/box_segment_length.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/box_segment_length.html)
+Length of segments by continent and by type of vehicle (boxes: quartiles; whiskers: 5th and 95th percentiles).
 
 <!-- yolo-figures:start -->
 <!-- yolo-figures:end -->

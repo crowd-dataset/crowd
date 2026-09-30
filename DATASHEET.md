@@ -45,12 +45,12 @@ A traffic index of 0 is a real measurement (free-flowing traffic when queried).
 
 | Imbalance | Details | Figure |
 |---|---|---|
-| Geographic | North America 31.7% of footage, Asia 29.0%, Europe 27.0%, Oceania 5.4%, South America 3.8%, Africa 3.0%. The USA alone is 27.4%. | per-continent maps in the README |
+| Geographic | North America 31.7% of footage, Asia 29.0%, Europe 27.0%, Oceania 5.4%, South America 3.8%, Africa 3.0%. The USA alone is 27.4%. | per-continent maps in the README, `dumbbell_footage_population_share` |
 | Time of day | 14.5% of footage is at night, varying strongly by country. | `map_night_share` |
 | Vehicle | 92.0% is filmed from cars, 2.7% from bicycles, 2.7% from buses and 1.6% from two-wheelers. | `bar_vehicle_type_time_of_day` |
 | Upload date | 91.3% of footage was uploaded in 2020 or later. | `hist_months` |
-| Channels | The 10 largest channels supply 18.6% of footage and the 100 largest 57.8%. A channel's route, camera and style can dominate a city's footage. | `line_channel_concentration` |
-| Coverage vs population | Coverage grows with city size but varies widely at the same size; 5,106 localities have a single segment. | `scatter_population_footage`, `scatter_indicators_footage` |
+| Channels | The 10 largest channels supply 18.6% of footage and the 100 largest 57.8%. A channel's route, camera and style can dominate a city's footage. | `line_channel_concentration`, `map_effective_channels` |
+| Coverage vs population | Coverage grows with city size but varies widely at the same size; 5,106 localities have a single segment. | `scatter_population_footage`, `bar_footage_population_band`, `scatter_indicators_footage` |
 
 **Sensitive content.** The footage shows public streets and incidentally captures people, faces and licence plates. CROWD does not redistribute video; it distributes video IDs, time ranges, labels and automatic detections.
 
