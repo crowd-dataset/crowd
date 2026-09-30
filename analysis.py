@@ -28,6 +28,7 @@ from logmod import logs
 from utils.analytics.metrics_cache import (YOLO_BICYCLE, YOLO_BUS, YOLO_CAR, YOLO_MOTORCYCLE, YOLO_PERSON,
                                            YOLO_TRUCK, MetricsCache)
 from utils.core.dataset_stats import Dataset_Stats
+from utils.plotting import dataset_figures
 from utils.plotting.bivariate import Bivariate
 from utils.plotting.distributions import Distributions
 from utils.plotting.maps import Maps
@@ -2080,6 +2081,8 @@ def log_rollups(df_mapping: "pl.DataFrame") -> None:
 README_FILE = os.path.join(common.root_dir, "README.md")
 README_STATS_START = "<!-- dataset-stats:start -->"
 README_STATS_END = "<!-- dataset-stats:end -->"
+README_YOLO_START = "<!-- yolo-figures:start -->"
+README_YOLO_END = "<!-- yolo-figures:end -->"
 README_TOP_CITIES = 200
 
 # README column name -> YOLO class ID
@@ -2096,31 +2099,34 @@ README_DETECTIONS = {
 def count_detections(df_mapping: pl.DataFrame) -> tuple[pl.DataFrame, int] | None:
     """Count unique tracked objects per mapping row and YOLO class from the data/*/bbox CSVs.
 
-    Returns (DataFrame with `id` plus one column per README_DETECTIONS entry, number of CSVs read),
-    or None if no CSV could be read.
+    Returns (DataFrame with `id`, one column per README_DETECTIONS entry and `detected_seconds` (processed footage
+    covered by the CSVs), number of CSVs read), or None if no CSV could be read.
     """
     files = [f for d in common.get_configs("data") for f in glob.glob(os.path.join(d, "bbox", "*.csv"))]
     if not files:
         return None
 
-    # "{vid}_{start_time}" -> mapping row id (CSV files are named {vid}_{start_time}_{fps}.csv)
+    # "{vid}_{start_time}" -> (mapping row id, processed seconds) (CSV files are named {vid}_{start_time}_{fps}.csv)
     segment_to_id = {}
-    for row in df_mapping.select(["id", "videos", "start_time"]).iter_rows(named=True):
+    for row in df_mapping.select(["id", "videos", "start_time", "end_time"]).iter_rows(named=True):
         vids = MetricsCache._parse_videos_cell(row["videos"])
-        for vid, starts in zip(vids, Dataset_Stats._parse_nested_list(row["start_time"])):
-            for st in starts if isinstance(starts, list) else [starts]:
-                segment_to_id[f"{vid}_{int(st)}"] = row["id"]
+        for vid, starts, ends in zip(vids, Dataset_Stats._parse_nested_list(row["start_time"]),
+                                     Dataset_Stats._parse_nested_list(row["end_time"])):
+            for st, et in zip(starts, ends):
+                segment_to_id[f"{vid}_{int(st)}"] = (row["id"], processed_segment_duration_seconds(st, et))
 
     min_conf = float(common.get_configs("min_confidence"))
     id_to_class = {v: k for k, v in README_DETECTIONS.items()}
     counts: dict = {}
     n_read = 0
     for f in tqdm(files, desc="Counting detections for README"):
-        row_id = segment_to_id.get(os.path.basename(f)[:-4].rsplit("_", 1)[0])
+        row_id, seconds = segment_to_id.get(os.path.basename(f)[:-4].rsplit("_", 1)[0], (None, 0))
         if row_id is None:
             continue
         try:
-            df = pl.read_csv(f, columns=["yolo-id", "unique-id", "confidence"])
+            # explicit types: a CSV with a header only (nothing detected) would otherwise be read as strings
+            df = pl.read_csv(f, columns=["yolo-id", "unique-id", "confidence"],
+                             schema_overrides={"yolo-id": pl.Int64, "unique-id": pl.Float64, "confidence": pl.Float64})
         except Exception as e:
             logger.warning(f"Skipping unreadable detection file {f}: {e}")
             continue
@@ -2130,7 +2136,8 @@ def count_detections(df_mapping: pl.DataFrame) -> tuple[pl.DataFrame, int] | Non
               .group_by("yolo-id")
               .agg(pl.col("unique-id").drop_nulls().n_unique())
         )
-        row_counts = counts.setdefault(row_id, dict.fromkeys(README_DETECTIONS, 0))
+        row_counts = counts.setdefault(row_id, dict.fromkeys([*README_DETECTIONS, "detected_seconds"], 0))
+        row_counts["detected_seconds"] += seconds
         for yolo_id, n in per_class.iter_rows():
             row_counts[id_to_class[yolo_id]] += n
 
@@ -2138,7 +2145,7 @@ def count_detections(df_mapping: pl.DataFrame) -> tuple[pl.DataFrame, int] | Non
         return None
     return pl.DataFrame(
         [{"id": k, **v} for k, v in counts.items()],
-        schema={"id": df_mapping.schema["id"], **dict.fromkeys(README_DETECTIONS, pl.Int64)},
+        schema={"id": df_mapping.schema["id"], **dict.fromkeys([*README_DETECTIONS, "detected_seconds"], pl.Int64)},
     ), n_read
 
 
@@ -2225,23 +2232,34 @@ def build_readme_stats(df_mapping: pl.DataFrame, detections: tuple[pl.DataFrame,
     ])
 
 
-def update_readme_stats(df_mapping: pl.DataFrame) -> None:
-    """Replace the dataset-stats block in README.md with freshly computed statistics."""
-    detections = count_detections(df_mapping)
-    if detections is None:
-        logger.warning("No readable bbox CSVs in configured data folders; README stats written without detections.")
+def _replace_block(readme: str, start_marker: str, end_marker: str, content: str) -> str:
+    """Replace the text between two markers (markers included) with `content`; unchanged if a marker is missing."""
+    start, end = readme.find(start_marker), readme.find(end_marker)
+    if start == -1 or end == -1:
+        logger.warning(f"README markers {start_marker} / {end_marker} not found; that part is not updated.")
+        return readme
+    return readme[:start] + content + readme[end + len(end_marker):]
 
+
+def update_readme(df_mapping: pl.DataFrame, detections: tuple[pl.DataFrame, int] | None) -> None:
+    """Refresh the generated parts of README.md: dataset statistics and, when detections exist, detection figures.
+
+    Without detections the statistics are written without object counts and the detection figures are left as they
+    are (they are only regenerated where the detection CSVs are available).
+    """
     with open(README_FILE, encoding="utf-8") as f:
         readme = f.read()
-    start, end = readme.find(README_STATS_START), readme.find(README_STATS_END)
-    if start == -1 or end == -1:
-        logger.warning(f"README stats markers not found in {README_FILE}; README stats not updated.")
-        return
-
-    readme = readme[:start] + build_readme_stats(df_mapping, detections) + readme[end + len(README_STATS_END):]
+    readme = _replace_block(readme, README_STATS_START, README_STATS_END, build_readme_stats(df_mapping, detections))
+    if detections is not None:
+        url = "https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/"
+        figures = [f"[![{caption}](figures/{name}.png)]({url}{name}.html)\n{caption}\n"
+                   for name, caption in dataset_figures.DETECTION_FIGURES.items()]
+        readme = _replace_block(readme, README_YOLO_START, README_YOLO_END, "\n".join(
+            [README_YOLO_START, "<!-- Generated by analysis.py from YOLO detections, do not edit by hand. -->",
+             "### Detections in the dataset", *figures, README_YOLO_END]))
     with open(README_FILE, "w", encoding="utf-8") as f:
         f.write(readme)
-    logger.info("Updated dataset statistics in README.md.")
+    logger.info("Updated README.md.")
 
 
 if __name__ == "__main__":
@@ -2850,4 +2868,12 @@ if __name__ == "__main__":
 
         logger.info("Analysis complete.")
 
-    update_readme_stats(df_mapping)
+    # figures of the dataset, and of what is detected in it when the YOLO detection CSVs are available
+    dataset_figures.dataset_figures(df_mapping, dataset_figures.segments(df_mapping, analysis_class.vehicle_map))
+    detections = count_detections(df_mapping)
+    if detections is None:
+        logger.warning("No readable bbox CSVs in configured data folders; figures and README stats based on "
+                       "detections are skipped.")
+    else:
+        dataset_figures.detection_figures(df_mapping, detections[0], list(README_DETECTIONS))
+    update_readme(df_mapping, detections)
