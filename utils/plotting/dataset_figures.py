@@ -265,10 +265,11 @@ def dataset_figures(df_mapping: pl.DataFrame, seg: pl.DataFrame, flags: dict) ->
     rank = pl.col("hours").rank("ordinal", descending=True)
     _labelled_scatter(city, "hours", "videos", "name", rank <= 40, "Footage (hours)", "Number of videos",
                       "scatter_all_total_time-video_count", emphasis=rank <= LABEL_TOP)
-    # every country labelled with its ISO3 code; the 30 with the most footage in larger black text
-    country = seg.group_by("iso3").agg(hours, pl.col("video").n_unique().alias("videos"), pl.first("continent"))
-    _labelled_scatter(country, "hours", "videos", "iso3", pl.lit(True), "Footage (hours)", "Number of videos",
-                      "scatter_all_country_total_time-video_count", size=(1600, 1300),
+    # every country labelled with flag and ISO3 code (tall, so the flags fit); the top 30 by footage in black
+    country = (seg.group_by("iso3").agg(hours, pl.col("video").n_unique().alias("videos"), pl.first("continent"))
+                  .with_columns(pl.concat_str([flag, pl.col("iso3")], separator=" ").alias("name")))
+    _labelled_scatter(country, "hours", "videos", "name", pl.lit(True), "Footage (hours)", "Number of videos",
+                      "scatter_all_country_total_time-video_count", size=(1600, 1700),
                       emphasis=pl.col("hours").rank("ordinal", descending=True) <= 30)
 
     # day and night footage per continent
