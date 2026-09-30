@@ -29,7 +29,6 @@ from utils.analytics.metrics_cache import (YOLO_BICYCLE, YOLO_BUS, YOLO_CAR, YOL
                                            YOLO_TRUCK, MetricsCache)
 from utils.core.dataset_stats import Dataset_Stats
 from utils.plotting import dataset_figures
-from utils.plotting.distributions import Distributions
 from utils.plotting.maps import Maps
 
 # ---------------------------------------------------------------------
@@ -46,7 +45,6 @@ logger = CustomLogger(__name__)  # use custom logger
 # Class instances (singletons for this module)
 # ---------------------------------------------------------------------
 maps = Maps()
-distribution = Distributions()
 
 dataset_stats = Dataset_Stats()
 metrics_cache = MetricsCache()
@@ -2387,11 +2385,10 @@ if __name__ == "__main__":
             pl.concat_str([flag_expr, pl.col("country").cast(pl.Utf8)], separator=" ").alias("flag_country"),
         ])
 
-        # Data to avoid showing on hover in scatter plots
-        columns_remove = ['videos', 'time_of_day', 'start_time', 'end_time', 'upload_date', 'vehicle_type', 'channel',
-                          'display_label', 'flag_locality', 'flag_country']
-
-        hover_data = sorted(list(set(df.columns) - set(columns_remove)))
+        # readable hover text on the city maps (names and hours, not raw columns and seconds)
+        df = df.with_columns((pl.col("total_time") / 3600).round(1).alias("Footage (hours)"),
+                             pl.col("video_count").alias("Videos"), pl.col("population_locality").alias("Population"))
+        hover_data = ["country", "state", "Footage (hours)", "Videos", "Population"]
 
         # Sort by continent and locality, both in ascending order
         df = df.sort(["continent", "country"])
@@ -2427,15 +2424,9 @@ if __name__ == "__main__":
         df = df.sort(["country", "locality"])
 
         # scatter plots of footage against number of videos are made by dataset_figures (log axes, hours)
-        hover_data = ["country", "continent", "total_time", "video_count"]
+        hover_data = ["country", "Footage (hours)", "Videos"]
 
-        # histogram of dates of videos
-        distribution.video_histogram_by_month(df=df.to_pandas(),
-                                              video_count_col='video_count',
-                                              upload_date_col='upload_date',
-                                              xaxis_title='Year',
-                                              yaxis_title='Number of videos',
-                                              save_file=True)
+        # videos per quarter of upload are plotted by dataset_figures (hist_months)
 
         # maps with all cities as bubbles sized by population, number of videos and amount of footage
         maps.mapbox_map(df=df.to_pandas(),
@@ -2464,6 +2455,10 @@ if __name__ == "__main__":
         # countries split across continents (e.g., Russia) are labelled at the part shown, not the country's centre
         split_countries = (df.group_by("iso3").agg(pl.col("continent").n_unique())
                              .filter(pl.col("continent") > 1)["iso3"].to_list())
+        # one colour scale for all continents, so a colour means the same amount of footage on each map
+        per_country = df.group_by(["continent", "iso3"]).agg((pl.sum("total_time") / 3600).alias("h"))
+        per_country = per_country.filter(pl.col("h") > 0)
+        continent_range = (per_country["h"].min(), per_country["h"].max())
         for continent in df["continent"].drop_nulls().unique().sort():
             maps.footage_map(df=df.filter(pl.col("continent") == continent)
                                   .group_by(["iso3", "flag_country"])
@@ -2476,6 +2471,7 @@ if __name__ == "__main__":
                              scope="world",
                              view=maps.CONTINENT_VIEWS[continent],
                              anchor_labels=split_countries,
+                             value_range=continent_range,
                              file_name=f"map_footage_{continent.lower().replace(' ', '_')}")
 
         # map of US states coloured by amount of footage

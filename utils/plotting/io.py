@@ -2,10 +2,14 @@ import os
 import common
 import plotly as py
 import plotly.graph_objects as go
+import plotly.io as pio
 import shutil
 from custom_logger import CustomLogger
 
 logger = CustomLogger(__name__)  # use custom logger
+
+# Without this, kaleido bakes a "Loading [MathJax]..." box into PDF/EPS exports; no figure uses LaTeX.
+pio.kaleido.scope.mathjax = None
 
 
 class IO:

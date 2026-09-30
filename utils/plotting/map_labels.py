@@ -99,6 +99,24 @@ class Projection:
                 self.mid_lat - (y - self.h / 2) / self.s)
 
 
+class AxisProjection:
+    """Linear pixel mapping of a chart's axes (in axis units, e.g. log10 values), for labels on scatter plots.
+
+    `x_range`/`y_range` are the axes' fixed ranges and `width`/`height` the plot area in pixels.
+    """
+
+    def __init__(self, x_range, y_range, width: float, height: float):
+        (self.x0, self.x1), (self.y0, self.y1) = x_range, y_range
+        self.w, self.h = width, height
+        self.frame = (0, 0, width, height)
+
+    def __call__(self, x, y):
+        return ((x - self.x0) / (self.x1 - self.x0) * self.w, (self.y1 - y) / (self.y1 - self.y0) * self.h)
+
+    def invert(self, px, py):
+        return (self.x0 + px / self.w * (self.x1 - self.x0), self.y1 - py / self.h * (self.y1 - self.y0))
+
+
 def text_width(text: str) -> float:
     """Estimated width of one line of label text; an emoji flag is a pair of regional indicator characters."""
     flags = sum(1 for c in text if 0x1F1E6 <= ord(c) <= 0x1F1FF) // 2

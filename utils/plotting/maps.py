@@ -2010,7 +2010,7 @@ class Maps:
 
     def footage_map(self, df, *, location_col, locationmode, scope, label_col=None, value_col="footage_h",
                     callouts=None, view=None, anchor_labels=None, colorbar_title="Footage (hours)",
-                    color_scale="YlOrRd", file_name="map_footage", save_final=True):
+                    color_scale="YlOrRd", value_range=None, file_name="map_footage", save_final=True):
         """
         Choropleth of regions (US states or countries) on a log colour scale, labelled with each region's name and
         value.
@@ -2032,8 +2032,10 @@ class Maps:
             view (dict|None): Map extent as dict(lon=(min, max), lat=(min, max), rotation=lon of projection centre).
             anchor_labels (list|None): Codes labelled at their `lon`/`lat` instead of the country's centre, e.g.
                 countries split across continents whose part shown is far from the country's centre.
-            colorbar_title (str): Title of the colour bar.
+            colorbar_title (str): Title of the colour bar and of the value in the hover text.
             color_scale (str|list): Plotly colour scale.
+            value_range (tuple|None): (min, max) of the colour scale; pass the same range to maps that are compared
+                with each other (e.g., all continents) so a colour means the same value on each. Default: this map's.
             file_name (str): Name of the saved file (without extension).
             save_final (bool): Passed to `save_plotly_figure`.
         """
@@ -2041,13 +2043,15 @@ class Maps:
         df = df[df[value_col] > 0].sort_values(value_col, ascending=False).copy()
         # Log colour scale: a few regions hold most of the footage, which would wash out the rest.
         df["log_value"] = np.log10(df[value_col])
-        ticks = [10 ** p for p in range(int(np.floor(df["log_value"].min())), int(np.ceil(df["log_value"].max())) + 1)]
+        lo, hi = np.log10(value_range) if value_range else (df["log_value"].min(), df["log_value"].max())
+        ticks = [10 ** p for p in range(int(np.floor(lo)), int(np.ceil(hi)) + 1)]
         df["value_text"] = [self._fmt_value(v) for v in df[value_col]]
         rows = df.set_index(location_col, drop=False)
 
         fig = px.choropleth(df, locations=location_col, locationmode=locationmode, scope=scope, color="log_value",
-                            color_continuous_scale=color_scale, hover_name=label_col,
-                            hover_data={value_col: ":,.1f", "log_value": False, location_col: False})
+                            color_continuous_scale=color_scale, range_color=(lo, hi), hover_name=label_col,
+                            hover_data={value_col: ":,.1f", "log_value": False, location_col: False},
+                            labels={value_col: colorbar_title})
         # black text with a white halo stays readable on any fill and on the sea
         halo = "1px 1px 1px white, -1px -1px 1px white, 1px -1px 1px white, -1px 1px 1px white"
         font = dict(size=11, color="black", shadow=halo)

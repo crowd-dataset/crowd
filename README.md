@@ -802,16 +802,16 @@ Amount of footage (hours) per country in Oceania. *Note:* the colour scale is lo
 Amount of footage (hours) per country in South America. *Note:* the colour scale is logarithmic; countries are grouped by the continent of their cities in the dataset.
 
 [![Number of videos over the total number of seconds of footage in the dataset on the city level](figures/scatter_all_total_time-video_count.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/scatter_all_total_time-video_count.html)
-Total time of footage over the number of videos in the dataset on the city level. *Note:* continents are based on geography, i.e., the cities in Russia east from Ural mountains are shown as Asia.
+Number of videos against the total amount of footage per locality (log scales). The 12 localities with the most footage are labelled.
 
 [![Number of videos over the total number of seconds of footage in the dataset on the country level](figures/scatter_all_country_total_time-video_count.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/scatter_all_country_total_time-video_count.html)
-Total time of footage over the number of videos in the dataset on the country level. *Note:* continents are based on geography, i.e., the cities in Russia east from Ural mountains are shown as Asia.
+Number of videos against the total amount of footage per country (log scales). The 12 countries with the most footage are labelled.
 
 [![Distribution by continent](figures/bar_continent_time_of_day.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/bar_continent_time_of_day.html)
 Distribution of videos by continent. *Note:* continents are based on geography, i.e., the cities in Russia east from Ural mountains are shown as Asia.
 
 [![Time of upload of videos](figures/hist_months.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/hist_months.html)
-Time of upload of videos.
+Number of videos by quarter of upload and continent. The current quarter (hatched) is not complete yet.
 
 [![Distribution by type of vehicle](figures/bar_vehicle_type_time_of_day.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/bar_vehicle_type_time_of_day.html)
 Distribution of segments (parts of videos included in dataset) by type of vehicle.
@@ -820,10 +820,16 @@ Distribution of segments (parts of videos included in dataset) by type of vehicl
 Amount of footage per locality against its population. Large localities with little footage are candidates for adding videos.
 
 [![Amount of footage per country against country indicators, showing whether some kinds of countries are over- or under-represented](figures/scatter_indicators_footage.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/scatter_indicators_footage.html)
-Amount of footage per country against country indicators, showing whether some kinds of countries are over- or under-represented.
+Amount of footage per country against country indicators, with the Spearman rank correlation and a trend line per panel, showing whether some kinds of countries are over- or under-represented.
 
 [![Share of footage recorded at night per country](figures/map_night_share.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/map_night_share.html)
-Share of footage recorded at night per country.
+Share of footage recorded at night per country. Countries with less than 10 hours of footage are grey, as their share is not reliable.
+
+[![Footage per million inhabitants per country](figures/map_footage_per_capita.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/map_footage_per_capita.html)
+Hours of footage per million inhabitants per country: coverage relative to country size (log scale).
+
+[![Share of footage from the largest channel per country](figures/map_top_channel_share.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/map_top_channel_share.html)
+Share of each country's footage that comes from its largest YouTube channel. Where it is high, one uploader's routes and camera dominate that country's data. Countries with less than 10 hours of footage are grey.
 
 [![Type of vehicle the footage is recorded from, as a share of footage per continent](figures/bar_vehicle_type_continent.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/bar_vehicle_type_continent.html)
 Type of vehicle the footage is recorded from, as a share of footage per continent.

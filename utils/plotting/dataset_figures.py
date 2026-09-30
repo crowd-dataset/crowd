@@ -7,14 +7,18 @@ per-locality counts of unique tracked objects produced by `analysis.count_detect
 
 import ast
 import math
+from datetime import date
 
 import numpy as np
 import plotly.express as px
+import plotly.graph_objects as go
 import polars as pl
+from plotly.subplots import make_subplots
 
 import common
 from utils.analytics.metrics_cache import MetricsCache
 from utils.core.dataset_stats import Dataset_Stats
+from utils.plotting import map_labels
 from utils.plotting.constants import CONTINENT_COLORS
 from utils.plotting.io import IO
 
@@ -81,6 +85,7 @@ def segments(df_mapping: pl.DataFrame, vehicle_map: dict) -> pl.DataFrame:
                     night=_item(_item(tods, i) or [], j) == 1,
                     vehicle=vehicle_map.get(_item(vehicles, i)),
                     year=int(str(date)[-4:]) if date else None,  # upload dates are stored as DMMYYYY / DDMMYYYY
+                    month=int(str(date)[-6:-4]) if date and len(str(date)) >= 7 else None,
                     channel=_item(channels, i),
                 ))
     return pl.DataFrame(rows).filter(pl.col("seconds") > 0)
@@ -93,30 +98,105 @@ def _country_indicators(df_mapping: pl.DataFrame) -> pl.DataFrame:
 
 
 def _vs_indicators(df: pl.DataFrame, value: str, value_title: str, name: str, log_y: bool):
-    """Scatter of `value` per country against each indicator, one panel per indicator."""
-    long = df.unpivot(index=["country", "continent", value], on=list(INDICATORS), variable_name="indicator",
-                      value_name="indicator_value").drop_nulls("indicator_value")
-    long = long.with_columns(pl.col("indicator").replace(INDICATORS))
-    fig = px.scatter(long.to_pandas(), x="indicator_value", y=value, color="continent", facet_col="indicator",
-                     facet_col_wrap=3, facet_col_spacing=0.06, facet_row_spacing=0.12, log_y=log_y,
-                     hover_name="country", **CONTINENT_STYLE, labels={value: value_title})
-    fig.update_xaxes(matches=None, showticklabels=True, title_text="")
-    fig.for_each_annotation(lambda a: a.update(text=a.text.split("=")[-1]))
+    """Scatter of `value` per country against each indicator, one panel per indicator, each with its Spearman rank
+    correlation, the number of countries and a least-squares trend line (on the log scale when `log_y`)."""
+    cols = 3
+    rows = math.ceil(len(INDICATORS) / cols)
+    titles = []
+    for col in INDICATORS:
+        d = df.select(col, value).drop_nulls().filter(pl.col(value) > 0)
+        rho = d.select(pl.corr(col, value, method="spearman")).item() if d.height > 2 else float("nan")
+        titles.append(f"{INDICATORS[col]}<br><sup>Spearman ρ = {rho:.2f}, n = {d.height}</sup>")
+    fig = make_subplots(rows=rows, cols=cols, subplot_titles=titles, horizontal_spacing=0.07, vertical_spacing=0.16)
+    for i, col in enumerate(INDICATORS):
+        r, c = i // cols + 1, i % cols + 1
+        d = df.select("country", "continent", col, value).drop_nulls([col, value]).filter(pl.col(value) > 0)
+        for continent in CONTINENT_ORDER:
+            dc = d.filter(pl.col("continent") == continent)
+            fig.add_trace(go.Scatter(x=dc[col], y=dc[value], mode="markers", name=continent,
+                                     legendgroup=continent, showlegend=i == 0, text=dc["country"],
+                                     marker=dict(color=CONTINENT_COLORS[continent], size=7, opacity=0.8),
+                                     hovertemplate="%{text}<br>%{x:,.1f}, %{y:,.1f}<extra></extra>"), row=r, col=c)
+        if d.height > 2:
+            x = d[col].to_numpy()
+            y = np.log10(d[value].to_numpy()) if log_y else d[value].to_numpy()
+            slope, intercept = np.polyfit(x, y, 1)
+            xs = np.linspace(x.min(), x.max(), 50)
+            ys = slope * xs + intercept
+            fig.add_trace(go.Scatter(x=xs, y=10 ** ys if log_y else ys, mode="lines", showlegend=False,
+                                     line=dict(color="#555555", width=2, dash="dash"), hoverinfo="skip"),
+                          row=r, col=c)
+    if log_y:
+        fig.update_yaxes(type="log")
+    fig.update_yaxes(title_text=value_title, col=1)
     _save(_style(fig, legend_title_text=""), name)
+
+
+MIN_HOURS = 10  # countries with less footage are greyed out on share maps: a share of a few minutes is noise
+
+
+def _country_map(df: pl.DataFrame, value: str, title: str, scale: str, name: str, fmt: str, log: bool = False):
+    """World map of a per-country value; countries with less than MIN_HOURS of footage are grey."""
+    ok = df.filter(pl.col("hours") >= MIN_HOURS) if "hours" in df.columns else df
+    few = df.filter(pl.col("hours") < MIN_HOURS) if "hours" in df.columns else df.clear()
+    d = ok.with_columns((pl.col(value).log10() if log else pl.col(value)).alias("_c"))
+    fig = px.choropleth(d.to_pandas(), locations="iso3", color="_c", hover_name="country",
+                        hover_data={value: fmt, "_c": False, "iso3": False}, color_continuous_scale=scale,
+                        projection="natural earth", labels={value: title})
+    if log:
+        ticks = [10 ** p for p in range(math.floor(d["_c"].min()), math.ceil(d["_c"].max()) + 1)]
+        fig.update_layout(coloraxis_colorbar=dict(tickvals=np.log10(ticks).tolist(),
+                                                  ticktext=[f"{t:,g}" for t in ticks]))
+    fig.update_layout(coloraxis_colorbar_title=title.replace(" (", "<br>("))
+    if few.height:
+        fig.add_trace(go.Choropleth(locations=few["iso3"], z=[0] * few.height, locationmode="ISO-3",
+                                    colorscale=[[0, "#cfcfcf"], [1, "#cfcfcf"]], showscale=False,
+                                    text=few["country"], hovertemplate=f"%{{text}}: under {MIN_HOURS} hours of "
+                                    "footage<extra></extra>", marker_line_width=0.5))
+        fig.add_annotation(text=f"Grey: under {MIN_HOURS} hours of footage", x=0.01, y=0.02, xref="paper",
+                           yref="paper", showarrow=False, font=dict(size=14, color="#666666"))
+    _save(_style(fig, margin=dict(l=0, r=0, t=0, b=0)), name)
 
 
 def _footage_vs_videos(df: pl.DataFrame, label: str, name: str):
-    """Footage against number of videos (log-log), coloured by continent, the largest points labelled."""
+    """Footage against number of videos (log-log), coloured by continent, the largest points labelled without
+    overlaps (next to the point, or with a leader line when there is no room)."""
+    size, margin = (1600, 900), dict(l=90, r=30, t=30, b=80)
+    x = np.log10(df["hours"].to_numpy())
+    y = np.log10(df["videos"].to_numpy())
+    x_range = (x.min() - 0.1, x.max() + 0.35)  # room on the right for the largest points' labels
+    y_range = (y.min() - 0.15, y.max() + 0.2)
+    fig = go.Figure()
+    for continent in CONTINENT_ORDER:
+        d = df.filter(pl.col("continent") == continent)
+        fig.add_trace(go.Scatter(x=d["hours"], y=d["videos"], mode="markers", name=continent, text=d[label],
+                                 marker=dict(color=CONTINENT_COLORS[continent], size=8, opacity=0.75),
+                                 hovertemplate="%{text}<br>%{x:,.1f} hours, %{y:,} videos<extra></extra>"))
     # rank rows, not names: same-named places (e.g., two Philadelphias) must not share a label
-    df = df.with_columns(pl.when(pl.col("hours").rank("ordinal", descending=True) <= LABEL_TOP)
-                         .then(pl.col(label)).otherwise(pl.lit("")).alias("text"))
-    # SVG rendering: with many points plotly switches to WebGL, which cannot draw emoji flags
-    fig = px.scatter(df.to_pandas(), x="hours", y="videos", color="continent", text="text", log_x=True, log_y=True,
-                     render_mode="svg",
-                     hover_name=label, hover_data={"text": False, "hours": ":,.1f"}, **CONTINENT_STYLE,
-                     labels={"hours": "Footage (hours)", "videos": "Number of videos"})
-    fig.update_traces(textposition="top center", textfont_size=12, marker=dict(size=8, opacity=0.75))
-    _save(_style(fig, legend_title_text=""), name)
+    top = df.with_row_index("_i").sort("hours", descending=True).head(LABEL_TOP)
+    proj = map_labels.AxisProjection(x_range, y_range, size[0] - margin["l"] - margin["r"],
+                                     size[1] - margin["t"] - margin["b"])
+    items = [dict(code=str(r["_i"]), lines=[r[label]], anchor=(math.log10(r["hours"]), math.log10(r["videos"])),
+                  ct=None) for r in top.iter_rows(named=True)]
+    placed = map_labels.place_labels(items, proj, {})
+    names = {str(r["_i"]): r[label] for r in top.iter_rows(named=True)}
+    font = dict(size=11, color="black")
+    for code, p in placed.items():
+        (ax, ay) = p[1]
+        if p[0] == "dot":  # invisible marker so the text sits beside the point like on the maps
+            fig.add_trace(go.Scatter(x=[10 ** ax], y=[10 ** ay], mode="markers+text", text=[names[code]],
+                                     textposition=p[2], textfont=font, marker=dict(size=8, opacity=0),
+                                     showlegend=False, hoverinfo="skip"))
+        else:
+            (lx, ly), pos = p[2], p[3]
+            fig.add_trace(go.Scatter(x=[10 ** ax, 10 ** lx], y=[10 ** ay, 10 ** ly], mode="lines",
+                                     line=dict(color="grey", width=1), showlegend=False, hoverinfo="skip"))
+            fig.add_trace(go.Scatter(x=[10 ** lx], y=[10 ** ly], mode="text", text=[names[code]],
+                                     textposition=pos, textfont=font, showlegend=False, hoverinfo="skip"))
+    fig.update_xaxes(type="log", range=x_range, title_text="Footage (hours)", automargin=False)
+    fig.update_yaxes(type="log", range=y_range, title_text="Number of videos", automargin=False)
+    _save(_style(fig, width=size[0], height=size[1], margin=margin,
+                 legend=dict(x=0.01, y=0.99, bgcolor="rgba(255,255,255,0.7)")), name)
 
 
 def dataset_figures(df_mapping: pl.DataFrame, seg: pl.DataFrame, flags: dict) -> None:
@@ -169,13 +249,26 @@ def dataset_figures(df_mapping: pl.DataFrame, seg: pl.DataFrame, flags: dict) ->
                   .join(_country_indicators(df_mapping), on="iso3", how="left"))
     _vs_indicators(country, "hours", "Footage (hours)", "scatter_indicators_footage", log_y=True)
 
-    # 3) share of night-time footage per country
-    night = (seg.group_by("iso3", "country").agg((pl.col("seconds").filter(pl.col("night")).sum()
-                                                  / pl.sum("seconds") * 100).alias("night_pct")))
-    fig = px.choropleth(night.to_pandas(), locations="iso3", color="night_pct", hover_name="country",
-                        color_continuous_scale="Blues", projection="natural earth",
-                        labels={"night_pct": "Night footage (%)"})
-    _save(_style(fig, margin=dict(l=0, r=0, t=0, b=0)), "map_night_share")
+    # 3) share of night-time footage per country; countries with too little footage are grey (share unreliable)
+    night = (seg.group_by("iso3", "country").agg(hours, (pl.col("seconds").filter(pl.col("night")).sum()
+                                                         / pl.sum("seconds") * 100).alias("night_pct")))
+    _country_map(night, "night_pct", "Night footage (%)", "Blues", "map_night_share", ":.0f")
+
+    # footage per million inhabitants: coverage relative to country size
+    pop = df_mapping.group_by("iso3").agg(pl.col("population_country").filter(pl.col("population_country") > 0)
+                                          .first())
+    per_capita = (seg.group_by("iso3", "country").agg(hours).join(pop, on="iso3")
+                     .with_columns((pl.col("hours") / pl.col("population_country") * 1e6).alias("per_million")))
+    _country_map(per_capita, "per_million", "Footage (hours per million inhabitants)", "YlOrRd",
+                 "map_footage_per_capita", ":,.1f", log=True)
+
+    # share of each country's footage from its largest channel: where one uploader dominates the data
+    by_channel = seg.drop_nulls("channel").group_by("iso3", "country", "channel").agg(pl.sum("seconds"))
+    top_channel = (by_channel.group_by("iso3", "country")
+                             .agg((pl.max("seconds") / pl.sum("seconds") * 100).alias("top_channel_pct"),
+                                  (pl.sum("seconds") / 3600).alias("hours"), pl.len().alias("channels")))
+    _country_map(top_channel, "top_channel_pct", "Footage from the largest channel (%)", "Purples",
+                 "map_top_channel_share", ":.0f")
 
     # 4) type of vehicle the footage is filmed from, per continent (share of footage)
     veh = (seg.drop_nulls("vehicle").group_by("continent", "vehicle").agg(hours)
@@ -192,6 +285,25 @@ def dataset_figures(df_mapping: pl.DataFrame, seg: pl.DataFrame, flags: dict) ->
                  **CONTINENT_STYLE,
                  labels={"year": "Year of upload", "hours": "Footage (hours)"})
     _save(_style(fig, legend_title_text=""), "bar_upload_year_continent")
+
+    # videos uploaded per quarter, by continent; the quarter still in progress is hatched
+    videos = (seg.drop_nulls(["year", "month"]).filter(pl.col("year").is_between(2005, 2100),
+                                                       pl.col("month").is_between(1, 12))
+                 .group_by("video").agg(pl.first("year"), pl.first("month"), pl.first("continent"))
+                 .with_columns(pl.date(pl.col("year"), (pl.col("month") - 1) // 3 * 3 + 1, 1).alias("quarter"))
+                 .group_by("quarter", "continent").len().sort("quarter"))
+    today = date.today()
+    current = date(today.year, (today.month - 1) // 3 * 3 + 1, 1)
+    fig = px.bar(videos.to_pandas(), x="quarter", y="len", color="continent", **CONTINENT_STYLE,
+                 pattern_shape=[q == current for q in videos["quarter"]], pattern_shape_map={True: "/", False: ""},
+                 labels={"quarter": "Quarter of upload", "len": "Number of videos"})
+    # px makes one trace per continent and hatching; show each continent once in the legend
+    fig.for_each_trace(lambda t: t.update(name=t.name.split(", ")[0], legendgroup=t.name.split(", ")[0],
+                                          showlegend=t.name.endswith("False")))
+    fig.update_layout(bargap=0.1)
+    fig.add_annotation(text="Hatched: current quarter, not complete yet", x=0.01, y=0.98, xref="paper",
+                       yref="paper", showarrow=False, xanchor="left", font=dict(size=14, color="#666666"))
+    _save(_style(fig, legend_title_text=""), "hist_months")
 
     # 6) how concentrated the footage is in a few YouTube channels
     chan = (seg.drop_nulls("channel").group_by("channel").agg(hours).sort("hours", descending=True)
