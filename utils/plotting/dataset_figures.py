@@ -456,9 +456,17 @@ def dataset_figures(df_mapping: pl.DataFrame, seg: pl.DataFrame, flags: dict) ->
                  legend=dict(x=0.01, y=0.35, itemsizing="constant", bgcolor="rgba(255,255,255,0.7)")),
           "map_localities_footage")
 
+    # the same dots on a globe; the HTML spins until it is touched, then can be dragged
+    fig = go.Figure(_dot_traces(dots))
+    fig.update_geos(projection_type="orthographic", projection_rotation=dict(lon=10, lat=25),
+                    showlakes=False, **GEO_STYLE)
+    _save(_style(fig, width=1200, height=1000, margin=dict(l=0, r=190, t=0, b=0),
+                 legend=dict(x=1.0, y=0.5, yanchor="middle", itemsizing="constant")),
+          "globe_localities_footage", post_script=SPIN_GEO_JS)
+
     # a 3D globe with a spike on each locality, its height proportional to the hours of footage; the HTML spins
     # until it is touched, then can be dragged
-    _save(_globe(dots), "globe_localities_footage", post_script=SPIN_JS)
+    _save(_globe(dots), "globe_localities_footage_spikes", post_script=SPIN_JS)
 
     # footprints of the channels with the most footage: where each one films (travel channels vs local drivers);
     # channels are numbered by footage; in the HTML each number links to the channel on YouTube
@@ -509,6 +517,22 @@ def dataset_figures(df_mapping: pl.DataFrame, seg: pl.DataFrame, flags: dict) ->
 
 GEO_STYLE = dict(showland=True, landcolor="#eeeeee", showcountries=True, countrycolor="#cccccc", showocean=True,
                  oceancolor="white", showframe=False, coastlinecolor="#bbbbbb")
+# Rotate a flat (orthographic geo) globe until the reader grabs it.
+SPIN_GEO_JS = """
+var gd = document.getElementById('{plot_id}'), lon = gd._fullLayout.geo.projection.rotation.lon, spinning = true;
+var last = performance.now();
+function spin() {  // 6 degrees a second, however long each redraw takes
+  if (!spinning) return;
+  var now = performance.now();
+  lon = (lon + (now - last) * 0.006) % 360;
+  last = now;
+  Plotly.relayout(gd, {'geo.projection.rotation.lon': lon}).then(function () { requestAnimationFrame(spin); });
+}
+['mousedown', 'touchstart', 'wheel'].forEach(function (e) {
+  gd.addEventListener(e, function () { spinning = false; }, {passive: true});
+});
+spin();
+"""
 # Turn the camera around a 3D globe (west to east, like the Earth) until the reader grabs it.
 SPIN_JS = """
 var gd = document.getElementById('{plot_id}'), eye = gd._fullLayout.scene.camera.eye, spinning = true;

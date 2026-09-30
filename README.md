@@ -844,7 +844,10 @@ Distribution of the length of segments (parts of videos included in the dataset)
 Every locality in the dataset as a dot coloured by continent; the dot area is proportional to the hours of footage.
 
 [![Localities in the dataset on a globe](figures/globe_localities_footage.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/globe_localities_footage.html)
-The same localities on a 3D globe, each with a spike whose height is proportional to its hours of footage. The HTML version spins until you grab it; drag to turn it, scroll to zoom.
+The same localities on a globe. The HTML version spins until you grab it; drag to turn it.
+
+[![Localities in the dataset on a 3D globe with spikes](figures/globe_localities_footage_spikes.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/globe_localities_footage_spikes.html)
+The localities on a 3D globe, each with a spike whose height is proportional to its hours of footage. The HTML version spins until you grab it; drag to turn it, scroll to zoom.
 
 [![Footage by continent, country and locality](figures/treemap_footage.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/treemap_footage.html)
 Footage by continent, country and locality, coloured by the share recorded at night. In the HTML version, click a box to zoom in down to the localities.
