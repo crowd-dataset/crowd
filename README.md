@@ -844,7 +844,7 @@ Distribution of the length of segments (parts of videos included in the dataset)
 Every locality in the dataset as a dot coloured by continent; the dot area is proportional to the hours of footage.
 
 [![Localities in the dataset on a globe](figures/globe_localities_footage.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/globe_localities_footage.html)
-The same localities on a globe. The HTML version spins until you grab it; drag to turn it.
+The same localities on a 3D globe, each with a spike whose height is proportional to its hours of footage. The HTML version spins until you grab it; drag to turn it, scroll to zoom.
 
 [![Footage by continent, country and locality](figures/treemap_footage.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/treemap_footage.html)
 Footage by continent, country and locality, coloured by the share recorded at night. In the HTML version, click a box to zoom in down to the localities.
@@ -859,7 +859,7 @@ Share of footage by population of the locality, per continent and overall: what 
 Effective number of YouTube channels per country (inverse Herfindahl index of the channels' shares of footage): 1 means a single uploader; n means as diverse as n channels with equal shares. Countries with less than 10 hours of footage are grey.
 
 [![Where the 20 channels with the most footage film](figures/map_channel_footprints.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/map_channel_footprints.html)
-Where the 20 YouTube channels with the most footage film, numbered by footage, with the number of countries and hours of each (dot area proportional to hours). Travel channels span many countries; most large channels film in one country or city. The channel IDs are shown on hover in the HTML version.
+Where the 20 YouTube channels with the most footage film, numbered by footage, with the number of countries and hours of each (dot area proportional to hours). Travel channels span many countries; most large channels film in one country or city. In the HTML version, each channel's number links to the channel on YouTube.
 
 [![Length of segments by continent and type of vehicle](figures/box_segment_length.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/box_segment_length.html)
 Length of segments by continent and by type of vehicle (boxes: quartiles; whiskers: 5th and 95th percentiles).

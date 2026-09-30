@@ -456,23 +456,20 @@ def dataset_figures(df_mapping: pl.DataFrame, seg: pl.DataFrame, flags: dict) ->
                  legend=dict(x=0.01, y=0.35, itemsizing="constant", bgcolor="rgba(255,255,255,0.7)")),
           "map_localities_footage")
 
-    # the same dots on a globe; the HTML spins until it is touched, then can be dragged
-    fig = go.Figure(_dot_traces(dots))
-    fig.update_geos(projection_type="orthographic", projection_rotation=dict(lon=10, lat=25),
-                    showlakes=False, **GEO_STYLE)
-    _save(_style(fig, width=1200, height=1000, margin=dict(l=0, r=190, t=0, b=0),
-                 legend=dict(x=1.0, y=0.5, yanchor="middle", itemsizing="constant")),
-          "globe_localities_footage", post_script=SPIN_JS)
+    # a 3D globe with a spike on each locality, its height proportional to the hours of footage; the HTML spins
+    # until it is touched, then can be dragged
+    _save(_globe(dots), "globe_localities_footage", post_script=SPIN_JS)
 
     # footprints of the channels with the most footage: where each one films (travel channels vs local drivers);
-    # channels are numbered by footage, their YouTube IDs are in the hover of the HTML
+    # channels are numbered by footage; in the HTML each number links to the channel on YouTube
     per_channel = (seg.drop_nulls("channel").group_by("channel", "id").agg(hours)
                       .join(dots.select("id", "locality", "country", "continent", "lat", "lon"), on="id"))
     top = (per_channel.group_by("channel").agg(pl.sum("hours"), pl.col("country").n_unique().alias("countries"))
                       .sort("hours", descending=True).head(20))
     cols = 5
     rows = math.ceil(top.height / cols)
-    titles = [f"#{i} · {r['countries']} {'country' if r['countries'] == 1 else 'countries'} · {r['hours']:,.0f} h"
+    titles = [f"<a href='https://www.youtube.com/channel/{r['channel']}' style='color:#0072B2'>#{i}</a> · "
+              f"{r['countries']} {'country' if r['countries'] == 1 else 'countries'} · {r['hours']:,.0f} h"
               for i, r in enumerate(top.iter_rows(named=True), 1)]
     fig = make_subplots(rows=rows, cols=cols, specs=[[{"type": "scattergeo"}] * cols] * rows,
                         subplot_titles=titles, horizontal_spacing=0.01, vertical_spacing=0.04)
@@ -512,22 +509,70 @@ def dataset_figures(df_mapping: pl.DataFrame, seg: pl.DataFrame, flags: dict) ->
 
 GEO_STYLE = dict(showland=True, landcolor="#eeeeee", showcountries=True, countrycolor="#cccccc", showocean=True,
                  oceancolor="white", showframe=False, coastlinecolor="#bbbbbb")
-# Rotate a globe (orthographic geo) slowly until the reader grabs it.
+# Turn the camera around a 3D globe (west to east, like the Earth) until the reader grabs it.
 SPIN_JS = """
-var gd = document.getElementById('{plot_id}'), lon = gd._fullLayout.geo.projection.rotation.lon, spinning = true;
-var last = performance.now();
+var gd = document.getElementById('{plot_id}'), eye = gd._fullLayout.scene.camera.eye, spinning = true;
+var r = Math.hypot(eye.x, eye.y), a = Math.atan2(eye.y, eye.x), last = performance.now();
 function spin() {  // 6 degrees a second, however long each redraw takes
   if (!spinning) return;
   var now = performance.now();
-  lon = (lon + (now - last) * 0.006) % 360;
+  a -= (now - last) * Math.PI / 30000;
   last = now;
-  Plotly.relayout(gd, {'geo.projection.rotation.lon': lon}).then(function () { requestAnimationFrame(spin); });
+  Plotly.relayout(gd, {'scene.camera.eye': {x: r * Math.cos(a), y: r * Math.sin(a), z: eye.z}})
+    .then(function () { requestAnimationFrame(spin); });
 }
 ['mousedown', 'touchstart', 'wheel'].forEach(function (e) {
   gd.addEventListener(e, function () { spinning = false; }, {passive: true});
 });
 spin();
 """
+
+
+def _xyz(lon, lat, r=1.0):
+    lon, lat = np.radians(np.asarray(lon, dtype=float)), np.radians(np.asarray(lat, dtype=float))
+    return r * np.cos(lat) * np.cos(lon), r * np.cos(lat) * np.sin(lon), r * np.sin(lat)
+
+
+def _globe(dots: pl.DataFrame, max_height: float = 0.45):
+    """3D globe: a sphere with country borders and a spike on each locality of `dots` (lat, lon, locality, continent,
+    hours), its height proportional to the hours (the largest reaching `max_height` globe radii)."""
+    u, v = np.meshgrid(np.linspace(-180, 180, 73), np.linspace(-90, 90, 37))
+    fig = go.Figure(go.Surface(x=_xyz(u, v, 0.995)[0], y=_xyz(u, v, 0.995)[1], z=_xyz(u, v, 0.995)[2],
+                               colorscale=[[0, "#e4edf5"], [1, "#e4edf5"]], showscale=False, hoverinfo="skip",
+                               lighting=dict(ambient=0.95, diffuse=0.1, specular=0, fresnel=0)))
+    bx, by, bz = [], [], []
+    for shape in map_labels.country_shapes().values():
+        for ring in shape["rings"]:
+            x, y, z = _xyz(*zip(*ring), r=1.001)
+            bx += [*x, None]
+            by += [*y, None]
+            bz += [*z, None]
+    fig.add_trace(go.Scatter3d(x=bx, y=by, z=bz, mode="lines", line=dict(color="#a0a0a0", width=1.5),
+                               hoverinfo="skip", showlegend=False))
+    top = dots["hours"].max()
+    for continent in CONTINENT_ORDER:
+        c = dots.filter(pl.col("continent") == continent)
+        if not c.height:
+            continue
+        r = 1.002 + max_height * c["hours"].to_numpy() / top
+        x0, y0, z0 = _xyz(c["lon"], c["lat"], 1.002)
+        x1, y1, z1 = _xyz(c["lon"], c["lat"], r)
+        nan = np.full(c.height, np.nan)  # breaks between spikes
+        color = CONTINENT_COLORS[continent]
+        fig.add_trace(go.Scatter3d(x=np.column_stack([x0, x1, nan]).ravel(), y=np.column_stack([y0, y1, nan]).ravel(),
+                                   z=np.column_stack([z0, z1, nan]).ravel(), mode="lines", name=continent,
+                                   legendgroup=continent, line=dict(color=color, width=4), hoverinfo="skip"))
+        fig.add_trace(go.Scatter3d(x=x1, y=y1, z=z1, mode="markers", legendgroup=continent, showlegend=False,
+                                   marker=dict(size=2, color=color), text=c["locality"], customdata=c["hours"],
+                                   hovertemplate="%{text}<br>%{customdata:,.1f} hours<extra></extra>"))
+    hidden = dict(visible=False, showbackground=False)
+    eye = 1.45 * np.array(_xyz(-35, 50))  # above the North Atlantic: spikes in North America and Europe lean into view
+    fig.update_layout(scene=dict(xaxis=hidden, yaxis=hidden, zaxis=hidden, aspectmode="data", dragmode="turntable",
+                                 camera=dict(eye=dict(x=eye[0], y=eye[1], z=eye[2]), up=dict(x=0, y=0, z=1))))
+    fig.add_annotation(text="Spike height proportional to hours of footage", x=0.01, y=0.02, xref="paper",
+                       yref="paper", showarrow=False, font=dict(size=14, color="#666666"))
+    return _style(fig, width=1200, height=1000, margin=dict(l=0, r=0, t=0, b=0),
+                  legend=dict(x=0.99, xanchor="right", y=0.5, yanchor="middle", bgcolor="rgba(255,255,255,0.7)"))
 
 
 def _dot_traces(d: pl.DataFrame, scale: float = 1.3, legend: bool = True, hover: str = "") -> list:
