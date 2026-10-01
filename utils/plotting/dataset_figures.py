@@ -719,132 +719,247 @@ def _dumbbell(df: pl.DataFrame, label: str, values: dict, x_title: str, name: st
 
 # Figures based on YOLO detections, with their README captions, in the order they appear in the README.
 DETECTION_FIGURES = {
+    "map_detection_coverage": "Share of each country's footage that has been analysed with YOLO (countries with less "
+                              "than 10 hours of footage are grey).",
     "map_pedestrians_per_minute": "Pedestrians per minute of footage per country (unique tracked persons).",
-    "box_pedestrians_per_minute_continent": "Pedestrians per minute of footage per locality, by continent.",
-    "bar_road_user_mix": "Mix of detected road users in the 30 countries with the most analysed footage.",
-    "scatter_indicators_pedestrians": "Pedestrians per minute of footage per country against country indicators.",
     "dot_pedestrians_per_minute": "Pedestrians per minute of footage per country, with a 95% bootstrap interval over "
-                                  "its localities (countries with at least 10 hours in at least 3 localities).",
+                                  "its localities (countries with at least 10 analysed hours in at least 3 "
+                                  "localities).",
+    "heatmap_road_users_per_minute": "Detected road users per minute of footage, per class, in the 40 countries with "
+                                     "the most analysed footage (log colour scale).",
+    "box_pedestrians_per_minute_continent": "Pedestrians per minute of footage per locality, by continent.",
+    "hist_pedestrians_per_minute_segment": "Distribution of pedestrians per minute over segments of at least a "
+                                           "minute (log scale).",
+    "bar_road_user_mix_continent": "Mix of detected road users per continent.",
+    "bar_road_user_mix": "Mix of detected road users in the 30 countries with the most analysed footage.",
+    "map_two_wheeler_share": "Share of two-wheelers (motorcycles and bicycles) among the detected vehicles per "
+                             "country (countries with less than 10 analysed hours are grey).",
+    "bar_road_users_day_night": "Detected road users per minute by day and by night, per class and continent (log "
+                                "scale).",
     "dumbbell_pedestrians_day_night": "Pedestrians per minute of footage by day and by night per country (countries "
                                       "with at least an hour of each).",
-    "bar_road_user_mix_continent": "Mix of detected road users per continent.",
+    "bar_pedestrians_vehicle_type": "Pedestrians per minute by the type of vehicle the footage is filmed from: the "
+                                    "viewpoint changes what the detector sees.",
+    "line_road_users_upload_year": "Detected road users per minute by year of upload (years with at least 10 analysed "
+                                   "hours): newer cameras and higher resolutions can change what the detector sees.",
+    "scatter_indicators_pedestrians": "Pedestrians per minute of footage per country against country indicators.",
     "scatter_pedestrians_population": "Pedestrians per minute of footage per locality against its population.",
 }
+TWO_WHEELERS, VEHICLES = ("Bicycles", "Motorcycles"), ("Cars", "Bicycles", "Motorcycles", "Buses", "Trucks")
 
 
 def detection_figures(df_mapping: pl.DataFrame, det: pl.DataFrame, classes: list, seg: pl.DataFrame,
-                      flags: dict) -> None:
+                      flags: dict) -> list:
     """
-    Figures based on YOLO detections.
+    Figures and README tables based on YOLO detections.
 
     Args:
         df_mapping: The mapping.
-        det: Per mapping row: `id`, one count column per class in `classes`, `detected_seconds` (footage covered
-            by the detection CSVs), and `night_seconds` and `night_persons` (the part of those at night).
+        det: One row per segment with detections: `id`, `video`, `start` (as in `segments()`) and one count column
+            per class in `classes` (unique tracked objects).
         classes: Detection count columns, the first one being persons.
-        seg: The segment table (`segments()`), for the hover popups.
-        flags: ISO3 code -> emoji flag, for the hover popups.
+        seg: The segment table (`segments()`): time of day, vehicle, upload year, and the hover popups.
+        flags: ISO3 code -> emoji flag.
+
+    Returns:
+        README tables as (title, DataFrame).
     """
     person = classes[0]
     loc_hover, cty_hover = hover.popups(df_mapping, seg, flags)
-    det = det.join(df_mapping.select("id", "locality", "country", "iso3", "continent"), on="id").filter(
-        pl.col("detected_seconds") > 0).join(loc_hover, on="id")
-    per_min = (pl.col(person) / (pl.col("detected_seconds") / 60)).alias("per_minute")
+    flag = pl.col("iso3").replace_strict(flags, default="🏳️", return_dtype=pl.Utf8)
+    d = (det.select("id", "video", "start", *classes).join(seg, on=["id", "video", "start"])
+            .with_columns((pl.col("seconds") / 60).alias("minutes")))
+
+    def rates(df: pl.DataFrame, *by) -> pl.DataFrame:
+        """Detections per minute of each class per group, with the analysed hours, segments and localities."""
+        return df.group_by(*by).agg(*[(pl.col(c).sum() / pl.sum("minutes")).alias(c) for c in classes],
+                                    (pl.sum("minutes") / 60).alias("hours"), pl.len().alias("segments"),
+                                    pl.col("id").n_unique().alias("localities"))
+
+    country = (rates(d, "iso3").join(seg.group_by("iso3").agg(pl.first("country"), pl.first("continent")), on="iso3")
+                               .join(cty_hover, on="iso3")
+                               .with_columns(pl.concat_str([flag, pl.col("country")], separator=" ").alias("name")))
+    locality = (rates(d, "id").join(df_mapping.select("id", "locality", "iso3", "continent", "population_locality"),
+                                    on="id").join(loc_hover, on="id"))
     rate_line = "<b>Pedestrians per minute: %{PLACE:.2f}</b><br>"  # on top of the shared popup
 
-    country = (det.group_by("iso3", "country").agg(pl.col(classes + ["detected_seconds"]).sum(), pl.first("continent"))
-                  .join(cty_hover, on="iso3"))
-    fig = px.choropleth(country.with_columns(per_min).to_pandas(), locations="iso3", color="per_minute",
-                        hover_name="hover", color_continuous_scale="YlOrRd", projection="natural earth",
-                        labels={"per_minute": "Pedestrians per minute"})
+    # how much of each country's footage has been analysed
+    total = seg.group_by("iso3", "country").agg((pl.sum("seconds") / 3600).alias("hours"))
+    coverage = (total.join(country.select("iso3", pl.col("hours").alias("analysed")), on="iso3", how="left")
+                     .with_columns((pl.col("analysed").fill_null(0) / pl.col("hours") * 100).alias("analysed_pct"))
+                     .join(cty_hover, on="iso3"))
+    _country_map(coverage, "analysed_pct", "Footage analysed (%)", "Greens", "map_detection_coverage", ":.0f")
+
+    fig = px.choropleth(country.to_pandas(), locations="iso3", color=person, hover_name="hover",
+                        color_continuous_scale="YlOrRd", projection="natural earth",
+                        labels={person: "Pedestrians per minute"})
     fig.update_traces(hovertemplate=rate_line.replace("PLACE", "z") + hover.TEMPLATE)
     fig.update_layout(coloraxis_colorbar=colorbar_top("Pedestrians per minute"))
     fig.update_geos(domain=dict(x=[0, 1], y=[0, MAP_TOP_SHARE]))
     _save(_style(fig, margin=dict(l=0, r=0, t=10, b=0)), "map_pedestrians_per_minute")
 
-    fig = px.box(det.with_columns(per_min).to_pandas(), x="continent", y="per_minute", color="continent",
-                 points="outliers", hover_name="hover", **CONTINENT_STYLE,
-                 labels={"per_minute": "Pedestrians per minute", "continent": ""})
-    fig.update_traces(hoveron="points", hovertemplate=rate_line.replace("PLACE", "y") + hover.TEMPLATE)
-    _save(_style(fig), "box_pedestrians_per_minute_continent")
-
-    top = country.sort("detected_seconds", descending=True).head(30)
-    mix = (top.unpivot(index="country", on=classes, variable_name="Road user", value_name="count")
-              .with_columns((pl.col("count") / pl.col("count").sum().over("country") * 100).alias("share")))
-    fig = px.bar(mix.to_pandas(), y="country", x="share", color="Road user", orientation="h",
-                 category_orders={"country": top["country"].to_list()},
-                 labels={"share": "Share of detected road users (%)", "country": ""})
-    _save(_style(fig, height=900), "bar_road_user_mix")
-
-    rates = country.with_columns(per_min).join(_country_indicators(df_mapping), on="iso3", how="left")
-    _vs_indicators(rates, "per_minute", "Pedestrians per minute", "scatter_indicators_pedestrians", log_y=False)
-
     # pedestrians per minute per country with a 95% bootstrap interval over its localities; countries with at least
     # MIN_HOURS of analysed footage in at least 3 localities
+    per_loc = d.group_by("iso3", "id").agg(pl.col(person).sum(), pl.sum("minutes"))
     rng = np.random.default_rng(0)
     rows = []
-    for (iso3, name), d in det.group_by("iso3", "country"):
-        if d.height < 3 or d["detected_seconds"].sum() < MIN_HOURS * 3600:
+    for (iso3,), g in per_loc.group_by("iso3"):
+        if g.height < 3 or g["minutes"].sum() < MIN_HOURS * 60:
             continue
-        continent = d["continent"][0]  # countries split across continents are shown once
-        p, m = d[person].to_numpy(), d["detected_seconds"].to_numpy() / 60
-        i = rng.integers(0, d.height, (1000, d.height))
+        p, m = g[person].to_numpy(), g["minutes"].to_numpy()
+        i = rng.integers(0, g.height, (1000, g.height))
         lo, hi = np.percentile(p[i].sum(1) / m[i].sum(1), [2.5, 97.5])
-        rows.append(dict(iso3=iso3, country=name, continent=continent, rate=p.sum() / m.sum(), lo=lo, hi=hi))
-    if rows:
-        ci = pl.DataFrame(rows).join(cty_hover, on="iso3").sort("rate")
+        rows.append(dict(iso3=iso3, rate=p.sum() / m.sum(), lo=lo, hi=hi))
+    ci = (pl.DataFrame(rows, schema={"iso3": pl.Utf8, "rate": pl.Float64, "lo": pl.Float64, "hi": pl.Float64})
+            .join(country.select("iso3", "name", "continent", "hover", "hours", "localities"), on="iso3")
+            .sort("rate"))
+    if ci.height:
         fig = go.Figure()
         for continent in CONTINENT_ORDER:
-            d = ci.filter(pl.col("continent") == continent)
-            fig.add_trace(go.Scatter(x=d["rate"], y=d["country"], mode="markers", name=continent,
+            c = ci.filter(pl.col("continent") == continent)
+            fig.add_trace(go.Scatter(x=c["rate"], y=c["name"], mode="markers", name=continent,
                                      marker=dict(color=CONTINENT_COLORS[continent], size=9),
-                                     error_x=dict(type="data", symmetric=False, array=d["hi"] - d["rate"],
-                                                  arrayminus=d["rate"] - d["lo"], color="#999999", thickness=1.5),
-                                     customdata=np.column_stack([d["lo"], d["hi"]]),
-                                     **_hover_args(d, "Pedestrians per minute: %{x:.2f} (95% interval "
+                                     error_x=dict(type="data", symmetric=False, array=c["hi"] - c["rate"],
+                                                  arrayminus=c["rate"] - c["lo"], color="#999999", thickness=1.5),
+                                     customdata=np.column_stack([c["lo"], c["hi"]]),
+                                     **_hover_args(c, "Pedestrians per minute: %{x:.2f} (95% interval "
                                                       "%{customdata[0]:.2f}–%{customdata[1]:.2f})")))
         fig.update_xaxes(title_text="Pedestrians per minute (95% bootstrap interval over localities)",
                          showgrid=True, gridcolor="#e5e5e5", rangemode="tozero")
-        fig.update_yaxes(categoryorder="array", categoryarray=ci["country"].to_list(), dtick=1)
+        fig.update_yaxes(categoryorder="array", categoryarray=ci["name"].to_list(), dtick=1)
         _save(_style(fig, height=max(500, 22 * ci.height + 150), margin=dict(l=10, r=20, t=20, b=70),
                      legend=dict(x=0.99, xanchor="right", y=0.01, yanchor="bottom")), "dot_pedestrians_per_minute")
 
-    # pedestrians per minute by day and by night, in countries with at least an hour of analysed footage of each
-    day_night = (country.join(det.group_by("iso3").agg(pl.sum("night_seconds", "night_persons")), on="iso3")
-                        .with_columns(((pl.col(person) - pl.col("night_persons"))
-                                       / ((pl.col("detected_seconds") - pl.col("night_seconds")) / 60)).alias("day"),
-                                      (pl.col("night_persons") / (pl.col("night_seconds") / 60)).alias("night"))
-                        .filter(pl.col("night_seconds") >= 3600,
-                                pl.col("detected_seconds") - pl.col("night_seconds") >= 3600)
-                        .sort("day"))
+    # every class in the countries with the most analysed footage, on one log colour scale
+    top = country.sort("hours", descending=True).head(40).sort("hours")
+    z = top.select(classes).to_numpy()
+    fig = go.Figure(go.Heatmap(z=np.log10(np.where(z > 0, z, np.nan)), x=classes, y=top["name"],
+                               text=np.round(z, 2), texttemplate="%{text}", colorscale="YlOrRd",
+                               customdata=z, hovertemplate="%{y}<br>%{x}: %{customdata:.2f} per minute"
+                                                           "<extra></extra>",
+                               colorbar=dict(title="Per minute", tickvals=[-2, -1, 0, 1],
+                                             ticktext=["0.01", "0.1", "1", "10"])))
+    fig.update_yaxes(dtick=1)
+    _save(_style(fig, height=max(600, 24 * top.height + 120), margin=dict(l=10, r=20, t=20, b=40)),
+          "heatmap_road_users_per_minute")
+
+    fig = px.box(locality.to_pandas(), x="continent", y=person, color="continent", points="outliers",
+                 hover_name="hover", **CONTINENT_STYLE, labels={person: "Pedestrians per minute", "continent": ""})
+    fig.update_traces(hoveron="points", hovertemplate=rate_line.replace("PLACE", "y") + hover.TEMPLATE)
+    _save(_style(fig, showlegend=False), "box_pedestrians_per_minute_continent")
+
+    # pedestrians per minute over segments of at least a minute: how much it varies within the data
+    per_seg = d.filter(pl.col("minutes") >= 1).select((pl.col(person) / pl.col("minutes")).alias("rate"))
+    per_seg = per_seg.filter(pl.col("rate") > 0)["rate"].to_numpy()
+    if len(per_seg):
+        edges = np.logspace(np.log10(per_seg.min()), np.log10(per_seg.max()), 40)
+        counts, _ = np.histogram(per_seg, bins=edges)
+        fig = px.bar(x=np.sqrt(edges[:-1] * edges[1:]), y=counts, log_x=True,
+                     labels={"x": "Pedestrians per minute (per segment)", "y": "Number of segments"})
+        fig.update_traces(width=np.diff(edges), marker_color="#0072B2")
+        _save(_style(fig), "hist_pedestrians_per_minute_segment")
+
+    # mix of detected road users per continent and overall, and in the countries with the most analysed footage
+    by_continent = pl.concat([rates(d, "continent"), rates(d.with_columns(continent=pl.lit("All")), "continent")])
+    for df, key, order, name in [(by_continent, "continent", CONTINENT_ORDER + ["All"], "bar_road_user_mix_continent"),
+                                 (country.sort("hours", descending=True).head(30), "name", None, "bar_road_user_mix")]:
+        mix = (df.unpivot(index=key, on=classes, variable_name="Road user", value_name="rate")
+                 .with_columns((pl.col("rate") / pl.col("rate").sum().over(key) * 100).alias("share")))
+        horizontal = key == "name"
+        fig = px.bar(mix.to_pandas(), x="share" if horizontal else key, y=key if horizontal else "share",
+                     color="Road user", orientation="h" if horizontal else "v",
+                     category_orders={key: order or df[key].to_list(), "Road user": classes},
+                     labels={"share": "Share of detected road users (%)", key: ""},
+                     hover_data={"rate": ":.2f", "share": ":.1f"})
+        _save(_style(fig, height=900 if horizontal else None), name)
+
+    # two-wheelers among the detected vehicles: motorcycle cultures stand out
+    if all(c in classes for c in VEHICLES):
+        share = country.with_columns((pl.sum_horizontal(TWO_WHEELERS) / pl.sum_horizontal(VEHICLES) * 100)
+                                     .alias("two_wheelers"))
+        _country_map(share, "two_wheelers", "Two-wheelers among vehicles (%)", "Purples", "map_two_wheeler_share",
+                     ":.0f")
+
+    # by day and by night: every class, per continent
+    tod = (rates(d.with_columns(pl.when(pl.col("night")).then(pl.lit("Night")).otherwise(pl.lit("Day"))
+                                .alias("time")), "continent", "time")
+           .unpivot(index=["continent", "time", "hours"], on=classes, variable_name="Road user", value_name="rate"))
+    fig = px.bar(tod.to_pandas(), x="Road user", y="rate", color="time", barmode="group", facet_col="continent",
+                 facet_col_wrap=3, log_y=True, category_orders={"continent": CONTINENT_ORDER, "time": ["Day", "Night"],
+                                                                "Road user": classes},
+                 color_discrete_map={"Day": "#E69F00", "Night": "#0072B2"}, hover_data={"hours": ":,.0f"},
+                 labels={"rate": "Per minute", "Road user": "", "time": ""})
+    fig.for_each_annotation(lambda a: a.update(text=a.text.split("=")[-1]))
+    _save(_style(fig, height=900), "bar_road_users_day_night")
+
+    night = rates(d, "iso3", "night").with_columns(pl.col(person).alias("rate"))
+    day = night.filter(~pl.col("night")).select("iso3", pl.col("rate").alias("day"), pl.col("hours").alias("dh"))
+    dark = night.filter(pl.col("night")).select("iso3", pl.col("rate").alias("night"), pl.col("hours").alias("nh"))
+    day_night = (day.join(dark, on="iso3").filter(pl.col("dh") >= 1, pl.col("nh") >= 1)
+                    .join(country.select("iso3", "name", "hover"), on="iso3").sort("day"))
     if day_night.height:
-        _dumbbell(day_night, "country", {"day": ("Day", "#E69F00"), "night": ("Night", "#0072B2")},
+        _dumbbell(day_night, "name", {"day": ("Day", "#E69F00"), "night": ("Night", "#0072B2")},
                   "Pedestrians per minute", "dumbbell_pedestrians_day_night", fmt=":.2f")
 
-    # mix of detected road users per continent and overall
-    continent = det.group_by("continent").agg(pl.col(classes).sum())
-    continent = pl.concat([continent, continent.select(pl.lit("All").alias("continent"), pl.col(classes).sum())])
-    mix = (continent.unpivot(index="continent", on=classes, variable_name="Road user", value_name="count")
-                    .with_columns((pl.col("count") / pl.col("count").sum().over("continent") * 100).alias("share")))
-    fig = px.bar(mix.to_pandas(), x="continent", y="share", color="Road user",
-                 category_orders={"continent": CONTINENT_ORDER + ["All"], "Road user": classes},
-                 labels={"share": "Share of detected road users (%)", "continent": ""},
-                 hover_data={"count": ":,", "share": ":.1f"})
-    _save(_style(fig), "bar_road_user_mix_continent")
+    # by the vehicle the footage is filmed from, and by year of upload: what the detector sees depends on both
+    vehicle = rates(d.drop_nulls("vehicle"), "vehicle").filter(pl.col("hours") >= 1).sort(person)  # rates need data
+    fig = px.bar(vehicle.to_pandas(), x=person, y="vehicle", orientation="h",
+                 text=[f"{h:,.0f} h analysed" for h in vehicle["hours"]],
+                 labels={person: "Pedestrians per minute", "vehicle": ""})
+    fig.update_traces(textposition="outside", marker_color="#0072B2", cliponaxis=False)
+    _save(_style(fig, margin=dict(r=160)), "bar_pedestrians_vehicle_type")
+
+    year = (rates(d.drop_nulls("year"), "year").filter(pl.col("hours") >= MIN_HOURS).sort("year")
+            .unpivot(index=["year", "hours"], on=classes, variable_name="Road user", value_name="rate"))
+    fig = px.line(year.to_pandas(), x="year", y="rate", color="Road user", markers=True, log_y=True,
+                  category_orders={"Road user": classes}, hover_data={"hours": ":,.0f"},
+                  labels={"rate": "Per minute", "year": "Year of upload"})
+    fig.update_xaxes(dtick=1)
+    _save(_style(fig), "line_road_users_upload_year")
+
+    rates_ind = country.join(_country_indicators(df_mapping), on="iso3", how="left")
+    _vs_indicators(rates_ind, person, "Pedestrians per minute", "scatter_indicators_pedestrians", log_y=False)
 
     # pedestrians per minute per locality against its population: whether more pedestrians just means a larger city
-    loc = (det.join(df_mapping.select("id", "population_locality"), on="id").with_columns(per_min)
-              .filter(pl.col("population_locality") > 0, pl.col("per_minute") > 0))
+    loc = locality.filter(pl.col("population_locality") > 0, pl.col(person) > 0)
     if loc.height > 2:
-        rho = loc.select(pl.corr("population_locality", "per_minute", method="spearman")).item()
-        fig = px.scatter(loc.to_pandas(), x="population_locality", y="per_minute", color="continent",
-                         hover_name="hover", log_x=True, log_y=True, opacity=0.7, **CONTINENT_STYLE,
-                         labels={"population_locality": "Population of locality",
-                                 "per_minute": "Pedestrians per minute", "continent": ""})
+        rho = loc.select(pl.corr("population_locality", person, method="spearman")).item()
+        fig = px.scatter(loc.to_pandas(), x="population_locality", y=person, color="continent", hover_name="hover",
+                         log_x=True, log_y=True, opacity=0.7, **CONTINENT_STYLE,
+                         labels={"population_locality": "Population of locality", person: "Pedestrians per minute",
+                                 "continent": ""})
         fig.update_traces(hovertemplate=rate_line.replace("PLACE", "y") + hover.TEMPLATE)
         fig.add_annotation(text=f"Spearman ρ = {rho:.2f}, n = {loc.height:,} localities", x=0.99, y=0.02,
                            xref="paper", yref="paper", xanchor="right", showarrow=False, font=dict(size=16))
         _save(_style(fig), "scatter_pedestrians_population")
+
+    # README tables
+    two = dict(function=lambda v: f"{v:.2f}", return_dtype=pl.Utf8)  # rates with two decimals in the tables
+    per_min = [pl.col(c).map_elements(**two).alias(f"{c} / min") for c in classes]
+    footage = pl.concat([total.join(seg.group_by("iso3").agg(pl.first("continent")), on="iso3")
+                              .group_by("continent").agg(pl.sum("hours")),
+                         pl.DataFrame({"continent": ["All"], "hours": [total["hours"].sum()]})])
+    t_continent = (by_continent.join(footage.rename({"hours": "total"}), on="continent")
+                   .with_columns(pl.col("continent").replace({c: i for i, c in enumerate(CONTINENT_ORDER + ["All"])},
+                                                             return_dtype=pl.Int64).alias("_o"))
+                   .sort("_o")
+                   .select(pl.col("continent").alias("Continent"), pl.col("hours").round(1).alias("Analysed (h)"),
+                           (pl.col("hours") / pl.col("total") * 100).round(1).alias("Of footage (%)"),
+                           pl.col("localities").alias("Localities"), *per_min))
+    t_country = (ci.sort("rate", descending=True).head(20)
+                   .select(pl.col("name").alias("Country"),
+                           pl.col("rate").map_elements(**two).alias("Pedestrians / min"),
+                           pl.format("{}–{}", pl.col("lo").map_elements(**two), pl.col("hi").map_elements(**two))
+                           .alias("95% interval"),
+                           pl.col("hours").round(1).alias("Analysed (h)"), pl.col("localities").alias("Localities")))
+    t_locality = (locality.filter(pl.col("hours") >= 1).sort(person, descending=True).head(20)
+                          .select(pl.concat_str([flag, pl.col("locality")], separator=" ").alias("Locality"),
+                                  pl.col(person).map_elements(**two).alias("Pedestrians / min"),
+                                  pl.col("hours").round(1).alias("Analysed (h)")))
+    return [("Detections per continent", t_continent),
+            (f"Top {t_country.height} countries by pedestrians per minute (at least {MIN_HOURS} analysed hours in at "
+             "least 3 localities)", t_country),
+            (f"Top {t_locality.height} localities by pedestrians per minute (at least 1 analysed hour)", t_locality)]
 
 
 if __name__ == "__main__":

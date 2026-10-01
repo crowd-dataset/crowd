@@ -2093,37 +2093,35 @@ README_DETECTIONS = {
 
 
 def count_detections(df_mapping: pl.DataFrame) -> tuple[pl.DataFrame, int] | None:
-    """Count unique tracked objects per mapping row and YOLO class from the data/*/bbox CSVs.
+    """Count unique tracked objects per segment and YOLO class from the data/*/bbox CSVs.
 
-    Returns (DataFrame with `id`, one column per README_DETECTIONS entry, `detected_seconds` (processed footage
-    covered by the CSVs), and `night_seconds` and `night_persons` (the part of those at night), number of CSVs
-    read), or None if no CSV could be read.
+    Returns (DataFrame with one row per segment with detections: `id`, `video`, `start` (as in
+    dataset_figures.segments()), one column per README_DETECTIONS entry and `detected_seconds` (processed footage of
+    the segment), number of CSVs read), or None if no CSV could be read. A segment found in several CSVs (e.g., in two
+    data folders) is counted once.
     """
     files = [f for d in common.get_configs("data") for f in glob.glob(os.path.join(d, "bbox", "*.csv"))]
     if not files:
         return None
 
-    # "{vid}_{start_time}" -> (mapping row id, processed seconds, night) (CSV files are named
+    # "{vid}_{start_time}" -> (mapping row id, video, start, processed seconds) (CSV files are named
     # {vid}_{start_time}_{fps}.csv)
     segment_to_id = {}
-    for row in df_mapping.select(["id", "videos", "start_time", "end_time", "time_of_day"]).iter_rows(named=True):
+    for row in df_mapping.select(["id", "videos", "start_time", "end_time"]).iter_rows(named=True):
         vids = MetricsCache._parse_videos_cell(row["videos"])
-        tods = Dataset_Stats._parse_nested_list(row["time_of_day"])
-        for i, (vid, starts, ends) in enumerate(zip(vids, Dataset_Stats._parse_nested_list(row["start_time"]),
-                                                    Dataset_Stats._parse_nested_list(row["end_time"]))):
-            video_tods = tods[i] if i < len(tods) and isinstance(tods[i], list) else []
-            for j, (st, et) in enumerate(zip(starts, ends)):
-                night = j < len(video_tods) and video_tods[j] == 1
-                segment_to_id[f"{vid}_{int(st)}"] = (row["id"], processed_segment_duration_seconds(st, et), night)
+        for vid, starts, ends in zip(vids, Dataset_Stats._parse_nested_list(row["start_time"]),
+                                     Dataset_Stats._parse_nested_list(row["end_time"])):
+            for st, et in zip(starts, ends):
+                seconds = processed_segment_duration_seconds(st, et)
+                segment_to_id[f"{vid}_{int(st)}"] = (row["id"], vid, int(st), seconds)
 
     min_conf = float(common.get_configs("min_confidence"))
     id_to_class = {v: k for k, v in README_DETECTIONS.items()}
-    columns = [*README_DETECTIONS, "detected_seconds", "night_seconds", "night_persons"]
     counts: dict = {}
     n_read = 0
-    for f in tqdm(files, desc="Counting detections for README"):
-        row_id, seconds, night = segment_to_id.get(os.path.basename(f)[:-4].rsplit("_", 1)[0], (None, 0, False))
-        if row_id is None:
+    for f in tqdm(files, desc="Counting detections"):
+        segment = segment_to_id.get(os.path.basename(f)[:-4].rsplit("_", 1)[0])
+        if segment is None or segment[:3] in counts:
             continue
         try:
             # explicit types: a CSV with a header only (nothing detected) would otherwise be read as strings
@@ -2138,19 +2136,17 @@ def count_detections(df_mapping: pl.DataFrame) -> tuple[pl.DataFrame, int] | Non
               .group_by("yolo-id")
               .agg(pl.col("unique-id").drop_nulls().n_unique())
         )
-        row_counts = counts.setdefault(row_id, dict.fromkeys(columns, 0))
-        row_counts["detected_seconds"] += seconds
-        row_counts["night_seconds"] += seconds if night else 0
+        row = dict.fromkeys(README_DETECTIONS, 0) | {"detected_seconds": segment[3]}
         for yolo_id, n in per_class.iter_rows():
-            row_counts[id_to_class[yolo_id]] += n
-            if night and yolo_id == YOLO_PERSON:
-                row_counts["night_persons"] += n
+            row[id_to_class[yolo_id]] = n
+        counts[segment[:3]] = row
 
     if not n_read:
         return None
     return pl.DataFrame(
-        [{"id": k, **v} for k, v in counts.items()],
-        schema={"id": df_mapping.schema["id"], **dict.fromkeys(columns, pl.Int64)},
+        [{"id": k[0], "video": k[1], "start": k[2], **v} for k, v in counts.items()],
+        schema={"id": df_mapping.schema["id"], "video": pl.Utf8, "start": pl.Int64,
+                **dict.fromkeys([*README_DETECTIONS, "detected_seconds"], pl.Int64)},
     ), n_read
 
 
@@ -2185,7 +2181,8 @@ def build_readme_stats(df_mapping: pl.DataFrame, detections: tuple[pl.DataFrame,
     if detections is not None:
         df_det, n_csv = detections
         det_cols = list(README_DETECTIONS)
-        df = df.join(df_det, on="id", how="left").with_columns(pl.col(det_cols).fill_null(0))
+        per_row = df_det.group_by("id").agg(pl.col(det_cols).sum())  # counts are per segment
+        df = df.join(per_row, on="id", how="left").with_columns(pl.col(det_cols).fill_null(0))
 
     hours = (pl.col("seconds") / 3600).round(1).alias("Footage (h)")
     countries = (
@@ -2246,11 +2243,13 @@ def _replace_block(readme: str, start_marker: str, end_marker: str, content: str
     return readme[:start] + content + readme[end + len(end_marker):]
 
 
-def update_readme(df_mapping: pl.DataFrame, detections: tuple[pl.DataFrame, int] | None) -> None:
-    """Refresh the generated parts of README.md: dataset statistics and, when detections exist, detection figures.
+def update_readme(df_mapping: pl.DataFrame, detections: tuple[pl.DataFrame, int] | None,
+                  detection_tables: list | None = None) -> None:
+    """Refresh the generated parts of README.md: dataset statistics and, when detections exist, the detection
+    figures and tables (`detection_tables`: (title, DataFrame) from dataset_figures.detection_figures).
 
-    Without detections the statistics are written without object counts and the detection figures are left as they
-    are (they are only regenerated where the detection CSVs are available).
+    Without detections the statistics are written without object counts and the detection section is left as it is
+    (it is only regenerated where the detection CSVs are available).
     """
     with open(README_FILE, encoding="utf-8") as f:
         readme = f.read()
@@ -2258,10 +2257,14 @@ def update_readme(df_mapping: pl.DataFrame, detections: tuple[pl.DataFrame, int]
     if detections is not None:
         url = "https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/"
         figures = [f"[![{caption}](figures/{name}.png)]({url}{name}.html)\n{caption}\n"
-                   for name, caption in dataset_figures.DETECTION_FIGURES.items()]
+                   for name, caption in dataset_figures.DETECTION_FIGURES.items()
+                   if os.path.exists(os.path.join(common.root_dir, "figures", name + ".png"))]  # made with enough data
+        tables = [f"<details><summary><b>{title}</b></summary>\n\n{_md_table(table)}\n\n</details>\n"
+                  for title, table in detection_tables or [] if table.height]
         readme = _replace_block(readme, README_YOLO_START, README_YOLO_END, "\n".join(
             [README_YOLO_START, "<!-- Generated by analysis.py from YOLO detections, do not edit by hand. -->",
-             "### Detections in the dataset", *figures, README_YOLO_END]))
+             f"Based on {detections[1]:,} detection CSV files, last updated {date.today().isoformat()}.\n",
+             "### Tables", *tables, "### Figures", *figures, README_YOLO_END]))
     with open(README_FILE, "w", encoding="utf-8") as f:
         f.write(readme)
     logger.info("Updated README.md.")
@@ -2550,6 +2553,6 @@ if __name__ == "__main__":
         logger.warning("No readable bbox CSVs in configured data folders; figures and README stats based on "
                        "detections are skipped.")
     else:
-        dataset_figures.detection_figures(df_mapping, detections[0], list(README_DETECTIONS), seg,
-                                          analysis_class.iso3_to_flag)
-    update_readme(df_mapping, detections)
+        detection_tables = dataset_figures.detection_figures(df_mapping, detections[0], list(README_DETECTIONS), seg,
+                                                             analysis_class.iso3_to_flag)
+    update_readme(df_mapping, detections, detection_tables if detections is not None else None)
