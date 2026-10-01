@@ -21,6 +21,7 @@ from geopy.geocoders import Nominatim
 from geopy.exc import GeocoderTimedOut, GeocoderUnavailable, GeocoderServiceError
 from datetime import datetime
 from functools import lru_cache
+from concurrent.futures import ThreadPoolExecutor
 
 app = Flask(__name__)
 
@@ -103,12 +104,15 @@ def _build_locality_index(_mtime_ns):
     return index
 
 
-def get_locality_index():
+def _mtime_ns(path):
     try:
-        mtime_ns = os.stat(FILE_PATH).st_mtime_ns
+        return os.stat(path).st_mtime_ns
     except OSError:
-        mtime_ns = 0
-    return _build_locality_index(mtime_ns)
+        return 0
+
+
+def get_locality_index():
+    return _build_locality_index(_mtime_ns(FILE_PATH))
 
 
 @app.route("/autocomplete/localities")
@@ -154,13 +158,19 @@ def extract_locality_autocomplete(file_path):
     return sorted(cities)
 
 
+@lru_cache(maxsize=4)
+def _read_csv_cached(file_path, _mtime_ns):
+    df = pd.read_csv(file_path)
+    for col in ('population_locality', 'population_country'):
+        if col in df.columns:
+            df[col] = df[col].astype('Int64')
+    return df
+
+
 def load_csv(file_path):
     if os.path.exists(file_path):
-        df = pd.read_csv(file_path)
-        for col in ('population_locality', 'population_country'):
-            if col in df.columns:
-                df[col] = df[col].astype('Int64')
-        return df
+        # callers edit the frame in place, so the cached one must never be handed out
+        return _read_csv_cached(file_path, _mtime_ns(file_path)).copy()
     else:
         return pd.DataFrame(columns=[
             'locality', 'locality_aka', 'state', 'country', 'iso3', 'videos',
@@ -383,7 +393,8 @@ def _parse_videos_cell(videos_cell):
 
     s = str(videos_cell).strip()
     if s.startswith('[') and s.endswith(']'):
-        parsed = _safe_literal_eval(s, None)
+        # ids are stored unquoted, which literal_eval cannot parse, so only try it on quoted cells
+        parsed = _safe_literal_eval(s, None) if ('"' in s or "'" in s) else None
         if isinstance(parsed, list):
             out = []
             for x in parsed:
@@ -395,6 +406,23 @@ def _parse_videos_cell(videos_cell):
 
     parts = [p.strip().strip('"').strip("'") for p in s.split(',')]
     return [p for p in parts if p]
+
+
+@lru_cache(maxsize=1)
+def _build_video_rows(mtime_ns):
+    """video_id -> indices of the saved rows containing it, rebuilt only after the mapping file changes."""
+    rows = {}
+    for idx, cell in _read_csv_cached(FILE_PATH, mtime_ns)['videos'].items():
+        for vid in dict.fromkeys(_parse_videos_cell(cell)):
+            rows.setdefault(vid, []).append(idx)
+    return rows
+
+
+def _rows_with_video(video_id):
+    """(index, row) for each saved row containing video_id; rows come from the cached frame, read only."""
+    mtime_ns = _mtime_ns(FILE_PATH)
+    df = _read_csv_cached(FILE_PATH, mtime_ns)
+    return [(idx, df.loc[idx]) for idx in _build_video_rows(mtime_ns).get(video_id, [])]
 
 
 def _segments_for_video_in_row(row, video_id):
@@ -473,24 +501,18 @@ def find_overlap_across_mapping(video_hits, new_start, new_end, exclude_idxs=Non
     return None
 
 
-def find_video_occurrences(df, video_id):
-    """Find every row in df that already contains video_id. Returns list of dicts."""
-    hits = []
+def find_video_occurrences(video_id):
+    """Every row of the saved mapping file that contains video_id. Returns list of dicts."""
     if not video_id:
-        return hits
-
-    for idx, row in df.iterrows():
-        vids = _parse_videos_cell(row.get('videos', ''))
-        if video_id in vids:
-            hits.append({
-                'idx': idx,
-                'locality': row.get('locality', ''),
-                'state': row.get('state', ''),
-                'country': row.get('country', ''),
-                'iso3': row.get('iso3', ''),
-                'segments': _segments_for_video_in_row(row, video_id),
-            })
-    return hits
+        return []
+    return [{
+        'idx': idx,
+        'locality': row.get('locality', ''),
+        'state': row.get('state', ''),
+        'country': row.get('country', ''),
+        'iso3': row.get('iso3', ''),
+        'segments': _segments_for_video_in_row(row, video_id),
+    } for idx, row in _rows_with_video(video_id)]
 
 
 def _format_segments(segs):
@@ -499,9 +521,9 @@ def _format_segments(segs):
     return ", ".join([f"{st} to {et}" for st, et in segs])
 
 
-def build_video_occurrence_note(df, video_id, max_rows=8, exclude_idxs=None):
+def build_video_occurrence_note(video_id, max_rows=8, exclude_idxs=None):
     """Build a user facing note listing where the video already exists and its segments."""
-    hits = find_video_occurrences(df, video_id)
+    hits = find_video_occurrences(video_id)
     if exclude_idxs:
         try:
             exclude = set(exclude_idxs)
@@ -610,10 +632,10 @@ def get_video_state_from_row(row, video_id):
     return state
 
 
-def get_global_max_end_time(df, video_id):
-    """Return the highest end time for video_id across all rows in the mapping."""
+def get_global_max_end_time(video_id):
+    """Return the highest end time for video_id across all rows in the saved mapping."""
     best = 0
-    for _, row in df.iterrows():
+    for _, row in _rows_with_video(video_id):
         state = get_video_state_from_row(row.to_dict(), video_id)
         for val in (state.get('end_time_video') or []):
             try:
@@ -754,7 +776,7 @@ def form():
         # Use the globally highest end time for this video across all cities
         # so the embed player always starts at the latest known position.
         if video_id:
-            global_max = get_global_max_end_time(df, video_id)
+            global_max = get_global_max_end_time(video_id)
             if global_max > timestamp_value:
                 timestamp_value = global_max
 
@@ -815,7 +837,7 @@ def form():
             try:
                 yt = YouTube(video_url)  # type: ignore
                 video_id = yt.video_id
-                video_global_note = build_video_occurrence_note(df, video_id)
+                video_global_note = build_video_occurrence_note(video_id)
 
                 yt_upload_date = yt.publish_date
                 yt_channel = _normalize_optional_text(getattr(yt, 'channel_id', None))
@@ -877,18 +899,28 @@ def form():
 
             else:
                 message = "No entry for locality found. You can add new data."
-                iso2_code = common.get_iso2_country_code(common.correct_country(country))
-                iso3_code = common.get_iso3_country_code(common.correct_country(country))
-                country_data = get_country_data(iso3_code)
-                locality_data = get_locality_data(locality, iso2_code, state)
+                country_corrected = common.correct_country(country)
+                iso2_code = common.get_iso2_country_code(country_corrected)
+                iso3_code = common.get_iso3_country_code(country_corrected)
+
+                def locate():
+                    data = get_locality_data(locality, iso2_code, state)
+                    lat, lon = get_coordinates(locality, state, country_corrected, data)
+                    return data, lat, lon, get_traffic_index_lat_lon(lat, lon)
+
+                # the web lookups are independent of each other, so run them together
+                with ThreadPoolExecutor() as pool:
+                    country_future = pool.submit(get_country_data, iso3_code)
+                    locate_future = pool.submit(locate)
+                    mortality_future = pool.submit(get_country_traffic_mortality, iso3_code)
+                    literacy_future = pool.submit(get_country_literacy_rate, iso3_code)
+                country_data = country_future.result()
+                locality_data, lat, lon, traffic = locate_future.result()
 
                 if iso2_code == 'XK':
                     country_population = 1578000
                 else:
                     country_population = get_country_population(country_data)
-
-                lat, lon = get_coordinates(locality, state, common.correct_country(country), locality_data)
-                traffic = get_traffic_index_lat_lon(lat, lon)
                 existing_data_row = {
                     'locality': locality,
                     'locality_aka': locality_aka,
@@ -902,11 +934,11 @@ def form():
                     'gmp': '',  # no source for locality GDP: left empty, filled in by hand
                     'population_locality': int(get_locality_population(locality_data, locality, state)),
                     'population_country': country_population,
-                    'traffic_mortality': get_country_traffic_mortality(iso3_code),
+                    'traffic_mortality': mortality_future.result(),
                     'start_time': [],
                     'end_time': [],
                     'continent': get_country_continent(country_data),
-                    'literacy_rate': get_country_literacy_rate(iso3_code),
+                    'literacy_rate': literacy_future.result(),
                     'avg_height': get_country_average_height(iso3_code),
                     'med_age': get_country_median_age(iso2_code),
                     'upload_date': [],
@@ -921,7 +953,7 @@ def form():
             # metadata so the embed player starts at the right timestamp and vehicle
             # type is pre-selected correctly.
             if not end_time_video:
-                video_hits = find_video_occurrences(df, video_id)
+                video_hits = find_video_occurrences(video_id)
                 if video_hits:
                     for hit in video_hits:
                         hit_row = df.loc[hit['idx']].to_dict()
@@ -988,7 +1020,7 @@ def form():
 
             try:
                 video_id = _extract_video_id(video_url)  # pyright: ignore[reportArgumentType]
-                video_matches_anywhere = find_video_occurrences(df, video_id)
+                video_matches_anywhere = find_video_occurrences(video_id)
                 yt_upload_date = request.form.get('yt_upload_date', '')
                 yt_description = request.form.get('yt_description', '')
                 yt_channel = None
@@ -1000,7 +1032,7 @@ def form():
                 if not upload_date_video or not channel_video:
                     yt = YouTube(video_url)  # pyright: ignore[reportArgumentType]
                     video_id = yt.video_id
-                    video_matches_anywhere = find_video_occurrences(df, video_id)
+                    video_matches_anywhere = find_video_occurrences(video_id)
 
                     if not upload_date_video:
                         yt_upload_date = yt.publish_date
@@ -1065,7 +1097,6 @@ def form():
 
                 if duplicate_elsewhere:
                     global_note_for_display = build_video_occurrence_note(
-                        df,
                         video_id,
                         exclude_idxs={current_idx} if current_idx is not None else None
                     )
