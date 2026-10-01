@@ -28,7 +28,7 @@ from logmod import logs
 from utils.analytics.metrics_cache import (YOLO_BICYCLE, YOLO_BUS, YOLO_CAR, YOLO_MOTORCYCLE, YOLO_PERSON,
                                            YOLO_TRUCK, MetricsCache)
 from utils.core.dataset_stats import Dataset_Stats
-from utils.plotting import dataset_figures
+from utils.plotting import dataset_figures, hover
 from utils.plotting.maps import Maps
 
 # ---------------------------------------------------------------------
@@ -2397,6 +2397,10 @@ if __name__ == "__main__":
         # readable hover text on the city maps (names and hours, not raw columns and seconds)
         df = df.with_columns((pl.col("total_time") / 3600).round(1).alias("Footage (hours)"),
                              pl.col("video_count").alias("Videos"), pl.col("population_locality").alias("Population"))
+        # the full popups shown on hover, the same as in the other figures
+        seg = dataset_figures.segments(df_mapping, analysis_class.vehicle_map)
+        country_hover = hover.country_hover(df_mapping, seg, analysis_class.iso3_to_flag)
+        df = df.join(hover.locality_hover(df_mapping, seg, analysis_class.iso3_to_flag), on="id", how="left")
         hover_data = ["country", "state", "Footage (hours)", "Videos", "Population"]
 
         # Sort by continent and locality, both in ascending order
@@ -2476,6 +2480,7 @@ if __name__ == "__main__":
                                   .group_by(["iso3", "flag_country"])
                                   .agg((pl.sum("total_time") / 3600).alias("footage_h"),
                                        pl.mean("lat"), pl.mean("lon"))  # anchors for outside labels
+                                  .join(country_hover, on="iso3", how="left")
                                   .to_pandas(),
                              location_col="iso3",
                              locationmode="ISO-3",
@@ -2538,12 +2543,13 @@ if __name__ == "__main__":
         logger.info("Analysis complete.")
 
     # figures of the dataset, and of what is detected in it when the YOLO detection CSVs are available
-    dataset_figures.dataset_figures(df_mapping, dataset_figures.segments(df_mapping, analysis_class.vehicle_map),
-                                    analysis_class.iso3_to_flag)
+    seg = dataset_figures.segments(df_mapping, analysis_class.vehicle_map)
+    dataset_figures.dataset_figures(df_mapping, seg, analysis_class.iso3_to_flag)
     detections = count_detections(df_mapping)
     if detections is None:
         logger.warning("No readable bbox CSVs in configured data folders; figures and README stats based on "
                        "detections are skipped.")
     else:
-        dataset_figures.detection_figures(df_mapping, detections[0], list(README_DETECTIONS))
+        dataset_figures.detection_figures(df_mapping, detections[0], list(README_DETECTIONS), seg,
+                                          analysis_class.iso3_to_flag)
     update_readme(df_mapping, detections)

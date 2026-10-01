@@ -13,7 +13,7 @@ The dataset is available on [kaggle](https://www.kaggle.com/datasets/anonymousau
 - **Localities (cities):** 9,575
 - **Countries and territories:** 238
 - **Continents:** 6
-- **Last updated:** 2026-09-30
+- **Last updated:** 2026-10-01
 
 <details><summary><b>All 238 countries and territories</b></summary>
 
@@ -93,8 +93,8 @@ The dataset is available on [kaggle](https://www.kaggle.com/datasets/anonymousau
 | 72 | 🇦🇿 Azerbaijan | 8 | 112 | 45.5 |
 | 73 | 🇶🇦 Qatar | 5 | 98 | 44.3 |
 | 74 | 🇸🇦 Saudi Arabia | 11 | 109 | 43.5 |
-| 75 | 🇪🇹 Ethiopia | 8 | 72 | 42.4 |
-| 76 | 🇬🇪 Georgia | 11 | 117 | 42.4 |
+| 75 | 🇬🇪 Georgia | 11 | 117 | 42.4 |
+| 76 | 🇪🇹 Ethiopia | 8 | 72 | 42.4 |
 | 77 | 🇳🇵 Nepal | 4 | 120 | 38.2 |
 | 78 | 🇱🇻 Latvia | 20 | 123 | 38.0 |
 | 79 | 🇱🇧 Lebanon | 60 | 154 | 35.2 |

@@ -7,7 +7,7 @@ import plotly.express as px
 from PIL import Image, ImageFont, ImageDraw, ImageColor
 import common
 from utils.plotting.io import IO
-from utils.plotting import map_labels
+from utils.plotting import hover, map_labels
 from utils.plotting.constants import CONTINENT_COLORS, MAP_TOP_SHARE, colorbar_top
 import warnings
 from custom_logger import CustomLogger
@@ -1919,6 +1919,7 @@ class Maps:
                 hover_name=hover_name,
                 color=df["continent"],
                 color_discrete_map=CONTINENT_COLORS,
+                custom_data=["hover"] if "hover" in df.columns else None,
                 zoom=1.3  # pyright: ignore[reportArgumentType]
             )
 
@@ -1944,6 +1945,7 @@ class Maps:
                 hover_name=hover_name,
                 hover_data={**{c: True for c in hover_data or [] if c in df.columns}, value_title: ":,.1f",
                             "log_value": False},
+                custom_data=["hover"] if "hover" in df.columns else None,
                 zoom=1.3  # pyright: ignore[reportArgumentType]
             )
             fig.update_traces(marker=dict(sizemin=2, opacity=0.85))
@@ -1951,6 +1953,9 @@ class Maps:
                                             int(np.ceil(df["log_value"].max())) + 1)]
             fig.update_layout(coloraxis_colorbar=dict(title=value_title, tickvals=np.log10(ticks).tolist(),
                                                       ticktext=[f"{t:,.0f}" if t >= 1 else f"{t:g}" for t in ticks]))
+
+        if "hover" in df.columns:  # the full locality popup shared by all figures
+            fig.update_traces(hovertemplate=hover.PX_TEMPLATE)
 
         # Update map layout to improve appearance
         fig.update_layout(
@@ -2054,7 +2059,10 @@ class Maps:
         fig = px.choropleth(df, locations=location_col, locationmode=locationmode, scope=scope, color="log_value",
                             color_continuous_scale=color_scale, range_color=(lo, hi), hover_name=label_col,
                             hover_data={value_col: ":,.1f", "log_value": False, location_col: False},
+                            custom_data=["hover"] if "hover" in df.columns else None,
                             labels={value_col: colorbar_title})
+        if "hover" in df.columns:  # the full country popup shared by all figures
+            fig.update_traces(hovertemplate=hover.PX_TEMPLATE)
         # black text with a white halo stays readable on any fill and on the sea
         halo = "1px 1px 1px white, -1px -1px 1px white, 1px -1px 1px white, -1px 1px 1px white"
         font = dict(size=11, color="black", shadow=halo)
@@ -2074,7 +2082,9 @@ class Maps:
                 text=text or [""] * len(codes), textposition=positions, textfont=font,
                 marker=dict(size=6, color=rows.loc[codes, "log_value"], coloraxis="coloraxis",
                             line=dict(width=0.5, color="grey")),
-                hovertext=[f"{rows.at[c, label_col]} {rows.at[c, 'value_text']}" for c in codes], hoverinfo="text",
+                hovertext=[rows.at[c, "hover"] if "hover" in rows.columns
+                           else f"{rows.at[c, label_col]} {rows.at[c, 'value_text']}" for c in codes],
+                hoverinfo="text",
             ))
 
         if view:
@@ -2093,7 +2103,9 @@ class Maps:
                              geometry=dict(type="Polygon", coordinates=[[list(p) for p in ring]]))
                         for c, ring in territories.items()]),
                     locations=list(territories), z=rows.loc[list(territories), "log_value"], coloraxis="coloraxis",
-                    marker_line=dict(width=0.5, color="#444444"), hoverinfo="skip"))
+                    marker_line=dict(width=0.5, color="#444444"),
+                    hovertext=[rows.at[c, "hover"] if "hover" in rows.columns else rows.at[c, label_col]
+                               for c in territories], hoverinfo="text"))
             placed = map_labels.layout_countries(
                 [(code, [r[label_col], r["value_text"]], (r["lon"], r["lat"])) for code, r in rows.iterrows()],
                 proj, split=anchor_labels)
