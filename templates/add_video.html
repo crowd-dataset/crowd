@@ -866,7 +866,11 @@ document.addEventListener("keydown", function (e) {
     const tag = document.activeElement.tagName.toLowerCase();
     if (["input", "textarea", "select"].includes(tag)) return;
 
-    const key = e.key.toLowerCase();
+    // non-Latin layouts (e.g. Cyrillic) fall back to the physical key, so ф acts as a
+    let key = e.key.toLowerCase();
+    if (!/^[a-z]$/.test(key) && /^Key[A-Z]$/.test(e.code)) {
+        key = e.code.slice(3).toLowerCase();
+    }
 
     const start = document.getElementById("start_time");
     const end = document.getElementById("end_time");
