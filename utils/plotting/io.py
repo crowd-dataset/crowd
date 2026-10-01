@@ -4,6 +4,7 @@ import plotly.graph_objects as go
 import plotly.io as pio
 import shutil
 from custom_logger import CustomLogger
+from utils.plotting import hover
 
 logger = CustomLogger(__name__)  # use custom logger
 
@@ -32,6 +33,16 @@ class IO:
         for layer in fig.layout.map.layers or ():
             layer.source = [src.replace("/light_all/", "/light_nolabels/") for src in layer.source or ()]
 
+    @staticmethod
+    def _uses_popups(fig) -> bool:
+        """Whether any trace carries popup keys ("@..." hover texts, see hover.py)."""
+        for t in fig.data:
+            for attr in ("hovertext", "text"):
+                v = getattr(t, attr, None)
+                if v is not None and not isinstance(v, str) and any(str(k).startswith("@") for k in v):
+                    return True
+        return False
+
     def save_plotly_figure(self, fig, filename, width=1600, height=900, scale=1, save_final=True, save_png=True,
                            save_eps=True, post_script=None):
         """
@@ -59,12 +70,24 @@ class IO:
         interactive = go.Figure(fig)
         interactive.layout.width = None
         interactive.layout.height = None
-        interactive.write_html(os.path.join(common.output_dir, filename + ".html"), include_plotlyjs="directory",
-                               auto_open=self._open_html(), post_script=post_script)
-        # also save the final figure
-        if save_final:
-            interactive.write_html(os.path.join(output_final, filename + ".html"), include_plotlyjs="directory",
+        # hover popups given as keys are filled in from popups.js, loaded like plotly.min.js (see hover.py)
+        popups = self._uses_popups(interactive)
+        if popups:
+            post_script = hover.POPUPS_JS + (post_script or "")
+        paths = [os.path.join(common.output_dir, filename + ".html")]
+        if save_final:  # also save the final figure
+            paths.append(os.path.join(output_final, filename + ".html"))
+        for i, path in enumerate(paths):
+            interactive.write_html(path, include_plotlyjs="directory", auto_open=self._open_html() and i == 0,
                                    post_script=post_script)
+            if popups:
+                with open(path, encoding="utf-8") as f:
+                    html = f.read()
+                plotly_js = '<script charset="utf-8" src="plotly.min.js"></script>'
+                popups_js = f'<script charset="utf-8" src="{hover.POPUPS_FILE}"></script>'
+                html = html.replace(plotly_js, plotly_js + popups_js, 1)
+                with open(path, "w", encoding="utf-8") as f:
+                    f.write(html)
 
         # static images cannot use interactive menus (e.g., dropdowns), so leave them out
         static = go.Figure(fig)

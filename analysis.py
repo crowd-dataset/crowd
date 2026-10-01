@@ -2399,8 +2399,8 @@ if __name__ == "__main__":
                              pl.col("video_count").alias("Videos"), pl.col("population_locality").alias("Population"))
         # the full popups shown on hover, the same as in the other figures
         seg = dataset_figures.segments(df_mapping, analysis_class.vehicle_map)
-        country_hover = hover.country_hover(df_mapping, seg, analysis_class.iso3_to_flag)
-        df = df.join(hover.locality_hover(df_mapping, seg, analysis_class.iso3_to_flag), on="id", how="left")
+        locality_hover, country_hover = hover.popups(df_mapping, seg, analysis_class.iso3_to_flag)
+        df = df.join(locality_hover, on="id", how="left")
         hover_data = ["country", "state", "Footage (hours)", "Videos", "Population"]
 
         # Sort by continent and locality, both in ascending order

@@ -1,16 +1,40 @@
 """
 Hover popups shared by all figures: one complete, formatted popup per locality and per country.
 
-Figures put the popup text on each point (`hovertext`, or `customdata` with plotly express) and show it with
-TEMPLATE, so a locality or country looks the same in every map and scatter plot.
+All popups are written once to figures/popups.js; each point only carries a short key ("@L<id>" or "@C<iso3>") as its
+`hovertext` (`text` on 3D traces), shown with TEMPLATE. When a figure's HTML loads, POPUPS_JS swaps the keys for the
+popups, so a locality or country looks the same in every figure while each figure stays small. The HTML of figures
+that use keys loads popups.js next to plotly.min.js (see io.save_plotly_figure).
 """
 
 import ast
+import json
+import os
 
 import polars as pl
 
+import common
+
 TEMPLATE = "%{hovertext}<extra></extra>"
-PX_TEMPLATE = "%{customdata[0]}<extra></extra>"  # plotly express figures: custom_data=["hover"]
+GL_TEMPLATE = "%{text}<extra></extra>"  # 3D traces: plotly leaves %{hovertext} empty there
+POPUPS_FILE = "popups.js"
+# Replace popup keys in a figure's hover texts with the popups from popups.js.
+POPUPS_JS = """
+(function () {
+  var gd = document.getElementById('{plot_id}'), popups = window.CROWD_POPUPS;
+  if (!popups) return;
+  gd.data.forEach(function (t, i) {
+    var update = {};
+    ['hovertext', 'text'].forEach(function (a) {
+      var v = t[a];
+      if (Array.isArray(v) && v.some(function (k) { return typeof k === 'string' && k.charAt(0) === '@'; })) {
+        update[a] = [v.map(function (k) { return popups[k] || k; })];
+      }
+    });
+    if (Object.keys(update).length) Plotly.restyle(gd, update, [i]);
+  });
+})();
+"""
 
 INDICATORS = [  # country column, label, format
     ("population_country", "Population", "{:,.0f}"),
@@ -151,6 +175,23 @@ def country_hover(df_mapping: pl.DataFrame, seg: pl.DataFrame, flags: dict) -> p
     return pl.DataFrame(out, schema={"iso3": pl.Utf8, "hover": pl.Utf8})
 
 
+def popups(df_mapping: pl.DataFrame, seg: pl.DataFrame, flags: dict, write: bool = True) -> tuple:
+    """Write all locality and country popups to popups.js (next to the figures) and return the keys that stand for
+    them: (DataFrame `id`, `hover`; DataFrame `iso3`, `hover`)."""
+    loc, cty = locality_hover(df_mapping, seg, flags), country_hover(df_mapping, seg, flags)
+    loc_keys = loc.with_columns(pl.format("@L{}", pl.col("id")).alias("key"))
+    cty_keys = cty.with_columns(pl.format("@C{}", pl.col("iso3")).alias("key"))
+    if write:
+        table = dict(zip(loc_keys["key"], loc_keys["hover"])) | dict(zip(cty_keys["key"], cty_keys["hover"]))
+        script = "window.CROWD_POPUPS = " + json.dumps(table, ensure_ascii=False, separators=(",", ":")) + ";\n"
+        for folder in (common.output_dir, os.path.join(common.root_dir, "figures")):
+            os.makedirs(folder, exist_ok=True)
+            with open(os.path.join(folder, POPUPS_FILE), "w", encoding="utf-8") as f:
+                f.write(script)
+    return (loc_keys.select("id", pl.col("key").alias("hover")),
+            cty_keys.select("iso3", pl.col("key").alias("hover")))
+
+
 if __name__ == "__main__":
     # self-check on one locality with two videos (one at night)
     m = pl.DataFrame(dict(id=[1], locality=["A"], locality_aka=["['Aa']"], state=["S"], country=["B"], iso3=["BBB"],
@@ -165,4 +206,6 @@ if __name__ == "__main__":
     assert "literacy" not in h, h  # zero literacy means no data
     c = country_hover(m, s, {"BBB": "🇧🇧"})["hover"][0]
     assert "Localities:</b> 1" in c and "Per million people:</b> 0.3 h" in c and "Largest channel:</b> 100%" in c, c
+    loc_keys, cty_keys = popups(m, s, {"BBB": "🇧🇧"}, write=False)
+    assert loc_keys["hover"].to_list() == ["@L1"] and cty_keys["hover"].to_list() == ["@CBBB"]
     print("ok")

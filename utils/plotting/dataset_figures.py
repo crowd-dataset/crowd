@@ -189,9 +189,9 @@ def _country_map(df: pl.DataFrame, value: str, title: str, scale: str, name: str
     ok = df.filter(pl.col("hours") >= MIN_HOURS) if "hours" in df.columns else df
     few = df.filter(pl.col("hours") < MIN_HOURS) if "hours" in df.columns else df.clear()
     d = ok.with_columns((pl.col(value).log10() if log else pl.col(value)).alias("_c"))
-    fig = px.choropleth(d.to_pandas(), locations="iso3", color="_c", custom_data=["hover"],
+    fig = px.choropleth(d.to_pandas(), locations="iso3", color="_c", hover_name="hover",
                         color_continuous_scale=scale, projection="natural earth", labels={value: title})
-    fig.update_traces(hovertemplate=hover.PX_TEMPLATE)
+    fig.update_traces(hovertemplate=hover.TEMPLATE)
     if log:
         lo, hi = d["_c"].min(), d["_c"].max()
         # powers of ten, and 2 and 5 times them when the values span only a few of those
@@ -270,7 +270,7 @@ def dataset_figures(df_mapping: pl.DataFrame, seg: pl.DataFrame, flags: dict) ->
     hours = (pl.sum("seconds") / 3600).alias("hours")
     flag = pl.col("iso3").replace_strict(flags, default="🏳️", return_dtype=pl.Utf8)
     # the popups shown on hover for each locality and country, the same in every figure
-    loc_hover, cty_hover = hover.locality_hover(df_mapping, seg, flags), hover.country_hover(df_mapping, seg, flags)
+    loc_hover, cty_hover = hover.popups(df_mapping, seg, flags)
 
     # footage against number of videos, per locality and per country
     city = (seg.group_by("id").agg(hours, pl.col("video").n_unique().alias("videos"))
@@ -465,7 +465,7 @@ def dataset_figures(df_mapping: pl.DataFrame, seg: pl.DataFrame, flags: dict) ->
                        f"{d['country'].n_unique()} countries and {d.height:,} localities<br><b>Night:</b> "
                        f"{d['night_h'].sum() / d['hours'].sum() * 100:.0f}%")
     fig.update_traces(texttemplate="%{label}<br>%{value:,.0f} h", root_color="#f5f5f5",
-                      customdata=[[popups.get(i, "")] for i in fig.data[0].ids], hovertemplate=hover.PX_TEMPLATE)
+                      hovertext=[popups.get(i, "") for i in fig.data[0].ids], hovertemplate=hover.TEMPLATE)
     fig.update_layout(coloraxis_colorbar=dict(title="Night (%)"))
     _save(_style(fig, margin=dict(l=5, r=5, t=5, b=5)), "treemap_footage")
 
@@ -635,10 +635,11 @@ def _globe(dots: pl.DataFrame, max_height: float = 0.25):
         x, y, z = (np.column_stack([a, b, nan]).ravel() for a, b in zip(p0, p1))
         fig.add_trace(go.Scatter3d(x=x, y=y, z=z, mode="lines", name=name, line=dict(color=color, width=2.5),
                                    hoverinfo="skip"))
+    # the popup on the spike tips; 3D traces take it as `text` (plotly leaves %{hovertext} empty in 3D)
     tips = _xyz(dots["lon"], dots["lat"], r_top)
     fig.add_trace(go.Scatter3d(x=tips[0], y=tips[1], z=tips[2], mode="markers", showlegend=False,
-                               marker=dict(size=2, color=np.where(night > 0, "#56B4E9", "#E69F00")),
-                               **_hover_args(dots)))
+                               marker=dict(size=3, color=np.where(night > 0, "#56B4E9", "#E69F00")),
+                               text=dots["hover"], hovertemplate=hover.GL_TEMPLATE))
     hidden = dict(visible=False, showbackground=False)
     eye = 1.45 * np.array(_xyz(-35, 50))  # above the North Atlantic: spikes in North America and Europe lean into view
     fig.update_layout(scene=dict(xaxis=hidden, yaxis=hidden, zaxis=hidden, aspectmode="data", dragmode="turntable",
@@ -718,7 +719,7 @@ def detection_figures(df_mapping: pl.DataFrame, det: pl.DataFrame, classes: list
         flags: ISO3 code -> emoji flag, for the hover popups.
     """
     person = classes[0]
-    loc_hover, cty_hover = hover.locality_hover(df_mapping, seg, flags), hover.country_hover(df_mapping, seg, flags)
+    loc_hover, cty_hover = hover.popups(df_mapping, seg, flags)
     det = det.join(df_mapping.select("id", "locality", "country", "iso3", "continent"), on="id").filter(
         pl.col("detected_seconds") > 0).join(loc_hover, on="id")
     per_min = (pl.col(person) / (pl.col("detected_seconds") / 60)).alias("per_minute")
@@ -727,17 +728,17 @@ def detection_figures(df_mapping: pl.DataFrame, det: pl.DataFrame, classes: list
     country = (det.group_by("iso3", "country").agg(pl.col(classes + ["detected_seconds"]).sum(), pl.first("continent"))
                   .join(cty_hover, on="iso3"))
     fig = px.choropleth(country.with_columns(per_min).to_pandas(), locations="iso3", color="per_minute",
-                        custom_data=["hover"], color_continuous_scale="YlOrRd", projection="natural earth",
+                        hover_name="hover", color_continuous_scale="YlOrRd", projection="natural earth",
                         labels={"per_minute": "Pedestrians per minute"})
-    fig.update_traces(hovertemplate=rate_line.replace("PLACE", "z") + hover.PX_TEMPLATE)
+    fig.update_traces(hovertemplate=rate_line.replace("PLACE", "z") + hover.TEMPLATE)
     fig.update_layout(coloraxis_colorbar=colorbar_top("Pedestrians per minute"))
     fig.update_geos(domain=dict(x=[0, 1], y=[0, MAP_TOP_SHARE]))
     _save(_style(fig, margin=dict(l=0, r=0, t=10, b=0)), "map_pedestrians_per_minute")
 
     fig = px.box(det.with_columns(per_min).to_pandas(), x="continent", y="per_minute", color="continent",
-                 points="outliers", custom_data=["hover"], **CONTINENT_STYLE,
+                 points="outliers", hover_name="hover", **CONTINENT_STYLE,
                  labels={"per_minute": "Pedestrians per minute", "continent": ""})
-    fig.update_traces(hoveron="points", hovertemplate=rate_line.replace("PLACE", "y") + hover.PX_TEMPLATE)
+    fig.update_traces(hoveron="points", hovertemplate=rate_line.replace("PLACE", "y") + hover.TEMPLATE)
     _save(_style(fig), "box_pedestrians_per_minute_continent")
 
     top = country.sort("detected_seconds", descending=True).head(30)
@@ -810,10 +811,10 @@ def detection_figures(df_mapping: pl.DataFrame, det: pl.DataFrame, classes: list
     if loc.height > 2:
         rho = loc.select(pl.corr("population_locality", "per_minute", method="spearman")).item()
         fig = px.scatter(loc.to_pandas(), x="population_locality", y="per_minute", color="continent",
-                         custom_data=["hover"], log_x=True, log_y=True, opacity=0.7, **CONTINENT_STYLE,
+                         hover_name="hover", log_x=True, log_y=True, opacity=0.7, **CONTINENT_STYLE,
                          labels={"population_locality": "Population of locality",
                                  "per_minute": "Pedestrians per minute", "continent": ""})
-        fig.update_traces(hovertemplate=rate_line.replace("PLACE", "y") + hover.PX_TEMPLATE)
+        fig.update_traces(hovertemplate=rate_line.replace("PLACE", "y") + hover.TEMPLATE)
         fig.add_annotation(text=f"Spearman ρ = {rho:.2f}, n = {loc.height:,} localities", x=0.99, y=0.02,
                            xref="paper", yref="paper", xanchor="right", showarrow=False, font=dict(size=16))
         _save(_style(fig), "scatter_pedestrians_population")
