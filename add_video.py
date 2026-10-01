@@ -743,7 +743,7 @@ def form():
     time_of_day_video = 0
 
     def render_current_template():
-        nonlocal upload_date_video, channel_video, vehicle_type_video
+        nonlocal upload_date_video, channel_video
 
         if not upload_date_video and yt_upload_date:
             upload_date_video = yt_upload_date.strftime('%d%m%Y')
