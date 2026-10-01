@@ -819,6 +819,12 @@ Distribution of segments (parts of videos included in dataset) by type of vehicl
 [![Amount of footage per locality against its population](figures/scatter_population_footage.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/scatter_population_footage.html)
 Amount of footage per locality against its population. Large localities with little footage are candidates for adding videos.
 
+[![Amount of footage per locality against its gross metropolitan product](figures/scatter_gmp_footage.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/scatter_gmp_footage.html)
+Amount of footage per locality against its gross metropolitan product (GMP, known for about 200 large cities), with the Spearman rank correlation: whether economically large cities dominate the data.
+
+[![Amount of footage per locality against its traffic index](figures/scatter_traffic_index_footage.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/scatter_traffic_index_footage.html)
+Amount of footage per locality against its traffic index (how much slower than free flow traffic is, from one TomTom reading per locality), for localities with a reading above 0, with the Spearman rank correlation.
+
 [![Amount of footage per country against country indicators, showing whether some kinds of countries are over- or under-represented](figures/scatter_indicators_footage.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/scatter_indicators_footage.html)
 Amount of footage per country against country indicators, with the Spearman rank correlation and a trend line per panel, showing whether some kinds of countries are over- or under-represented.
 

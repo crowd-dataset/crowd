@@ -888,6 +888,7 @@ def form():
                     country_population = get_country_population(country_data)
 
                 lat, lon = get_coordinates(locality, state, common.correct_country(country), locality_data)
+                traffic = get_traffic_index_lat_lon(lat, lon)
                 existing_data_row = {
                     'locality': locality,
                     'locality_aka': locality_aka,
@@ -912,7 +913,8 @@ def form():
                     'channel': [],
                     'vehicle_type': [],
                     'gini': get_country_gini(country_data),
-                    'traffic_index': get_traffic_index_lat_lon(lat, lon)
+                    # empty when TomTom has no reading here, so it is not mistaken for free-flowing traffic (0)
+                    'traffic_index': '' if traffic is None else traffic
                 }
 
             # For a new city, if the video already exists elsewhere, carry over its
@@ -1230,10 +1232,7 @@ def form():
 
                         df.at[idx, 'gini'] = to_optional_float(gini)
 
-                        if traffic_index:
-                            df.at[idx, 'traffic_index'] = float(traffic_index)
-                        else:
-                            df.at[idx, 'traffic_index'] = 0.0
+                        df.at[idx, 'traffic_index'] = to_optional_float(traffic_index)
 
                     else:
                         new_row = {
@@ -1580,6 +1579,8 @@ def get_gmp(locality: str, state: str, iso3: str) -> float:
 
 
 def get_traffic_index_lat_lon(lat, lon, api="tomtom"):
+    """Congestion on the road segment nearest to (lat, lon) right now: how much slower traffic is than free flow (%).
+    None when there is no reading (TomTom has no road segment near the point, or the request failed)."""
     if api == "tomtom":
         url = f"https://api.tomtom.com/traffic/services/4/flowSegmentData/absolute/10/json?key={common.get_secrets('tomtom_api_key')}&point={lat},{lon}"  # noqa: E501
         try:
@@ -1590,19 +1591,17 @@ def get_traffic_index_lat_lon(lat, lon, api="tomtom"):
                 if "flowSegmentData" in data:
                     current_speed = data["flowSegmentData"]["currentSpeed"]
                     free_flow_speed = data["flowSegmentData"]["freeFlowSpeed"]
-                    try:
-                        traffic_index = round((1 - current_speed / free_flow_speed) * 100, 2)
-                    except ZeroDivisionError:
-                        traffic_index = 0.0
-                    return traffic_index
+                    if not free_flow_speed:
+                        return None
+                    return round((1 - current_speed / free_flow_speed) * 100, 2)
                 else:
-                    return 0.0
+                    return None
             else:
                 print(f"Error fetching traffic index for {lat}, {lon}: {response.status_code}")
-                return 0.0
-        except ConnectionError as e:
+                return None
+        except requests.exceptions.RequestException as e:
             print(f"An error occurred: {e}")
-            return 0.0
+            return None
     elif api == "trafiklab":
         url = f"https://api.trafiklab.se/v1/trafficindex?lat={lat}&lon={lon}&apikey={common.get_secrets('trafiklab_api_key')}"  # noqa: E501
 

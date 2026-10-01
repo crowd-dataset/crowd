@@ -73,7 +73,7 @@ function zoomLabels() {
   if (all < 0) return;
   var t = gd.data[all], xr = gd._fullLayout.xaxis.range, yr = gd._fullLayout.yaxis.range, n = 0;
   for (var i = 0; i < t.x.length; i++) {
-    var x = Math.log10(t.x[i]), y = Math.log10(t.y[i]);
+    var x = gd._fullLayout.xaxis.type === 'log' ? Math.log10(t.x[i]) : t.x[i], y = Math.log10(t.y[i]);
     if (x >= xr[0] && x <= xr[1] && y >= yr[0] && y <= yr[1]) n++;
   }
   var show = n <= %d;
@@ -213,14 +213,19 @@ def _country_map(df: pl.DataFrame, value: str, title: str, scale: str, name: str
 
 
 def _labelled_scatter(df: pl.DataFrame, x_col: str, y_col: str, label: str, labelled: pl.Expr, x_title: str,
-                      y_title: str, name: str, size=(1600, 900), emphasis: pl.Expr = pl.lit(True)):
-    """Log-log scatter coloured by continent. Rows where `labelled` is true get a label placed without overlaps
-    (next to the point, or with a leader line when there is no room); in the HTML, zooming in labels every point.
+                      y_title: str, name: str, size=(1600, 900), emphasis: pl.Expr = pl.lit(True), note: str = "",
+                      log_x: bool = True):
+    """Log-log scatter (linear x if not `log_x`) coloured by continent. Rows where `labelled` is true get a label
+    placed without overlaps (next to the point, or with a leader line when there is no room); in the HTML, zooming in
+    labels every point.
     Labels of rows where `emphasis` is false are smaller and grey, so the eye goes to the emphasised ones first."""
     margin = dict(l=90, r=30, t=30, b=80)
-    x = np.log10(df[x_col].to_numpy())
+    fx = math.log10 if log_x else float  # data -> axis units (labels are placed in axis units)
+    ix = (lambda v: 10 ** v) if log_x else float  # axis units -> data
+    x = np.log10(df[x_col].to_numpy()) if log_x else df[x_col].to_numpy().astype(float)
     y = np.log10(df[y_col].to_numpy())
-    x_range = (x.min() - 0.1, x.max() + 0.35)  # room on the right for the largest points' labels
+    # room on the right for the largest points' labels: in axis units, a third of a decade on log axes
+    x_range = (x.min() - 0.1, x.max() + 0.35) if log_x else (x.min() - 0.03 * np.ptp(x), x.max() + 0.12 * np.ptp(x))
     y_range = (y.min() - 0.15, y.max() + 0.2)
     fig = go.Figure()
     for continent in CONTINENT_ORDER:
@@ -232,7 +237,7 @@ def _labelled_scatter(df: pl.DataFrame, x_col: str, y_col: str, label: str, labe
     top = df.with_row_index("_i").with_columns(emphasis.alias("_emphasis")).filter(labelled)
     proj = map_labels.AxisProjection(x_range, y_range, size[0] - margin["l"] - margin["r"],
                                      size[1] - margin["t"] - margin["b"])
-    items = [dict(code=str(r["_i"]), lines=[r[label]], anchor=(math.log10(r[x_col]), math.log10(r[y_col])),
+    items = [dict(code=str(r["_i"]), lines=[r[label]], anchor=(fx(r[x_col]), math.log10(r[y_col])),
                   ct=None, scale=1 if r["_emphasis"] else 9 / 11)
              for r in top.sort(y_col, descending=True).iter_rows(named=True)]
     # labels with no free spot are left out of the static image; hover and zoom in the HTML still show them
@@ -244,23 +249,26 @@ def _labelled_scatter(df: pl.DataFrame, x_col: str, y_col: str, label: str, labe
         (ax, ay) = p[1]
         font = strong if code in emphasised else faint
         if p[0] == "dot":  # invisible marker so the text sits beside the point like on the maps
-            fig.add_trace(go.Scatter(x=[10 ** ax], y=[10 ** ay], mode="markers+text", text=[names[code]],
+            fig.add_trace(go.Scatter(x=[ix(ax)], y=[10 ** ay], mode="markers+text", text=[names[code]],
                                      textposition=p[2], textfont=font, marker=dict(size=8, opacity=0),
                                      showlegend=False, hoverinfo="skip", meta="top-labels"))
         else:
             (lx, ly), pos = p[2], p[3]
-            fig.add_trace(go.Scatter(x=[10 ** ax, 10 ** lx], y=[10 ** ay, 10 ** ly], mode="lines",
+            fig.add_trace(go.Scatter(x=[ix(ax), ix(lx)], y=[10 ** ay, 10 ** ly], mode="lines",
                                      line=dict(color="#bbbbbb" if font is faint else "grey", width=1),
                                      showlegend=False, hoverinfo="skip",
                                      meta="top-labels"))
-            fig.add_trace(go.Scatter(x=[10 ** lx], y=[10 ** ly], mode="text", text=[names[code]],
+            fig.add_trace(go.Scatter(x=[ix(lx)], y=[10 ** ly], mode="text", text=[names[code]],
                                      textposition=pos, textfont=font, showlegend=False, hoverinfo="skip",
                                      meta="top-labels"))
     # every point's label, shown in the HTML only when zoomed in (see ZOOM_LABELS_JS)
     fig.add_trace(go.Scatter(x=df[x_col], y=df[y_col], mode="text", text=df[label], textposition="top center",
                              textfont=strong, visible=False, showlegend=False, hoverinfo="skip", meta="zoom-labels"))
-    fig.update_xaxes(type="log", range=x_range, title_text=x_title, automargin=False)
+    fig.update_xaxes(type="log" if log_x else "linear", range=x_range, title_text=x_title, automargin=False)
     fig.update_yaxes(type="log", range=y_range, title_text=y_title, automargin=False)
+    if note:  # e.g., the correlation, in the bottom-right corner
+        fig.add_annotation(text=note, x=0.99, y=0.02, xref="paper", yref="paper", xanchor="right",
+                           showarrow=False, font=dict(size=16), bgcolor="rgba(255,255,255,0.8)")
     _save(_style(fig, width=size[0], height=size[1], margin=margin,
                  legend=dict(x=0.01, y=0.99, bgcolor="rgba(255,255,255,0.7)")), name, post_script=ZOOM_LABELS_JS)
 
@@ -320,6 +328,24 @@ def dataset_figures(df_mapping: pl.DataFrame, seg: pl.DataFrame, flags: dict) ->
                | (pl.col("population_locality").rank("ordinal", descending=True) <= 8))
     _labelled_scatter(city, "population_locality", "hours", "name", notable, "Population of locality",
                       "Footage (hours)", "scatter_population_footage")
+
+    # footage against the economy (GMP, known for ~200 large cities) and the congestion of each locality: do rich or
+    # congested cities dominate the data? The traffic index (how much slower than free flow traffic is, %) is one
+    # TomTom reading per locality; shown where it is above 0, as older zeros also stand for failed requests
+    city = (seg.group_by("id").agg(hours)
+               .join(df_mapping.select("id", "locality", "iso3", "continent", "gmp", "traffic_index"), on="id")
+               .join(loc_hover, on="id")
+               .with_columns(pl.concat_str([flag, pl.col("locality")], separator=" ").alias("name")))
+    for col, x_title, name, top, log_x in [
+            ("gmp", "Gross metropolitan product (billion USD)", "scatter_gmp_footage", 15, True),
+            ("traffic_index", "Traffic index: how much slower than free flow (%, TomTom; localities above 0)",
+             "scatter_traffic_index_footage", 12, False)]:
+        d = city.filter(pl.col(col) > 0)
+        rho = d.select(pl.corr(col, "hours", method="spearman")).item()
+        notable = ((pl.col("hours").rank("ordinal", descending=True) <= top)
+                   | (pl.col(col).rank("ordinal", descending=True) <= top))
+        _labelled_scatter(d, col, "hours", "name", notable, x_title, "Footage (hours)", name, log_x=log_x,
+                          note=f"Spearman ρ = {rho:.2f}, n = {d.height:,} localities")
 
     # 2) footage against country indicators: is the dataset biased towards some kinds of countries
     # countries split across continents (e.g., Russia) count as one country, shown with their first continent

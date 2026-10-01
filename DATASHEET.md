@@ -23,7 +23,7 @@ This datasheet follows the structure of *Datasheets for Datasets* (Gebru et al.,
 **What each record contains.** `mapping.csv` has one row per locality with:
 
 - **Location:** locality name, alternative names, state or region, country, ISO3 code, continent, latitude and longitude.
-- **Context indicators:** locality population; country population, road traffic deaths per 100,000, literacy rate, Gini index, median age and average height; locality GDP (sparse) and a traffic index.
+- **Context indicators:** locality population; country population, road traffic deaths per 100,000, literacy rate, Gini index, median age and average height; locality GDP (sparse) and a traffic index (see below).
 - **Per video:** the YouTube ID, upload date, channel and the type of vehicle the footage is filmed from (car, bus, truck, two-wheeler, bicycle, and others).
 - **Per segment:** start and end time in seconds, and time of day (day or night).
 
@@ -37,7 +37,7 @@ This datasheet follows the structure of *Datasheets for Datasets* (Gebru et al.,
 - **Country indicators:** empty where the World Bank has no value.
 - **Locality population:** 0 for a few localities.
 
-A traffic index of 0 is a real measurement (free-flowing traffic when queried).
+**Traffic index:** one TomTom reading per locality of how much slower than free flow traffic was on the nearest road when it was queried (%). It is a snapshot, so it depends on the time of the query. Empty: no TomTom coverage (e.g., Ukraine, Russia, Belarus, China) or no reading yet. A 0 can mean free-flowing traffic, but older entries also stored failed requests as 0.
 
 **Relationships.** A video can span several localities. Its segments then belong to different localities and never overlap in time: no stretch of video is counted twice (checked on 94,473 segments).
 
@@ -75,7 +75,7 @@ See "Selection procedure" in the README for examples.
 - the vehicle type;
 - the locality.
 
-**Context data.** Locality populations and coordinates come from GeoNames. Country indicators come from the World Bank (`update_params.py`). The traffic index comes from TomTom.
+**Context data.** Locality populations and coordinates come from GeoNames. Country indicators come from the World Bank (`update_params.py`). The traffic index comes from TomTom (`add_video.py`).
 
 **Time frame.** Videos were uploaded between 2005 and 2026. Upload dates come from YouTube; recording dates are not known.
 
@@ -91,6 +91,7 @@ See "Selection procedure" in the README for examples.
 - **Known remaining issues.**
   - 1,283 localities could not be matched to GeoNames, so their populations are unchecked.
   - Two videos (Mumbai and Cairo) are no longer viewable and have no valid upload date.
+  - Traffic index: about 650 values that were country-level copies (often from Numbeo, above 100) were replaced with local TomTom readings in October 2026, or cleared where TomTom has no coverage. Of the remaining zeros, it is not known which are real readings and which were failed requests.
 
 ## Uses
 
