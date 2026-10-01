@@ -445,8 +445,9 @@ def dataset_figures(df_mapping: pl.DataFrame, seg: pl.DataFrame, flags: dict) ->
     _save(_style(fig, margin=dict(l=5, r=5, t=5, b=5)), "treemap_footage")
 
     # every locality as a dot sized by footage (area proportional to hours), for print where the tile maps are weak
-    dots = (seg.group_by("id").agg(hours).join(df_mapping.select("id", "locality", "country", "continent", "lat",
-                                                                 "lon"), on="id")
+    night_hours = (pl.col("seconds").filter(pl.col("night")).sum() / 3600).alias("night_hours")
+    dots = (seg.group_by("id").agg(hours, night_hours)
+               .join(df_mapping.select("id", "locality", "country", "continent", "lat", "lon"), on="id")
                .drop_nulls(["lat", "lon"]).sort("hours", descending=True))
     fig = go.Figure(_dot_traces(dots))
     fig.update_geos(projection_type="natural earth", lataxis_range=[-57, 84], **GEO_STYLE)
@@ -557,9 +558,14 @@ def _xyz(lon, lat, r=1.0):
     return r * np.cos(lat) * np.cos(lon), r * np.cos(lat) * np.sin(lon), r * np.sin(lat)
 
 
-def _globe(dots: pl.DataFrame, max_height: float = 0.45):
-    """3D globe: a sphere with country borders and a spike on each locality of `dots` (lat, lon, locality, continent,
-    hours), its height proportional to the hours (the largest reaching `max_height` globe radii)."""
+GLOBE_MIN_HOURS = 0.1  # spikes start at six minutes of footage
+
+
+def _globe(dots: pl.DataFrame, max_height: float = 0.25):
+    """3D globe: a sphere with country borders and a spike on each locality of `dots` (lat, lon, locality, hours,
+    night_hours). Spike height is on a log scale, so localities with little footage still show: zero at
+    GLOBE_MIN_HOURS, `max_height` globe radii at the largest. Each spike is split by the share of day (below) and night
+    (on top) footage."""
     u, v = np.meshgrid(np.linspace(-180, 180, 73), np.linspace(-90, 90, 37))
     fig = go.Figure(go.Surface(x=_xyz(u, v, 0.995)[0], y=_xyz(u, v, 0.995)[1], z=_xyz(u, v, 0.995)[2],
                                colorscale=[[0, "#e4edf5"], [1, "#e4edf5"]], showscale=False, hoverinfo="skip",
@@ -573,28 +579,31 @@ def _globe(dots: pl.DataFrame, max_height: float = 0.45):
             bz += [*z, None]
     fig.add_trace(go.Scatter3d(x=bx, y=by, z=bz, mode="lines", line=dict(color="#a0a0a0", width=1.5),
                                hoverinfo="skip", showlegend=False))
-    top = dots["hours"].max()
-    for continent in CONTINENT_ORDER:
-        c = dots.filter(pl.col("continent") == continent)
-        if not c.height:
-            continue
-        r = 1.002 + max_height * c["hours"].to_numpy() / top
-        x0, y0, z0 = _xyz(c["lon"], c["lat"], 1.002)
-        x1, y1, z1 = _xyz(c["lon"], c["lat"], r)
-        nan = np.full(c.height, np.nan)  # breaks between spikes
-        color = CONTINENT_COLORS[continent]
-        fig.add_trace(go.Scatter3d(x=np.column_stack([x0, x1, nan]).ravel(), y=np.column_stack([y0, y1, nan]).ravel(),
-                                   z=np.column_stack([z0, z1, nan]).ravel(), mode="lines", name=continent,
-                                   legendgroup=continent, line=dict(color=color, width=4), hoverinfo="skip"))
-        fig.add_trace(go.Scatter3d(x=x1, y=y1, z=z1, mode="markers", legendgroup=continent, showlegend=False,
-                                   marker=dict(size=2, color=color), text=c["locality"], customdata=c["hours"],
-                                   hovertemplate="%{text}<br>%{customdata:,.1f} hours<extra></extra>"))
+    lo, top = math.log10(GLOBE_MIN_HOURS), dots["hours"].max()
+    h = np.log10(np.maximum(dots["hours"].to_numpy(), GLOBE_MIN_HOURS))
+    r_top = 1.002 + max_height * (h - lo) / (math.log10(top) - lo)
+    night = dots["night_hours"].to_numpy() / dots["hours"].to_numpy()
+    r_mid = 1.002 + (r_top - 1.002) * (1 - night)  # day footage below, night footage on top
+    nan = np.full(dots.height, np.nan)  # breaks between spikes
+    for name, r0, r1, color in [("Day", 1.002, r_mid, "#E69F00"), ("Night", r_mid, r_top, "#0072B2")]:
+        p0, p1 = _xyz(dots["lon"], dots["lat"], r0), _xyz(dots["lon"], dots["lat"], r1)
+        x, y, z = (np.column_stack([a, b, nan]).ravel() for a, b in zip(p0, p1))
+        fig.add_trace(go.Scatter3d(x=x, y=y, z=z, mode="lines", name=name, line=dict(color=color, width=2.5),
+                                   hoverinfo="skip"))
+    tips = _xyz(dots["lon"], dots["lat"], r_top)
+    fig.add_trace(go.Scatter3d(x=tips[0], y=tips[1], z=tips[2], mode="markers", showlegend=False,
+                               marker=dict(size=2, color=np.where(night > 0, "#0072B2", "#E69F00")),
+                               text=dots["locality"], customdata=np.column_stack([dots["hours"], night * 100]),
+                               hovertemplate="%{text}<br>%{customdata[0]:,.1f} hours, %{customdata[1]:.0f}% at "
+                                             "night<extra></extra>"))
     hidden = dict(visible=False, showbackground=False)
     eye = 1.45 * np.array(_xyz(-35, 50))  # above the North Atlantic: spikes in North America and Europe lean into view
     fig.update_layout(scene=dict(xaxis=hidden, yaxis=hidden, zaxis=hidden, aspectmode="data", dragmode="turntable",
                                  camera=dict(eye=dict(x=eye[0], y=eye[1], z=eye[2]), up=dict(x=0, y=0, z=1))))
-    fig.add_annotation(text="Spike height proportional to hours of footage", x=0.01, y=0.02, xref="paper",
-                       yref="paper", showarrow=False, font=dict(size=14, color="#666666"))
+    fig.add_annotation(text=f"Spike height: hours of footage on a log scale (6 minutes to {top:,.0f} hours); "
+                       "colours: share of day and night footage",
+                       x=0.01, y=0.02, xref="paper", yref="paper", showarrow=False,
+                       font=dict(size=14, color="#666666"))
     return _style(fig, width=1200, height=1000, margin=dict(l=0, r=0, t=0, b=0),
                   legend=dict(x=0.99, xanchor="right", y=0.5, yanchor="middle", bgcolor="rgba(255,255,255,0.7)"))
 

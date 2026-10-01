@@ -847,7 +847,7 @@ Every locality in the dataset as a dot coloured by continent; the dot area is pr
 The same localities on a globe. The HTML version spins until you grab it; drag to turn it.
 
 [![Localities in the dataset on a 3D globe with spikes](figures/globe_localities_footage_spikes.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/globe_localities_footage_spikes.html)
-The localities on a 3D globe, each with a spike whose height is proportional to its hours of footage. The HTML version spins until you grab it; drag to turn it, scroll to zoom.
+The localities on a 3D globe, each with a spike whose height shows its hours of footage on a log scale, so localities with little footage are visible too. Each spike is orange for the share of its footage recorded by day and blue for the share at night. The HTML version spins until you grab it; drag to turn it, scroll to zoom.
 
 [![Footage by continent, country and locality](figures/treemap_footage.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/treemap_footage.html)
 Footage by continent, country and locality, coloured by the share recorded at night. In the HTML version, click a box to zoom in down to the localities.
