@@ -7,12 +7,15 @@ per-locality counts of unique tracked objects produced by `analysis.count_detect
 
 import ast
 import math
+import os
+import urllib.request
 from datetime import date
 
 import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 import polars as pl
+from PIL import Image
 from plotly.subplots import make_subplots
 
 import common
@@ -48,10 +51,10 @@ def _style(fig, **layout):
     return fig
 
 
-def _save(fig, name, post_script=None):
+def _save(fig, name, post_script=None, save_eps=True):
     # static images at the figure's own size where it sets one (e.g., a taller scatter), else 1600x900
     io.save_plotly_figure(fig, name, width=fig.layout.width or 1600, height=fig.layout.height or 900,
-                          save_final=True, post_script=post_script)
+                          save_final=True, post_script=post_script, save_eps=save_eps)
 
 
 # Interactive scatter plots: when zoomed in to at most ZOOM_LABELS points, label every point in view (a hidden
@@ -463,11 +466,12 @@ def dataset_figures(df_mapping: pl.DataFrame, seg: pl.DataFrame, flags: dict) ->
                     showlakes=False, **GEO_STYLE)
     _save(_style(fig, width=1200, height=1000, margin=dict(l=0, r=190, t=0, b=0),
                  legend=dict(x=1.0, y=0.5, yanchor="middle", itemsizing="constant")),
-          "globe_localities_footage", post_script=SPIN_GEO_JS)
+          "globe_localities_footage", post_script=SPIN_GEO_JS, save_eps=False)
 
     # a 3D globe with a spike on each locality, its height proportional to the hours of footage; the HTML spins
     # until it is touched, then can be dragged
-    _save(_globe(dots), "globe_localities_footage_spikes", post_script=SPIN_JS)
+    # no EPS for the globes (the 3D one would be embedded in it as a ~10 MB picture): they are for the screen
+    _save(_globe(dots), "globe_localities_footage_spikes", post_script=SPIN_JS, save_eps=False)
 
     # footprints of the channels with the most footage: where each one films (travel channels vs local drivers);
     # channels are numbered by footage; in the HTML each number links to the channel on YouTube
@@ -555,21 +559,39 @@ spin();
 
 def _xyz(lon, lat, r=1.0):
     lon, lat = np.radians(np.asarray(lon, dtype=float)), np.radians(np.asarray(lat, dtype=float))
-    return r * np.cos(lat) * np.cos(lon), r * np.cos(lat) * np.sin(lon), r * np.sin(lat)
+    # rounded to ~1 km on the globe: keeps the HTML small
+    xyz = r * np.cos(lat) * np.cos(lon), r * np.cos(lat) * np.sin(lon), r * np.sin(lat)
+    return tuple(np.round(a, 4) for a in xyz)
 
 
 GLOBE_MIN_HOURS = 0.1  # spikes start at six minutes of footage
+# NASA Blue Marble (land_shallow_topo, public domain, 2048x1024, equirectangular), cached on first use
+EARTH_IMAGE_URL = "https://eoimages.gsfc.nasa.gov/images/imagerecords/57000/57752/land_shallow_topo_2048.jpg"
+
+
+def _earth_mesh(width: int = 180, height: int = 90):
+    """The Earth as a sphere mesh coloured with the Blue Marble image: one vertex per image pixel, with plotly blending
+    the true colours between vertices."""
+    path = os.path.join(common.output_dir, "blue_marble_2048.jpg")
+    if not os.path.exists(path):
+        os.makedirs(common.output_dir, exist_ok=True)
+        urllib.request.urlretrieve(EARTH_IMAGE_URL, path)
+    pixels = np.asarray(Image.open(path).convert("RGB").resize((width + 1, height + 1), Image.LANCZOS))
+    lon, lat = np.meshgrid(np.linspace(-180, 180, width + 1), np.linspace(90, -90, height + 1))
+    x, y, z = (a.ravel() for a in _xyz(lon, lat, 0.998))
+    v = np.arange((height + 1) * (width + 1)).reshape(height + 1, width + 1)
+    a, b, c, d = v[:-1, :-1].ravel(), v[:-1, 1:].ravel(), v[1:, 1:].ravel(), v[1:, :-1].ravel()  # cell corners
+    return go.Mesh3d(x=x, y=y, z=z, i=np.concatenate([a, a]), j=np.concatenate([b, c]), k=np.concatenate([c, d]),
+                     vertexcolor=[f"#{r:02x}{g:02x}{b_:02x}" for r, g, b_ in pixels.reshape(-1, 3)],
+                     hoverinfo="skip", showscale=False, lighting=dict(ambient=1, diffuse=0, specular=0, fresnel=0))
 
 
 def _globe(dots: pl.DataFrame, max_height: float = 0.25):
-    """3D globe: a sphere with country borders and a spike on each locality of `dots` (lat, lon, locality, hours,
-    night_hours). Spike height is on a log scale, so localities with little footage still show: zero at
-    GLOBE_MIN_HOURS, `max_height` globe radii at the largest. Each spike is split by the share of day (below) and night
-    (on top) footage."""
-    u, v = np.meshgrid(np.linspace(-180, 180, 73), np.linspace(-90, 90, 37))
-    fig = go.Figure(go.Surface(x=_xyz(u, v, 0.995)[0], y=_xyz(u, v, 0.995)[1], z=_xyz(u, v, 0.995)[2],
-                               colorscale=[[0, "#e4edf5"], [1, "#e4edf5"]], showscale=False, hoverinfo="skip",
-                               lighting=dict(ambient=0.95, diffuse=0.1, specular=0, fresnel=0)))
+    """3D globe: the Blue Marble image with country borders and a spike on each locality of `dots` (lat, lon,
+    locality, hours, night_hours). Spike height is on a log scale, so localities with little footage still show: zero
+    at GLOBE_MIN_HOURS, `max_height` globe radii at the largest. Each spike is split by the share of day (below) and
+    night (on top) footage."""
+    fig = go.Figure(_earth_mesh())
     bx, by, bz = [], [], []
     for shape in map_labels.country_shapes().values():
         for ring in shape["rings"]:
@@ -577,7 +599,7 @@ def _globe(dots: pl.DataFrame, max_height: float = 0.25):
             bx += [*x, None]
             by += [*y, None]
             bz += [*z, None]
-    fig.add_trace(go.Scatter3d(x=bx, y=by, z=bz, mode="lines", line=dict(color="#a0a0a0", width=1.5),
+    fig.add_trace(go.Scatter3d(x=bx, y=by, z=bz, mode="lines", line=dict(color="rgba(255,255,255,0.45)", width=1),
                                hoverinfo="skip", showlegend=False))
     lo, top = math.log10(GLOBE_MIN_HOURS), dots["hours"].max()
     h = np.log10(np.maximum(dots["hours"].to_numpy(), GLOBE_MIN_HOURS))
@@ -585,15 +607,17 @@ def _globe(dots: pl.DataFrame, max_height: float = 0.25):
     night = dots["night_hours"].to_numpy() / dots["hours"].to_numpy()
     r_mid = 1.002 + (r_top - 1.002) * (1 - night)  # day footage below, night footage on top
     nan = np.full(dots.height, np.nan)  # breaks between spikes
-    for name, r0, r1, color in [("Day", 1.002, r_mid, "#E69F00"), ("Night", r_mid, r_top, "#0072B2")]:
+    # night in sky blue (not the darker blue of the other figures), so it shows against the dark ocean
+    for name, r0, r1, color in [("Day", 1.002, r_mid, "#E69F00"), ("Night", r_mid, r_top, "#56B4E9")]:
         p0, p1 = _xyz(dots["lon"], dots["lat"], r0), _xyz(dots["lon"], dots["lat"], r1)
         x, y, z = (np.column_stack([a, b, nan]).ravel() for a, b in zip(p0, p1))
         fig.add_trace(go.Scatter3d(x=x, y=y, z=z, mode="lines", name=name, line=dict(color=color, width=2.5),
                                    hoverinfo="skip"))
     tips = _xyz(dots["lon"], dots["lat"], r_top)
     fig.add_trace(go.Scatter3d(x=tips[0], y=tips[1], z=tips[2], mode="markers", showlegend=False,
-                               marker=dict(size=2, color=np.where(night > 0, "#0072B2", "#E69F00")),
-                               text=dots["locality"], customdata=np.column_stack([dots["hours"], night * 100]),
+                               marker=dict(size=2, color=np.where(night > 0, "#56B4E9", "#E69F00")),
+                               text=dots["locality"],
+                               customdata=np.column_stack([dots["hours"].round(1), (night * 100).round()]),
                                hovertemplate="%{text}<br>%{customdata[0]:,.1f} hours, %{customdata[1]:.0f}% at "
                                              "night<extra></extra>"))
     hidden = dict(visible=False, showbackground=False)
