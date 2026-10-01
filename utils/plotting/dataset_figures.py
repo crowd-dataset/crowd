@@ -484,9 +484,10 @@ def dataset_figures(df_mapping: pl.DataFrame, seg: pl.DataFrame, flags: dict) ->
 
     # the same dots on a globe; the HTML spins until it is touched, then can be dragged
     fig = go.Figure(_dot_traces(dots))
+    # a pale sea, so the edge of the globe shows, and a margin, so it does not touch the edges of the figure
     fig.update_geos(projection_type="orthographic", projection_rotation=dict(lon=10, lat=25),
-                    showlakes=False, **GEO_STYLE)
-    _save(_style(fig, width=1200, height=1000, margin=dict(l=0, r=190, t=0, b=0),
+                    showlakes=False, **{**GEO_STYLE, "oceancolor": "#e4edf5"})
+    _save(_style(fig, width=1200, height=1000, margin=dict(l=30, r=190, t=30, b=30),
                  legend=dict(x=1.0, y=0.5, yanchor="middle", itemsizing="constant")),
           "globe_localities_footage", post_script=SPIN_GEO_JS, save_eps=False)
 
@@ -641,7 +642,7 @@ def _globe(dots: pl.DataFrame, max_height: float = 0.25):
                                marker=dict(size=3, color=np.where(night > 0, "#56B4E9", "#E69F00")),
                                text=dots["hover"], hovertemplate=hover.GL_TEMPLATE))
     hidden = dict(visible=False, showbackground=False)
-    eye = 1.45 * np.array(_xyz(-35, 50))  # above the North Atlantic: spikes in North America and Europe lean into view
+    eye = 1.45 * np.array(_xyz(15, 50))  # centred on Europe
     fig.update_layout(scene=dict(xaxis=hidden, yaxis=hidden, zaxis=hidden, aspectmode="data", dragmode="turntable",
                                  camera=dict(eye=dict(x=eye[0], y=eye[1], z=eye[2]), up=dict(x=0, y=0, z=1))))
     fig.add_annotation(text=f"Spike height: hours of footage on a log scale (6 minutes to {top:,.0f} hours); "
