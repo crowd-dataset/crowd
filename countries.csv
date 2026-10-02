@@ -1,239 +1,239 @@
 country,demonym,id,iso2,tld,currency,population,density,area,gdp,median_age,language,website,calling_code,driving_side,continent,un_member,religion,flag
-China,Chinese,CN,CN,.cn,Chinese Yuan,1413142846,147.2,9596960,17963170,39.8,Chinese,https://www.gov.cn,86,right,Asia,TRUE,No Religion,🇨🇳
-India,Indian,IN,IN,.in,Indian Rupee,1399179585,425.6,3287263,3465541,29.5,Hindi,http://india.gov.in,91,left,Asia,TRUE,Hinduism,🇮🇳
-United States,American,US,US,.us,United States Dollar,339665118,34.5,9833517,25744100,38.5,English,https://www.usa.gov,1,right,North America,TRUE,Christianity,🇺🇸
-Indonesia,Indonesian,ID,ID,.id,Rupiah,279476346,146.7,1904569,1319100,31.2,Indonesian,https://indonesia.go.id,62,left,Asia,TRUE,Islam,🇮🇩
-Pakistan,Pakistani,PK,PK,.pk,Pakistani Rupee,247653551,311.1,796095,326796,22.7,Urdu,http://www.pakistan.gov.pk,92,left,Asia,TRUE,Islam,🇵🇰
-Nigeria,Nigerian,NG,NG,.ng,Naira,230842743,249.9,923768,15414,19.2,English,https://nigeria.gov.ng,234,right,Africa,TRUE,Christianity,🇳🇬
-Brazil,Brazilian,BR,BR,.br,Brazilian Real,218689757,25.7,8515770,1920095,34.7,Portuguese,https://www.gov.br,55,right,South America,TRUE,Christianity,🇧🇷
-Bangladesh,Bangladeshi,BD,BD,.bd,Bangladeshi Taka,167184465,1126.1,148460,432677,29.2,Bengali,http://www.bangladesh.gov.bd,880,left,Asia,TRUE,Islam,🇧🇩
-Russia,Russian,RU,RU,.ru,Russian Ruble,141698923,8.3,17098242,2240422,41.5,Russian,http://gov.ru,7,right,Europe,TRUE,Christianity,🇷🇺
-Mexico,Mexican,MX,MX,.mx,Mexican Peso,129875529,66.1,1964375,1463323,30.6,Spanish,https://www.gob.mx,52,right,North America,TRUE,Christianity,🇲🇽
-Japan,Japanese,JP,JP,.jp,Japanese Yen,123719238,327.4,377915,4232173,49.5,Japanese,https://www.japan.go.jp,81,left,Asia,TRUE,No Religion,🇯🇵
-Ethiopia,Ethiopian,ET,ET,.et,Bir,116462712,105.5,1104300,118971,20.2,Amharic,https://www.pmo.gov.et,251,right,Africa,TRUE,Christianity,🇪🇹
-Philippines,Philippine,PH,PH,.ph,Philippine Peso,116434200,388.1,300000,404284,25.4,Filipino,https://www.gov.ph,63,right,Asia,TRUE,Christianity,🇵🇭
-Democratic Republic of the Congo,Congolese,CD,CD,.cd,Congolese Franc,102262808,45.0,2344858,58421,17.0,French,https://www.gouv.cd,243,right,Africa,TRUE,Christianity,🇨🇩
-Egypt,Egyptian,EG,EG,.eg,Egyptian Pound,113583565,113.6,1002450,387100,25.2,Arabic,https://www.egypt.gov.eg,20,right,Africa,TRUE,Islam,🇪🇬
-Vietnam,Vietnamese,VN,VN,.vn,Đồng,98858960,290.1,331212,449090,32.5,Vietnamese,https://www.chinhphu.vn,84,right,Asia,TRUE,No Religion,🇻🇳
-Iran,Iranian,IR,IR,.ir,Iranian Rial,89435380,54.5,1648195,388245,32.0,Persian,https://www.iran.ir,98,right,Asia,TRUE,Islam,🇮🇷
-Germany,German,DE,DE,.de,Euro,84319867,240.6,357022,4383974,47.8,German,https://www.bundesregierung.de,49,right,Europe,TRUE,Christianity,🇩🇪
-Türkiye,Turkish,TR,TR,.tr,Turkish Lira,86302447,105.2,783562,906776,33.5,Turkish,https://www.turkiye.gov.tr,90,right,Asia,TRUE,Islam,🇹🇷
-Thailand,Thai,TH,TH,.th,Baht,71870712,140.0,513120,505982,40.0,Thai,https://www.thaigov.go.th,66,left,Asia,TRUE,Buddhism,🇹🇭
-France,French,FR,FR,.fr,Euro,65426179,116.7,551695,3030878,41.4,French,https://www.gouvernement.fr,33,right,Europe,TRUE,Christianity,🇫🇷
-United Kingdom,British,GB,GB,.uk,Pound Sterling,68270116,278.6,243610,3124655,40.6,English,https://www.gov.uk,44,left,Europe,TRUE,Christianity,🇬🇧
-Tanzania,Tanzanian,TZ,TZ,.tz,Tanzanian Shilling,67293010,65.7,945087,78810,18.0,Swahili,https://www.tanzania.go.tz,255,right,Africa,TRUE,Christianity,🇹🇿
-Italy,Italian,IT,IT,.it,Euro,58870762,205.0,301340,2213156,48.0,Italian,https://www.governo.it,39,right,Europe,TRUE,Christianity,🇮🇹
-South Africa,South African,ZA,ZA,.za,South African Rand,59893884,48.8,1219090,399022,28.0,English,https://www.gov.za,27,left,Africa,TRUE,Christianity,🇿🇦
-Myanmar,Burmese,MM,MM,.mm,Kyat,56877344,84.2,676578,63304,29.0,Burmese,https://www.president-office.gov.mm,95,right,Asia,TRUE,Buddhism,🇲🇲
-Kenya,Kenyan,KE,KE,.ke,Kenyan Shilling,56215221,92.8,580367,113422,20.1,English,https://www.mygov.go.ke,254,left,Africa,TRUE,Christianity,🇰🇪
-South Korea,South Korean,KR,KR,.kr,South Korean Won,51765459,527.1,100210,1814437,43.7,Korean,https://www.korea.go.kr,82,right,Asia,TRUE,No Religion,🇰🇷
-Colombia,Colombian,CO,CO,.co,Colombian Peso,52085168,44.1,1141748,343177,32.2,Spanish,https://www.gov.co,57,right,South America,TRUE,Christianity,🇨🇴
-Sudan,Sudanese,SD,SD,.sd,Sudanese Pound,48708461,21.0,1861484,34381,19.7,Arabic,https://www.gov.sd,249,right,Africa,TRUE,Islam,🇸🇩
-Uganda,Ugandan,UG,UG,.ug,Ugandan Shilling,48437544,211.1,241038,45553,16.7,English,https://www.gou.go.ug,256,left,Africa,TRUE,Christianity,🇺🇬
-Spain,Spanish,ES,ES,.es,Euro,47615034,95.1,505990,1576272,45.0,Spanish,https://www.lamoncloa.gob.es,34,right,Europe,TRUE,Christianity,🇪🇸
-Argentina,Argentine,AR,AR,.ar,Argentine Peso,45376763,16.2,2780400,641083,32.6,Spanish,https://www.argentina.gob.ar,54,right,South America,TRUE,Christianity,🇦🇷
-Algeria,Algerian,DZ,DZ,.dz,Algerian Dinar,45606477,18.2,2381741,206607,28.5,Arabic,https://www.el-mouradia.dz,213,right,Africa,TRUE,Islam,🇩🇿
-Ukraine,Ukrainian,UA,UA,.ua,Ukrainian Hryvnia,36744604,60.9,603500,160839,41.2,Ukrainian,https://www.kmu.gov.ua,380,right,Europe,TRUE,Christianity,🇺🇦
-Iraq,Iraqi,IQ,IQ,.iq,Iraqi Dinar,46693387,108.0,438317,234094,20.2,Arabic,https://www.iraq.gov.iq,964,right,Asia,TRUE,Islam,🇮🇶
-Afghanistan,Afghan,AF,AF,.af,Afghani,42566398,65.2,652230,19972,18.6,Pashto,https://president.gov.af,93,right,Asia,TRUE,Islam,🇦🇫
-Canada,Canadian,CA,CA,.ca,Canadian Dollar,38845944,4.1,9984670,2051247,41.7,English,https://www.canada.ca,1,right,North America,TRUE,Christianity,🇨🇦
-Poland,Polish,PL,PL,.pl,Polish Zloty,41026089,132.4,312679,789576,41.7,Polish,https://www.gov.pl,48,right,Europe,TRUE,Christianity,🇵🇱
-Morocco,Moroccan,MA,MA,.ma,Moroccan Dirham,37457956,83.0,446550,143970,30.2,Arabic,https://www.maroc.ma,212,right,Africa,TRUE,Islam,🇲🇦
-Angola,Angolan,AO,AO,.ao,Kwanza,36807691,29.5,1246700,124006,16.7,Portuguese,https://www.governo.gov.ao,244,right,Africa,TRUE,Christianity,🇦🇴
-Saudi Arabia,Saudi,SA,SA,.sa,Saudi Riyal,36947025,16.5,2149690,1113342,32.4,Arabic,https://www.saudi.gov.sa,966,right,Asia,TRUE,Islam,🇸🇦
-Malaysia,Malaysian,MY,MY,.my,Malaysian Ringgit,34308525,104.2,330803,434595,30.3,Malay,https://www.malaysia.gov.my,60,right,Asia,TRUE,Islam,🇲🇾
-Ghana,Ghanaian,GH,GH,.gh,Ghanaian Cedi,34121985,138.0,238533,77809,21.5,English,https://www.ghana.gov.gh,233,right,Africa,TRUE,Christianity,🇬🇭
-Mozambique,Mozambican,MZ,MZ,.mz,Mozambican Metical,33897346,42.5,801590,17315,17.3,Portuguese,https://www.portaldogoverno.gov.mz,258,left,Africa,TRUE,Christianity,🇲🇿
-Peru,Peruvian,PE,PE,.pe,Sol,34352719,27.3,1285216,268774,31.0,Spanish,https://www.gob.pe,51,right,South America,TRUE,Christianity,🇵🇪
-Yemen,Yemeni,YE,YE,.ye,Yemeni Rial,34449825,65.0,527968,22260,20.2,Arabic,https://www.yemen.gov.ye,967,right,Asia,TRUE,Islam,🇾🇪
-Uzbekistan,Uzbek,UZ,UZ,.uz,Uzbekistan Sum,35225718,78.3,448978,85720,28.5,Uzbek,https://www.gov.uz,998,right,Asia,TRUE,Islam,🇺🇿
-Nepal,Nepali,NP,NP,.np,Nepalese Rupee,30896568,209.0,147516,37706,24.0,Nepali,https://www.nepal.gov.np,977,left,Asia,TRUE,Hinduism,🇳🇵
-Venezuela,Venezuelan,VE,VE,.ve,Venezuelan Bolívar,28838499,31.5,916445,214140,30.0,Spanish,https://www.gobiernoenlinea.ve,58,right,South America,TRUE,Christianity,🇻🇪
-Cameroon,Cameroonian,CM,CM,.cm,CFA Franc BEAC,28828564,56.9,475442,40631,18.7,French,https://www.prc.cm,237,right,Africa,TRUE,Christianity,🇨🇲
-Ivory Coast,Ivorian,CI,CI,.ci,West African CFA franc,28873062,89.2,322463,70743,20.3,French,https://www.gouv.ci,225,right,Africa,TRUE,Christianity,🇨🇮
-Madagascar,Madagascan,MG,MG,.mg,Madagascar Ariary,30060672,51.6,587041,14517,20.3,Malagasy,https://www.presidence.gov.mg,261,right,Africa,TRUE,Christianity,🇲🇬
-Australia,Australian,AU,AU,.au,Australian Dollar,26910715,3.5,7692024,1685208,38.9,English,https://www.australia.gov.au,61,left,Oceania,TRUE,Christianity,🇦🇺
-North Korea,North Korean,KP,KP,.kp,North Korean Won,26160821,215.5,120538,15385,35.0,Korean,http://www.naenara.com.kp,850,right,Asia,FALSE,Atheism,🇰🇵
-Niger,Nigerien,NE,NE,.ne,West African CFA franc,27046533,17.8,1267000,15000,15.2,French,https://www.presidence.ne,227,right,Africa,TRUE,Islam,🇳🇪
-Taiwan,Taiwanese,TW,TW,.tw,New Taiwan Dollar,23911419,663.3,36197,754217,42.5,Chinese,https://www.taiwan.gov.tw,886,right,Asia,FALSE,Buddhism,🇹🇼
-Sri Lanka,Sri Lankan,LK,LK,.lk,Sri Lankan Rupee,21893587,347.8,65610,84970,34.5,Sinhala,https://www.gov.lk,94,left,Asia,TRUE,Buddhism,🇱🇰
-Syria,Syrian,SY,SY,.sy,Syrian Pound,23576793,127.4,185180,60542,25.0,Arabic,https://www.egov.sy,963,right,Asia,TRUE,Islam,🇸🇾
-Burkina Faso,Burkinabe,BF,BF,.bf,West African CFA franc,23719692,86.4,272967,19891,17.6,French,https://www.gouvernement.gov.bf,226,right,Africa,TRUE,Islam,🇧🇫
-Mali,Malian,ML,ML,.ml,West African CFA franc,23332057,18.6,1240192,17603,16.3,French,https://www.gouv.ml,223,right,Africa,TRUE,Islam,🇲🇱
-Malawi,Malawian,MW,MW,.mw,Malawian Kwacha,21132505,178.9,118484,11941,18.3,English,https://www.malawi.gov.mw,265,left,Africa,TRUE,Christianity,🇲🇼
-Zambia,Zambian,ZM,ZM,.zm,Zambian Kwacha,20591929,27.7,752612,27627,17.7,English,https://www.zambia.gov.zm,260,right,Africa,TRUE,Christianity,🇿🇲
-Kazakhstan,Kazakh,KZ,KZ,.kz,Kazakhstani Tenge,19939452,6.8,2724900,221377,30.7,Kazakh,https://www.gov.kz,7,right,Asia,TRUE,Islam,🇰🇿
-Chile,Chilean,CL,CL,.cl,Chilean Peso,18549457,24.5,756102,300686,36.6,Spanish,https://www.thisischile.cl/?lang=en,56,right,South America,TRUE,Christianity,🇨🇱
-Chad,Chadian,TD,TD,.td,Central African Cfa Franc,18523165,14.4,1284000,16799,16.5,Arabic,,235,right,Africa,TRUE,Islam,🇹🇩
-Senegal,Senegalese,SN,SN,.sn,West African Cfa Franc,18384660,93.5,196722,27775,19,French,https://www.sec.gouv.sn,221,right,Africa,TRUE,Islam,🇸🇳
-Romania,Romanian,RO,RO,.ro,Romanian Leu,18326327,76.9,238391,300690,45.1,Romanian,http://www.guv.ro,40,right,Europe,TRUE,Christianity,🇷🇴
-Guatemala,Guatemalan,GT,GT,.gt,Quetzal,17980803,165.1,108889,95003,24.4,Spanish,https://www.guatemala.gob.gt,502,right,North America,TRUE,Christianity,🇬🇹
-Ecuador,Ecuadorian,EC,EC,.ec,United States Dollar,17483326,61.7,283561,115049,27.7,Spanish,https://www.gob.ec,593,right,South America,TRUE,Christianity,🇪🇨
-Netherlands,Dutch,NL,NL,.nl,Euro,17463930,420.4,41543,1572,42.2,Dutch,https://www.government.nl,31,right,Europe,TRUE,Christianity,🇳🇱
-Cambodia,Cambodian,KH,KH,.kh,Riel,16891245,93.3,181035,29504,27.6,Khmer,https://www.ccc.gov.kh,855,right,Asia,TRUE,Buddhism,🇰🇭
-Zimbabwe,Zimbabwean,ZW,ZW,.zw,Zimbabwean ZiG,15418674,39.5,390757,26418,21,English,https://www.zim.gov.zw/index.php,263,left,Africa,TRUE,Christianity,🇿🇼
-Benin,Beninese,BJ,BJ,.bj,West African Cfa Franc,14219908,126.3,112622,17396,17.1,French,https://www.gouv.bj,229,right,Africa,TRUE,Christianity,🇧🇯
-Guinea,Guinean,GN,GN,.gn,Guinean Franc,13607249,55.3,245857,20846,19.3,French,http://www.presidence.gov.gn,224,right,Africa,TRUE,Islam,🇬🇳
-Rwanda,Rwandese,RW,RW,.rw,Rwandan Franc,13400541,508.8,26338,13312,20.5,Kinyarwanda,https://www.gov.rw,250,right,Africa,TRUE,Christianity,🇷🇼
-Burundi,Burundian,BI,BI,.bi,Burundian Franc,13162952,473,27830,4032,18.2,Kirundi,https://www.presidence.gov.bi,257,right,Africa,TRUE,Christianity,🇧🇮
-Somalia,Somalian,SO,SO,.so,Somali Shilling,12693796,19.9,637657,10420,19,Somali,https://web.mfa.gov.so,252,right,Africa,TRUE,Islam,🇸🇴
-Bolivia,Bolivian,BO,BO,.bo,Boliviano,12186079,11.1,1098581,44008,26.2,Spanish,https://www.mingobierno.gob.bo,591,right,South America,TRUE,Christianity,🇧🇴
-South Sudan,South Sudanese,SS,SS,.ss,South Sudanese Pound,12118379,18.8,644329,4616,18.7,Arabic,https://mofaic.gov.ss,211,right,Africa,TRUE,Christianity,🇸🇸
-Tunisia,Tunisian,TN,TN,.tn,Tunisian Dinar,11976182,73.2,163610,46181,34,Arabic,https://www.social.gov.tn/en,216,right,Africa,TRUE,Islam,🇹🇳
-Belgium,Belgian,BE,BE,.be,Euro,11913633,390.3,30528,582643,41.9,Dutch,https://www.belgium.be,32,right,Europe,TRUE,Christianity,🇧🇪
-Haiti,Haitian,HT,HT,.ht,Gourde,11470261,413.3,27750,18751,24.7,French,http://primature.gouv.ht,509,right,North America,TRUE,Christianity,🇭🇹
-Jordan,Jordanian,JO,JO,.jo,Jordanian Dinar,11086716,124.1,89342,47452,24.6,Arabic,https://psd.gov.jo/en-us,962,right,Asia,TRUE,Islam,🇯🇴
-Cuba,Cuban,CU,CU,.cu,Cuban Peso,10985974,99.1,110860,147193,42.3,Spanish,http://www.cuba.cu,53,right,North America,TRUE,Christianity,🇨🇺
-Dominican Republic,Dominican,DO,DO,.do,Dominican Peso,10790744,221.7,48670,113537,28.9,Spanish,https://www.dominicanrepublic.com,1,right,North America,TRUE,Christianity,🇩🇴
-Czech Republic,Czech,CZ,CZ,.cz,Czech Koruna,10706242,135.8,78867,290527,43.9,Czech,https://www.czechia.eu,,right,Europe,TRUE,No Religion,🇨🇿
-Sweden,Swedish,SE,SE,.se,Swedish Krona,10536338,23.4,450295,591188,41,Swedish,https://sweden.se,46,right,Europe,TRUE,No Religion,🇸🇪
-Greece,Greek,GR,GR,.gr,Euro,10497595,79.6,131957,217285,46.2,Greek,https://www.government.gov.gr,30,right,Europe,TRUE,Christianity,🇬🇷
-Azerbaijan,Azerbaijani,AZ,AZ,.az,Azerbaijani Manat,10420515,120.3,86600,78721,33.8,Azerbaijani,http://mfa.gov.az/en,994,right,Asia,TRUE,Islam,🇦🇿
-Portugal,Portuguese,PT,PT,.pt,Euro,10223150,111,92090,254849,46,Portuguese,https://www.portugal.gov.pt,351,right,Europe,TRUE,Christianity,🇵🇹
-United Arab Emirates,Emirati,AE,AE,.ae,United Arab Emirates Dirham,9973449,119.3,83600,507063,35.7,Arabic,https://u.ae,971,right,Asia,TRUE,Islam,🇦🇪
-Papua New Guinea,Papua New Guinean,PG,PG,.pg,Kina,9819350,21.2,462840,31609,21.6,English,https://papuanewguinea.travel,675,left,Oceania,TRUE,Christianity,🇵🇬
-Hungary,Hungarian,HU,HU,.hu,Hungarian Forint,9670009,103.9,93028,177337,44.5,Hungarian,https://www.kormany.hu,36,right,Europe,TRUE,Christianity,🇭🇺
-Honduras,Catracho,HN,HN,.hn,Honduran Lempira,9571352,85.4,112090,31717,25.3,Spanish,https://www.honduras.travel/en,504,right,North America,TRUE,Christianity,🇭🇳
-Belarus,Belarusian,BY,BY,.by,Belarusian Ruble,9383853,45.2,207600,72873,41.7,Belarusian,https://www.belarus.by,375,right,Europe,TRUE,Christianity,🇧🇾
-Tajikistan,Tajikistani,TJ,TJ,.tj,Tajikistani Somoni,9245937,64.2,144100,10492,22.7,Tajik,https://www.mfa.tj/en,992,right,Asia,TRUE,Islam,🇹🇯
-Israel,Israeli,IL,IL,.il,New Shekel,9043387,412.2,21937,525002,30.1,Hebrew,https://www.gov.il,972,right,Asia,TRUE,Judaism,🇮🇱
-Austria,Austrian,AT,AT,.at,Euro,8940860,106.6,83871,470302,44.8,German,https://www.oesterreich.gv.at/en,43,right,Europe,TRUE,Christianity,🇦🇹
-Sierra Leone,Sierra Leonean,SL,SL,.sl,Leone,8908040,124.2,71740,3481,19.2,English,https://statehouse.gov.sl,232,right,Africa,TRUE,Islam,🇸🇱
-Togo,Togolese,TG,TG,.tg,West African Cfa Franc,8703961,153.3,56785,8087,20.5,French,https://www.republicoftogo.com,228,right,Africa,TRUE,Christianity,🇹🇬
-Switzerland,Swiss,CH,CH,.ch,Swiss Franc,8563760,207.5,41277,818426,44,German,https://www.admin.ch,41,right,Europe,TRUE,Christianity,🇨🇭
-Laos,Laotian,LA,LA,.la,Lao Kip,7852377,33.2,236800,15362,25,Lao,https://www.tourismlaos.org,856,right,Asia,TRUE,Buddhism,🇱🇦
-Paraguay,Paraguayan,PY,PY,.py,Paraguayan Guaranã­,7439863,18.3,406752,41722,31.3,Spanish,https://www.paraguay.gov.py,595,right,South America,TRUE,Christianity,🇵🇾
-Hong Kong,Hong Konger,HK,HK,.hk,Hong Kong Dollar,7288167,6577.8,1108,359838,46.8,Chinese,http://www.gov.hk,852,left,Asia,FALSE,No Religion,🇭🇰
-Libya,Libyan,LY,LY,.ly,Libyan Dinar,7252573,4.1,1759540,40537,26.1,Arabic,https://ejraat.gov.ly/?l=en,218,right,Africa,TRUE,Islam,🇱🇾
-Bulgaria,Bulgarian,BG,BG,.bg,Bulgarian Lev,6827736,61.6,110879,90213,44.7,Bulgarian,http://www.government.bg,359,right,Europe,TRUE,Christianity,🇧🇬
-Serbia,Serbian,RS,RS,.rs,Serbian Dinar,6693375,86.4,77474,9397,43.7,Serbian,https://www.srbija.gov.rs,381,right,Europe,TRUE,Christianity,🇷🇸
-El Salvador,Salvadoran,SV,SV,.sv,United States Dollar,6602370,313.8,21041,32488,29.2,Spanish,https://elsalvador.travel/en,503,right,North America,TRUE,Christianity,🇸🇻
-Nicaragua,Nicaraguan,NI,NI,.ni,Nicaraguan Cordoba,6359689,48.8,130370,15671,28.5,Spanish,https://www.visitnicaragua.us,505,right,North America,TRUE,Christianity,🇳🇮
-Eritrea,Eritrean,ER,ER,.er,Nakfa,6274796,53.4,117600,2383,21,Tigrinya,http://www.shabait.com/index.php,291,right,Africa,TRUE,Islam,🇪🇷
-Kyrgyzstan,Kyrgyzstani,KG,KG,.kg,Kyrgyz Som,6122781,30.6,199951,12560,28.1,Kyrgyz,https://www.gov.kg/ky,996,right,Asia,TRUE,Islam,🇰🇬
-Singapore,Singaporean,SG,SG,.sg,Singapore Dollar,5975383,8310.7,719,466788,38.9,English,https://www.gov.sg,65,left,Asia,TRUE,Buddhism,🇸🇬
-Denmark,Danish,DK,DK,.dk,Danish Krone,5946984,138,43094,400167,42.2,Danish,https://denmark.dk,45,right,Europe,FALSE,No Religion,🇩🇰
-Turkmenistan,Turkmenistani,TM,TM,.tm,Turkmenistan New Manat,5690818,11.7,488100,67009,30.7,Turkmen,http://www.turkmenistan.gov.tm,993,right,Asia,TRUE,Islam,🇹🇲
-Republic of the Congo,Congolese,CG,CG,.cg,Central African Cfa Franc,5677493,16.6,342000,15344,20.5,French,https://gouvernement.cg,,right,Africa,TRUE,Christianity,🇨🇬
-Finland,Finnish,FI,FI,.fi,Euro,5614571,16.6,338145,282511,43.2,Finnish,https://finland.fi,358,right,Europe,TRUE,Christianity,🇫🇮
-Norway,Norwegian,NO,NO,.no,Norwegian Krone,5597924,17.3,323802,579422,40.6,Norwegian,http://www.norway.no,47,right,Europe,TRUE,No Religion,🇳🇴
-Central African Republic,Central African,CF,CF,.cf,Central African Cfa Franc,5552228,8.9,622984,2395,20.2,Sango,,420,right,Africa,TRUE,Christianity,🇨🇫
-Liberia,Liberian,LR,LR,.lr,Liberian Dollar,5506280,49.4,111369,3265,19.7,English,https://www.mofa.gov.lr,231,right,Africa,TRUE,Christianity,🇱🇷
-Slovakia,Slovak,SK,SK,.sk,Euro,5425319,110.6,49035,115304,42.5,Slovak,https://www.slovakia.com,421,right,Europe,TRUE,Christianity,🇸🇰
-Lebanon,Lebanese,LB,LB,.lb,Lebanese Pound,5331203,512.6,10400,39303,35.8,Arabic,https://www.ministryinfo.gov.lb/en,961,right,Asia,TRUE,Islam,🇱🇧
-Ireland,Irish,IE,IE,.ie,Euro,5323991,75.8,70273,532415,39.8,English,http://www.gov.ie,44,left,Europe,TRUE,Christianity,🇮🇪
-Costa Rica,Costa Rican,CR,CR,.cr,Costa Rican Colon,5256612,102.9,51100,68380,35,Spanish,https://www.presidencia.go.cr,506,right,North America,TRUE,Christianity,🇨🇷
-New Zealand,New Zealander,NZ,NZ,.nz,New Zealand Dollar,5109702,19,268838,245845,37.7,English,https://www.govt.nz,64,left,Oceania,TRUE,Christianity,🇳🇿
-Georgia,Georgian,GE,GE,.ge,Georgian Lari,4927228,70.7,69700,24605,38,Georgian,https://www.gov.ge,995,right,Asia,TRUE,Christianity,🇬🇪
-Panama,Panamanian,PA,PA,.pa,United States Dollar,4404108,58.4,75420,76522,31.2,Spanish,https://visitpanama.com/?lang=en,507,right,North America,TRUE,Christianity,🇵🇦
-Mauritania,Mauritanian,MR,MR,.mr,Mauritanian Ouguiya,4244878,4.1,1030700,10997,21.9,Arabic,,222,right,Africa,TRUE,Islam,🇲🇷
-Croatia,Croatian,HR,HR,.hr,Euro,4169239,73.7,56594,71552,44.8,Croatian,https://www.vlada.hr,385,right,Europe,TRUE,Christianity,🇭🇷
-Oman,Omani,OM,OM,.om,Omani Rial,3833465,12.4,309500,114666,27.1,Arabic,https://www.oman.om,968,right,Asia,TRUE,Islam,🇴🇲
-Bosnia and Herzegovina,Herzegovinian,BA,BA,.ba,Convertible Mark,3807764,74.4,51197,24473,44.4,Bosnian,http://www.fbihvlada.gov.ba,387,right,Europe,TRUE,Islam,🇧🇦
-Uruguay,Uruguayan,UY,UY,.uy,Uruguayan Peso,3416264,19.4,176215,71171,36.2,Spanish,https://www.gub.uy,598,right,South America,TRUE,Christianity,🇺🇾
-Mongolia,Mongolian,MN,MN,.mn,Tugrik,3255468,2.1,1564116,17146,31.2,Mongolian,https://www.gov.mn/en,976,right,Asia,TRUE,Buddhism,🇲🇳
-Moldova,Moldavian,MD,MD,.md,Moldovan Leu,3250532,96,33851,14510,39.4,Romanian,http://www.moldova.md,373,right,Europe,TRUE,Christianity,🇲🇩
-Kuwait,Kuwaiti,KW,KW,.kw,Kuwaiti Dinar,3103580,174.2,17818,175363,30.1,Arabic,https://www.e.gov.kw,965,right,Asia,TRUE,Islam,🇰🇼
-Albania,Albanian,AL,AL,.al,Albanian Lek,3101621,107.9,28748,18916,35.8,Albanian,https://www.kryeministria.al/en,355,right,Europe,TRUE,Islam,🇦🇱
-Puerto Rico,Puerto Rican,PR,PR,.pr,United States Dollar,3057311,335.8,9104,113434,45.6,Spanish,https://pr.gov,1,right,North America,FALSE,Christianity,🇵🇷
-Armenia,Armenian,AM,AM,.am,Armenian Dram,2989091,100.5,29743,19513,38.3,Armenian,http://www.gov.am/en,374,right,Asia,TRUE,Christianity,🇦🇲
-West Bank,West Banker,XW,PS,,,2949246,521.5,5655,,,,https://www.pcbs.gov.ps/default.aspx,,right,Asia,FALSE,Islam,🇵🇸
-Jamaica,Jamaican,JM,JM,.jm,Jamaican Dollar,2820982,256.7,10991,17097,30.5,English,https://www.gov.jm,1,left,North America,TRUE,Christianity,🇯🇲
-Namibia,Namibian,NA,NA,.na,Namibian Dollar ,2777232,3.4,824292,12607,22.5,English,https://gov.na,,left,Africa,TRUE,,🇳🇦
-Lithuania,Lithuanian,LT,LT,.lt,Euro,2655755,40.7,65300,70878,45,Lithuanian,https://www.lietuva.lt/en,370,right,Europe,TRUE,Christianity,🇱🇹
-Qatar,Qatari,QA,QA,.qa,Qatari Riyal,2532104,218.5,11586,237101,34.2,Arabic,https://www.diwan.gov.qa,974,right,Asia,TRUE,Islam,🇶🇦
-The Gambia,Gambian,GM,GM,.gm,Dalasi,2468569,218.5,11300,2231,19.9,English,https://gambia.gov.gm,220,right,Africa,TRUE,Islam,🇬🇲
-Botswana,Botswanan,BW,BW,.bw,Botswana Pula,2417596,4.2,581730,20352,26.8,English,https://gov.bw,267,left,Africa,TRUE,Christianity,🇧🇼
-Gabon,Gabonese,GA,GA,.ga,Central African Cfa Franc,2397368,9,267667,20132,21.8,French,https://gouvernement.ga,241,right,Africa,TRUE,Christianity,🇬🇦
-Lesotho,Basotho,LS,LS,.ls,Rand,2210646,72.8,30355,2287,23.7,English,https://www.gov.ls,266,left,Africa,TRUE,Christianity,🇱🇸
-North Macedonia,Macedonian,MK,MK,.mk,North Macedonian Denar,2133410,83,25713,13711,40.1,Macedonian,https://vlada.mk,389,right,Europe,TRUE,Christianity,🇲🇰
-Slovenia,Slovenian,SI,SI,.si,Euro,2099790,103.6,20273,59981,45.9,Slovenian,https://www.gov.si,386,right,Europe,TRUE,Christianity,🇸🇮
-Guinea-Bissau,Guinea-Bissauan,GW,GW,.gw,West African Cfa Franc,2078820,57.5,36125,1574,18.3,Portuguese,https://www.gov.gw,245,right,Africa,TRUE,Islam,🇬🇼
-Kosovo,Kosovan,XK,XK,,Euro,1964327,180.4,10887,,31.7,Serbian,http://www.rks-gov.net,383,right,Europe,FALSE,Islam,🇽🇰
-Latvia,Latvian,LV,LV,.lv,Euro,1821750,28.2,64589,40876,45.2,Latvian,https://www.mk.gov.lv,371,right,Europe,TRUE,Christianity,🇱🇻
-Equatorial Guinea,Equatorial Guinean,GQ,GQ,.gq,Central African Cfa Franc,1737695,61.9,28051,11767,21.9,Spanish,https://www.guineaecuatorialpress.com,240,right,Africa,TRUE,Christianity,🇬🇶
-Bahrain,Bahraini,BH,BH,.bh,Bahraini Dinar,1553886,2044.6,760,44382,33.3,Arabic,https://www.bahrain.bh,973,right,Asia,TRUE,Islam,🇧🇭
-Timor-Leste,East Timorese,TL,TL,.tl,United States Dollar,1476042,99.2,14874,3204,20.3,Portuguese,http://timor-leste.gov.tl/?lang=en,670,left,Asia,TRUE,Christianity,🇹🇱
-Trinidad and Tobago,Trinidadian,TT,TT,.tt,Trinidad And Tobago Dollar,1407460,274.5,5128,30053,38,English,http://www.gov.tt,1,left,North America,TRUE,Christianity,🇹🇹
-Mauritius,Mauritian,MU,MU,.mu,Mauritian Rupee,1309448,641.9,2040,12898,39.3,English,http://www.govmu.org,230,left,Seven seas (open ocean),TRUE,Hinduism,🇲🇺
-Cyprus,Cypriot,CY,CY,.cy,Euro,1308120,141.4,9251,29210,39.1,Greek,http://www.cyprus.gov.cy,90,left,Asia,TRUE,Christianity,🇨🇾
-Estonia,Estonian,EE,EE,.ee,Euro,1202762,26.6,45228,38049,44.7,Estonian,https://valitsus.ee,372,right,Europe,TRUE,No Religion,🇪🇪
-Eswatini,liSwati,SZ,SZ,.sz,Lilangeni,1130043,65.1,17364,4326,24.4,English,http://www.gov.sz,268,left,Africa,TRUE,Christianity,🇸🇿
-Djibouti,Djiboutian,DJ,DJ,.dj,Djiboutian Franc,976143,42.1,23200,4003,26,Arabic,https://www.presidence.dj,253,right,Africa,TRUE,Islam,🇩🇯
-Fiji,Fijian,FJ,FJ,.fj,Fijian Dollar,947760,51.9,18274,4979,31.2,English,https://www.fiji.gov.fj,679,left,Oceania,TRUE,Christianity,🇫🇯
-Comoros,Comorian,KM,KM,.km,Comorian Franc,888378,397.5,2235,1246,22.3,Arabic,https://beit-salam.km,269,right,Africa,TRUE,Islam,🇰🇲
-Bhutan,Bhutanese,BT,BT,.bt,Ngultrum,876181,22.8,38394,2898,30.2,Dzongkha,http://www.bhutan.gov.bt,975,left,Asia,TRUE,Buddhism,🇧🇹
-Guyana,Guyanese,GY,GY,.gy,Guyanese Dollar,791739,3.7,214969,14718,27.9,English,https://parliament.gov.gy,592,left,South America,TRUE,Christianity,🇬🇾
-Solomon Islands,Solomon Islander,SB,SB,.sb,Solomon Islands Dollar,714766,24.7,28896,1597,24.8,English,https://solomons.gov.sb,677,left,Oceania,TRUE,Christianity,🇸🇧
-Luxembourg,Luxembourgian,LU,LU,.lu,Euro,660924,255.6,2586,81530,39.8,Luxembourgish,https://luxembourg.public.lu,352,right,Europe,TRUE,Christianity,🇱🇺
-Macau,Macanese,MO,MO,.mo,Hong Kong Dollar,639971,22856.1,28,24042,42,Chinese,https://www.gov.mo,853,left,Asia,FALSE,Buddhism,🇲🇴
-Suriname,Surinamese,SR,SR,.sr,Surinamese Dollar,639759,3.9,163820,3620,31.6,Dutch,https://gov.sr,597,left,South America,TRUE,Christianity,🇸🇷
-Cape Verde,Cabo Verdean,CV,CV,.cv,Cape Verdean Escudo,603901,149.7,4033,2314,28.3,Portuguese,http://www.governo.cv,,right,Africa,TRUE,Christianity,🇨🇻
-Montenegro,Montenegrin,ME,ME,.me,Euro,602445,43.6,13812,6229,40.7,Montenegrin,https://www.gov.me,382,right,Europe,TRUE,Christianity,🇲🇪
-Western Sahara,Sahrawi,EH,EH,.eh,Moroccan Dirham,565581,2.1,272000,,,Arabic,,,right,Africa,FALSE,Islam,🇪🇭
-Maldives,Maldivian,MV,MV,.mv,Maldivian Rufiyaa,521021,1748.4,298,6170,31.3,Divehi,https://visitmaldives.com,960,left,Seven seas (open ocean),TRUE,Islam,🇲🇻
-Brunei,Brunei,BN,BN,.bn,Brunei Dollar,484991,84.1,5765,16681,32,Malay,https://www.gov.bn/bm,673,left,Asia,TRUE,Islam,🇧🇳
-Malta,Maltese,MT,MT,.mt,Euro,467138,1478.3,316,18100,43.2,Maltese,http://www.gov.mt,356,left,Europe,TRUE,Christianity,🇲🇹
-Belize,Belizean,BZ,BZ,.bz,Belize Dollar,419137,18.3,22966,2830,26.4,English,http://www.belize.gov.bz,501,right,North America,TRUE,Christianity,🇧🇿
-Guadeloupe,Guadeloupean,GP,GP,.gp,Euro,378561,232.5,1628,9462,,French,https://www.guadeloupe.gouv.fr,590,right,North America,FALSE,Christianity,🇬🇵
-Iceland,Icelander,IS,IS,.is,Icelandic Krona,360872,3.5,103000,28064,37.8,Icelandic,http://www.iceland.is,354,right,Europe,TRUE,Christianity,🇮🇸
-The Bahamas,Bahamian,BS,BS,.bs,Bahamian Dollar,358508,25.8,13880,12897,30.2,English,https://www.bahamas.gov.bs,1,left,North America,TRUE,Christianity,🇧🇸
-Vanuatu,Ni-Vanuatu,VU,VU,.vu,Vanuatu Vatus,313046,25.7,12189,985,24.2,Bislama,https://www.gov.vu,678,right,Oceania,TRUE,Christianity,🇻🇺
-Barbados,Barbadian,BB,BB,.bb,Barbadian Dollar,303431,705.7,430,5699,41,English,http://www.gov.bb,1,left,North America,TRUE,Christianity,🇧🇧
-French Polynesia,French Polynesian,PF,PF,.pf,Cfp Franc,301488,72.4,4167,5814,34.8,French,https://www.polynesie-francaise.pref.gouv.fr,689,right,Oceania,FALSE,Christianity,🇵🇫
-New Caledonia,New Caledonian,NC,NC,.nc,Cfp Franc,300682,16.2,18575,9623,33.9,French,https://gouv.nc,687,right,Oceania,FALSE,Christianity,🇳🇨
-São Tomé and Príncipe,Sao Tomean,ST,ST,.st,Sã£O Tomã© And Prã­Ncipe Dobra,220372,228.6,964,546,20.4,Portuguese,http://www.saotome.st,239,right,Africa,TRUE,Christianity,🇸🇹
-Samoa,Samoan,WS,WS,.ws,Samoan Tala,207501,73.3,2831,857,26.9,Samoan,http://www.samoagovt.ws,685,left,Oceania,TRUE,Christianity,🇼🇸
-Guam,Guamanian,GU,GU,.gu,United States Dollar,169330,311.3,544,,30.1,English,http://www.guam.gov,1,right,Oceania,FALSE,Christianity,🇬🇺
-Saint Lucia,Saint Lucian,LC,LC,.lc,Eastern Caribbean Dollar,167591,272.1,616,2165,39,English,http://www.govt.lc,1,left,North America,TRUE,Christianity,🇱🇨
-Curaçao,Curaçaoan,CW,CW,.cw,Netherlands Antillean Guilder,152849,344.3,444,,37.5,English,http://www.curacao.com,599,right,North America,FALSE,Christianity,🇨🇼
-Aruba,Aruban,AW,AW,.aw,Aruban Florin,123702,687.2,180,3544,40.7,Dutch,http://www.aruba.com,297,right,North America,FALSE,Christianity,🇦🇼
-Kiribati,I-Kiribati,KI,KI,.ki,Australian Dollar,115372,142.3,811,223,26.9,English,https://www.kiribati.gov.ki,686,left,Oceania,TRUE,Christianity,🇰🇮
-Grenada,Grenadian,GD,GD,.gd,Eastern Caribbean Dollar,114299,332.3,344,1192,35,English,https://www.gov.gd,1,left,North America,TRUE,Christianity,🇬🇩
-Tonga,Tongan,TO,TO,.to,Tongan Paʻanga,105221,140.9,747,488,25.4,English,http://www.mic.gov.to,676,left,Oceania,TRUE,Christianity,🇹🇴
-United States Virgin Islands,Virgin Islander,VI,VI,.vi,United States Dollar,104917,54.9,1910,,42.7,English,http://www.vi.gov,1,left,North America,FALSE,Christianity,🇻🇮
-Jersey,Jersey People,JE,JE,.je,Pound Sterling,102785,886.1,116,,38,English,https://www.gov.je,44,left,Europe,FALSE,Christianity,🇯🇪
-Antigua and Barbuda,Antigua and Barbuda,AG,AG,.ag,Eastern Caribbean Dollar,101489,229.1,443,1770,33.6,English,http://www.ab.gov.ag,1,left,North America,TRUE,Christianity,🇦🇬
-Saint Vincent and the Grenadines,Saint Vincentian,VC,VC,.vc,Eastern Caribbean Dollar,100804,259.1,389,946,37,English,https://www.gov.vc,1,left,North America,TRUE,Christianity,🇻🇨
-Federated States of Micronesia,Micronesian,FM,FM,.fm,United States Dollar,100319,142.9,702,427,27.8,English,https://gov.fm,691,right,Oceania,TRUE,Christianity,🇫🇲
-Seychelles,Seychelloise,SC,SC,.sc,Seychellois Rupee,97617,214.5,455,1994,38.2,English,http://www.egov.sc,248,left,Seven seas (open ocean),TRUE,Christianity,🇸🇨
-Isle of Man,Manx,IM,IM,.im,Manx Pound,91840,160.6,572,,44.8,Manx,http://www.gov.im,44,left,Europe,FALSE,Christianity,🇮🇲
-Andorra,Andorran,AD,AD,.ad,Euro,85468,182.6,468,3376,48.1,Catalan,https://www.govern.ad,376,right,Europe,TRUE,Christianity,🇦🇩
-Marshall Islands,Marshallese,MH,MH,.mh,United States Dollar,80966,447.3,181,279,25.1,English,https://rmiparliament.org/cms,692,right,Oceania,TRUE,Christianity,🇲🇭
-Dominica,Dominican,DM,DM,.dm,Eastern Caribbean Dollar,74656,99.4,751,612,36.5,English,http://www.dominica.gov.dm,1,left,North America,TRUE,Christianity,🇩🇲
-Bermuda,Bermudian,BM,BM,.bm,Bermudian Dollar,72576,1344,54,7546,43.7,English,https://www.gov.bm,1,left,North America,FALSE,Christianity,🇧🇲
-Guernsey,Guernsey,GG,GG,.gg,Pound Sterling,67642,867.2,78,,44.8,English,https://www.gov.gg,44,left,Europe,FALSE,Christianity,🇬🇬
+China,Chinese,CN,CN,.cn,Chinese Yuan,1406585000,146.6,9596960,17963170,39.8,Chinese,https://www.gov.cn,86,right,Asia,TRUE,No Religion,🇨🇳
+India,Indian,IN,IN,.in,Indian Rupee,1463865525,445.3,3287263,3465541,29.5,Hindi,http://india.gov.in,91,left,Asia,TRUE,Hinduism,🇮🇳
+United States,American,US,US,.us,United States Dollar,341784857,34.8,9833517,25744100,38.5,English,https://www.usa.gov,1,right,North America,TRUE,Christianity,🇺🇸
+Indonesia,Indonesian,ID,ID,.id,Rupiah,285721236,150.0,1904569,1319100,31.2,Indonesian,https://indonesia.go.id,62,left,Asia,TRUE,Islam,🇮🇩
+Pakistan,Pakistani,PK,PK,.pk,Pakistani Rupee,255219554,320.6,796095,326796,22.7,Urdu,http://www.pakistan.gov.pk,92,left,Asia,TRUE,Islam,🇵🇰
+Nigeria,Nigerian,NG,NG,.ng,Naira,237527782,257.1,923768,15414,19.2,English,https://nigeria.gov.ng,234,right,Africa,TRUE,Christianity,🇳🇬
+Brazil,Brazilian,BR,BR,.br,Brazilian Real,212812405,25.0,8515770,1920095,34.7,Portuguese,https://www.gov.br,55,right,South America,TRUE,Christianity,🇧🇷
+Bangladesh,Bangladeshi,BD,BD,.bd,Bangladeshi Taka,175686899,1183.4,148460,432677,29.2,Bengali,http://www.bangladesh.gov.bd,880,left,Asia,TRUE,Islam,🇧🇩
+Russia,Russian,RU,RU,.ru,Russian Ruble,143513328,8.4,17098242,2240422,41.5,Russian,http://gov.ru,7,right,Europe,TRUE,Christianity,🇷🇺
+Mexico,Mexican,MX,MX,.mx,Mexican Peso,131946900,67.2,1964375,1463323,30.6,Spanish,https://www.gob.mx,52,right,North America,TRUE,Christianity,🇲🇽
+Japan,Japanese,JP,JP,.jp,Japanese Yen,123366734,326.4,377915,4232173,49.5,Japanese,https://www.japan.go.jp,81,left,Asia,TRUE,No Religion,🇯🇵
+Ethiopia,Ethiopian,ET,ET,.et,Bir,135472051,122.7,1104300,118971,20.2,Amharic,https://www.pmo.gov.et,251,right,Africa,TRUE,Christianity,🇪🇹
+Philippines,Philippine,PH,PH,.ph,Philippine Peso,116786962,389.3,300000,404284,25.4,Filipino,https://www.gov.ph,63,right,Asia,TRUE,Christianity,🇵🇭
+Democratic Republic of the Congo,Congolese,CD,CD,.cd,Congolese Franc,112832473,48.1,2344858,58421,17.0,French,https://www.gouv.cd,243,right,Africa,TRUE,Christianity,🇨🇩
+Egypt,Egyptian,EG,EG,.eg,Egyptian Pound,118365995,118.1,1002450,387100,25.2,Arabic,https://www.egypt.gov.eg,20,right,Africa,TRUE,Islam,🇪🇬
+Vietnam,Vietnamese,VN,VN,.vn,Đồng,101598527,306.7,331212,449090,32.5,Vietnamese,https://www.chinhphu.vn,84,right,Asia,TRUE,No Religion,🇻🇳
+Iran,Iranian,IR,IR,.ir,Iranian Rial,92417681,56.1,1648195,388245,32.0,Persian,https://www.iran.ir,98,right,Asia,TRUE,Islam,🇮🇷
+Germany,German,DE,DE,.de,Euro,83491249,233.9,357022,4383974,47.8,German,https://www.bundesregierung.de,49,right,Europe,TRUE,Christianity,🇩🇪
+Türkiye,Turkish,TR,TR,.tr,Turkish Lira,85878556,109.6,783562,906776,33.5,Turkish,https://www.turkiye.gov.tr,90,right,Asia,TRUE,Islam,🇹🇷
+Thailand,Thai,TH,TH,.th,Baht,71619863,139.6,513120,505982,40.0,Thai,https://www.thaigov.go.th,66,left,Asia,TRUE,Buddhism,🇹🇭
+France,French,FR,FR,.fr,Euro,68720337,124.6,551695,3030878,41.4,French,https://www.gouvernement.fr,33,right,Europe,TRUE,Christianity,🇫🇷
+United Kingdom,British,GB,GB,.uk,Pound Sterling,69487000,285.2,243610,3124655,40.6,English,https://www.gov.uk,44,left,Europe,TRUE,Christianity,🇬🇧
+Tanzania,Tanzanian,TZ,TZ,.tz,Tanzanian Shilling,70545865,74.6,945087,78810,18.0,Swahili,https://www.tanzania.go.tz,255,right,Africa,TRUE,Christianity,🇹🇿
+Italy,Italian,IT,IT,.it,Euro,58915656,195.5,301340,2213156,48.0,Italian,https://www.governo.it,39,right,Europe,TRUE,Christianity,🇮🇹
+South Africa,South African,ZA,ZA,.za,South African Rand,64747319,53.1,1219090,399022,28.0,English,https://www.gov.za,27,left,Africa,TRUE,Christianity,🇿🇦
+Myanmar,Burmese,MM,MM,.mm,Kyat,54850648,81.1,676578,63304,29.0,Burmese,https://www.president-office.gov.mm,95,right,Asia,TRUE,Buddhism,🇲🇲
+Kenya,Kenyan,KE,KE,.ke,Kenyan Shilling,57532493,99.1,580367,113422,20.1,English,https://www.mygov.go.ke,254,left,Africa,TRUE,Christianity,🇰🇪
+South Korea,South Korean,KR,KR,.kr,South Korean Won,51684564,515.8,100210,1814437,43.7,Korean,https://www.korea.go.kr,82,right,Asia,TRUE,No Religion,🇰🇷
+Colombia,Colombian,CO,CO,.co,Colombian Peso,53425635,46.8,1141748,343177,32.2,Spanish,https://www.gov.co,57,right,South America,TRUE,Christianity,🇨🇴
+Sudan,Sudanese,SD,SD,.sd,Sudanese Pound,51662147,27.8,1861484,34381,19.7,Arabic,https://www.gov.sd,249,right,Africa,TRUE,Islam,🇸🇩
+Uganda,Ugandan,UG,UG,.ug,Ugandan Shilling,51384894,213.2,241038,45553,16.7,English,https://www.gou.go.ug,256,left,Africa,TRUE,Christianity,🇺🇬
+Spain,Spanish,ES,ES,.es,Euro,49355143,97.5,505990,1576272,45.0,Spanish,https://www.lamoncloa.gob.es,34,right,Europe,TRUE,Christianity,🇪🇸
+Argentina,Argentine,AR,AR,.ar,Argentine Peso,45851378,16.5,2780400,641083,32.6,Spanish,https://www.argentina.gob.ar,54,right,South America,TRUE,Christianity,🇦🇷
+Algeria,Algerian,DZ,DZ,.dz,Algerian Dinar,47435312,19.9,2381741,206607,28.5,Arabic,https://www.el-mouradia.dz,213,right,Africa,TRUE,Islam,🇩🇿
+Ukraine,Ukrainian,UA,UA,.ua,Ukrainian Hryvnia,38980376,64.6,603500,160839,41.2,Ukrainian,https://www.kmu.gov.ua,380,right,Europe,TRUE,Christianity,🇺🇦
+Iraq,Iraqi,IQ,IQ,.iq,Iraqi Dinar,47020774,107.3,438317,234094,20.2,Arabic,https://www.iraq.gov.iq,964,right,Asia,TRUE,Islam,🇮🇶
+Afghanistan,Afghan,AF,AF,.af,Afghani,43844111,67.2,652230,19972,18.6,Pashto,https://president.gov.af,93,right,Asia,TRUE,Islam,🇦🇫
+Canada,Canadian,CA,CA,.ca,Canadian Dollar,41651653,4.2,9984670,2051247,41.7,English,https://www.canada.ca,1,right,North America,TRUE,Christianity,🇨🇦
+Poland,Polish,PL,PL,.pl,Polish Zloty,36435861,116.5,312679,789576,41.7,Polish,https://www.gov.pl,48,right,Europe,TRUE,Christianity,🇵🇱
+Morocco,Moroccan,MA,MA,.ma,Moroccan Dirham,38430770,86.1,446550,143970,30.2,Arabic,https://www.maroc.ma,212,right,Africa,TRUE,Islam,🇲🇦
+Angola,Angolan,AO,AO,.ao,Kwanza,39040039,31.3,1246700,124006,16.7,Portuguese,https://www.governo.gov.ao,244,right,Africa,TRUE,Christianity,🇦🇴
+Saudi Arabia,Saudi,SA,SA,.sa,Saudi Riyal,36973555,17.2,2149690,1113342,32.4,Arabic,https://www.saudi.gov.sa,966,right,Asia,TRUE,Islam,🇸🇦
+Malaysia,Malaysian,MY,MY,.my,Malaysian Ringgit,35977838,108.8,330803,434595,30.3,Malay,https://www.malaysia.gov.my,60,right,Asia,TRUE,Islam,🇲🇾
+Ghana,Ghanaian,GH,GH,.gh,Ghanaian Cedi,35064272,147.0,238533,77809,21.5,English,https://www.ghana.gov.gh,233,right,Africa,TRUE,Christianity,🇬🇭
+Mozambique,Mozambican,MZ,MZ,.mz,Mozambican Metical,35631653,44.5,801590,17315,17.3,Portuguese,https://www.portaldogoverno.gov.mz,258,left,Africa,TRUE,Christianity,🇲🇿
+Peru,Peruvian,PE,PE,.pe,Sol,34576665,26.9,1285216,268774,31.0,Spanish,https://www.gob.pe,51,right,South America,TRUE,Christianity,🇵🇪
+Yemen,Yemeni,YE,YE,.ye,Yemeni Rial,41773878,79.1,527968,22260,20.2,Arabic,https://www.yemen.gov.ye,967,right,Asia,TRUE,Islam,🇾🇪
+Uzbekistan,Uzbek,UZ,UZ,.uz,Uzbekistan Sum,37053428,82.5,448978,85720,28.5,Uzbek,https://www.gov.uz,998,right,Asia,TRUE,Islam,🇺🇿
+Nepal,Nepali,NP,NP,.np,Nepalese Rupee,29618118,200.8,147516,37706,24.0,Nepali,https://www.nepal.gov.np,977,left,Asia,TRUE,Hinduism,🇳🇵
+Venezuela,Venezuelan,VE,VE,.ve,Venezuelan Bolívar,28516896,31.1,916445,214140,30.0,Spanish,https://www.gobiernoenlinea.ve,58,right,South America,TRUE,Christianity,🇻🇪
+Cameroon,Cameroonian,CM,CM,.cm,CFA Franc BEAC,29879337,62.8,475442,40631,18.7,French,https://www.prc.cm,237,right,Africa,TRUE,Christianity,🇨🇲
+Ivory Coast,Ivorian,CI,CI,.ci,West African CFA franc,32711547,101.4,322463,70743,20.3,French,https://www.gouv.ci,225,right,Africa,TRUE,Christianity,🇨🇮
+Madagascar,Madagascan,MG,MG,.mg,Madagascar Ariary,32740678,55.8,587041,14517,20.3,Malagasy,https://www.presidence.gov.mg,261,right,Africa,TRUE,Christianity,🇲🇬
+Australia,Australian,AU,AU,.au,Australian Dollar,27614411,3.6,7692024,1685208,38.9,English,https://www.australia.gov.au,61,left,Oceania,TRUE,Christianity,🇦🇺
+North Korea,North Korean,KP,KP,.kp,North Korean Won,26571036,220.4,120538,15385,35.0,Korean,http://www.naenara.com.kp,850,right,Asia,FALSE,Atheism,🇰🇵
+Niger,Nigerien,NE,NE,.ne,West African CFA franc,27917831,22.0,1267000,15000,15.2,French,https://www.presidence.ne,227,right,Africa,TRUE,Islam,🇳🇪
+Taiwan,Taiwanese,TW,TW,.tw,New Taiwan Dollar,23570000,651.2,36197,754217,42.5,Chinese,https://www.taiwan.gov.tw,886,right,Asia,FALSE,Buddhism,🇹🇼
+Sri Lanka,Sri Lankan,LK,LK,.lk,Sri Lankan Rupee,21756000,331.6,65610,84970,34.5,Sinhala,https://www.gov.lk,94,left,Asia,TRUE,Buddhism,🇱🇰
+Syria,Syrian,SY,SY,.sy,Syrian Pound,25620427,138.4,185180,60542,25.0,Arabic,https://www.egov.sy,963,right,Asia,TRUE,Islam,🇸🇾
+Burkina Faso,Burkinabe,BF,BF,.bf,West African CFA franc,24074580,88.2,272967,19891,17.6,French,https://www.gouvernement.gov.bf,226,right,Africa,TRUE,Islam,🇧🇫
+Mali,Malian,ML,ML,.ml,West African CFA franc,25198821,20.3,1240192,17603,16.3,French,https://www.gouv.ml,223,right,Africa,TRUE,Islam,🇲🇱
+Malawi,Malawian,MW,MW,.mw,Malawian Kwacha,22216120,187.5,118484,11941,18.3,English,https://www.malawi.gov.mw,265,left,Africa,TRUE,Christianity,🇲🇼
+Zambia,Zambian,ZM,ZM,.zm,Zambian Kwacha,21913874,29.1,752612,27627,17.7,English,https://www.zambia.gov.zm,260,right,Africa,TRUE,Christianity,🇿🇲
+Kazakhstan,Kazakh,KZ,KZ,.kz,Kazakhstani Tenge,20843754,7.6,2724900,221377,30.7,Kazakh,https://www.gov.kz,7,right,Asia,TRUE,Islam,🇰🇿
+Chile,Chilean,CL,CL,.cl,Chilean Peso,19859921,26.3,756102,300686,36.6,Spanish,https://www.thisischile.cl/?lang=en,56,right,South America,TRUE,Christianity,🇨🇱
+Chad,Chadian,TD,TD,.td,Central African Cfa Franc,21003705,16.4,1284000,16799,16.5,Arabic,,235,right,Africa,TRUE,Islam,🇹🇩
+Senegal,Senegalese,SN,SN,.sn,West African Cfa Franc,18931966,96.2,196722,27775,19,French,https://www.sec.gouv.sn,221,right,Africa,TRUE,Islam,🇸🇳
+Romania,Romanian,RO,RO,.ro,Romanian Leu,19020271,79.8,238391,300690,45.1,Romanian,http://www.guv.ro,40,right,Europe,TRUE,Christianity,🇷🇴
+Guatemala,Guatemalan,GT,GT,.gt,Quetzal,18687881,171.6,108889,95003,24.4,Spanish,https://www.guatemala.gob.gt,502,right,North America,TRUE,Christianity,🇬🇹
+Ecuador,Ecuadorian,EC,EC,.ec,United States Dollar,18289896,64.5,283561,115049,27.7,Spanish,https://www.gob.ec,593,right,South America,TRUE,Christianity,🇪🇨
+Netherlands,Dutch,NL,NL,.nl,Euro,18087633,435.4,41543,1572,42.2,Dutch,https://www.government.nl,31,right,Europe,TRUE,Christianity,🇳🇱
+Cambodia,Cambodian,KH,KH,.kh,Riel,17847982,98.6,181035,29504,27.6,Khmer,https://www.ccc.gov.kh,855,right,Asia,TRUE,Buddhism,🇰🇭
+Zimbabwe,Zimbabwean,ZW,ZW,.zw,Zimbabwean ZiG,16950795,43.4,390757,26418,21,English,https://www.zim.gov.zw/index.php,263,left,Africa,TRUE,Christianity,🇿🇼
+Benin,Beninese,BJ,BJ,.bj,West African Cfa Franc,14814460,131.5,112622,17396,17.1,French,https://www.gouv.bj,229,right,Africa,TRUE,Christianity,🇧🇯
+Guinea,Guinean,GN,GN,.gn,Guinean Franc,15099727,61.4,245857,20846,19.3,French,http://www.presidence.gov.gn,224,right,Africa,TRUE,Islam,🇬🇳
+Rwanda,Rwandese,RW,RW,.rw,Rwandan Franc,14569341,553.2,26338,13312,20.5,Kinyarwanda,https://www.gov.rw,250,right,Africa,TRUE,Christianity,🇷🇼
+Burundi,Burundian,BI,BI,.bi,Burundian Franc,14390003,517.1,27830,4032,18.2,Kirundi,https://www.presidence.gov.bi,257,right,Africa,TRUE,Christianity,🇧🇮
+Somalia,Somalian,SO,SO,.so,Somali Shilling,19654739,30.8,637657,10420,19,Somali,https://web.mfa.gov.so,252,right,Africa,TRUE,Islam,🇸🇴
+Bolivia,Bolivian,BO,BO,.bo,Boliviano,12581843,11.5,1098581,44008,26.2,Spanish,https://www.mingobierno.gob.bo,591,right,South America,TRUE,Christianity,🇧🇴
+South Sudan,South Sudanese,SS,SS,.ss,South Sudanese Pound,12188788,18.9,644329,4616,18.7,Arabic,https://mofaic.gov.ss,211,right,Africa,TRUE,Christianity,🇸🇸
+Tunisia,Tunisian,TN,TN,.tn,Tunisian Dinar,12348573,75.5,163610,46181,34,Arabic,https://www.social.gov.tn/en,216,right,Africa,TRUE,Islam,🇹🇳
+Belgium,Belgian,BE,BE,.be,Euro,11941781,391.2,30528,582643,41.9,Dutch,https://www.belgium.be,32,right,Europe,TRUE,Christianity,🇧🇪
+Haiti,Haitian,HT,HT,.ht,Gourde,11906095,429.0,27750,18751,24.7,French,http://primature.gouv.ht,509,right,North America,TRUE,Christianity,🇭🇹
+Jordan,Jordanian,JO,JO,.jo,Jordanian Dinar,11520684,129.0,89342,47452,24.6,Arabic,https://psd.gov.jo/en-us,962,right,Asia,TRUE,Islam,🇯🇴
+Cuba,Cuban,CU,CU,.cu,Cuban Peso,10937203,98.7,110860,147193,42.3,Spanish,http://www.cuba.cu,53,right,North America,TRUE,Christianity,🇨🇺
+Dominican Republic,Dominican,DO,DO,.do,Dominican Peso,11520487,236.7,48670,113537,28.9,Spanish,https://www.dominicanrepublic.com,1,right,North America,TRUE,Christianity,🇩🇴
+Czech Republic,Czech,CZ,CZ,.cz,Czech Koruna,10886878,138.0,78867,290527,43.9,Czech,https://www.czechia.eu,,right,Europe,TRUE,No Religion,🇨🇿
+Sweden,Swedish,SE,SE,.se,Swedish Krona,10596620,23.5,450295,591188,41,Swedish,https://sweden.se,46,right,Europe,TRUE,No Religion,🇸🇪
+Greece,Greek,GR,GR,.gr,Euro,10413962,78.9,131957,217285,46.2,Greek,https://www.government.gov.gr,30,right,Europe,TRUE,Christianity,🇬🇷
+Azerbaijan,Azerbaijani,AZ,AZ,.az,Azerbaijani Manat,10246996,118.3,86600,78721,33.8,Azerbaijani,http://mfa.gov.az/en,994,right,Asia,TRUE,Islam,🇦🇿
+Portugal,Portuguese,PT,PT,.pt,Euro,10804871,117.3,92090,254849,46,Portuguese,https://www.portugal.gov.pt,351,right,Europe,TRUE,Christianity,🇵🇹
+United Arab Emirates,Emirati,AE,AE,.ae,United Arab Emirates Dirham,11513149,137.7,83600,507063,35.7,Arabic,https://u.ae,971,right,Asia,TRUE,Islam,🇦🇪
+Papua New Guinea,Papua New Guinean,PG,PG,.pg,Kina,10762817,23.3,462840,31609,21.6,English,https://papuanewguinea.travel,675,left,Oceania,TRUE,Christianity,🇵🇬
+Hungary,Hungarian,HU,HU,.hu,Hungarian Forint,9514251,102.3,93028,177337,44.5,Hungarian,https://www.kormany.hu,36,right,Europe,TRUE,Christianity,🇭🇺
+Honduras,Catracho,HN,HN,.hn,Honduran Lempira,11005850,98.2,112090,31717,25.3,Spanish,https://www.honduras.travel/en,504,right,North America,TRUE,Christianity,🇭🇳
+Belarus,Belarusian,BY,BY,.by,Belarusian Ruble,9085991,43.8,207600,72873,41.7,Belarusian,https://www.belarus.by,375,right,Europe,TRUE,Christianity,🇧🇾
+Tajikistan,Tajikistani,TJ,TJ,.tj,Tajikistani Somoni,10786734,74.9,144100,10492,22.7,Tajik,https://www.mfa.tj/en,992,right,Asia,TRUE,Islam,🇹🇯
+Israel,Israeli,IL,IL,.il,New Shekel,10122800,461.4,21937,525002,30.1,Hebrew,https://www.gov.il,972,right,Asia,TRUE,Judaism,🇮🇱
+Austria,Austrian,AT,AT,.at,Euro,9208163,109.8,83871,470302,44.8,German,https://www.oesterreich.gv.at/en,43,right,Europe,TRUE,Christianity,🇦🇹
+Sierra Leone,Sierra Leonean,SL,SL,.sl,Leone,8819794,122.9,71740,3481,19.2,English,https://statehouse.gov.sl,232,right,Africa,TRUE,Islam,🇸🇱
+Togo,Togolese,TG,TG,.tg,West African Cfa Franc,8591626,151.3,56785,8087,20.5,French,https://www.republicoftogo.com,228,right,Africa,TRUE,Christianity,🇹🇬
+Switzerland,Swiss,CH,CH,.ch,Swiss Franc,9092436,220.3,41277,818426,44,German,https://www.admin.ch,41,right,Europe,TRUE,Christianity,🇨🇭
+Laos,Laotian,LA,LA,.la,Lao Kip,7873046,33.2,236800,15362,25,Lao,https://www.tourismlaos.org,856,right,Asia,TRUE,Buddhism,🇱🇦
+Paraguay,Paraguayan,PY,PY,.py,Paraguayan Guaranã­,7013078,17.2,406752,41722,31.3,Spanish,https://www.paraguay.gov.py,595,right,South America,TRUE,Christianity,🇵🇾
+Hong Kong,Hong Konger,HK,HK,.hk,Hong Kong Dollar,7498900,6768.0,1108,359838,46.8,Chinese,http://www.gov.hk,852,left,Asia,FALSE,No Religion,🇭🇰
+Libya,Libyan,LY,LY,.ly,Libyan Dinar,7458555,4.2,1759540,40537,26.1,Arabic,https://ejraat.gov.ly/?l=en,218,right,Africa,TRUE,Islam,🇱🇾
+Bulgaria,Bulgarian,BG,BG,.bg,Bulgarian Lev,6433302,58.0,110879,90213,44.7,Bulgarian,http://www.government.bg,359,right,Europe,TRUE,Christianity,🇧🇬
+Serbia,Serbian,RS,RS,.rs,Serbian Dinar,6549143,84.5,77474,9397,43.7,Serbian,https://www.srbija.gov.rs,381,right,Europe,TRUE,Christianity,🇷🇸
+El Salvador,Salvadoran,SV,SV,.sv,United States Dollar,6365503,302.5,21041,32488,29.2,Spanish,https://elsalvador.travel/en,503,right,North America,TRUE,Christianity,🇸🇻
+Nicaragua,Nicaraguan,NI,NI,.ni,Nicaraguan Cordoba,7007502,53.8,130370,15671,28.5,Spanish,https://www.visitnicaragua.us,505,right,North America,TRUE,Christianity,🇳🇮
+Eritrea,Eritrean,ER,ER,.er,Nakfa,3607003,30.7,117600,2383,21,Tigrinya,http://www.shabait.com/index.php,291,right,Africa,TRUE,Islam,🇪🇷
+Kyrgyzstan,Kyrgyzstani,KG,KG,.kg,Kyrgyz Som,7343064,36.7,199951,12560,28.1,Kyrgyz,https://www.gov.kg/ky,996,right,Asia,TRUE,Islam,🇰🇬
+Singapore,Singaporean,SG,SG,.sg,Singapore Dollar,6111175,8499.5,719,466788,38.9,English,https://www.gov.sg,65,left,Asia,TRUE,Buddhism,🇸🇬
+Denmark,Danish,DK,DK,.dk,Danish Krone,6009169,139.4,43094,400167,42.2,Danish,https://denmark.dk,45,right,Europe,FALSE,No Religion,🇩🇰
+Turkmenistan,Turkmenistani,TM,TM,.tm,Turkmenistan New Manat,7618847,15.6,488100,67009,30.7,Turkmen,http://www.turkmenistan.gov.tm,993,right,Asia,TRUE,Islam,🇹🇲
+Republic of the Congo,Congolese,CG,CG,.cg,Central African Cfa Franc,6484437,19.0,342000,15344,20.5,French,https://gouvernement.cg,,right,Africa,TRUE,Christianity,🇨🇬
+Finland,Finnish,FI,FI,.fi,Euro,5646436,16.7,338145,282511,43.2,Finnish,https://finland.fi,358,right,Europe,TRUE,Christianity,🇫🇮
+Norway,Norwegian,NO,NO,.no,Norwegian Krone,5610870,17.3,323802,579422,40.6,Norwegian,http://www.norway.no,47,right,Europe,TRUE,No Religion,🇳🇴
+Central African Republic,Central African,CF,CF,.cf,Central African Cfa Franc,5513282,8.8,622984,2395,20.2,Sango,,420,right,Africa,TRUE,Christianity,🇨🇫
+Liberia,Liberian,LR,LR,.lr,Liberian Dollar,5731206,51.5,111369,3265,19.7,English,https://www.mofa.gov.lr,231,right,Africa,TRUE,Christianity,🇱🇷
+Slovakia,Slovak,SK,SK,.sk,Euro,5413813,110.4,49035,115304,42.5,Slovak,https://www.slovakia.com,421,right,Europe,TRUE,Christianity,🇸🇰
+Lebanon,Lebanese,LB,LB,.lb,Lebanese Pound,5849421,562.4,10400,39303,35.8,Arabic,https://www.ministryinfo.gov.lb/en,961,right,Asia,TRUE,Islam,🇱🇧
+Ireland,Irish,IE,IE,.ie,Euro,5484367,78.0,70273,532415,39.8,English,http://www.gov.ie,44,left,Europe,TRUE,Christianity,🇮🇪
+Costa Rica,Costa Rican,CR,CR,.cr,Costa Rican Colon,5152950,100.8,51100,68380,35,Spanish,https://www.presidencia.go.cr,506,right,North America,TRUE,Christianity,🇨🇷
+New Zealand,New Zealander,NZ,NZ,.nz,New Zealand Dollar,5324700,19.8,268838,245845,37.7,English,https://www.govt.nz,64,left,Oceania,TRUE,Christianity,🇳🇿
+Georgia,Georgian,GE,GE,.ge,Georgian Lari,3935766,56.5,69700,24605,38,Georgian,https://www.gov.ge,995,right,Asia,TRUE,Christianity,🇬🇪
+Panama,Panamanian,PA,PA,.pa,United States Dollar,4571189,60.6,75420,76522,31.2,Spanish,https://visitpanama.com/?lang=en,507,right,North America,TRUE,Christianity,🇵🇦
+Mauritania,Mauritanian,MR,MR,.mr,Mauritanian Ouguiya,5315065,5.2,1030700,10997,21.9,Arabic,,222,right,Africa,TRUE,Islam,🇲🇷
+Croatia,Croatian,HR,HR,.hr,Euro,3876200,68.5,56594,71552,44.8,Croatian,https://www.vlada.hr,385,right,Europe,TRUE,Christianity,🇭🇷
+Oman,Omani,OM,OM,.om,Omani Rial,5494691,17.8,309500,114666,27.1,Arabic,https://www.oman.om,968,right,Asia,TRUE,Islam,🇴🇲
+Bosnia and Herzegovina,Herzegovinian,BA,BA,.ba,Convertible Mark,3140095,61.3,51197,24473,44.4,Bosnian,http://www.fbihvlada.gov.ba,387,right,Europe,TRUE,Islam,🇧🇦
+Uruguay,Uruguayan,UY,UY,.uy,Uruguayan Peso,3384688,19.2,176215,71171,36.2,Spanish,https://www.gub.uy,598,right,South America,TRUE,Christianity,🇺🇾
+Mongolia,Mongolian,MN,MN,.mn,Tugrik,3568978,2.3,1564116,17146,31.2,Mongolian,https://www.gov.mn/en,976,right,Asia,TRUE,Buddhism,🇲🇳
+Moldova,Moldavian,MD,MD,.md,Moldovan Leu,2360527,69.7,33851,14510,39.4,Romanian,http://www.moldova.md,373,right,Europe,TRUE,Christianity,🇲🇩
+Kuwait,Kuwaiti,KW,KW,.kw,Kuwaiti Dinar,4865298,273.1,17818,175363,30.1,Arabic,https://www.e.gov.kw,965,right,Asia,TRUE,Islam,🇰🇼
+Albania,Albanian,AL,AL,.al,Albanian Lek,2349580,81.7,28748,18916,35.8,Albanian,https://www.kryeministria.al/en,355,right,Europe,TRUE,Islam,🇦🇱
+Puerto Rico,Puerto Rican,PR,PR,.pr,United States Dollar,3184835,349.8,9104,113434,45.6,Spanish,https://pr.gov,1,right,North America,FALSE,Christianity,🇵🇷
+Armenia,Armenian,AM,AM,.am,Armenian Dram,3086700,103.8,29743,19513,38.3,Armenian,http://www.gov.am/en,374,right,Asia,TRUE,Christianity,🇦🇲
+West Bank,West Banker,XW,PS,,,5413596,957.3,5655,,,,https://www.pcbs.gov.ps/default.aspx,,right,Asia,FALSE,Islam,🇵🇸
+Jamaica,Jamaican,JM,JM,.jm,Jamaican Dollar,2837077,258.1,10991,17097,30.5,English,https://www.gov.jm,1,left,North America,TRUE,Christianity,🇯🇲
+Namibia,Namibian,NA,NA,.na,Namibian Dollar ,3092816,3.8,824292,12607,22.5,English,https://gov.na,,left,Africa,TRUE,,🇳🇦
+Lithuania,Lithuanian,LT,LT,.lt,Euro,2888774,44.2,65300,70878,45,Lithuanian,https://www.lietuva.lt/en,370,right,Europe,TRUE,Christianity,🇱🇹
+Qatar,Qatari,QA,QA,.qa,Qatari Riyal,2972215,256.5,11586,237101,34.2,Arabic,https://www.diwan.gov.qa,974,right,Asia,TRUE,Islam,🇶🇦
+The Gambia,Gambian,GM,GM,.gm,Dalasi,2822093,249.7,11300,2231,19.9,English,https://gambia.gov.gm,220,right,Africa,TRUE,Islam,🇬🇲
+Botswana,Botswanan,BW,BW,.bw,Botswana Pula,2562122,4.4,581730,20352,26.8,English,https://gov.bw,267,left,Africa,TRUE,Christianity,🇧🇼
+Gabon,Gabonese,GA,GA,.ga,Central African Cfa Franc,2593130,9.7,267667,20132,21.8,French,https://gouvernement.ga,241,right,Africa,TRUE,Christianity,🇬🇦
+Lesotho,Basotho,LS,LS,.ls,Rand,2363325,77.9,30355,2287,23.7,English,https://www.gov.ls,266,left,Africa,TRUE,Christianity,🇱🇸
+North Macedonia,Macedonian,MK,MK,.mk,North Macedonian Denar,1820909,70.8,25713,13711,40.1,Macedonian,https://vlada.mk,389,right,Europe,TRUE,Christianity,🇲🇰
+Slovenia,Slovenian,SI,SI,.si,Euro,2130986,105.1,20273,59981,45.9,Slovenian,https://www.gov.si,386,right,Europe,TRUE,Christianity,🇸🇮
+Guinea-Bissau,Guinea-Bissauan,GW,GW,.gw,West African Cfa Franc,2249515,62.3,36125,1574,18.3,Portuguese,https://www.gov.gw,245,right,Africa,TRUE,Islam,🇬🇼
+Kosovo,Kosovan,XK,XK,,Euro,1576876,144.8,10887,,31.7,Serbian,http://www.rks-gov.net,383,right,Europe,FALSE,Islam,🇽🇰
+Latvia,Latvian,LV,LV,.lv,Euro,1847785,28.6,64589,40876,45.2,Latvian,https://www.mk.gov.lv,371,right,Europe,TRUE,Christianity,🇱🇻
+Equatorial Guinea,Equatorial Guinean,GQ,GQ,.gq,Central African Cfa Franc,1938431,69.1,28051,11767,21.9,Spanish,https://www.guineaecuatorialpress.com,240,right,Africa,TRUE,Christianity,🇬🇶
+Bahrain,Bahraini,BH,BH,.bh,Bahraini Dinar,1600366,2105.7,760,44382,33.3,Arabic,https://www.bahrain.bh,973,right,Asia,TRUE,Islam,🇧🇭
+Timor-Leste,East Timorese,TL,TL,.tl,United States Dollar,1418517,95.4,14874,3204,20.3,Portuguese,http://timor-leste.gov.tl/?lang=en,670,left,Asia,TRUE,Christianity,🇹🇱
+Trinidad and Tobago,Trinidadian,TT,TT,.tt,Trinidad And Tobago Dollar,1367764,266.7,5128,30053,38,English,http://www.gov.tt,1,left,North America,TRUE,Christianity,🇹🇹
+Mauritius,Mauritian,MU,MU,.mu,Mauritian Rupee,1243741,609.7,2040,12898,39.3,English,http://www.govmu.org,230,left,Seven seas (open ocean),TRUE,Hinduism,🇲🇺
+Cyprus,Cypriot,CY,CY,.cy,Euro,1370754,148.2,9251,29210,39.1,Greek,http://www.cyprus.gov.cy,90,left,Asia,TRUE,Christianity,🇨🇾
+Estonia,Estonian,EE,EE,.ee,Euro,1366475,30.2,45228,38049,44.7,Estonian,https://valitsus.ee,372,right,Europe,TRUE,No Religion,🇪🇪
+Eswatini,liSwati,SZ,SZ,.sz,Lilangeni,1256174,72.3,17364,4326,24.4,English,http://www.gov.sz,268,left,Africa,TRUE,Christianity,🇸🇿
+Djibouti,Djiboutian,DJ,DJ,.dj,Djiboutian Franc,1184076,51.0,23200,4003,26,Arabic,https://www.presidence.dj,253,right,Africa,TRUE,Islam,🇩🇯
+Fiji,Fijian,FJ,FJ,.fj,Fijian Dollar,933154,51.1,18274,4979,31.2,English,https://www.fiji.gov.fj,679,left,Oceania,TRUE,Christianity,🇫🇯
+Comoros,Comorian,KM,KM,.km,Comorian Franc,882847,395.0,2235,1246,22.3,Arabic,https://beit-salam.km,269,right,Africa,TRUE,Islam,🇰🇲
+Bhutan,Bhutanese,BT,BT,.bt,Ngultrum,796682,20.8,38394,2898,30.2,Dzongkha,http://www.bhutan.gov.bt,975,left,Asia,TRUE,Buddhism,🇧🇹
+Guyana,Guyanese,GY,GY,.gy,Guyanese Dollar,835986,3.9,214969,14718,27.9,English,https://parliament.gov.gy,592,left,South America,TRUE,Christianity,🇬🇾
+Solomon Islands,Solomon Islander,SB,SB,.sb,Solomon Islands Dollar,838645,29.0,28896,1597,24.8,English,https://solomons.gov.sb,677,left,Oceania,TRUE,Christianity,🇸🇧
+Luxembourg,Luxembourgian,LU,LU,.lu,Euro,686970,265.6,2586,81530,39.8,Luxembourgish,https://luxembourg.public.lu,352,right,Europe,TRUE,Christianity,🇱🇺
+Macau,Macanese,MO,MO,.mo,Hong Kong Dollar,685900,24496.4,28,24042,42,Chinese,https://www.gov.mo,853,left,Asia,FALSE,Buddhism,🇲🇴
+Suriname,Surinamese,SR,SR,.sr,Surinamese Dollar,639850,3.9,163820,3620,31.6,Dutch,https://gov.sr,597,left,South America,TRUE,Christianity,🇸🇷
+Cape Verde,Cabo Verdean,CV,CV,.cv,Cape Verdean Escudo,527326,130.8,4033,2314,28.3,Portuguese,http://www.governo.cv,,right,Africa,TRUE,Christianity,🇨🇻
+Montenegro,Montenegrin,ME,ME,.me,Euro,623129,45.1,13812,6229,40.7,Montenegrin,https://www.gov.me,382,right,Europe,TRUE,Christianity,🇲🇪
+Western Sahara,Sahrawi,EH,EH,.eh,Moroccan Dirham,619551,2.3,272000,,,Arabic,,,right,Africa,FALSE,Islam,🇪🇭
+Maldives,Maldivian,MV,MV,.mv,Maldivian Rufiyaa,529676,1777.4,298,6170,31.3,Divehi,https://visitmaldives.com,960,left,Seven seas (open ocean),TRUE,Islam,🇲🇻
+Brunei,Brunei,BN,BN,.bn,Brunei Dollar,466330,80.9,5765,16681,32,Malay,https://www.gov.bn/bm,673,left,Asia,TRUE,Islam,🇧🇳
+Malta,Maltese,MT,MT,.mt,Euro,579704,1834.5,316,18100,43.2,Maltese,http://www.gov.mt,356,left,Europe,TRUE,Christianity,🇲🇹
+Belize,Belizean,BZ,BZ,.bz,Belize Dollar,422924,18.4,22966,2830,26.4,English,http://www.belize.gov.bz,501,right,North America,TRUE,Christianity,🇧🇿
+Guadeloupe,Guadeloupean,GP,GP,.gp,Euro,395752,243.1,1628,9462,,French,https://www.guadeloupe.gouv.fr,590,right,North America,FALSE,Christianity,🇬🇵
+Iceland,Icelander,IS,IS,.is,Icelandic Krona,392404,3.8,103000,28064,37.8,Icelandic,http://www.iceland.is,354,right,Europe,TRUE,Christianity,🇮🇸
+The Bahamas,Bahamian,BS,BS,.bs,Bahamian Dollar,403033,29.0,13880,12897,30.2,English,https://www.bahamas.gov.bs,1,left,North America,TRUE,Christianity,🇧🇸
+Vanuatu,Ni-Vanuatu,VU,VU,.vu,Vanuatu Vatus,335169,27.5,12189,985,24.2,Bislama,https://www.gov.vu,678,right,Oceania,TRUE,Christianity,🇻🇺
+Barbados,Barbadian,BB,BB,.bb,Barbadian Dollar,282623,657.3,430,5699,41,English,http://www.gov.bb,1,left,North America,TRUE,Christianity,🇧🇧
+French Polynesia,French Polynesian,PF,PF,.pf,Cfp Franc,282465,67.8,4167,5814,34.8,French,https://www.polynesie-francaise.pref.gouv.fr,689,right,Oceania,FALSE,Christianity,🇵🇫
+New Caledonia,New Caledonian,NC,NC,.nc,Cfp Franc,295333,15.9,18575,9623,33.9,French,https://gouv.nc,687,right,Oceania,FALSE,Christianity,🇳🇨
+São Tomé and Príncipe,Sao Tomean,ST,ST,.st,Sã£O Tomã© And Prã­Ncipe Dobra,240254,249.2,964,546,20.4,Portuguese,http://www.saotome.st,239,right,Africa,TRUE,Christianity,🇸🇹
+Samoa,Samoan,WS,WS,.ws,Samoan Tala,219306,77.5,2831,857,26.9,Samoan,http://www.samoagovt.ws,685,left,Oceania,TRUE,Christianity,🇼🇸
+Guam,Guamanian,GU,GU,.gu,United States Dollar,168999,310.7,544,,30.1,English,http://www.guam.gov,1,right,Oceania,FALSE,Christianity,🇬🇺
+Saint Lucia,Saint Lucian,LC,LC,.lc,Eastern Caribbean Dollar,180149,292.4,616,2165,39,English,http://www.govt.lc,1,left,North America,TRUE,Christianity,🇱🇨
+Curaçao,Curaçaoan,CW,CW,.cw,Netherlands Antillean Guilder,156263,351.9,444,,37.5,English,http://www.curacao.com,599,right,North America,FALSE,Christianity,🇨🇼
+Aruba,Aruban,AW,AW,.aw,Aruban Florin,108785,604.4,180,3544,40.7,Dutch,http://www.aruba.com,297,right,North America,FALSE,Christianity,🇦🇼
+Kiribati,I-Kiribati,KI,KI,.ki,Australian Dollar,136488,168.3,811,223,26.9,English,https://www.kiribati.gov.ki,686,left,Oceania,TRUE,Christianity,🇰🇮
+Grenada,Grenadian,GD,GD,.gd,Eastern Caribbean Dollar,117303,341.0,344,1192,35,English,https://www.gov.gd,1,left,North America,TRUE,Christianity,🇬🇩
+Tonga,Tongan,TO,TO,.to,Tongan Paʻanga,103742,138.9,747,488,25.4,English,http://www.mic.gov.to,676,left,Oceania,TRUE,Christianity,🇹🇴
+United States Virgin Islands,Virgin Islander,VI,VI,.vi,United States Dollar,103792,54.3,1910,,42.7,English,http://www.vi.gov,1,left,North America,FALSE,Christianity,🇻🇮
+Jersey,Jersey People,JE,JE,.je,Pound Sterling,103267,890.2,116,,38,English,https://www.gov.je,44,left,Europe,FALSE,Christianity,🇯🇪
+Antigua and Barbuda,Antigua and Barbuda,AG,AG,.ag,Eastern Caribbean Dollar,94209,212.7,443,1770,33.6,English,http://www.ab.gov.ag,1,left,North America,TRUE,Christianity,🇦🇬
+Saint Vincent and the Grenadines,Saint Vincentian,VC,VC,.vc,Eastern Caribbean Dollar,99924,256.9,389,946,37,English,https://www.gov.vc,1,left,North America,TRUE,Christianity,🇻🇨
+Federated States of Micronesia,Micronesian,FM,FM,.fm,United States Dollar,113683,161.9,702,427,27.8,English,https://gov.fm,691,right,Oceania,TRUE,Christianity,🇫🇲
+Seychelles,Seychelloise,SC,SC,.sc,Seychellois Rupee,122730,269.7,455,1994,38.2,English,http://www.egov.sc,248,left,Seven seas (open ocean),TRUE,Christianity,🇸🇨
+Isle of Man,Manx,IM,IM,.im,Manx Pound,84118,147.1,572,,44.8,Manx,http://www.gov.im,44,left,Europe,FALSE,Christianity,🇮🇲
+Andorra,Andorran,AD,AD,.ad,Euro,82904,177.1,468,3376,48.1,Catalan,https://www.govern.ad,376,right,Europe,TRUE,Christianity,🇦🇩
+Marshall Islands,Marshallese,MH,MH,.mh,United States Dollar,36282,200.5,181,279,25.1,English,https://rmiparliament.org/cms,692,right,Oceania,TRUE,Christianity,🇲🇭
+Dominica,Dominican,DM,DM,.dm,Eastern Caribbean Dollar,65871,87.7,751,612,36.5,English,http://www.dominica.gov.dm,1,left,North America,TRUE,Christianity,🇩🇲
+Bermuda,Bermudian,BM,BM,.bm,Bermudian Dollar,64555,1195.5,54,7546,43.7,English,https://www.gov.bm,1,left,North America,FALSE,Christianity,🇧🇲
+Guernsey,Guernsey,GG,GG,.gg,Pound Sterling,63026,808.0,78,,44.8,English,https://www.gov.gg,44,left,Europe,FALSE,Christianity,🇬🇬
 country,demonym,id,iso2,tld,currency,population,density,area,gdp,median_age,language,website,calling_code,driving_side,continent,un_member,religion,flag
-Cayman Islands,Caymanian,KY,KY,.ky,Cayman Islands Dollar,65483,248,264,6281,41,English,https://www.gov.ky,1,left,North America,FALSE,Christianity,🇰🇾
-Turks and Caicos Islands,Turks and Caicos Islander,TC,TC,.tc,United States Dollar,59367,62.6,948,1138,35.9,English,https://www.gov.tc,1,left,North America,FALSE,Christianity,🇹🇨
-Greenland,Greenlandic,GL,GL,.gl,Danish Krone,57777,0,2166086,2926,35,Greenlandic,https://naalakkersuisut.gl,299,right,North America,FALSE,Christianity,🇬🇱
-Saint Kitts and Nevis,Kittitian,KN,KN,.kn,Eastern Caribbean Dollar,54817,210,261,979,38.1,English,https://www.gov.kn,1,left,North America,TRUE,Christianity,🇰🇳
-Faroe Islands,Faroe Islander,FO,FO,.fo,Faroese Krona,52600,37.8,1393,,36.8,Faroese,https://www.government.fo,298,right,Europe,FALSE,Christianity,🇫🇴
-Northern Mariana Islands,Northern Mariana Islander,MP,MP,.mp,United States Dollar,51295,110.5,464,,32.3,English,http://gov.mp,1,right,Oceania,FALSE,Christianity,🇲🇵
-Sint Maarten,St. Maartener,SX,SX,.sx,Netherlands Antillean Guilder,45677,1343.4,34,,41.1,English,,1,right,North America,FALSE,Christianity,🇸🇽
-American Samoa,American Samoan,AS,AS,.as,United States Dollar,44620,199.2,224,709,29.4,English,https://www.americansamoa.gov,1,right,Oceania,FALSE,Christianity,🇦🇸
-Liechtenstein,Liechtensteiner,LI,LI,.li,Swiss Franc,39993,250,160,7757,44.1,German,https://www.liechtenstein.li,423,right,Europe,TRUE,Christianity,🇱🇮
-British Virgin Islands,British Virgin Islander,VG,VG,.vg,United States Dollar,39369,260.7,151,,38.2,English,http://www.bvi.gov.vg,1,left,North America,FALSE,Christianity,🇻🇬
-San Marino,Sammarinese,SM,SM,.sm,Euro,34892,572,61,1780,45.9,Italian,https://www.gov.sm,378,right,Europe,TRUE,Christianity,🇸🇲
-Saint-Martin,Saint-Martinoi,MF,MF,.mf,Euro,32897,657.9,50,,34,French,https://www.sintmaartengov.org,590,right,North America,FALSE,Christianity,🇲🇫
-Monaco,Monegasque,MC,MC,.mc,Euro,31597,15798.5,2,8772,56.2,French,https://www.gouv.mc|https://www.mairie.mc,377,right,Europe,TRUE,Christianity,🇲🇨
-Caribbean Netherlands,Dutch Caribbean,BQ,BQ,.bq,United States Dollar,30397,,,725,,English,http://www.rijksdienstcn.com,599,right,North America,FALSE,Christianity,🇧🇶
-Gibraltar,Gibraltarian,GI,GI,.gi,Gibraltar Pound,29629,4232.7,7,,36.6,English,http://www.gibraltar.gov.gi,350,right,Europe,FALSE,Christianity,🇬🇮
-Palau,Palauan,PW,PW,.pw,United States Dollar,21779,47.4,459,225,35,English,https://www.palaugov.pw,680,right,Oceania,TRUE,Christianity,🇵🇼
-Anguilla,Anguillan,AI,AI,.ai,Eastern Caribbean Dollar,19079,209.7,91,,36.8,English,https://www.gov.ai,1,left,North America,FALSE,Christianity,🇦🇮
+Cayman Islands,Caymanian,KY,KY,.ky,Cayman Islands Dollar,75844,287.3,264,6281,41,English,https://www.gov.ky,1,left,North America,FALSE,Christianity,🇰🇾
+Turks and Caicos Islands,Turks and Caicos Islander,TC,TC,.tc,United States Dollar,46855,49.4,948,1138,35.9,English,https://www.gov.tc,1,left,North America,FALSE,Christianity,🇹🇨
+Greenland,Greenlandic,GL,GL,.gl,Danish Krone,56831,0.0,2166086,2926,35,Greenlandic,https://naalakkersuisut.gl,299,right,North America,FALSE,Christianity,🇬🇱
+Saint Kitts and Nevis,Kittitian,KN,KN,.kn,Eastern Caribbean Dollar,46922,179.8,261,979,38.1,English,https://www.gov.kn,1,left,North America,TRUE,Christianity,🇰🇳
+Faroe Islands,Faroe Islander,FO,FO,.fo,Faroese Krona,54900,39.4,1393,,36.8,Faroese,https://www.government.fo,298,right,Europe,FALSE,Christianity,🇫🇴
+Northern Mariana Islands,Northern Mariana Islander,MP,MP,.mp,United States Dollar,43541,93.8,464,,32.3,English,http://gov.mp,1,right,Oceania,FALSE,Christianity,🇲🇵
+Sint Maarten,St. Maartener,SX,SX,.sx,Netherlands Antillean Guilder,43923,1291.9,34,,41.1,English,,1,right,North America,FALSE,Christianity,🇸🇽
+American Samoa,American Samoan,AS,AS,.as,United States Dollar,46029,205.5,224,709,29.4,English,https://www.americansamoa.gov,1,right,Oceania,FALSE,Christianity,🇦🇸
+Liechtenstein,Liechtensteiner,LI,LI,.li,Swiss Franc,41024,256.4,160,7757,44.1,German,https://www.liechtenstein.li,423,right,Europe,TRUE,Christianity,🇱🇮
+British Virgin Islands,British Virgin Islander,VG,VG,.vg,United States Dollar,39732,263.1,151,,38.2,English,http://www.bvi.gov.vg,1,left,North America,FALSE,Christianity,🇻🇬
+San Marino,Sammarinese,SM,SM,.sm,Euro,34109,559.2,61,1780,45.9,Italian,https://www.gov.sm,378,right,Europe,TRUE,Christianity,🇸🇲
+Saint-Martin,Saint-Martinoi,MF,MF,.mf,Euro,24941,498.8,50,,34,French,https://www.sintmaartengov.org,590,right,North America,FALSE,Christianity,🇲🇫
+Monaco,Monegasque,MC,MC,.mc,Euro,38341,19170.5,2,8772,56.2,French,https://www.gouv.mc|https://www.mairie.mc,377,right,Europe,TRUE,Christianity,🇲🇨
+Caribbean Netherlands,Dutch Caribbean,BQ,BQ,.bq,United States Dollar,26221,,,725,,English,http://www.rijksdienstcn.com,599,right,North America,FALSE,Christianity,🇧🇶
+Gibraltar,Gibraltarian,GI,GI,.gi,Gibraltar Pound,40126,5732.3,7,,36.6,English,http://www.gibraltar.gov.gi,350,right,Europe,FALSE,Christianity,🇬🇮
+Palau,Palauan,PW,PW,.pw,United States Dollar,17663,38.5,459,225,35,English,https://www.palaugov.pw,680,right,Oceania,TRUE,Christianity,🇵🇼
+Anguilla,Anguillan,AI,AI,.ai,Eastern Caribbean Dollar,18090,198.8,91,,36.8,English,https://www.gov.ai,1,left,North America,FALSE,Christianity,🇦🇮
 Wallis and Futuna,Wallisian,WF,WF,.wf,Cfp Franc,15929,112.2,142,,35.8,French,http://www.wallis-et-futuna.pref.gouv.fr,681,right,Oceania,FALSE,Christianity,🇼🇫
-Tuvalu,Tuvaluan,TV,TV,.tv,Tuvaluan Dollar,11639,447.7,26,59,27.5,English,https://finance.gov.tv,688,left,Oceania,TRUE,Christianity,🇹🇻
-Nauru,Nauruan,NR,NR,.nr,Australian Dollar,9852,469.1,21,147,27.5,Nauruan,https://www.nauru.gov.nr,674,left,Oceania,TRUE,Christianity,🇳🇷
-Cook Islands,Cook Islander,CK,CK,.ck,Cook Islands Dollar,7939,33.6,236,,40.6,English,http://www.ck/govt.htm,682,left,Oceania,FALSE,Christianity,🇨🇰
-"Saint Helena, Ascension and Tristan da Cunha",Ascension Islander,SH,SH,,Pound Sterling,7935,20.1,394,,44.7,English,,290,left,Seven seas (open ocean),FALSE,Christianity,🇸🇭
-Saint Barthélemy,Saint-Barth,BL,BL,.bl,Euro,7093,283.7,25,,47,French,https://www.comstbarth.fr,590,right,North America,FALSE,Christianity,🇧🇱
-Montserrat,Montserratian,MS,MS,.ms,Eastern Caribbean Dollar,5440,53.3,102,,36.4,English,https://www.gov.ms,1,left,North America,FALSE,Christianity,🇲🇸
-Saint Pierre and Miquelon,Saint-Pierrai,PM,PM,.fr,Euro,5195,21.5,242,,50.6,French,http://www.spm-ct975.fr,508,right,North America,FALSE,Christianity,🇵🇲
-Falkland Islands,Falkland Islander,FK,FK,.fk,Falkland Islands Pound,3662,0.3,12173,,,English,http://www.falklands.gov.fk,500,left,South America,FALSE,Christianity,🇫🇰
-Svalbard and Jan Mayen,Svalbardian,SJ,SJ,.sj,Norwegian Krone,2926,0,62045,,,Norwegian,https://www.sysselmesteren.no/en,47,right,Europe,FALSE,Christianity,🇸🇯
-Christmas Island,Christmas Islander,CX,CX,.cx,Australian Dollar,2205,16.3,135,,,English,https://www.shire.gov.cx,61,left,Asia,FALSE,Buddhism,🇨🇽
-Niue,Niuean,NU,NU,.nu,New Zealand Dollar,2000,7.7,260,,,English,https://www.gov.nu,683,left,Oceania,FALSE,Christianity,🇳🇺
-Norfolk Island,Norfolk Islander,NF,NF,.nf,Australian Dollar,1748,48.6,36,,,English,http://www.info.gov.nf,672,left,Oceania,FALSE,Christianity,🇳🇫
+Tuvalu,Tuvaluan,TV,TV,.tv,Tuvaluan Dollar,9492,365.1,26,59,27.5,English,https://finance.gov.tv,688,left,Oceania,TRUE,Christianity,🇹🇻
+Nauru,Nauruan,NR,NR,.nr,Australian Dollar,12025,572.6,21,147,27.5,Nauruan,https://www.nauru.gov.nr,674,left,Oceania,TRUE,Christianity,🇳🇷
+Cook Islands,Cook Islander,CK,CK,.ck,Cook Islands Dollar,17564,74.4,236,,40.6,English,http://www.ck/govt.htm,682,left,Oceania,FALSE,Christianity,🇨🇰
+"Saint Helena, Ascension and Tristan da Cunha",Ascension Islander,SH,SH,,Pound Sterling,5633,14.3,394,,44.7,English,,290,left,Seven seas (open ocean),FALSE,Christianity,🇸🇭
+Saint Barthélemy,Saint-Barth,BL,BL,.bl,Euro,10585,423.4,25,,47,French,https://www.comstbarth.fr,590,right,North America,FALSE,Christianity,🇧🇱
+Montserrat,Montserratian,MS,MS,.ms,Eastern Caribbean Dollar,4386,43.0,102,,36.4,English,https://www.gov.ms,1,left,North America,FALSE,Christianity,🇲🇸
+Saint Pierre and Miquelon,Saint-Pierrai,PM,PM,.fr,Euro,5840,24.1,242,,50.6,French,http://www.spm-ct975.fr,508,right,North America,FALSE,Christianity,🇵🇲
+Falkland Islands,Falkland Islander,FK,FK,.fk,Falkland Islands Pound,3780,0.3,12173,,,English,http://www.falklands.gov.fk,500,left,South America,FALSE,Christianity,🇫🇰
+Svalbard and Jan Mayen,Svalbardian,SJ,SJ,.sj,Norwegian Krone,2572,0.0,62045,,,Norwegian,https://www.sysselmesteren.no/en,47,right,Europe,FALSE,Christianity,🇸🇯
+Christmas Island,Christmas Islander,CX,CX,.cx,Australian Dollar,1692,12.5,135,,,English,https://www.shire.gov.cx,61,left,Asia,FALSE,Buddhism,🇨🇽
+Niue,Niuean,NU,NU,.nu,New Zealand Dollar,1549,6.0,260,,,English,https://www.gov.nu,683,left,Oceania,FALSE,Christianity,🇳🇺
+Norfolk Island,Norfolk Islander,NF,NF,.nf,Australian Dollar,2188,60.8,36,,,English,http://www.info.gov.nf,672,left,Oceania,FALSE,Christianity,🇳🇫
 Tokelau,Tokelauan,TK,TK,.tk,New Zealand Dollar,1647,137.3,12,,,English,https://www.tokelau.org.nz,690,left,Insular Oceania,FALSE,Christianity,🇹🇰
 Vatican City,Vatican,VA,VA,.va,Euro,1000,,0,,,Italian,http://www.vaticanstate.va,39,right,Europe,FALSE,Christianity,🇻🇦
 Cocos (Keeling) Islands,Cocos Islander,CC,CC,.cc,Australian Dollar,596,42.6,14,,,English,,61,left,Oceania,FALSE,Islam,🇨🇨
@@ -242,29 +242,29 @@ Pitcairn Islands,Pitcairn Islander,PN,PN,.pn,New Zealand Dollar,50,1.1,47,,,Engl
 Akrotiri,,QZ,,,,,,,,,,,,left,,FALSE,Christianity,
 British Indian Ocean Territory,,IO,IO,.io,United States Dollar,,,60,,,English,https://www.biot.gov.io,246,right,Seven seas (open ocean),FALSE,Islam,🇮🇴
 Dhekelia,,XD,,,,,,,,,,,,left,,FALSE,Christianity,
-French Guiana,French Guianese,GF,GF,.gf,Euro,,,,,,French,https://www.ctguyane.fr,594,right,South America,FALSE,Christianity,🇬🇫
+French Guiana,French Guianese,GF,GF,.gf,Euro,304557,,,,,French,https://www.ctguyane.fr,594,right,South America,FALSE,Christianity,🇬🇫
 French Southern and Antarctic Lands,,TF,TF,.tf,Euro,,,,,,French,https://taaf.fr,596,right,Seven seas (open ocean),FALSE,,🇹🇫
-Gaza Strip,Gazan,XG,PS,,,,,,,,,https://www.pcbs.gov.ps/default.aspx,,right,Asia,FALSE,Islam,🇵🇸
-Martinique,Martiniquai,MQ,MQ,.mq,Euro,,,,,,French,http://www.martinique.pref.gouv.fr,596,right,North America,FALSE,Christianity,🇲🇶
-Mayotte,Mahoran ,YT,YT,.yt,Euro,,,,,,French,https://mayotte.fr,262,right,Africa,FALSE,Islam,🇾🇹
+Gaza Strip,Gazan,XG,PS,,,5413596,,,,,,https://www.pcbs.gov.ps/default.aspx,,right,Asia,FALSE,Islam,🇵🇸
+Martinique,Martiniquai,MQ,MQ,.mq,Euro,366000,,,,,French,http://www.martinique.pref.gouv.fr,596,right,North America,FALSE,Christianity,🇲🇶
+Mayotte,Mahoran ,YT,YT,.yt,Euro,358471,,,,,French,https://mayotte.fr,262,right,Africa,FALSE,Islam,🇾🇹
 Paracel Islands,,XP,,,,,,,,,,,,right,,FALSE,,
-Réunion,Reunion,RE,RE,.re,Euro,,,,,,French,http://www.regionreunion.com,262,right,Africa,FALSE,Christianity,🇷🇪
+Réunion,Reunion,RE,RE,.re,Euro,974052,,,,,French,http://www.regionreunion.com,262,right,Africa,FALSE,Christianity,🇷🇪
 South Georgia and the South Sandwich Islands,South Sandwich Islander,GS,GS,.gs,Pound Sterling,,,,,,English,https://gov.gs,7,left,Seven seas (open ocean),FALSE,,🇬🇸
 Heard Island and McDonald Islands,,HM,HM,.hm,,,,412,,,,https://www.antarctica.gov.au/antarctic-operations/stations/other-locations/heard-island,1,left,Seven seas (open ocean),FALSE,,🇭🇲
 Bouvet Island,,BV,BV,.bv,,,,49,,,,,,right,Antarctica,FALSE,,🇧🇻
 Antarctica,,AQ,AQ,.aq,,,,14200000,,,,http://www.ats.aq,,,Antarctica,FALSE,No Religion,🇦🇶
-Caribbean Netherlands,Dutch Caribbean,BQ,BQ,.bq,United States Dollar,30397,,,725,39.7,English,http://www.rijksdienstcn.com,599,right,North America,FALSE,Christianity,🇧🇶
-Christmas Island,Christmas Islander,CX,CX,.cx,Australian Dollar,2205,16.3,135,,38,English,https://www.shire.gov.cx,61,left,Asia,FALSE,Buddhism,🇨🇽
-Falkland Islands,Falkland Islander,FK,FK,.fk,Falkland Islands Pound,3662,0.3,12173,,43.4,English,http://www.falklands.gov.fk,500,left,South America,FALSE,Christianity,🇫🇰
-French Guiana,French Guianese,GF,GF,.gf,Euro,,,,,24.9,French,https://www.ctguyane.fr,594,right,South America,FALSE,Christianity,🇬🇫
-Guadeloupe,Guadeloupean,GP,GP,.gp,Euro,378561,232.5,1628,9462,47.4,French,https://www.guadeloupe.gouv.fr,590,right,North America,FALSE,Christianity,🇬🇵
-Martinique,Martiniquai,MQ,MQ,.mq,Euro,,,,,50.2,French,http://www.martinique.pref.gouv.fr,596,right,North America,FALSE,Christianity,🇲🇶
-Mayotte,Mahoran ,YT,YT,.yt,Euro,,,,,17.3,French,https://mayotte.fr,262,right,Africa,FALSE,Islam,🇾🇹
-Niue,Niuean,NU,NU,.nu,New Zealand Dollar,2000,7.7,260,,35.1,English,https://www.gov.nu,683,left,Oceania,FALSE,Christianity,🇳🇺
-Norfolk Island,Norfolk Islander,NF,NF,.nf,Australian Dollar,1748,48.6,36,,50,English,http://www.info.gov.nf,672,left,Oceania,FALSE,Christianity,🇳🇫
-Réunion,Reunion,RE,RE,.re,Euro,,,,,38.4,French,http://www.regionreunion.com,262,right,Africa,FALSE,Christianity,🇷🇪
-Svalbard and Jan Mayen,Svalbardian,SJ,SJ,.sj,Norwegian Krone,2926,0,62045,,33.6,Norwegian,https://www.sysselmesteren.no/en,47,right,Europe,FALSE,Christianity,🇸🇯
-Western Sahara,Sahrawi,EH,EH,.eh,Moroccan Dirham,565581,2.1,272000,,32.8,Arabic,,,right,Africa,FALSE,Islam,🇪🇭
-West Bank,West Banker,XW,PS,,,2949246,521.5,5655,,20.3,,https://www.pcbs.gov.ps/default.aspx,,right,Asia,FALSE,Islam,🇵🇸
-Gaza Strip,Gazan,XG,PS,,,,,,,20.3,,https://www.pcbs.gov.ps/default.aspx,,right,Asia,FALSE,Islam,🇵🇸
-Åland Islands,,AX,AX,,,,,,,44.3,,,,,,,
+Caribbean Netherlands,Dutch Caribbean,BQ,BQ,.bq,United States Dollar,26221,,,725,39.7,English,http://www.rijksdienstcn.com,599,right,North America,FALSE,Christianity,🇧🇶
+Christmas Island,Christmas Islander,CX,CX,.cx,Australian Dollar,1692,12.5,135,,38,English,https://www.shire.gov.cx,61,left,Asia,FALSE,Buddhism,🇨🇽
+Falkland Islands,Falkland Islander,FK,FK,.fk,Falkland Islands Pound,3780,0.3,12173,,43.4,English,http://www.falklands.gov.fk,500,left,South America,FALSE,Christianity,🇫🇰
+French Guiana,French Guianese,GF,GF,.gf,Euro,304557,,,,24.9,French,https://www.ctguyane.fr,594,right,South America,FALSE,Christianity,🇬🇫
+Guadeloupe,Guadeloupean,GP,GP,.gp,Euro,395752,243.1,1628,9462,47.4,French,https://www.guadeloupe.gouv.fr,590,right,North America,FALSE,Christianity,🇬🇵
+Martinique,Martiniquai,MQ,MQ,.mq,Euro,366000,,,,50.2,French,http://www.martinique.pref.gouv.fr,596,right,North America,FALSE,Christianity,🇲🇶
+Mayotte,Mahoran ,YT,YT,.yt,Euro,358471,,,,17.3,French,https://mayotte.fr,262,right,Africa,FALSE,Islam,🇾🇹
+Niue,Niuean,NU,NU,.nu,New Zealand Dollar,1549,6.0,260,,35.1,English,https://www.gov.nu,683,left,Oceania,FALSE,Christianity,🇳🇺
+Norfolk Island,Norfolk Islander,NF,NF,.nf,Australian Dollar,2188,60.8,36,,50,English,http://www.info.gov.nf,672,left,Oceania,FALSE,Christianity,🇳🇫
+Réunion,Reunion,RE,RE,.re,Euro,974052,,,,38.4,French,http://www.regionreunion.com,262,right,Africa,FALSE,Christianity,🇷🇪
+Svalbard and Jan Mayen,Svalbardian,SJ,SJ,.sj,Norwegian Krone,2572,0.0,62045,,33.6,Norwegian,https://www.sysselmesteren.no/en,47,right,Europe,FALSE,Christianity,🇸🇯
+Western Sahara,Sahrawi,EH,EH,.eh,Moroccan Dirham,619551,2.3,272000,,32.8,Arabic,,,right,Africa,FALSE,Islam,🇪🇭
+West Bank,West Banker,XW,PS,,,5413596,957.3,5655,,20.3,,https://www.pcbs.gov.ps/default.aspx,,right,Asia,FALSE,Islam,🇵🇸
+Gaza Strip,Gazan,XG,PS,,,5413596,,,,20.3,,https://www.pcbs.gov.ps/default.aspx,,right,Asia,FALSE,Islam,🇵🇸
+Åland Islands,,AX,AX,,,30129,,,,44.3,,,,,,,

@@ -4,6 +4,7 @@ import re
 import time
 import zipfile
 import pandas as pd
+import pycountry
 import requests
 
 mapping_path = "mapping.csv"
@@ -239,12 +240,14 @@ iso2_age = (
     .set_index("iso2")["median_age"]
 )
 
-out["iso2_from_height"] = (
-    out["cca2"]
-    .astype("string")
-    .str.strip()
-    .str.upper()
-)
+def iso3_to_iso2(iso3):
+    if iso3 == "XKX":  # Kosovo is not in ISO 3166
+        return "XK"
+    country = pycountry.countries.get(alpha_3=str(iso3))
+    return country.alpha_2 if country else pd.NA
+
+
+out["iso2_from_height"] = out["iso3"].map(iso3_to_iso2).astype("string")
 out["median_age_new"] = out["iso2_from_height"].map(iso2_age)
 
 if "med_age" not in out.columns:
@@ -275,6 +278,18 @@ print(
 
 
 # 3) World Bank updates
+# Fallback order when the World Bank has no value: countries.csv
+# (population only, covers Taiwan and territories), then the existing value.
+countries["population"] = pd.to_numeric(
+    countries["population"],
+    errors="coerce",
+)
+iso2_population = (
+    countries.dropna(subset=["population"])
+    .drop_duplicates(subset=["iso2"], keep="first")
+    .set_index("iso2")["population"]
+)
+
 for ind_code, col_name in WB_INDICATORS.items():
     latest = wb_download_indicator_latest(ind_code).rename(
         columns={
@@ -289,6 +304,10 @@ for ind_code, col_name in WB_INDICATORS.items():
         out[f"{col_name}_new"],
         errors="coerce",
     )
+    if col_name == "population_country":
+        values = values.fillna(out["iso2_from_height"].map(iso2_population))
+    if col_name in out.columns:
+        values = values.fillna(pd.to_numeric(out[col_name], errors="coerce"))
 
     if col_name == "population_country":
         # SP.POP.TOTL already provides absolute population counts.
