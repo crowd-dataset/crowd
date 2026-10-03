@@ -15,8 +15,10 @@ import random
 import requests
 from requests.exceptions import RequestException
 import ast
+import io
 import json
 import re
+import unicodedata
 from geopy.geocoders import Nominatim
 from geopy.exc import GeocoderTimedOut, GeocoderUnavailable, GeocoderServiceError
 from datetime import datetime, timezone
@@ -778,6 +780,7 @@ def new_locality_row(locality, state, country, locality_aka=None):
         locate_future = pool.submit(locate)
         mortality_future = pool.submit(get_country_traffic_mortality, iso3_code)
         literacy_future = pool.submit(get_country_literacy_rate, iso3_code)
+        gmp_future = pool.submit(get_gmp, locality, state, iso3_code, locality_aka)
     country_data = country_future.result()
     locality_data, lat, lon, traffic = locate_future.result()
 
@@ -795,7 +798,7 @@ def new_locality_row(locality, state, country, locality_aka=None):
         'state': state,
         'videos': [],
         'time_of_day': [],
-        'gmp': '',  # no source for locality GDP: left empty, filled in by hand
+        'gmp': gmp_future.result() or '',
         'population_locality': int(get_locality_population(locality_data, locality, state)),
         'population_country': country_population,
         'traffic_mortality': mortality_future.result(),
@@ -1638,39 +1641,126 @@ def get_country_median_age(iso2_code):
         return 0.0
 
 
-def get_gmp(locality: str, state: str, iso3: str) -> float:
-    """
-    Fetches Gross Metropolitan Product (GMP) for a given locality, state, and ISO3 country code.
-    """
-    if iso3.upper() == "USA":
-        url = "https://apps.bea.gov/api/data/"
-        params = {
-            "UserID": common.get_secrets('bea_api_key'),
-            "method": "GetData",
-            "datasetname": "Regional",
-            "TableName": "CAGDP2",
-            "LineCode": "1",
-            "GeoFIPS": "MSA",
-            "Year": "2022",
-            "ResultFormat": "json"
-        }
-        response = requests.get(url, params=params)
-        data = response.json()
+GMP_YEAR = 2022  # the year of the GDP figures already in the mapping
+# Connecticut's 2023 metro areas are made of planning regions, whose BEA GDP starts in 2024; for GMP_YEAR use the
+# 2020 county-based areas (OMB Bulletin 20-01). ponytail: hand-coded, only these four name a Connecticut city.
+_CT_2020_METROS = {'Bridgeport-Stamford-Norwalk, CT': ['09001'],
+                   'Hartford-East Hartford-Middletown, CT': ['09003', '09007', '09013'],
+                   'New Haven-Milford, CT': ['09009'], 'Norwich-New London, CT': ['09011']}
+# OECD names a few urban areas in the local language or after a region, the mapping in English or after the city
+_FUA_ALIASES = {'Athens': 'Athina', 'Aarhus': 'Århus', 'Venice': 'Venezia', 'Brighton': 'Brighton and Hove',
+                'Birmingham': 'West Midlands urban area', 'Ljubljana': 'Osrednjeslovenska', 'Maribor': 'Podravska',
+                'Las Palmas de Gran Canaria': 'Palmas de Gran Canaria, Las',
+                'Las Palmas': 'Palmas de Gran Canaria, Las',
+                'Vitoria-Gasteiz': 'Vitoria/Gasteiz', 'Halle': 'Halle an der Saale', 'Dundee': 'Dundee City',
+                'Blackburn': 'Blackburn with Darwen', 'Reggio Emilia': "Reggio nell'Emilia"}
+_FUA_ISO3 = {'AT': 'AUT', 'BE': 'BEL', 'BG': 'BGR', 'CH': 'CHE', 'CZ': 'CZE', 'DE': 'DEU', 'DK': 'DNK', 'EE': 'EST',
+             'EL': 'GRC', 'ES': 'ESP', 'FI': 'FIN', 'FR': 'FRA', 'HR': 'HRV', 'HU': 'HUN', 'IE': 'IRL', 'IT': 'ITA',
+             'JPN': 'JPN', 'KOR': 'KOR', 'LT': 'LTU', 'LU': 'LUX', 'LV': 'LVA', 'NL': 'NLD', 'NO': 'NOR', 'NZL': 'NZL',
+             'PL': 'POL', 'PT': 'PRT', 'RO': 'ROU', 'SE': 'SWE', 'SI': 'SVN', 'SK': 'SVK', 'TR': 'TUR', 'UK': 'GBR'}
 
-        for entry in data.get("BEAAPI", {}).get("Results", {}).get("Data", []):
-            if locality.lower() in entry["GeoName"].lower():
-                return float(entry["DataValue"])
 
-    else:
-        url = f"https://stats.oecd.org/SDMX-JSON/data/CITIES/GDP.METRO.{iso3.upper()}?json-lang=en"
-        response = requests.get(url)
-        data = response.json()
+def _place_key(name):
+    """Name compared without accents, case or punctuation: "Córdoba" and "Cordoba", "St. Louis" and "St Louis"."""
+    name = unicodedata.normalize('NFKD', str(name)).encode('ascii', 'ignore').decode().lower()
+    return ' '.join(name.replace('.', ' ').replace("'", ' ').split())
 
-        for key, value in data.get("dataSets", [{}])[0].get("observations", {}).items():
-            if locality.lower() in key.lower():
-                return float(value[0])
 
-    return None  # type: ignore
+@lru_cache(maxsize=1)
+def _us_metro_gdp():
+    """{(city, state code): (metro title, GDP in billion USD)} for every city named in a metropolitan area's
+    title. The BEA API serves GDP by county only, so an area's GDP is summed over its counties in the Census 2023
+    delineation; an area with a county BEA has no figure for is left out rather than undercounted."""
+    r = requests.get('https://apps.bea.gov/api/data/', timeout=120, params={
+        'UserID': common.get_secrets('bea_api_key'), 'method': 'GetData', 'datasetname': 'Regional',
+        'TableName': 'CAGDP2', 'LineCode': '1', 'GeoFips': 'COUNTY', 'Year': str(GMP_YEAR), 'ResultFormat': 'json'})
+    rows = r.json()['BEAAPI']['Results']['Data']
+    gdp, combined = {}, {}
+    for row in rows:
+        value = float(row['DataValue'].replace(',', '')) / 1e6  # thousands of dollars
+        if value > 0:  # the API sends 0 where BEA has no figure
+            gdp[row['GeoFips']] = value
+        if '+' in row['GeoName']:  # Virginia and Hawaii report some counties with the cities inside them
+            places, _ = row['GeoName'].rstrip('*').rsplit(', ', 1)
+            for place in places.replace(' + ', ',').split(','):
+                combined[(_place_key(place), row['GeoFips'][:2])] = row['GeoFips']
+    d = pd.read_excel('https://www2.census.gov/programs-surveys/metro-micro/geographies/reference-files/2023/'
+                      'delineation-files/list1_2023.xlsx', header=2, dtype=str).dropna(subset=['FIPS County Code'])
+    d = d[d['Metropolitan/Micropolitan Statistical Area'] == 'Metropolitan Statistical Area']
+    metros = {}
+    for title, g in d.groupby('CBSA Title'):
+        parts = set()
+        for st, county, name in zip(g['FIPS State Code'], g['FIPS County Code'], g['County/County Equivalent']):
+            fips = st.zfill(2) + county.zfill(3)
+            base = _place_key(name.replace(' County', '').replace(' city', '').replace(' Municipio', ''))
+            parts.add(fips if fips in gdp else combined.get((base, fips[:2])))
+        if None not in parts and all(f in gdp for f in parts):
+            metros[title] = sum(gdp[f] for f in parts)
+    for title, counties in _CT_2020_METROS.items():
+        if all(f in gdp for f in counties):
+            metros[title] = sum(gdp[f] for f in counties)
+    table = {}
+    for title, value in metros.items():
+        cities, states = title.rsplit(', ', 1)
+        parts = cities.split('-')
+        for i in range(len(parts)):  # "Winston-Salem" is one city written with a hyphen
+            for j in range(i + 1, len(parts) + 1):
+                for st in states.split('-'):
+                    table[(_place_key('-'.join(parts[i:j])), st)] = (title, value)
+    return table
+
+
+@lru_cache(maxsize=1)
+def _oecd_metro_gdp():
+    """{(name, iso3): (urban area, GDP in billion current USD, year)} for the OECD's functional urban areas:
+    their PPP GDP converted with the country's ratio of current-dollar to PPP GDP (World Bank), so the figures
+    match the current-dollar ones in the mapping."""
+    r = requests.get('https://sdmx.oecd.org/public/rest/data/OECD.CFE.EDS,DSD_FUA_ECO@DF_ECONOMY,1.1/all',
+                     params={'startPeriod': GMP_YEAR - 4, 'dimensionAtObservation': 'AllDimensions',
+                             'format': 'csvfilewithlabels'}, timeout=120)
+    p = pd.read_csv(io.StringIO(r.text), dtype=str)
+    p = p[(p['MEASURE'] == 'GDP') & (p['UNIT_MEASURE'] == 'USD_PPP')]
+    wb = {}
+    for indicator in ('NY.GDP.MKTP.CD', 'NY.GDP.MKTP.PP.CD'):
+        data = requests.get(f'https://api.worldbank.org/v2/country/all/indicator/{indicator}', timeout=120,
+                            params={'date': f'{GMP_YEAR - 4}:{GMP_YEAR}', 'format': 'json', 'per_page': 20000}).json()
+        for x in data[1]:
+            if x['value']:
+                wb[(indicator, x['countryiso3code'], int(x['date']))] = x['value']
+    table = {}
+    for (code, area), g in p.groupby(['REF_AREA', 'Reference area']):
+        prefix = next((k for k in _FUA_ISO3 if code.startswith(k)), None)
+        if prefix is None:  # US areas come from BEA
+            continue
+        iso3 = _FUA_ISO3[prefix]
+        values = {int(t): float(v) * 10 ** int(m) / 1e9
+                  for t, v, m in zip(g['TIME_PERIOD'], g['OBS_VALUE'], g['UNIT_MULT'])}
+        year = next((y for y in range(GMP_YEAR, GMP_YEAR - 5, -1) if y in values
+                     and ('NY.GDP.MKTP.CD', iso3, y) in wb and ('NY.GDP.MKTP.PP.CD', iso3, y) in wb), None)
+        if year is None:
+            continue
+        value = values[year] * wb[('NY.GDP.MKTP.CD', iso3, year)] / wb[('NY.GDP.MKTP.PP.CD', iso3, year)]
+        names = {area} | set(area.replace(' (', '/').replace(')', '').split('/')) | set(area.split('-'))
+        names |= {alias for alias, target in _FUA_ALIASES.items() if target == area}
+        for name in names:
+            table.setdefault((_place_key(name), iso3), (area, value, year))
+    return table
+
+
+def get_gmp(locality, state, iso3, locality_aka=None):
+    """GDP (billion current USD) of the metropolitan area a locality names, or None. US cities named in their
+    metropolitan area's title get its BEA GDP; elsewhere a locality named like an OECD functional urban area gets
+    its GDP. Suburbs and countries outside the OECD's data get None, to be filled in by hand."""
+    names = {_place_key(n) for n in [locality, *(locality_aka or [])] if n}
+    try:
+        if iso3 == 'USA':
+            hit = next((_us_metro_gdp()[(n, state)] for n in names if (n, state) in _us_metro_gdp()), None)
+        else:
+            hit = next((_oecd_metro_gdp()[(n, iso3)] for n in names if (n, iso3) in _oecd_metro_gdp()), None)
+    except (RequestException, KeyError, ValueError) as e:
+        print(f"Error fetching GDP of {locality}: {e}")
+        return None
+    return round(hit[1], 3) if hit else None
 
 
 def get_traffic_index_lat_lon(lat, lon, api="tomtom"):
