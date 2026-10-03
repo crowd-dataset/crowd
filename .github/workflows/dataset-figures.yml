@@ -1,8 +1,9 @@
 ---
 ############################
 # Refresh README statistics and dataset figures when the mapping changes.
-# Runs analysis.py without YOLO data (no data folders), so detection
-# figures and object counts are left as they are in the repository.
+# Runs analysis.py without the YOLO bbox CSVs (no data folders). The object
+# counts come from the committed figures/detection_counts.csv, which a local
+# run of analysis.py with the data folders refreshes.
 ############################
 name: Dataset figures
 

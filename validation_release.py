@@ -156,11 +156,12 @@ CONFIG: Dict[str, Any] = {
             5: "Automated car",
             6: "Electric scooter",
             7: "Monowheel/unicycle",
-            8: "Automated bus",
-            9: "Automated truck",
-            10: "Automated two-wheeler",
-            11: "Non-electric scooter",
-            12: "Pedestrian",
+            8: "Emergency vehicle",
+            9: "Automated bus",
+            10: "Automated truck",
+            11: "Automated two-wheeler",
+            12: "Non-electric scooter",
+            13: "Pedestrian",
         },
     },
 
@@ -2938,32 +2939,19 @@ def validate_crowd_index_jsonl(
         warn=False,
     )
 
-    required_top = {"record_type", "schema_version", "segment_id", "video_id", "source", "upload", "segment",
-                    "labels", "location", "automatic_outputs"}
-    required_nested = [
-        ("source", "platform"),
-        ("source", "watch_url"),
-        ("source", "underlying_video_redistributed"),
-        ("upload", "upload_date"),
-        ("upload", "recording_date"),
-        ("upload", "recording_date_provenance"),
-        ("upload", "recording_date_uncertainty"),
-        ("segment", "start_time_s"),
-        ("segment", "end_time_s"),
-        ("segment", "processed_end_time_s"),
-        ("segment", "endpoint_adjustment_s"),
-        ("segment", "processed_duration_s"),
-        ("labels", "time_of_day_code"),
-        ("labels", "vehicle_type_code"),
-        ("automatic_outputs", "bbox_csv_expected_prefix"),
-        ("automatic_outputs", "object_level_ground_truth"),
-    ]
+    required_top = {"segment_id", "video_id", "youtube_url", "start_time_s", "end_time_s", "upload_date",
+                    "time_of_day_code", "time_of_day_name", "vehicle_type_code", "vehicle_type_name",
+                    "location", "mapping_row_number", "metadata", "mapping_extra"}
+    # Keys that must exist in `location`; a missing source value is an explicit null, never an omitted key.
+    required_location = ("locality", "country", "iso3", "continent", "lat", "lon")
+    # Numeric codes must be present and non-null; the *_name and upload_date fields may legitimately be null.
+    required_not_null = ("segment_id", "video_id", "youtube_url", "start_time_s", "end_time_s")
+    free_text_keys = {"title", "description", "channel", "chapters", "tags", "categories"}
 
     missing_required_examples: List[Dict[str, Any]] = []
     bad_value_examples: List[Dict[str, Any]] = []
     mismatch_examples: List[Dict[str, Any]] = []
     source_free_text_examples: List[Dict[str, Any]] = []
-    free_text_keys = {"title", "description", "channel", "chapters", "tags", "categories"}
 
     n_missing_required = 0
     n_bad_governance_values = 0
@@ -2974,43 +2962,29 @@ def validate_crowd_index_jsonl(
         obj = records[segment_id]
 
         missing_for_record = [k for k in sorted(required_top) if k not in obj]
-        for path in required_nested:
-            nullable = {("upload", "recording_date"), ("upload", "recording_date_provenance")}
-            if _json_get(obj, path) is None and path not in nullable:
-                missing_for_record.append(".".join(path))
-            elif path in {("upload", "recording_date"), ("upload", "recording_date_provenance")}:
-                # These fields must exist and be null, so distinguish missing from null.
-                parent = obj.get(path[0])
-                if not isinstance(parent, dict) or path[1] not in parent:
-                    missing_for_record.append(".".join(path))
+        missing_for_record += [k for k in required_not_null if k in obj and obj[k] is None]
+        location = obj.get("location")
+        if isinstance(location, dict):
+            missing_for_record += [f"location.{k}" for k in required_location if k not in location]
+        elif "location" in obj:
+            missing_for_record.append("location")
 
         if missing_for_record:
             n_missing_required += 1
             if len(missing_required_examples) < 25:
                 missing_required_examples.append({"segment_id": segment_id, "missing": missing_for_record[:20]})
 
-        # Governance/privacy/ground-truth values should remain explicit.
-        if _json_get(obj, ("source", "underlying_video_redistributed")) is not False:
+        # The YouTube link must be the watch URL of the record's own video.
+        expected_url = f"https://www.youtube.com/watch?v={obj.get('video_id')}"
+        if obj.get("youtube_url") != expected_url:
             n_bad_governance_values += 1
             if len(bad_value_examples) < 25:
-                bad_value_examples.append({"segment_id": segment_id, "field": "source.underlying_video_redistributed"})
-        if _json_get(obj, ("automatic_outputs", "object_level_ground_truth")) is not False:
-            n_bad_governance_values += 1
-            if len(bad_value_examples) < 25:
-                bad_value_examples.append({"segment_id": segment_id,
-                                           "field": "automatic_outputs.object_level_ground_truth"})
-        if _json_get(obj, ("upload", "recording_date")) is not None:
-            n_bad_governance_values += 1
-            if len(bad_value_examples) < 25:
-                bad_value_examples.append({"segment_id": segment_id, "field": "upload.recording_date"})
-        if _json_get(obj, ("upload", "recording_date_uncertainty")) != "not_available":
-            n_bad_governance_values += 1
-            if len(bad_value_examples) < 25:
-                bad_value_examples.append({"segment_id": segment_id, "field": "upload.recording_date_uncertainty"})
+                bad_value_examples.append({"segment_id": segment_id, "field": "youtube_url",
+                                           "jsonl": obj.get("youtube_url"), "expected": expected_url})
 
-        upload_metadata = obj.get("upload_metadata")
-        if isinstance(upload_metadata, dict):
-            leaked = sorted(k for k in upload_metadata.keys() if str(k).lower() in free_text_keys)
+        metadata = obj.get("metadata")
+        if isinstance(metadata, dict):
+            leaked = sorted(k for k in metadata.keys() if str(k).lower() in free_text_keys)
             if leaked:
                 n_source_free_text += 1
                 if len(source_free_text_examples) < 25:
@@ -3027,28 +3001,14 @@ def validate_crowd_index_jsonl(
                     {"segment_id": segment_id, "field": "video_id", "jsonl": obj.get("video_id"),
                      "expected": exp["video_id"]}
                 )
-        if not _float_close(_json_get(obj, ("segment", "start_time_s")), exp["start_time_s"]):
-            n_value_mismatches += 1
-            if len(mismatch_examples) < 25:
-                mismatch_examples.append(
-                    {"segment_id": segment_id, "field": "segment.start_time_s",
-                     "jsonl": _json_get(obj, ("segment", "start_time_s")), "expected": exp["start_time_s"]}
-                )
-        if not _float_close(_json_get(obj, ("segment", "end_time_s")), exp["end_time_s"]):
-            n_value_mismatches += 1
-            if len(mismatch_examples) < 25:
-                mismatch_examples.append(
-                    {"segment_id": segment_id, "field": "segment.end_time_s",
-                     "jsonl": _json_get(obj, ("segment", "end_time_s")), "expected": exp["end_time_s"]}
-                )
-        if not _float_close(_json_get(obj, ("segment", "processed_duration_s")), exp["processed_duration_s"]):
-            n_value_mismatches += 1
-            if len(mismatch_examples) < 25:
-                mismatch_examples.append(
-                    {"segment_id": segment_id, "field": "segment.processed_duration_s",
-                     "jsonl": _json_get(obj, ("segment", "processed_duration_s")),
-                     "expected": exp["processed_duration_s"]}
-                )
+        for field in ("start_time_s", "end_time_s"):
+            if not _float_close(obj.get(field), exp[field]):
+                n_value_mismatches += 1
+                if len(mismatch_examples) < 25:
+                    mismatch_examples.append(
+                        {"segment_id": segment_id, "field": field, "jsonl": obj.get(field),
+                         "expected": exp[field]}
+                    )
 
     report.add(
         "crowd_index_jsonl.required_schema_fields",
@@ -3063,7 +3023,7 @@ def validate_crowd_index_jsonl(
         warn=False,
     )
     report.add(
-        "crowd_index_jsonl.governance_flags",
+        "crowd_index_jsonl.youtube_url_matches_video_id",
         ok=(n_bad_governance_values == 0),
         details={"bad_value_count": n_bad_governance_values, "examples": bad_value_examples},
         warn=False,
@@ -3077,10 +3037,10 @@ def validate_crowd_index_jsonl(
 
     total_duration_jsonl = 0.0
     for obj in records.values():
-        dur = _json_get(obj, ("segment", "processed_duration_s"))
         try:
-            total_duration_jsonl += float(dur)
-        except Exception:
+            dur = _jsonl_processed_duration_seconds(float(obj.get("start_time_s")), float(obj.get("end_time_s")))
+            total_duration_jsonl += float(dur or 0.0)
+        except (TypeError, ValueError):
             pass
     total_duration_expected = sum(float(v.get("processed_duration_s") or 0.0) for v in expected.values())
     unique_uploads_jsonl = len({str(obj.get("video_id")) for obj in records.values() if obj.get("video_id")})

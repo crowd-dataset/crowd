@@ -36,6 +36,7 @@ import sys
 import tempfile
 import warnings
 from collections import Counter
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
@@ -222,6 +223,21 @@ def _json_friendly(value: Any) -> Any:
 
 
 def _parse_cell(value: Any) -> Any:
+    """Parse a CSV cell; string cells are cached (the same large list cell is read once per segment).
+
+    Callers treat the result as read-only: they index it or copy it through _json_friendly.
+    """
+    if isinstance(value, str):
+        return _parse_str_cell(value)
+    return _parse_cell_uncached(value)
+
+
+@lru_cache(maxsize=64)
+def _parse_str_cell(value: str) -> Any:
+    return _parse_cell_uncached(value)
+
+
+def _parse_cell_uncached(value: Any) -> Any:
     """Parse a CSV cell into a JSON-friendly Python object.
 
     Supports valid JSON, Python literal strings, and legacy bare-token list cells
