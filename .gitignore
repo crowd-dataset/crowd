@@ -73,3 +73,6 @@ cache_countries.json
 crowd_index.jsonl
 # Claude Code local settings (preview servers)
 .claude/
+
+# YouTube login cookies for yt-dlp (YT_DLP_COOKIES), never committed
+cookies.txt

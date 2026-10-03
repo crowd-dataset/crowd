@@ -19,7 +19,8 @@ import json
 import re
 from geopy.geocoders import Nominatim
 from geopy.exc import GeocoderTimedOut, GeocoderUnavailable, GeocoderServiceError
-from datetime import datetime
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 from functools import lru_cache
 from concurrent.futures import ThreadPoolExecutor
 
@@ -383,6 +384,64 @@ def _fetch_channel_id_from_html(video_url, timeout=10):
     except Exception:
         pass
 
+    return None
+
+
+YOUTUBE_TZ = ZoneInfo('America/Los_Angeles')  # the day YouTube shows under a video is in Pacific time
+
+
+def youtube_day(when):
+    """The day YouTube shows for an upload moment (epoch seconds, or an ISO time such as the Data API's
+    publishedAt in UTC), as a datetime at midnight: an evening upload in California is the next day in UTC."""
+    if isinstance(when, (int, float)):
+        moment = datetime.fromtimestamp(when, timezone.utc)
+    else:
+        moment = datetime.fromisoformat(when.replace('Z', '+00:00'))
+    return datetime.combine(moment.astimezone(YOUTUBE_TZ).date(), datetime.min.time())
+
+
+def _fetch_upload_date(yt, video_url, timeout=10):
+    """Upload date (datetime) of a video, or None. pytubefix's publish_date comes back empty or raises when
+    YouTube throttles a busy day of fetching, so fall back to the date in the raw page HTML, then yt-dlp,
+    then the YouTube Data API, which YouTube's bot check does not block."""
+    try:
+        if yt.publish_date:
+            return yt.publish_date
+    except Exception:
+        pass
+    try:
+        resp = requests.get(video_url, params={'hl': 'en'}, timeout=timeout, headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
+                          "Chrome/124.0.0.0 Safari/537.36",
+            "Accept-Language": "en-US,en"})
+        match = re.search(r'"(?:publishDate|uploadDate)":"(\d{4}-\d{2}-\d{2})', resp.text)
+        if match:  # the page's own (Pacific) day
+            return datetime.strptime(match.group(1), '%Y-%m-%d')
+        # a throttled page has only the shown text, e.g. "Jun 17, 2021" or "Streamed live on Jun 17, 2021"
+        match = re.search(r'"(?:publishDate|dateText)":\{"simpleText":"[^"]*?([A-Z][a-z]{2} \d{1,2}, \d{4})"',
+                          resp.text)
+        if match:
+            return datetime.strptime(match.group(1), '%b %d, %Y')
+    except Exception:
+        pass
+    if yt_dlp is not None:
+        try:
+            with yt_dlp.YoutubeDL({"quiet": True, "no_warnings": True, "skip_download": True}) as ydl:
+                info = ydl.extract_info(video_url, download=False)
+            if info and info.get("timestamp"):
+                return youtube_day(info["timestamp"])
+            if info and info.get("upload_date"):
+                return datetime.strptime(info["upload_date"], '%Y%m%d')
+        except Exception:
+            pass
+    try:
+        resp = requests.get('https://www.googleapis.com/youtube/v3/videos', timeout=timeout, params={
+            'part': 'snippet', 'id': _extract_video_id(video_url), 'key': common.get_secrets('youtube_api_key')})
+        items = resp.json().get('items', [])
+        if items:
+            return youtube_day(items[0]['snippet']['publishedAt'])
+    except Exception:
+        pass
     return None
 
 
@@ -892,7 +951,7 @@ def form():
                 video_id = yt.video_id
                 video_global_note = build_video_occurrence_note(video_id)
 
-                yt_upload_date = yt.publish_date
+                yt_upload_date = _fetch_upload_date(yt, video_url)
                 yt_channel = _normalize_optional_text(getattr(yt, 'channel_id', None))
                 if not yt_channel:
                     yt_channel = _fetch_channel_id_from_html(video_url)
@@ -1040,7 +1099,7 @@ def form():
                     video_matches_anywhere = find_video_occurrences(video_id)
 
                     if not upload_date_video:
-                        yt_upload_date = yt.publish_date
+                        yt_upload_date = _fetch_upload_date(yt, video_url)
 
                     if not channel_video:
                         yt_channel = _normalize_optional_text(getattr(yt, 'channel_id', None))

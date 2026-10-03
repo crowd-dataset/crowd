@@ -13,6 +13,7 @@ import json
 import os
 import random
 import re
+import shutil
 import subprocess
 import tempfile
 import time
@@ -76,7 +77,10 @@ def _yt_dlp(*args):
     # or a path to a cookies.txt exported from a logged-in browser
     jar = os.environ.get('YT_DLP_COOKIES')
     cookies = (['--cookies', jar] if os.path.isfile(jar) else ['--cookies-from-browser', jar]) if jar else []
-    r = subprocess.run([YT_DLP, '--no-warnings', *cookies, *args], capture_output=True, text=True)
+    # yt-dlp solves YouTube's JavaScript challenge only with a JS runtime and uses just deno unless told,
+    # so offer node: without it YouTube hands out thumbnails instead of the video
+    js = ['--js-runtimes', 'node'] if shutil.which('node') else []
+    r = subprocess.run([YT_DLP, '--no-warnings', *js, *cookies, *args], capture_output=True, text=True)
     if r.returncode:
         msg = (r.stderr.strip().splitlines() or [f'yt-dlp exited with {r.returncode}'])[-1]
         raise (BotCheck if 'not a bot' in r.stderr else RuntimeError)(msg)
@@ -89,7 +93,9 @@ def _url(video_id):
 
 def fetch_metadata(video_id):
     m = json.loads(_yt_dlp('-J', _url(video_id)))
-    d = m.get('upload_date')  # YYYYMMDD
+    d = m.get('upload_date')  # YYYYMMDD, in UTC
+    if m.get('timestamp'):
+        d = add_video.youtube_day(m['timestamp']).strftime('%Y%m%d')
     return {
         'id': video_id,
         'title': m.get('title'),
@@ -560,7 +566,7 @@ def fetch_metadata_api(video_ids):
         for v in _api('videos', part='snippet,contentDetails,player', id=','.join(video_ids[i:i + 50]),
                       maxWidth=1000).get('items', []):
             sn, pl = v['snippet'], v.get('player', {})
-            day = sn.get('publishedAt', '')[:10]  # YYYY-MM-DD
+            day = add_video.youtube_day(sn['publishedAt']).strftime('%Y-%m-%d') if sn.get('publishedAt') else ''
             out[v['id']] = {
                 'id': v['id'], 'title': sn.get('title'), 'duration': _iso_seconds(v['contentDetails'].get('duration')),
                 'upload_date': f'{day[8:10]}{day[5:7]}{day[:4]}' if day else None, 'channel_id': sn.get('channelId'),
