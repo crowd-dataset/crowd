@@ -34,8 +34,13 @@ W, H = 160, 90          # analysis frame size
 PARAMS = {
     'moving_flow': 0.25,      # median flow (px per analysis frame) above which the camera is moving
     'smooth_s': 5,            # rolling median window for motion
-    'edge_stop_s': 15,        # stationary stretch at the start/end longer than this is trimmed
-    'mid_stop_s': 180,        # stationary stretch inside a video longer than this is cut out
+    'edge_stop_s': 0,         # stationary stretch at the start/end longer than this is trimmed: parked before
+                              # setting off or after arriving (labelled videos keep none of it)
+    'mid_stop_s': 180,        # stationary stretch inside a video longer than this is cut out; shorter ones
+                              # are waits at traffic lights and in traffic, and stay
+    'edge_burst_s': 15,       # moving for less than this between stops at the start/end is shuffling in the
+                              # parking spot or fixing the camera: the parked stretch goes on through it...
+    'edge_parked_s': 5,       # ...when the video opens (or closes) standing still at least this long
     'cut_ncc': 0.3,           # a frame this uncorrelated with the previous one is a hard cut...
     'cut_neighbour_ncc': 0.6,  # ...when the frames either side of it are this coherent
     'bridge_dip': 0.5,        # a cut whose sky darkens below this share of its surroundings is a bridge
@@ -45,9 +50,17 @@ PARAMS = {
     'night_window_s': 60,     # night/day must hold this long to count as a transition
     'min_segment_s': 30,      # drop proposed segments shorter than this
     'driver_window_s': 60,    # a big face in more than driver_share of the frames over this window means the
-    'driver_share': 0.25,     # camera faces the driver...
+    'driver_share': 0.1,      # camera faces the driver (found in only 10-40% of its frames: sunglasses, small
+                              # picture; road footage the user kept: 0% in the median minute)...
     'driver_min_s': 10,       # ...and such a stretch this long is cut out
+    # camera angle: a moving frame whose right and left sides flow apart by less than angle_spread times the
+    # overall motion looks sideways (forward cameras: median 1.1-1.5; a side-facing camera: -0.1)
+    'angle_spread': 0.3,
+    'angle_share': 0.6,       # sideways in this share of the moving frames over a minute: cut that stretch
+    'shake_jitter': 1.0,      # spread of the vertical shift over 10 s (normal: 0.02-0.46; shaking: 1.8)
+    'problem_min_s': 60,      # angle and shaking stretches shorter than this are kept (turns, bumps: ~30 s)
 }
+VIDEO_SIDEWAYS_SHARE = 0.5   # sideways in more than this share of all moving frames: the video is excluded
 
 
 # pytubefix downloads now fail YouTube's PoToken check; a current yt-dlp (with node installed) does not
@@ -282,6 +295,37 @@ def _rolling_median(x, n):
     return np.array([np.median(xp[i:i + n]) for i in range(len(x))])
 
 
+def _rolling_mean(x, n):
+    """Mean over a centred window of n frames; near the ends, over the frames that exist rather than padding
+    with zeros, which would make the first and last half-window look emptier than they are."""
+    k = np.ones(n)
+    return np.convolve(x, k, mode='same') / np.convolve(np.ones(len(x)), k, mode='same')
+
+
+def _jitter(sig):
+    """How much the picture's vertical shift varies over 10 s: a steady camera barely, a shaking one a lot."""
+    y = sig['shift_y']
+    n = 10 * FPS
+    return np.sqrt(np.maximum(_rolling_mean(y * y, n) - _rolling_mean(y, n) ** 2, 0))
+
+
+def _sideways(sig, p):
+    """Moving frames, and moving frames whose flow does not spread out from the middle (camera aimed sideways)."""
+    moving = sig['motion'] > 2 * p['moving_flow']
+    return moving, moving & (sig['spread'] / (sig['motion'] + 0.05) < p['angle_spread'])
+
+
+def footage_problem(sig, p=PARAMS):
+    """Why a whole video is unusable from its camera, or None (signals saved before these checks: None)."""
+    if 'shift_y' in sig and np.median(_jitter(sig)) > p['shake_jitter']:
+        return 'the camera shakes too much'
+    if 'spread' in sig:
+        moving, sideways = _sideways(sig, p)
+        if moving.sum() >= 60 * FPS and sideways.sum() / moving.sum() > VIDEO_SIDEWAYS_SHARE:
+            return f'the camera does not face forward ({sideways.sum() / moving.sum():.0%} of the driving)'
+    return None
+
+
 def _drop_short_runs(mask, n):
     """Give runs shorter than n samples the value of the run before them (the next one at the start)."""
     out = mask.copy()
@@ -333,7 +377,15 @@ def propose(sig, p=PARAMS):
 
     keep = ~blank
     notes = []
-    for a, b in _runs(~moving):
+    stopped = ~moving
+    for order in (slice(None), slice(None, None, -1)):  # the start, then the end read backwards
+        runs = _runs(stopped[order])
+        if runs and runs[0][0] == 0 and (runs[0][1] - runs[0][0]) / FPS >= p['edge_parked_s']:
+            i = 0
+            while i + 1 < len(runs) and (runs[i + 1][0] - runs[i][1]) / FPS < p['edge_burst_s']:
+                i += 1
+            stopped[order][:runs[i][1]] = True
+    for a, b in _runs(stopped):
         at_edge = a == 0 or b == n
         limit = p['edge_stop_s'] if at_edge else p['mid_stop_s']
         if (b - a) / FPS > limit:
@@ -344,13 +396,25 @@ def propose(sig, p=PARAMS):
     if 'face' in sig:  # signals saved before this check have no face trace
         # a camera on the driver keeps seeing him, but turning his head hides the face for a while, so judge
         # the share of frames with a big face over a longer window rather than frame by frame
-        window = p['driver_window_s'] * FPS
-        share = np.convolve((sig['face'] > 0).astype(float), np.ones(window) / window, mode='same')
-        driver = share > p['driver_share']
+        driver = _rolling_mean((sig['face'] > 0).astype(float), p['driver_window_s'] * FPS) > p['driver_share']
         for a, b in _runs(driver):
             if (b - a) / FPS >= p['driver_min_s']:
                 keep[a:b] = False
                 notes.append(f'camera on the driver {a / FPS:.0f}-{b / FPS:.0f}s')
+    problems = []
+    if 'spread' in sig:
+        moving, sideways = _sideways(sig, p)
+        moving_share = _rolling_mean(moving.astype(float), 60 * FPS)
+        share = _rolling_mean(sideways.astype(float), 60 * FPS) / np.maximum(moving_share, 1e-6)
+        # judged only over minutes with enough driving; a stop says nothing about where the camera points
+        problems.append(('camera not facing forward', (share > p['angle_share']) & (moving_share > 0.3)))
+    if 'shift_y' in sig:
+        problems.append(('camera shaking', _rolling_median(_jitter(sig), 30 * FPS) > p['shake_jitter']))
+    for label, bad in problems:
+        for a, b in _runs(bad):
+            if (b - a) / FPS >= p['problem_min_s']:
+                keep[a:b] = False
+                notes.append(f'{label} {a / FPS:.0f}-{b / FPS:.0f}s')
 
     window = p['night_window_s'] * FPS
     night = _rolling_median((sig['sky'] < p['night_sky']).astype(float), window) > 0.5
@@ -525,8 +589,12 @@ def exclusion_reason(meta):
 
 def guess_locality(title, country, df):
     """[locality, state, country] when the title names exactly one mapping locality of that country, else None."""
+    return _title_locality(title, df[df['country'] == country])
+
+
+def _title_locality(title, df, exact_case=False):
     found = set()
-    for _, row in df[df['country'] == country].iterrows():
+    for _, row in df.iterrows():
         names = [row['locality']]
         aka = row.get('locality_aka')
         if isinstance(aka, str) and aka.startswith('['):
@@ -535,10 +603,10 @@ def guess_locality(title, country, df):
             if not isinstance(name, str) or not name:
                 continue
             # short aliases such as "LA" only count in capitals, so "la" in a Spanish title does not match
-            flags = 0 if len(name) <= 3 else re.I
+            flags = 0 if exact_case or len(name) <= 3 else re.I
             if re.search(rf'(?<!\w){re.escape(name)}(?!\w)', title or '', flags):
                 state = row['state'] if isinstance(row['state'], str) else None
-                found.add((row['locality'], state, country))
+                found.add((row['locality'], state, row['country']))
     return list(found.pop()) if len(found) == 1 else None
 
 
@@ -547,6 +615,9 @@ def _km(lat1, lon1, lat2, lon2):
     p1, p2 = np.radians(lat1), np.radians(lat2)
     a = np.sin((p2 - p1) / 2) ** 2 + np.cos(p1) * np.cos(p2) * np.sin(np.radians(lon2 - lon1) / 2) ** 2
     return float(6371 * 2 * np.arcsin(np.sqrt(a)))
+
+
+ABROAD_KM = 1000  # a title place in another country counts only this close to the channel's home
 
 
 def _place_near(name, iso2, lat, lon, km=60):
@@ -740,6 +811,8 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
                 reason = 'another camera is shown in a corner of the picture (picture-in-picture)'
             elif (n_driver := driver_frames(frames)) >= DRIVER_SHEET_FRAMES:
                 reason = f'the camera faces the driver (a big face in {n_driver} of {len(frames)} sampled frames)'
+            else:
+                reason = footage_problem(dict(np.load(sig_path)))
         if reason:
             plan[vid] = {'video': vid, 'title': meta['title'], 'exclude': reason}
             touched.append(vid)
@@ -747,6 +820,12 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
             continue
         if analysed:
             segments, notes = propose(dict(np.load(sig_path)))
+            if not segments:
+                plan[vid] = {'video': vid, 'title': meta['title'],
+                             'exclude': 'no usable footage left: ' + ('; '.join(notes) or 'too short')}
+                touched.append(vid)
+                commit([vid])
+                continue
         else:
             night = bool(NIGHT_TITLE.search(meta['title'] or ''))
             segments = [{'start': 0, 'end': int(meta['duration']), 'night': int(night)}]
@@ -783,7 +862,15 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
         for p in new:
             for e in p.get('entries', []):
                 loc = e.get('locality')
-                if not (loc and e.get('guessed')) or tuple(loc) == home[:3]:
+                if not loc:
+                    # a trip over the border ("Entering Tijuana" from an LA channel): a capitalised name of one
+                    # locality abroad within reach of home; "New Mexico" or "Little Tokyo" are not trips abroad
+                    abroad = df[(df['country'] != country) & np.array([
+                        _km(home[3], home[4], lat, lon) <= ABROAD_KM for lat, lon in zip(df['lat'], df['lon'])])]
+                    if found := _title_locality(p['title'], abroad, exact_case=True):
+                        e['locality'], e['guessed'] = found, True
+                    continue
+                if not e.get('guessed') or tuple(loc) == home[:3]:
                     continue
                 _, row = add_video.get_existing_locality_row(df, *loc)
                 if row is None or _km(home[3], home[4], float(row['lat']), float(row['lon'])) < 100:
@@ -926,7 +1013,7 @@ tr.seg.active td:first-child { box-shadow: inset 4px 0 #007bff; }
   </div>
 </header>
 <main>
-{% for p in plan if p.entries %}
+{% for p in plan if p.entries and p.video in open_videos %}
 <div class="video"><div class="main">
   <h3>{{ p.title }}</h3>
   <a href="https://www.youtube.com/watch?v={{ p.video }}" target="_blank">{{ p.video }}</a>
@@ -988,12 +1075,19 @@ tr.seg.active td:first-child { box-shadow: inset 4px 0 #007bff; }
           → other locality</button>{% endif %}</td>
     </tr>
     {% if not loop.last %}{% set n = e.segments[loop.index] %}
-    {% if n.start - s.end <= max_merge_gap and n.night == s.night and not s.applied and not n.applied %}
+    {% if not s.applied and not n.applied %}
+    {% set split = n.start - s.end <= max_merge_gap and n.night == s.night %}
     <tr class="split">
-      <td colspan="2">suggested split at {{ '%d:%02d' % (s.end // 60, s.end % 60) }}</td>
-      <td><button class="small" onclick="play('{{ p.video }}', {{ [s.end - 5, 0] | max }})">▶ split</button></td>
+      <td colspan="2">{% if split %}suggested split at {{ '%d:%02d' % (s.end // 60, s.end % 60) }}
+        {% elif n.start > s.end %}left out {{ '%d:%02d' % (s.end // 60, s.end % 60) }}–{{
+          '%d:%02d' % (n.start // 60, n.start % 60) }}{% else %}{% endif %}</td>
+      <td><button class="small" onclick="play('{{ p.video }}', {{ [s.end - 5, 0] | max }})">▶ {{
+          'split' if split else 'gap' }}</button></td>
       <td><button class="small" onclick="mergeSplit('{{ p.video }}', {{ ei }}, {{ loop.index0 }},
-          [[{{ s.start }}, {{ s.end }}], [{{ n.start }}, {{ n.end }}]])">Remove split</button></td>
+          [[{{ s.start }}, {{ s.end }}], [{{ n.start }}, {{ n.end }}]])"{% if not split %}
+          title="one segment from {{ '%d:%02d' % (s.start // 60, s.start % 60) }} to {{
+          '%d:%02d' % (n.end // 60, n.end % 60) }}, the left-out part and the first one's day/night included"
+          {% endif %}>{{ 'Remove split' if split else 'Join' }}</button></td>
     </tr>
     {% endif %}{% endif %}
   {% endfor %}
@@ -1016,11 +1110,13 @@ tr.seg.active td:first-child { box-shadow: inset 4px 0 #007bff; }
   </div>
 </div>
 {% endfor %}
-<h3>Excluded videos</h3>
+{% if not open_videos %}<p>Nothing left to decide in this plan.</p>{% endif %}
+<details><summary>Excluded videos ({{ plan | selectattr('exclude') | list | length }})</summary>
 {% for p in plan if p.exclude %}
 <div class="excluded"><a href="https://www.youtube.com/watch?v={{ p.video }}" target="_blank">{{ p.video }}</a>
   {{ p.title }} — {{ p.exclude }}</div>
 {% endfor %}
+</details>
 </main>
 <script>
 let ytPlayer = null, ytReady = false, pending = null;
@@ -1045,12 +1141,15 @@ function playingVideo() {
   try { return new URL(ytPlayer.getVideoUrl()).searchParams.get('v'); } catch (e) { return null; }
 }
 function activeRow() {
-  // the segment of the playing video that the current time is in, or the nearest one
+  // the undecided segment of the playing video that the current time is in, or the nearest one; a decided
+  // segment only when the video has no undecided one left
   const video = ytReady && playingVideo();
   if (!video) return null;
   const t = ytPlayer.getCurrentTime();
+  const rows = [...document.querySelectorAll(`tr.seg:not(.applied)[data-video="${video}"]`)];
+  const open = rows.filter(r => !r.classList.contains('approve') && !r.classList.contains('reject'));
   let best = null, bestDistance = Infinity;
-  for (const r of document.querySelectorAll(`tr.seg:not(.applied)[data-video="${video}"]`)) {
+  for (const r of open.length ? open : rows) {
     const distance = Math.max(0, +r.dataset.start - t, t - +r.dataset.end);
     if (distance < bestDistance) { best = r; bestDistance = distance; }
   }
@@ -1094,6 +1193,22 @@ function editTimes(input) {
   }
   setBounds(row, start, end);
 }
+let stepSave;
+document.addEventListener('keydown', e => {
+  // up/down arrows in a time box step it by a second, show that moment, and save once the stepping pauses
+  const input = e.target;
+  if (!['ArrowUp', 'ArrowDown'].includes(e.key) || !input.matches('input.t-start, input.t-end, input.at')) return;
+  const t = parseTime(input.value);
+  if (!Number.isFinite(t)) return;
+  e.preventDefault();
+  const next = Math.max(0, t + (e.key === 'ArrowUp' ? 1 : -1));
+  input.value = fmt(next);
+  const row = input.closest('tr');
+  if (ytReady && playingVideo() === row.dataset.video) ytPlayer.seekTo(next, true);
+  if (input.matches('.at')) return;
+  clearTimeout(stepSave);
+  stepSave = setTimeout(() => editTimes(input), 600);
+});
 document.addEventListener('keydown', e => {
   // same keys as the add-video form; never while typing in a box or with a modifier held
   if (['input', 'textarea', 'select'].includes(document.activeElement.tagName.toLowerCase())) return;
@@ -1280,12 +1395,14 @@ function update() {
   const no = rows.filter(r => r.classList.contains('reject')).length;
   const open = rows.length - yes - no;
   document.getElementById('status').textContent =
-    `${rows.length} segments to review: ${yes} approved, ${no} rejected, ${open} undecided`;
-  document.getElementById('apply').disabled = yes === 0;
+    `${rows.length} segments to review: ${yes} approved, ${no} rejected, ${open} undecided` +
+    (APPROVED_HIDDEN ? ` (+${APPROVED_HIDDEN} approved in finished videos, waiting for Apply)` : '');
+  document.getElementById('apply').disabled = yes + APPROVED_HIDDEN === 0;
 }
+const APPROVED_HIDDEN = {{ approved_hidden }};  // approved segments of finished videos, which are not shown
 document.getElementById('apply').onclick = async () => {
   const rows = [...document.querySelectorAll('tr.seg:not(.applied)')];
-  const yes = rows.filter(r => r.classList.contains('approve')).length;
+  const yes = rows.filter(r => r.classList.contains('approve')).length + APPROVED_HIDDEN;
   const open = rows.filter(r => !r.classList.contains('approve') && !r.classList.contains('reject')).length;
   if (!confirm(`Write ${yes} approved segment(s) to the mapping file?` +
                (open ? `\n${open} undecided segment(s) stay here for later.` : ''))) return;
@@ -1322,6 +1439,8 @@ def review(plan_path, port=None):
     app = Flask(__name__)
 
     def load():
+        if not os.path.exists(plan_path):  # a channel run that has not finished its first video yet
+            return []
         with open(plan_path) as f:
             return json.load(f)
 
@@ -1349,11 +1468,16 @@ def review(plan_path, port=None):
 
     @app.route('/')
     def index():
+        # only videos with something left to decide; finished ones stay in the plan but off the page
         plan = load()
-        descriptions = {p['video']: describe(p['video']) for p in plan if 'entries' in p}
-        return render_template_string(REVIEW_HTML, plan=plan, max_merge_gap=MAX_MERGE_GAP_S,
-                                      descriptions={v: d for v, d in descriptions.items() if d}, countries=COUNTRIES,
-                                      vehicle_types=VEHICLE_TYPES)
+        segs = {p['video']: [s for e in p['entries'] for s in e['segments']] for p in plan if 'entries' in p}
+        open_videos = {v for v, ss in segs.items() if any(not s.get('decision') and not s.get('applied') for s in ss)}
+        approved_hidden = sum(s.get('decision') == 'approve' and not s.get('applied')
+                              for v, ss in segs.items() if v not in open_videos for s in ss)
+        descriptions = {v: describe(v) for v in open_videos}
+        return render_template_string(REVIEW_HTML, plan=plan, open_videos=open_videos, approved_hidden=approved_hidden,
+                                      max_merge_gap=MAX_MERGE_GAP_S, countries=COUNTRIES, vehicle_types=VEHICLE_TYPES,
+                                      descriptions={v: d for v, d in descriptions.items() if d})
 
     def lookup(plan, d):
         """The video and segment list the page refers to, or (None, None) when the page shows an older plan."""
@@ -1366,6 +1490,16 @@ def review(plan_path, port=None):
         return (p, segs) if shown == d['bounds'] else (None, None)
 
     stale = 'The plan changed since this page was loaded. Reload the page and try again.'
+
+    def overlap(p, seg, start, end):
+        """Error text when start-end would overlap another segment of the video, else None. Rejected segments
+        never reach the mapping, so a segment may take over their time."""
+        for e in p['entries']:
+            for o in e['segments']:
+                if o is not seg and o.get('decision') != 'reject' and start < o['end'] and o['start'] < end:
+                    return (f"that would overlap this video's segment {o['start'] // 60}:{o['start'] % 60:02d}"
+                            f"–{o['end'] // 60}:{o['end'] % 60:02d}")
+        return None
 
     def describe(video_id):
         """Description (escaped, with its timestamps as play links) and chapters from the saved metadata."""
@@ -1387,7 +1521,8 @@ def review(plan_path, port=None):
 
     @app.route('/bounds', methods=['POST'])
     def bounds():
-        """New start and end for a segment (the A, S and D keys); it may not overlap the video's other segments."""
+        """New start and end for a segment (the A, S and D keys); it may not overlap the video's other segments
+        that are not rejected."""
         d = request.get_json()
         plan = load()
         p, segs = lookup(plan, d)
@@ -1399,11 +1534,8 @@ def review(plan_path, port=None):
         start, end = int(d['start']), int(d['end'])
         if not 0 <= start < end:
             return jsonify(error='the start must be before the end'), 400
-        for e in p['entries']:
-            for o in e['segments']:
-                if o is not s and start < o['end'] and o['start'] < end:
-                    return jsonify(error=f"that would overlap this video's segment {o['start'] // 60}:"
-                                         f"{o['start'] % 60:02d}–{o['end'] // 60}:{o['end'] % 60:02d}"), 400
+        if s.get('decision') != 'reject' and (error := overlap(p, s, start, end)):
+            return jsonify(error=error), 400
         s['start'], s['end'] = start, end
         save(plan)
         return jsonify(start=start, end=end)
@@ -1418,7 +1550,8 @@ def review(plan_path, port=None):
         if p is None or d['entry'] >= len(p['entries']):
             return jsonify(error=stale), 409
         e = p['entries'][d['entry']]
-        taken = sorted((s['start'], s['end']) for x in p['entries'] for s in x['segments'])
+        taken = sorted((s['start'], s['end']) for x in p['entries'] for s in x['segments']
+                       if s.get('decision') != 'reject')
         start = int(d['at']) if d.get('at') is not None else max((b for _, b in taken), default=0)
         if any(a <= start < b for a, b in taken):
             return jsonify(error=f'{start // 60}:{start % 60:02d} is inside an existing segment: split that '
@@ -1575,11 +1708,10 @@ def review(plan_path, port=None):
         a, b = segs[i], segs[i + 1]
         if a.get('applied') or b.get('applied'):
             return jsonify(error='one of these segments is already in the mapping'), 409
-        if a['night'] != b['night'] or b['start'] - a['end'] > MAX_MERGE_GAP_S:
-            return jsonify(error='only splits between neighbouring segments with the same time of day '
-                                 'can be removed'), 400
-        segs[i:i + 2] = [{'start': a['start'], 'end': b['end'], 'night': a['night']}]
-        p.setdefault('removed_splits', []).append(a['end'])  # false cuts, kept for tuning the detector
+        # joining over a gap or a day/night change takes in the left-out footage and the first one's time of day
+        segs[i:i + 2] = [{'start': min(a['start'], b['start']), 'end': max(a['end'], b['end']), 'night': a['night']}]
+        if 0 <= b['start'] - a['end'] <= MAX_MERGE_GAP_S and a['night'] == b['night']:
+            p.setdefault('removed_splits', []).append(a['end'])  # false cuts, kept for tuning the detector
         save(plan)
         return jsonify(ok=True)
 
@@ -1597,6 +1729,8 @@ def review(plan_path, port=None):
         seg = segs[d['seg']]
         if seg.get('applied'):
             return jsonify(error='this segment is already in the mapping'), 409
+        if d['decision'] != 'reject' and (error := overlap(p, seg, seg['start'], seg['end'])):
+            return jsonify(error=f'{error}: shorten one of them first'), 400
         seg['decision'] = d['decision']
         save(plan)
         return jsonify(ok=True)
