@@ -715,7 +715,53 @@ Configuration of the project needs to be defined in `config`. Please use the `de
   - If set to **2+**, multiple workers may process segments from the **same video** simultaneously, which can improve throughput when one video has many segments but reduces “video diversity” across workers.
 
 
-For working with external APIs of [VideoFiles](https://files.mobility-squad.com/), [GeoNames](https://www.geonames.org), [BEA](https://apps.bea.gov/api/signup), [TomTom](https://developer.tomtom.com/user/register), [Trafikab](https://www.trafiklab.se/api/trafiklab-apis), and [Numbeo](https://www.numbeo.com/common/api.jsp) (paid), the API keys need to be placed in file `secret` (no extension) in the root of the project. The file needs to be formatted as `default.secret`. The email SMTP server, account and password need to be also set here. This is optional for just running the analysis on the dataset. For running the the `main.py` script at least an empty `secret` file directly copies from the template is required.
+### The `secret` file
+API keys, passwords and usernames live in a file named `secret` (no extension) in the root of the project. It is ignored by git, so it is never committed. To create it, copy the template `default.secret` to `secret` and fill in the values you need. Any value can stay empty (`""`) if you do not use the feature it belongs to. Running the analysis on the released dataset needs none of them; running `main.py` needs at least an empty `secret` copied from the template.
+
+The file is a single JSON object:
+
+```json
+{
+  "geonames_username": "",
+  "po_token": "",
+  "bea_api_key": "",
+  "tomtom_api_key": "",
+  "trafiklab_api_key": "",
+  "numbeo_api_key": "",
+  "restcountries_api_key": "",
+  "email_smtp": "",
+  "email_account": "",
+  "email_password": "",
+  "ftp_username": "",
+  "ftp_password": "",
+  "carto_api_key": "",
+  "youtube_api_key": ""
+}
+```
+
+| Key | Used by | What for | Where to get it |
+|---|---|---|---|
+| `geonames_username` | `add_video.py` | locality population and a fallback for coordinates | free account at [GeoNames](https://www.geonames.org/login) (enable web services in the account) |
+| `po_token` | — | not used by the current code; kept for YouTube proof-of-origin tokens | — |
+| `bea_api_key` | `add_video.py` | GDP of US metropolitan areas | [BEA](https://apps.bea.gov/api/signup) |
+| `tomtom_api_key` | `add_video.py`, `update_traffic_index.py` | traffic index from TomTom traffic flow | [TomTom](https://developer.tomtom.com/user/register) |
+| `trafiklab_api_key` | `add_video.py` | alternative traffic index | [Trafiklab](https://www.trafiklab.se/api/trafiklab-apis) |
+| `numbeo_api_key` | `add_video.py` | traffic index from Numbeo (paid) | [Numbeo](https://www.numbeo.com/common/api.jsp) |
+| `restcountries_api_key` | `add_video.py` | country population, continent and Gini | [REST Countries](https://restcountries.com) |
+| `email_smtp`, `email_account`, `email_password` | `main.py` | email when a job finishes (`email_send` in `config`) | your email provider's SMTP settings |
+| `ftp_username`, `ftp_password` | `main.py` | downloading videos from the [VideoFiles](https://files.mobility-squad.com/) server | project maintainers |
+| `carto_api_key` | `utils/plotting/maps.py` | basemaps for the map figures | [CARTO](https://carto.com) |
+| `youtube_api_key` | `propose_segments.py` | listing a channel's videos and their length, upload date and channel, without downloading them | see below |
+
+#### Getting a YouTube Data API key
+The key is free; the default quota of 10,000 units a day covers several large channels (listing a channel's search results costs 100 units per 50 videos, video details 1 unit per 50 videos).
+
+1. Go to the [Google Cloud console](https://console.cloud.google.com/) and sign in with the Google account you want the key to belong to.
+2. Create a project: project selector at the top → **New project** → give it a name (e.g. `crowd`) → **Create**, then select it.
+3. Open **APIs & Services → Library**, search for **YouTube Data API v3** and click **Enable**.
+4. Open **APIs & Services → Credentials → Create credentials → API key**. Copy the key that appears.
+5. Recommended: click the new key → under **API restrictions** choose **Restrict key** → select **YouTube Data API v3** → **Save**, so the key cannot be used for anything else.
+6. Put the key in `secret` as `"youtube_api_key": "..."`.
 
 ## Example of YOLO output for a video with dashcam footage
 

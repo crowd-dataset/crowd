@@ -702,6 +702,59 @@ def get_latest_segment_values(start_times, end_times, time_of_day_values):
     return out
 
 
+def new_locality_row(locality, state, country, locality_aka=None):
+    """Row values for a locality not yet in the mapping, looked up from the web services."""
+    country_corrected = common.correct_country(country)
+    iso2_code = common.get_iso2_country_code(country_corrected)
+    iso3_code = common.get_iso3_country_code(country_corrected)
+
+    def locate():
+        data = get_locality_data(locality, iso2_code, state)
+        lat, lon = get_coordinates(locality, state, country_corrected, data)
+        return data, lat, lon, get_traffic_index_lat_lon(lat, lon)
+
+    # the web lookups are independent of each other, so run them together
+    with ThreadPoolExecutor() as pool:
+        country_future = pool.submit(get_country_data, iso3_code)
+        locate_future = pool.submit(locate)
+        mortality_future = pool.submit(get_country_traffic_mortality, iso3_code)
+        literacy_future = pool.submit(get_country_literacy_rate, iso3_code)
+    country_data = country_future.result()
+    locality_data, lat, lon, traffic = locate_future.result()
+
+    if iso2_code == 'XK':
+        country_population = 1578000
+    else:
+        country_population = get_country_population(country_data)
+    return {
+        'locality': locality,
+        'locality_aka': [] if locality_aka is None else locality_aka,
+        'country': country,
+        'iso3': iso3_code,
+        'lat': lat,
+        'lon': lon,
+        'state': state,
+        'videos': [],
+        'time_of_day': [],
+        'gmp': '',  # no source for locality GDP: left empty, filled in by hand
+        'population_locality': int(get_locality_population(locality_data, locality, state)),
+        'population_country': country_population,
+        'traffic_mortality': mortality_future.result(),
+        'start_time': [],
+        'end_time': [],
+        'continent': get_country_continent(country_data),
+        'literacy_rate': literacy_future.result(),
+        'avg_height': get_country_average_height(iso3_code),
+        'med_age': get_country_median_age(iso2_code),
+        'upload_date': [],
+        'channel': [],
+        'vehicle_type': [],
+        'gini': get_country_gini(country_data),
+        # empty when TomTom has no reading here, so it is not mistaken for free-flowing traffic (0)
+        'traffic_index': '' if traffic is None else traffic
+    }
+
+
 @app.route('/', methods=['GET', 'POST'])
 def form():
     df = load_csv(FILE_PATH)
@@ -899,55 +952,7 @@ def form():
 
             else:
                 message = "No entry for locality found. You can add new data."
-                country_corrected = common.correct_country(country)
-                iso2_code = common.get_iso2_country_code(country_corrected)
-                iso3_code = common.get_iso3_country_code(country_corrected)
-
-                def locate():
-                    data = get_locality_data(locality, iso2_code, state)
-                    lat, lon = get_coordinates(locality, state, country_corrected, data)
-                    return data, lat, lon, get_traffic_index_lat_lon(lat, lon)
-
-                # the web lookups are independent of each other, so run them together
-                with ThreadPoolExecutor() as pool:
-                    country_future = pool.submit(get_country_data, iso3_code)
-                    locate_future = pool.submit(locate)
-                    mortality_future = pool.submit(get_country_traffic_mortality, iso3_code)
-                    literacy_future = pool.submit(get_country_literacy_rate, iso3_code)
-                country_data = country_future.result()
-                locality_data, lat, lon, traffic = locate_future.result()
-
-                if iso2_code == 'XK':
-                    country_population = 1578000
-                else:
-                    country_population = get_country_population(country_data)
-                existing_data_row = {
-                    'locality': locality,
-                    'locality_aka': locality_aka,
-                    'country': country,
-                    'iso3': iso3_code,
-                    'lat': lat,
-                    'lon': lon,
-                    'state': state,
-                    'videos': [],
-                    'time_of_day': [],
-                    'gmp': '',  # no source for locality GDP: left empty, filled in by hand
-                    'population_locality': int(get_locality_population(locality_data, locality, state)),
-                    'population_country': country_population,
-                    'traffic_mortality': mortality_future.result(),
-                    'start_time': [],
-                    'end_time': [],
-                    'continent': get_country_continent(country_data),
-                    'literacy_rate': literacy_future.result(),
-                    'avg_height': get_country_average_height(iso3_code),
-                    'med_age': get_country_median_age(iso2_code),
-                    'upload_date': [],
-                    'channel': [],
-                    'vehicle_type': [],
-                    'gini': get_country_gini(country_data),
-                    # empty when TomTom has no reading here, so it is not mistaken for free-flowing traffic (0)
-                    'traffic_index': '' if traffic is None else traffic
-                }
+                existing_data_row = new_locality_row(locality, state, country, locality_aka)
 
             # For a new city, if the video already exists elsewhere, carry over its
             # metadata so the embed player starts at the right timestamp and vehicle
