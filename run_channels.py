@@ -137,6 +137,13 @@ def check_reviews(state, sheet):
                 c['status'] = 'marked'
 
 
+def on_hotspot():
+    """Connected through an iPhone's Personal Hotspot (it always hands out 172.20.10.x; macOS hides the Wi-Fi
+    name)."""
+    r = subprocess.run(['route', '-n', 'get', 'default'], capture_output=True, text=True)
+    return 'gateway: 172.20.10.' in r.stdout
+
+
 def run_chunk(url, country, chunk):
     """One batch of the channel with the latest code; its output, streamed."""
     env = dict(os.environ)
@@ -147,6 +154,10 @@ def run_chunk(url, country, chunk):
     out = []
     with subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env) as proc:
         for line in proc.stdout:
+            if on_hotspot():  # stop downloading at once; the batch continues once off the hotspot
+                proc.terminate()
+                out.append('switched to the hotspot\n')
+                break
             if 'Warning' not in line:
                 print('  ' + line.rstrip()[:200], flush=True)
                 out.append(line)
@@ -167,6 +178,11 @@ def main():
     t0 = time.time()
     state = load_state()
     while not args.max_minutes or time.time() - t0 < args.max_minutes * 60:
+        if on_hotspot():
+            log('on the iPhone hotspot: waiting until another network is used')
+            while on_hotspot():
+                time.sleep(60)
+            log('off the hotspot: continuing')
         try:
             sheet = sheet_rows()
         except requests.RequestException as e:
@@ -200,13 +216,24 @@ def main():
         save_state(state)
         log(f'row {n} {url} ({country}): next {args.chunk} proposals')
         out = run_chunk(url, country, args.chunk)
+        if 'Could not list the channel' not in out:
+            c.pop('list_failures', None)
         if 'asks to sign in' in out:
             log('YouTube asks to sign in: waiting 15 min (a fresh cookies.txt helps)')
+            time.sleep(BLOCKED_WAIT_S)
+        elif 'three videos in a row could not be analysed' in out:
+            log('three videos in a row failed (YouTube blocking or no connection?): waiting 15 min')
             time.sleep(BLOCKED_WAIT_S)
         elif 'so it is rejected' in out:
             c['status'] = 'rejected'
         elif 'Could not list the channel' in out:
-            c['status'] = 'error'
+            # usually a block or a dropped connection: wait; give up on the channel only after 3 tries in a row
+            c['list_failures'] = c.get('list_failures', 0) + 1
+            if c['list_failures'] >= 3:
+                c['status'] = 'error'
+            else:
+                log('could not list the channel (blocked or offline?): waiting 15 min')
+                time.sleep(BLOCKED_WAIT_S)
         elif 'still to do' not in out:
             c['status'] = 'to review'
             log(f"row {n} {url}: all videos proposed; on to the next channel")
