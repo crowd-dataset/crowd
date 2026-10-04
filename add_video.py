@@ -21,6 +21,7 @@ import re
 import unicodedata
 from geopy.geocoders import Nominatim
 from geopy.exc import GeocoderTimedOut, GeocoderUnavailable, GeocoderServiceError
+from geopy.distance import geodesic
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 from functools import lru_cache
@@ -763,8 +764,10 @@ def get_latest_segment_values(start_times, end_times, time_of_day_values):
     return out
 
 
-def new_locality_row(locality, state, country, locality_aka=None):
-    """Row values for a locality not yet in the mapping, looked up from the web services."""
+def new_locality_row(locality, state, country, locality_aka=None, near=None):
+    """Row values for a locality not yet in the mapping, looked up from the web services. near=(lat, lon): where
+    the locality is known to be (footage filmed there); a lookup by name landing farther away found a namesake
+    (Butler Township, PA in Butler County for the one near Hazleton), so near is used instead."""
     country_corrected = common.correct_country(country)
     iso2_code = common.get_iso2_country_code(country_corrected)
     iso3_code = common.get_iso3_country_code(country_corrected)
@@ -783,6 +786,10 @@ def new_locality_row(locality, state, country, locality_aka=None):
         gmp_future = pool.submit(get_gmp, locality, state, iso3_code, locality_aka)
     country_data = country_future.result()
     locality_data, lat, lon, traffic = locate_future.result()
+    namesake = bool(near and (lat is None or lon is None or geodesic((lat, lon), near).km > 15))
+    if namesake:
+        lat, lon = near
+        traffic = get_traffic_index_lat_lon(lat, lon)
 
     if iso2_code == 'XK':
         country_population = 1578000
@@ -799,7 +806,10 @@ def new_locality_row(locality, state, country, locality_aka=None):
         'videos': [],
         'time_of_day': [],
         'gmp': gmp_future.result() or '',
-        'population_locality': int(get_locality_population(locality_data, locality, state)),
+        # GeoNames picks by name, so for a namesake its figure is the other place's: Wikidata, by location, first
+        'population_locality': int((namesake and get_wikidata_population(locality, lat, lon))
+                                   or get_locality_population(locality_data, locality, state)
+                                   or (lat and lon and get_wikidata_population(locality, lat, lon)) or 0),
         'population_country': country_population,
         'traffic_mortality': mortality_future.result(),
         'start_time': [],
@@ -1612,6 +1622,43 @@ def get_locality_population(locality_data, locality, state=None):
           f"(query: '{locality}, {state}')")
 
     return best.get("population", 0)
+
+
+def get_wikidata_population(locality, lat, lon, max_km=25):
+    """Population from Wikidata of the place called locality nearest to lat/lon (within max_km), else 0. GeoNames
+    has no population for many US townships ("Sugarloaf Township", PA); Wikidata has the census figure."""
+    api = 'https://www.wikidata.org/w/api.php'
+    headers = {'User-Agent': 'youtube-pedestrian/1.0 (research dataset)'}
+    try:
+        hits = requests.get(api, params={'action': 'wbsearchentities', 'search': locality, 'language': 'en',
+                                         'type': 'item', 'limit': 20, 'format': 'json'},
+                            headers=headers, timeout=20).json().get('search', [])
+        if not hits:
+            return 0
+        entities = requests.get(api, params={'action': 'wbgetentities', 'ids': '|'.join(h['id'] for h in hits),
+                                             'props': 'claims', 'format': 'json'},
+                                headers=headers, timeout=20).json().get('entities', {})
+    except (RequestException, ValueError):
+        return 0
+    best = None
+    for entity in entities.values():
+        claims = entity.get('claims', {})
+        coords = [c['mainsnak'].get('datavalue', {}).get('value') for c in claims.get('P625', [])]
+        coords = [c for c in coords if c]
+        pops = [c for c in claims.get('P1082', []) if c['mainsnak'].get('datavalue') and c.get('rank') != 'deprecated']
+        if not coords or not pops:
+            continue
+        km = geodesic((lat, lon), (coords[0]['latitude'], coords[0]['longitude'])).km
+        if km > max_km or (best and km >= best[0]):
+            continue
+
+        # the preferred figure, else the latest by its "point in time"
+        def when(c):
+            t = c.get('qualifiers', {}).get('P585', [{}])[0].get('datavalue', {}).get('value', {}).get('time', '')
+            return (c.get('rank') == 'preferred', t)
+        amount = max(pops, key=when)['mainsnak']['datavalue']['value']['amount']
+        best = (km, int(float(amount)))
+    return best[1] if best else 0
 
 
 def get_country_average_height(iso3_code):

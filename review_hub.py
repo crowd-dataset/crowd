@@ -1,7 +1,7 @@
 """Local page listing the channel batches to review; a click opens a batch's review page.
 
-The list is rebuilt from _output/proposals/channels.json on every load and the page reloads itself, so batches
-appear while run_channels.py adds videos and drop off once everything in them is decided.
+The list is rebuilt on every load from _output/proposals/channels.json, plus the earlier batches in that folder,
+so batches appear while run_channels.py adds videos and drop off once everything in them is decided.
 
     /Users/pavlo/opt/anaconda3/bin/python review_hub.py   # then open http://127.0.0.1:8770
 """
@@ -30,7 +30,7 @@ a.b:hover{background:#f3f6ff;border-color:#68f}
 <h2>Batches to review</h2>
 {% for b in batches %}
 <a class="b" href="/open/{{ b.name }}" target="_blank"><span><span class="n">{{ b.name }}</span>
- <span class="s">· row {{ b.row }} · {{ b.state }}</span></span>
+ <span class="s">{% if b.row %}· row {{ b.row }} {% endif %}· {{ b.state }}</span></span>
  <span>{{ b.waiting }} of {{ b.proposed }} to review</span></a>
 {% else %}<p>Nothing to review.</p>{% endfor %}
 {% if done %}<p class="done">All decided: {{ done|join(', ') }}</p>{% endif %}
@@ -48,12 +48,17 @@ def index():
             batches.append(dict(name=c['name'], row=c['row'], state=state, waiting=waiting, proposed=proposed))
         elif proposed:
             done.append(c['name'])
+    known = {c['name'] for c in rc.load_state().values()}
+    for name in sorted(set(os.listdir(rc.ROOT)) - known):  # batches made before run_channels.py
+        waiting, proposed = rc.review_counts(name)
+        if waiting:
+            batches.append(dict(name=name, row=None, state='earlier batch', waiting=waiting, proposed=proposed))
     return render_template_string(PAGE, batches=batches, done=done)
 
 
 @app.route('/open/<name>')
 def open_batch(name):
-    if name not in {c['name'] for c in rc.load_state().values()}:
+    if not os.path.exists(os.path.join(rc.ROOT, name, 'plan.json')):
         return 'unknown batch', 404
     proc, port = servers.get(name, (None, None))
     if proc is None or proc.poll() is not None:

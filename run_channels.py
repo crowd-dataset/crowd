@@ -218,7 +218,11 @@ def main():
         out = run_chunk(url, country, args.chunk)
         if 'Could not list the channel' not in out:
             c.pop('list_failures', None)
-        if 'asks to sign in' in out:
+        if 'Traceback (most recent call last)' in out:
+            # a bug, not a finished channel: keep it in progress and wait for a fix
+            log('propose_segments.py crashed (see above): waiting 15 min, the channel stays in progress')
+            time.sleep(BLOCKED_WAIT_S)
+        elif 'asks to sign in' in out:
             log('YouTube asks to sign in: waiting 15 min (a fresh cookies.txt helps)')
             time.sleep(BLOCKED_WAIT_S)
         elif 'three videos in a row could not be analysed' in out:
@@ -234,9 +238,13 @@ def main():
             else:
                 log('could not list the channel (blocked or offline?): waiting 15 min')
                 time.sleep(BLOCKED_WAIT_S)
-        elif 'still to do' not in out:
+        elif ps.CHANNEL_DONE in out:
             c['status'] = 'to review'
             log(f"row {n} {url}: all videos proposed; on to the next channel")
+        elif 'still to do' not in out:
+            # cut off (hotspot, killed, stopped early) without saying the channel is done: stay on it
+            log(f'row {n} {url}: the batch ended without finishing the channel; staying on it')
+            time.sleep(60)
         save_state(state)
         write_to_review(state)
     log('time limit reached')
