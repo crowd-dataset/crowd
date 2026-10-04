@@ -1763,73 +1763,26 @@ def get_gmp(locality, state, iso3, locality_aka=None):
     return round(hit[1], 3) if hit else None
 
 
-def get_traffic_index_lat_lon(lat, lon, api="tomtom"):
-    """Congestion on the road segment nearest to (lat, lon) right now: how much slower traffic is than free flow (%).
-    None when there is no reading (TomTom has no road segment near the point, or the request failed)."""
-    if api == "tomtom":
-        url = f"https://api.tomtom.com/traffic/services/4/flowSegmentData/absolute/10/json?key={common.get_secrets('tomtom_api_key')}&point={lat},{lon}"  # noqa: E501
-        try:
-            response = requests.get(url)
-
-            if response.status_code == 200:
-                data = response.json()
-                if "flowSegmentData" in data:
-                    current_speed = data["flowSegmentData"]["currentSpeed"]
-                    free_flow_speed = data["flowSegmentData"]["freeFlowSpeed"]
-                    if not free_flow_speed:
-                        return None
-                    return round((1 - current_speed / free_flow_speed) * 100, 2)
-                else:
-                    return None
-            else:
-                print(f"Error fetching traffic index for {lat}, {lon}: {response.status_code}")
-                return None
-        except requests.exceptions.RequestException as e:
-            print(f"An error occurred: {e}")
-            return None
-    elif api == "trafiklab":
-        url = f"https://api.trafiklab.se/v1/trafficindex?lat={lat}&lon={lon}&apikey={common.get_secrets('trafiklab_api_key')}"  # noqa: E501
-
-        try:
-            response = requests.get(url)
-            response.raise_for_status()
-            data = response.json()
-
-            traffic_index = data.get('trafficIndex', None)
-
-            if traffic_index is not None:
-                return traffic_index
-            else:
-                return 0.0
-
-        except requests.exceptions.RequestException as e:
-            print(f"An error occurred: {e}")
-            return 0.0
-    else:
-        print(f"Wrong type of API provided {api}.")
-        return 0.0
-
-
-def get_traffic_index(locality, state, country):
-    if state:
-        url = f"https://www.numbeo.com/api/traffic?api_key={common.get_secrets('numbeo_api_key')}&locality={locality}&state={state}&country={country}"  # noqa: E501
-    else:
-        url = f"https://www.numbeo.com/api/traffic?api_key={common.get_secrets('numbeo_api_key')}&locality={locality}&country={country}"  # noqa: E501
+def get_traffic_index_lat_lon(lat, lon):
+    """Congestion on the road segment nearest to (lat, lon) right now: how much slower traffic is than free flow (%),
+    from TomTom. None when there is no reading (TomTom has no road segment near the point, or the request failed)."""
+    url = f"https://api.tomtom.com/traffic/services/4/flowSegmentData/absolute/10/json?key={common.get_secrets('tomtom_api_key')}&point={lat},{lon}"  # noqa: E501
     try:
         response = requests.get(url)
-        response.raise_for_status()
+        if response.status_code != 200:
+            print(f"Error fetching traffic index for {lat}, {lon}: {response.status_code}")
+            return None
         data = response.json()
-
-        if 'traffic_index' in data:
-            traffic_index = data['traffic_index']
-            return traffic_index
-        else:
-            print(f"No traffic index data available fro locality locality={locality}, state={state}, country={country}.")  # noqa: E501
-            return 0.0
-
+        if "flowSegmentData" not in data:
+            return None
+        current_speed = data["flowSegmentData"]["currentSpeed"]
+        free_flow_speed = data["flowSegmentData"]["freeFlowSpeed"]
+        if not free_flow_speed:
+            return None
+        return round((1 - current_speed / free_flow_speed) * 100, 2)
     except requests.exceptions.RequestException as e:
         print(f"An error occurred: {e}")
-        return 0.0
+        return None
 
 
 def get_coordinates(locality, state, country, locality_data=None):

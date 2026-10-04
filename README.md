@@ -723,11 +723,8 @@ The file is a single JSON object:
 ```json
 {
   "geonames_username": "",
-  "po_token": "",
   "bea_api_key": "",
   "tomtom_api_key": "",
-  "trafiklab_api_key": "",
-  "numbeo_api_key": "",
   "restcountries_api_key": "",
   "email_smtp": "",
   "email_account": "",
@@ -750,11 +747,8 @@ Which keys you need depends on what you run:
 | Key | Used by | What for | Where to get it |
 |---|---|---|---|
 | `geonames_username` | `add_video.py`, `propose_segments.py` | locality population, a fallback for coordinates, and place lookups | free account at [GeoNames](https://www.geonames.org/login); see below |
-| `po_token` | — | not used by the current code; kept for YouTube proof-of-origin tokens | — |
 | `bea_api_key` | `add_video.py` | GDP of US localities | free key from [BEA](https://apps.bea.gov/API/signup/); see below |
 | `tomtom_api_key` | `add_video.py`, `update_traffic_index.py` | traffic index from TomTom traffic flow | free account at [TomTom](https://developer.tomtom.com/); see below |
-| `trafiklab_api_key` | — | not used by the current code (an alternative traffic index that is not called) | [Trafiklab](https://www.trafiklab.se/api/trafiklab-apis) |
-| `numbeo_api_key` | — | not used by the current code (Numbeo was the source of older, often country-level, traffic index values) | [Numbeo](https://www.numbeo.com/common/api.jsp) (paid) |
 | `restcountries_api_key` | `add_video.py` | country population, continent and Gini | free account at [REST Countries](https://restcountries.com/sign-up); see below |
 | `email_smtp`, `email_account`, `email_password` | `main.py` | email when a job finishes (`email_send` in `config`) | your email provider; see below |
 | `ftp_username`, `ftp_password` | `main.py` | downloading videos from the [VideoFiles](https://files.mobility-squad.com/) server | the maintainers (see [Contact](#contact)) |
