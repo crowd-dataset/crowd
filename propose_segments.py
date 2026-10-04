@@ -17,14 +17,18 @@ import shutil
 import subprocess
 import tempfile
 import time
+import unicodedata
 import webbrowser
 from collections import Counter
+from functools import lru_cache
 from threading import Timer
 from urllib.parse import parse_qs, unquote, urlparse
 
 import cv2
 import numpy as np
 import requests
+from geopy.exc import GeopyError
+from geopy.geocoders import Nominatim
 
 import add_video
 import common
@@ -45,10 +49,13 @@ PARAMS = {
     'cut_ncc': 0.3,           # a frame this uncorrelated with the previous one is a hard cut...
     'cut_neighbour_ncc': 0.6,  # ...when the frames either side of it are this coherent
     'bridge_dip': 0.5,        # a cut whose sky darkens below this share of its surroundings is a bridge
+    'cut_confirm_ratio': 15,  # a cut stands only with a full-frame-rate jump this strong within a second
     'cut_pan_ncc': None,      # a cut that matches this well once shifted sideways is a corner (not yet calibrated)
     'blank_std': 6.0,         # frame this flat is blank or a title card
     'night_sky': 95.0,        # sky brightness below this is night (calibrated on labelled segments)
     'night_window_s': 60,     # night/day must hold this long to count as a transition
+    'night_inside_day_s': 300,  # dark this long or shorter with daylight before and after is a bridge, tunnel or
+                                # elevated railway: night falls over many minutes and does not lift again
     'min_segment_s': 30,      # drop proposed segments shorter than this
     'driver_window_s': 60,    # a big face in more than driver_share of the frames over this window means the
     'driver_share': 0.1,      # camera faces the driver (found in only 10-40% of its frames: sunglasses, small
@@ -380,6 +387,15 @@ def propose(sig, p=PARAMS):
             continue
         if sky[max(0, i - 8):i + 9].min() < p['bridge_dip'] * min(before.mean(), after.mean()):
             cut[i] = False
+    # half a second apart, frames under an elevated railway, in a corner or past flickering light differ like a
+    # cut; at the full frame rate a real cut is a jump between two frames (see skip_events). Videos analysed
+    # with it keep only the cuts such a jump confirms within a second.
+    if sig.get('skips') is not None:
+        jumps = np.asarray(sig['skips']).reshape(-1, 3)
+        jumps = jumps[jumps[:, 2] >= p['cut_confirm_ratio'], 0]
+        for i in np.flatnonzero(cut):
+            if not (np.abs(jumps - i / FPS) <= 1).any():
+                cut[i] = False
 
     keep = ~blank
     notes = []
@@ -426,6 +442,9 @@ def propose(sig, p=PARAMS):
     night = _rolling_median((sig['sky'] < p['night_sky']).astype(float), window) > 0.5
     # brief dark or bright spells (underpasses, a flickering sky near the threshold) must not split a segment
     night = _drop_short_runs(night, window)
+    for a, b in _runs(night):
+        if a > 0 and b < n and (b - a) / FPS <= p['night_inside_day_s']:
+            night[a:b] = False
 
     segments = []
     for a, b in _runs(keep):
@@ -458,6 +477,51 @@ def channel_vehicle_type(channel_id, df=None):
     return vt, k / sum(counts.values())
 
 
+def skip_events(path):
+    """(time s, scene score, ratio to the local median) of each frame that changes far more from the frame before
+    than the frames around it do: an edit cut. At the full frame rate consecutive frames of a drive are nearly
+    alike, so even a cut that only skips a wait at the same intersection stands out (cars jump, the light turns
+    green between two frames), which half-second analysis frames cannot show. Candidates only: ratio >= 8."""
+    cmd = ['ffmpeg', '-v', 'error', '-i', path, '-an', '-vf',
+           "scale=160:-2,select='gte(scene,0)',metadata=print:file=-", '-f', 'null', '-']
+    out = subprocess.run(cmd, capture_output=True, text=True).stdout
+    t = np.array([float(x) for x in re.findall(r'pts_time:([\d.]+)', out)])
+    score = np.array([float(x) for x in re.findall(r'lavfi\.scene_score=([\d.]+)', out)])
+    n = min(len(t), len(score))
+    if n < 3:
+        return np.zeros((0, 3))
+    t, score = t[:n], score[:n]
+    # median over a second either side, from a sorted sliding window
+    k = 15
+    padded = np.pad(score, k, mode='edge')
+    windows = np.lib.stride_tricks.sliding_window_view(padded, 2 * k + 1)
+    ratio = score / np.maximum(np.median(windows, axis=1), 0.002)
+    keep = (ratio >= 8) & (score >= 0.02)
+    return np.column_stack([t[keep], score[keep], ratio[keep]])
+
+
+# an edit cut that skips footage: a frame changing SKIP_RATIO times more than the frames around it and by at
+# least SKIP_SCORE, alone (livestream stutter and intro montages jump many times in a row), and not in the first
+# SKIP_INTRO_S (title cards) or last SKIP_OUTRO_S (end screens). Checked on whole approved videos: these keep
+# the waits cut out at red lights and the cuts to other streets, and none of the stutter or fades.
+SKIP_RATIO, SKIP_SCORE, SKIP_ALONE_S, SKIP_INTRO_S, SKIP_OUTRO_S = 25, 0.06, 10, 30, 10
+SKIP_STREAK = 10       # this many analysed videos of a channel in a row with skips: the channel edits its drives
+
+
+def footage_skip(sig):
+    """Where the video skips footage (an edit cut), as m:ss, else None. Waiting at intersections is what gets
+    cut most and what the dataset needs, so such a video is left out whole."""
+    ev = np.asarray(sig.get('skips', np.zeros((0, 3)))).reshape(-1, 3)
+    end = len(sig['motion']) / FPS
+    for t, score, ratio in ev:
+        if ratio < SKIP_RATIO or score < SKIP_SCORE or not SKIP_INTRO_S < t < end - SKIP_OUTRO_S:
+            continue
+        gap = np.abs(ev[:, 0] - t)
+        if not ((gap > 0.5) & (gap <= SKIP_ALONE_S)).any():  # frames right at a cut can both jump
+            return f'{int(t) // 60}:{int(t) % 60:02d}'
+    return None
+
+
 def analyse_video(video_id, out_dir, meta=None):
     """Download a low resolution copy, propose segments, write a contact sheet; the copy is deleted."""
     meta = meta or fetch_metadata(video_id)
@@ -465,6 +529,7 @@ def analyse_video(video_id, out_dir, meta=None):
     path = download_low_res(video_id, work_dir)
     try:
         sig = signals(path)
+        sig['skips'] = skip_events(path)
         contact_sheet(path, meta['duration'] or len(sig['motion']) / FPS,
                       os.path.join(out_dir, f'{video_id}.jpg'))
     finally:
@@ -481,6 +546,9 @@ EXCLUDE_TITLE = re.compile(r'walking tour|walk tour|city walk|time[- ]?lapse|hyp
 # highway driving and road trips; "via I-5" only passes along it on an otherwise urban drive
 HIGHWAY_TITLE = re.compile(r'(?i:road ?trip|\bhighway\b|\bfreeway\b|\bhwy\b|\bmotorway\b|\bautobahn\b)'
                            r'|(?<![Vv]ia )(?:\b[Ii]nterstate[- ]?|\bI[- ]?|\bi[- ])\d{1,3}\b')
+# walks and rides on boats are no vehicle type the dataset takes; a title that also says drive keeps the video
+NOT_DRIVING_TITLE = re.compile(r'\b(?:walk(?:s|ing)?|stroll(?:ing)?|hik(?:e|ing)|on foot|(?:boat|ferry) ride)\b', re.I)
+DRIVING_TITLE = re.compile(r'\bdriv(?:e|es|ing)\b|\bdashcam\b', re.I)
 
 
 def list_channel(url):
@@ -590,7 +658,12 @@ def exclusion_reason(meta):
     if hit:
         return f"title mentions '{hit.group(0)}'"
     hit = HIGHWAY_TITLE.search(meta.get('title') or '')
-    return f"highway driving or a road trip (title mentions '{hit.group(0)}')" if hit else None
+    if hit:
+        return f"highway driving or a road trip (title mentions '{hit.group(0)}')"
+    hit = NOT_DRIVING_TITLE.search(meta.get('title') or '')
+    if hit and not DRIVING_TITLE.search(meta.get('title') or ''):
+        return f"not a drive (title mentions '{hit.group(0)}')"
+    return None
 
 
 def guess_locality(title, country, df):
@@ -598,7 +671,91 @@ def guess_locality(title, country, df):
     return _title_locality(title, df[df['country'] == country])
 
 
-def _title_locality(title, df, exact_case=False):
+def _common_words():
+    """Lower-case English words (the system word list), for place names that are also ordinary words."""
+    try:
+        with open('/usr/share/dict/words') as f:
+            return {w.strip() for w in f if w[:1].islower()}
+    except OSError:
+        return set()
+
+
+COMMON_WORDS = _common_words()
+ADDRESS_LINE = re.compile(r',\s*[A-Z]{2}\s+\d{5}\b|https?://|www\.|\b(?:P\.?\s?O\.? Box|Ste\.?|Suite)\b', re.I)
+
+
+def channel_boilerplate(descriptions):
+    """Lines a channel repeats under many of its videos (sign-offs, links, a mailing address): they say nothing
+    about where one video was filmed."""
+    counts = Counter(line for d in descriptions for line in {x.strip() for x in (d or '').splitlines() if x.strip()})
+    return {line for line, n in counts.items() if n >= max(3, 0.2 * len(descriptions))}
+
+
+def description_locality(description, df, boilerplate):
+    """[locality, state, country] when a video description, without the channel's boilerplate, links and
+    addresses, names exactly one locality of df, else None. A place name that is also an ordinary word
+    ("Beach", "Canon" the camera, "Phoenix") only counts written with its state, as in "Phoenix, AZ"."""
+    text = '\n'.join(line for line in (description or '').splitlines()
+                     if line.strip() not in boilerplate and not ADDRESS_LINE.search(line))
+    return _title_locality(text, df, exact_case=True, word_needs_state=True)
+
+
+CHAPTER_START = re.compile(r'^\W*(?:(\d{1,2}):)?(\d{1,2}):(\d{2})(?!\d)\W*(.+)$')
+CHAPTER_END = re.compile(r'^\W*(.+?)\W*(?<![\d:])(?:(\d{1,2}):)?(\d{1,2}):(\d{2})\W*$')
+
+
+def video_chapters(meta):
+    """[(start in s, name)] of a video's chapters: YouTube's own, else the description's timestamped lines
+    ("12:30 Santa Monica" or "Santa Monica - 12:30"), when at least two run in increasing order."""
+    chapters = [(int(start or 0), name) for name, start in meta.get('chapters') or [] if name]
+    if not chapters:
+        for line in (meta.get('description') or '').splitlines():
+            if m := CHAPTER_START.match(line):
+                h, mins, secs, name = m.groups()
+            elif m := CHAPTER_END.match(line):
+                name, h, mins, secs = m.groups()
+            else:
+                continue
+            chapters.append((int(h or 0) * 3600 + int(mins) * 60 + int(secs), name.strip()))
+    starts = [t for t, _ in chapters]
+    return chapters if len(chapters) >= 2 and starts == sorted(set(starts)) else []
+
+
+# a chapter named after a road ("Venice Blvd", "Rodeo Drive") is not in the place the road is named after
+ROAD = re.compile(r'\b(?:blvd|boulevard|st|street|ave|avenue|rd|road|dr|drive|fwy|freeway|hwy|highway|expy|'
+                  r'expressway|pkwy|parkway|ln|lane|way|terrace|strip|bridge|tunnel|pier|walk of fame)\b', re.I)
+CHAPTER_PREFIX = re.compile(r'^(?:start(?:ing)? (?:in|at|from)|entering|arriv(?:e|ing|al) (?:in|at)|welcome to|'
+                            r'leaving|into|in|to|from|downtown)\s+', re.I)
+
+
+def chapter_localities(chapters, df, near_home=None):
+    """[(start, end, locality)] stretches of a video by the localities its chapters name, or [] when none does.
+    A chapter naming none (a road, a sight) is still in the locality before it; leading ones in the first named.
+    near_home(name) gives a locality not in the mapping yet for a chapter that is just a place name."""
+    locs = []
+    for _, name in chapters:
+        if ROAD.search(name):
+            locs.append(None)
+            continue
+        loc = _title_locality(name, df, exact_case=True, word_needs_state=True)
+        place = CHAPTER_PREFIX.sub('', name.strip(' .!-'))
+        if not loc and near_home and re.fullmatch(r"(?:[A-Z][\w'.-]*\s?){1,4}", place):
+            loc = near_home(place.strip())
+        locs.append(loc)
+    named = [loc for loc in locs if loc]
+    if not named:
+        return []
+    out, current = [], named[0]
+    for (start, _), loc, nxt in zip(chapters, locs, [t for t, _ in chapters[1:]] + [float('inf')]):
+        current = loc or current
+        if out and out[-1][2] == current:
+            out[-1] = (out[-1][0], nxt, current)
+        else:
+            out.append((start, nxt, current))
+    return out
+
+
+def _title_locality(title, df, exact_case=False, word_needs_state=False):
     found = set()
     for _, row in df.iterrows():
         names = [row['locality']]
@@ -610,10 +767,188 @@ def _title_locality(title, df, exact_case=False):
                 continue
             # short aliases such as "LA" only count in capitals, so "la" in a Spanish title does not match
             flags = 0 if exact_case or len(name) <= 3 else re.I
-            if re.search(rf'(?<!\w){re.escape(name)}(?!\w)', title or '', flags):
+            pattern = rf'(?<!\w){re.escape(name)}(?!\w)'
+            if word_needs_state and name.lower() in COMMON_WORDS:
+                if not isinstance(row['state'], str):
+                    continue
+                pattern += rf',\s*{re.escape(row["state"])}\b'
+            state = row['state'] if isinstance(row['state'], str) else ''
+            if any(not (word_needs_state and (other := re.match(r',\s*([A-Z]{2})\b', (title or '')[m.end():]))
+                        and other.group(1) != state)
+                   for m in re.finditer(pattern, title or '', flags)):
                 state = row['state'] if isinstance(row['state'], str) else None
                 found.add((row['locality'], state, row['country']))
     return list(found.pop()) if len(found) == 1 else None
+
+
+# words of titles that are no place ("Beautiful Evening Drive", "4K ASMR"); runs of capitalised words without
+# them are looked up as places ("Al Khan Beach", "Jebel Jais Mountain")
+NOT_PLACE = {'drive', 'drives', 'driving', 'beautiful', 'relax', 'relaxing', 'chilled', 'morning', 'afternoon',
+             'evening', 'night', 'midnight', 'sunrise', 'sun', 'rise', 'sunset', 'unedited', 'sounds', 'sound',
+             'asmr', 'vlog', 'travel', 'video', 'episode', 'part', 'visit', 'visiting', 'tour', 'tours', 'trip',
+             'uhd', 'hd', 'fps', 'live', 'stream', 'subscribe', 'thanks', 'watching', 'enjoy', 'please', 'new',
+             'route', 'journey', 'heavy', 'windy', 'cloudy', 'rainy', 'foggy', 'nice', 'view', 'best', 'my', 'i',
+             'friday', 'saturday', 'sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'january', 'february',
+             'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december'}
+PLACE_JOINERS = {'al', 'el', 'de', 'del', 'la', 'le', 'of', 'the', 'bin', 'bu', 'van', 'von', 'da', 'do', 'dos'}
+
+
+# "...from A to B in the Bronx, New York (2026)": the place after the last "in" holds the whole drive, when no
+# other name follows it but its state or country
+DRIVE_AREA = re.compile(r"\bfrom\b.+\bto\b.+\bin (?:the )?([A-Z][\w'’.-]*(?: [A-Z][\w'’.-]*){0,3})"
+                        r"(?:,\s*[A-Z][\w .'-]*)?\s*(?:\bin \d{4}\b.*|[|(].*)?$")
+
+
+def place_phrases(text, limit=4):
+    """Runs of capitalised words in a title or description that may name a place, longest first: "Al Khan
+    Beach" from "Beautiful Sun Rise at Al Khan Beach, unedited sounds". Hashtags and links are skipped."""
+    text = re.sub(r'#\w+|https?://\S+|www\.\S+', ' ', text or '')
+    phrases, run = [], []
+    for token in re.findall(r"[^\W\d_][\w'’-]*|[^\w\s]+|\d\w*", text) + ['.']:
+        word = token.lower()
+        # a two-letter word that joins nothing ends a name: "Orosi,Ca Cutler,Ca" names Orosi and Cutler
+        if (token[:1].isupper() and word not in NOT_PLACE and (len(token) > 2 or word in PLACE_JOINERS)
+                or run and word in PLACE_JOINERS):
+            run.append(token)
+            continue
+        while run and run[-1].lower() in PLACE_JOINERS:
+            run.pop()
+        if len(run) > 1 or run and len(run[0]) > 3 and run[0].lower() not in COMMON_WORDS:
+            phrases.append(' '.join(run))
+        run = []
+    # a name written with its state ("Cutler,Ca") is a place even when it is also a word, and goes first
+    with_state = re.findall(r"\b([A-Z][a-z'’-]+(?: [A-Z][a-z'’-]+){0,3}),\s*[A-Z][A-Za-z]\b", text)
+    unique = list(dict.fromkeys(p for p in phrases if len(p.split()) <= 5))
+    return list(dict.fromkeys(with_state + sorted(unique, key=lambda p: -len(p.split()))))[:limit]
+
+
+@lru_cache(maxsize=None)
+def _osm_place(phrase, country_codes, near=None, reach_km=None):
+    """(town, region, country code, region code, lat, lon) of an OpenStreetMap feature called phrase in those
+    countries (a beach, a road, a district or a town): town is the one it lies in, region its state or emirate.
+    near=(lat, lon): the nearest of the matches within reach of there, as the place a channel from there means
+    ("Longwood in the Bronx" for a New York channel, not Longwood in Boston; Cutler, CA not Cutler, IL)."""
+    time.sleep(1)  # Nominatim's usage policy: one request a second
+    box = {}
+    if near:
+        deg = (reach_km or ABROAD_KM) / 111
+        box = {'viewbox': [(near[0] - deg, near[1] - deg), (near[0] + deg, near[1] + deg)], 'bounded': True}
+    try:
+        found = Nominatim(user_agent='crowd-dataset-propose-segments').geocode(
+            phrase, exactly_one=False, limit=10, country_codes=list(country_codes), addressdetails=True,
+            language='en', timeout=15, **box) or []
+    except (GeopyError, ValueError):
+        return None
+    wanted = _name_key(phrase)
+
+    def fits(r):
+        # a feature of that name that is a place (a town, district, beach, park, mountain) or a main road:
+        # shops, offices and side streets named alike are everywhere ("Colombo" jewellers, a "Grand Avenue")
+        name = _name_key(r.raw.get('name', ''))
+        return (r.raw.get('addresstype') != 'country' and name and (name in wanted or wanted in name)
+                and (r.raw.get('class') in ('place', 'boundary', 'tourism', 'natural', 'leisure', 'landuse')
+                     or r.raw.get('class') == 'highway' and r.raw.get('type') in ('motorway', 'trunk', 'primary')))
+    found = [r for r in found if fits(r)]
+    if not found:
+        return None
+    r = min(found, key=lambda r: _km(near[0], near[1], r.latitude, r.longitude)) if near else found[0]
+    a = r.raw.get('address', {})
+    town = a.get('city') or a.get('town') or a.get('village') or a.get('municipality')
+    if town:  # OpenStreetMap calls some towns "City of Mount Vernon", "Town of Hempstead"
+        town = re.sub(r'^(?:City|Town|Village|Borough|Township) of ', '', town)
+    return (town, a.get('state'), a.get('country_code', '').upper(), a.get('ISO3166-2-lvl4', ''),
+            r.latitude, r.longitude, float(r.raw.get('importance') or 0))
+
+
+def abroad_is_nearest(locality, df, home, country):
+    """False when a place of that name lies nearer home in the channel's own country: Richmond Hill in a title
+    of a Pennsylvania channel is the one in Queens, not Richmond Hill, Ontario."""
+    _, row = add_video.get_existing_locality_row(df, *locality)
+    if row is None:
+        return True
+    hit = _osm_place(locality[0], (common.get_iso2_country_code(common.correct_country(country)),), home[3:5])
+    return hit is None or (_km(home[3], home[4], hit[4], hit[5])
+                           > _km(home[3], home[4], float(row['lat']), float(row['lon'])))
+
+
+def _name_key(name):
+    """Name compared without accents, case, punctuation or a trailing "Emirate", "City", "Province"."""
+    name = unicodedata.normalize('NFKD', str(name)).encode('ascii', 'ignore').decode().lower()
+    name = ' '.join(re.sub(r'\W+', ' ', name).split())
+    return re.sub(r' (?:emirate|city|province|prefecture|governorate|municipality|county)$', '', name)
+
+
+def place_locality(phrases, df, home=None):
+    """([locality, state, country], phrase) for the first phrase OpenStreetMap finds in df's countries (and near
+    home when known), None when it finds none; see place_localities."""
+    return next(place_localities(phrases, df, home), None)
+
+
+def place_localities(phrases, df, home=None):
+    """([locality, state, country], phrase) for each phrase OpenStreetMap finds in df's countries (and near
+    home when known): the mapping locality of the town it lies in ("Al Khan Beach" is in Sharjah), else of its
+    region when that is a locality ("Jebel Jais" in the Ras Al Khaimah emirate), else that town as a new
+    locality."""
+    countries = {common.get_iso2_country_code(common.correct_country(c)): c for c in df['country'].dropna().unique()}
+    countries.pop(None, None)
+    country_names = {_name_key(c) for c in COUNTRIES}
+    codes = tuple(sorted(countries))
+
+    def usable(hit):
+        return hit and hit[2] in countries and not (home and _km(home[3], home[4], hit[4], hit[5]) > ABROAD_KM)
+    # "from Longwood to West Farms in the Bronx, New York": the best-known place a text names (the Bronx) is the
+    # anchor, and each other name is the place of that name nearest it, not the one nearest the channel's home
+    hits = [(p, _osm_place(p, codes, (home[3], home[4]) if home else None)) for p in phrases
+            if _name_key(p) not in country_names]  # "GEORGIA" in a travel title is the country
+    hits = [(p, h) for p, h in hits if usable(h)]
+    if len(hits) > 1:
+        anchor = max(hits, key=lambda ph: ph[1][6])
+        # a name OpenStreetMap does not know near the anchor (a small neighbourhood) says nothing: a far
+        # namesake (Longwood, PA for Longwood in the Bronx) would only look like a second town
+        hits = [(p, h if p == anchor[0] else _osm_place(p, codes, anchor[1][4:6], 50)) for p, h in hits]
+    for phrase, hit in hits:
+        if not usable(hit):
+            continue
+        town, region, code, region_code = hit[:4]
+        rows = df[df['country'] == countries[code]]
+        # where the country's localities in the mapping carry a state (US-NY -> NY), the town must be in it:
+        # Mount Vernon, NY is not the Mount Vernon, WA of the mapping
+        with_state = rows['state'].notna().mean() > 0.5
+        state = region_code.split('-')[-1] if with_state and region_code else None
+        if state:
+            rows = rows[rows['state'] == state]
+        known = {_name_key(n): r for n, r in zip(rows['locality'], rows.itertuples())}
+        # the town it lies in; only a place in no town (a mountain park) goes by its region
+        for name in ((town,) if town else (region,)):
+            if name and _name_key(name) in known:
+                r = known[_name_key(name)]
+                yield [r.locality, r.state if isinstance(r.state, str) else None, r.country], phrase
+                break
+        else:
+            if town:  # a new locality
+                yield [town, state, countries[code]], phrase
+
+
+@lru_cache(maxsize=None)
+def town_near(name, home):
+    """[locality, state, country] of the town a place of that name near the channel's home is: itself, or for
+    a neighbourhood the city it is part of (Echo Park is Los Angeles, Beverly Hills its own city). OpenStreetMap
+    tells them apart; GeoNames calls both a section of a populated place."""
+    time.sleep(1)  # Nominatim's usage policy: one request a second
+    try:
+        r = Nominatim(user_agent='crowd-dataset-propose-segments').geocode(
+            f'{name}, {home[2]}', featuretype='settlement', addressdetails=True, timeout=15,
+            viewbox=[(home[3] - 1, home[4] - 1), (home[3] + 1, home[4] + 1)], bounded=True)
+    except (GeopyError, ValueError):
+        return None
+    if r is None or _km(home[3], home[4], r.latitude, r.longitude) > 60:
+        return None
+    address = r.raw.get('address', {})
+    if r.raw.get('addresstype') in ('city', 'town', 'village', 'municipality'):
+        town = name
+    else:
+        town = address.get('city') or address.get('town') or address.get('village')
+    return [town, home[1], home[2]] if town else None
 
 
 def _km(lat1, lon1, lat2, lon2):
@@ -758,10 +1093,14 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
     stopped = None
     touched = []  # videos added or re-analysed in this run
     failures_in_a_row = 0
+    skips_in_a_row = 0
     try:
         ids = list_channel_api(url) if use_api else list_channel(url)
         todo = [v for v in ids if (v not in plan and v not in in_mapping) or v in reanalyse]
         api_meta = fetch_metadata_api(todo) if use_api else {}
+        saved = [os.path.join(out_dir, f) for f in os.listdir(out_dir) if f.endswith('_meta.json')]
+        boilerplate = channel_boilerplate([m.get('description') for m in api_meta.values()]
+                                          + [json.load(open(f)).get('description') for f in saved])
     except BotCheck as e:
         print(f'YouTube asks to sign in ({e}); try again later.')
         return None
@@ -817,8 +1156,19 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
                 reason = 'another camera is shown in a corner of the picture (picture-in-picture)'
             elif (n_driver := driver_frames(frames)) >= DRIVER_SHEET_FRAMES:
                 reason = f'the camera faces the driver (a big face in {n_driver} of {len(frames)} sampled frames)'
+            elif at := footage_skip(dict(np.load(sig_path))):
+                reason = f'the video skips footage at {at} (an edit cut; waits at intersections may be missing)'
             else:
                 reason = footage_problem(dict(np.load(sig_path)))
+            if 'skips' in np.load(sig_path):  # only videos analysed for skips count towards the streak
+                skips_in_a_row = skips_in_a_row + 1 if reason and reason.startswith('the video skips') else 0
+            if skips_in_a_row >= SKIP_STREAK:
+                plan[vid] = {'video': vid, 'title': meta['title'], 'exclude': reason}
+                touched.append(vid)
+                commit([vid])
+                stopped = (f'{SKIP_STREAK} analysed videos in a row skip footage: this channel edits its drives, '
+                           'so it is rejected; mark it "Rejected" in the channels sheet')
+                break
         if reason:
             plan[vid] = {'video': vid, 'title': meta['title'], 'exclude': reason}
             touched.append(vid)
@@ -861,30 +1211,109 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
     # a channel films around one area: a title place whose mapping match is far from the channel's home is a
     # namesake when a place of that name exists near home ("Hollywood" from an LA channel is not Hollywood, FL),
     # and a genuine trip otherwise ("Seattle" has no namesake near LA)
+    metas = {}
+    for p in new:
+        path = os.path.join(out_dir, f"{p['video']}_meta.json")
+        if os.path.exists(path):
+            with open(path) as f:
+                metas[p['video']] = json.load(f)
     channels = Counter(p.get('channel_id') for p in plan.values() if p.get('channel_id'))
     home = channel_home(channels.most_common(1)[0][0], df, plan) if channels else None
+    # places a video may be in: the channel's country, and abroad within reach of its home
+    in_reach = df['country'] == country
+    if home:
+        in_reach |= np.array([_km(home[3], home[4], lat, lon) <= ABROAD_KM for lat, lon in zip(df['lat'], df['lon'])])
+    for p in new:
+        for e in p.get('entries', []):
+            if e.get('locality'):
+                continue
+            # a capitalised title name of one locality abroad ("Entering Tijuana" from an LA channel); "New Mexico"
+            # or "Little Tokyo" are not trips abroad. Then the description, where "from Los Angeles to Ensenada"
+            # names two places and so decides nothing
+            found = _title_locality(p['title'], df[in_reach & (df['country'] != country)], exact_case=True)
+            if found and home and not abroad_is_nearest(found, df, home, country):
+                found = None
+            if not found:
+                found = description_locality(metas.get(p['video'], {}).get('description'), df[in_reach], boilerplate)
+                if found:
+                    p['note'] = f"{p['note']}; locality {found[0]} from the description".lstrip('; ')
+            if found:
+                e['locality'], e['guessed'] = found, True
+
+    # a drive through several localities often names them as chapters: split its segments at those chapters
+    for p in new:
+        if len(p.get('entries', [])) != 1 or p['video'] not in metas:
+            continue
+        stretches = chapter_localities(video_chapters(metas[p['video']]), df[in_reach],
+                                       (lambda name: town_near(name, home)) if home else None)
+        if not stretches:
+            continue
+        e = p['entries'][0]
+        if len(stretches) == 1:
+            if not e.get('locality'):
+                e['locality'], e['guessed'] = stretches[0][2], True
+                p['note'] = f"{p['note']}; locality {stretches[0][2][0]} from the chapters".lstrip('; ')
+            continue
+        groups = {}
+        for seg in e['segments']:
+            for a, b, loc in stretches:
+                lo, hi = max(seg['start'], a), min(seg['end'], b)
+                if hi - lo >= 5:
+                    groups.setdefault(tuple(loc), []).append({'start': lo, 'end': hi, 'night': seg['night']})
+        p['entries'] = [{'locality': list(loc), 'guessed': True, 'segments': segs} for loc, segs in groups.items()]
+        p['note'] = (f"{p['note']}; localities from the chapters: "
+                     + ', '.join(f'{loc[0]} from {a // 60}:{a % 60:02d}' for a, _, loc in stretches)).lstrip('; ')
+    # a named place ("Sun Rise at Al Khan Beach") is in some town: look it up on OpenStreetMap
+    for p in new:
+        for e in p.get('entries', []):
+            if e.get('locality'):
+                continue
+            description = '\n'.join(line for line in (metas.get(p['video'], {}).get('description') or '').splitlines()
+                                    if line.strip() not in boilerplate and not ADDRESS_LINE.search(line))
+            # every place the title names, then the description's first one; two towns in a title (a drive
+            # from one to the other) decide nothing
+            in_title = {}
+            for loc, phrase in place_localities(place_phrases(p['title']), df[in_reach], home):
+                in_title.setdefault(tuple(loc), phrase)
+            area = DRIVE_AREA.search(p['title'])
+            if len(in_title) > 1 and area:
+                # "Driving from Longwood to West Farms in the Bronx, New York": the drive is in the Bronx
+                inside = place_locality([area.group(1)], df[in_reach], home)
+                if inside:
+                    in_title = {tuple(inside[0]): inside[1]}
+            if len(in_title) > 1:
+                p['note'] = (f"{p['note']}; the title names " + ' and '.join(loc[0] for loc in in_title)
+                             + ': set the locality').lstrip('; ')
+                continue
+            found = next(iter(in_title.items()), None)
+            found = found or place_locality(place_phrases(description, limit=3), df[in_reach], home)
+            if found:
+                e['locality'], e['guessed'] = list(found[0]), True
+                p['note'] = f"{p['note']}; locality {found[0][0]} from where '{found[1]}' is".lstrip('; ')
     if home:
         iso2 = common.get_iso2_country_code(common.correct_country(home[2]))
         for p in new:
             for e in p.get('entries', []):
                 loc = e.get('locality')
-                if not loc:
-                    # a trip over the border ("Entering Tijuana" from an LA channel): a capitalised name of one
-                    # locality abroad within reach of home; "New Mexico" or "Little Tokyo" are not trips abroad
-                    abroad = df[(df['country'] != country) & np.array([
-                        _km(home[3], home[4], lat, lon) <= ABROAD_KM for lat, lon in zip(df['lat'], df['lon'])])]
-                    if found := _title_locality(p['title'], abroad, exact_case=True):
-                        e['locality'], e['guessed'] = found, True
-                    continue
-                if not e.get('guessed') or tuple(loc) == home[:3]:
+                if not loc or not e.get('guessed') or tuple(loc) == home[:3]:
                     continue
                 _, row = add_video.get_existing_locality_row(df, *loc)
                 if row is None or _km(home[3], home[4], float(row['lat']), float(row['lon'])) < 100:
                     continue
                 if _place_near(loc[0], iso2, home[3], home[4]):
-                    p['note'] = f"{p['note']}; the title's {loc[0]} is the place of that name near {home[0]}, " \
+                    p['note'] = f"{p['note']}; {loc[0]} here is the place of that name near {home[0]}, " \
                                 f"not {', '.join(filter(None, loc))}".lstrip('; ')
                     e['locality'] = list(home[:3])
+    for p in new:  # chapters whose places turned out the same ("Hollywood", "Los Angeles") are one group
+        if len(p.get('entries', [])) > 1:
+            merged = {}
+            for e in p['entries']:
+                key = tuple(e['locality']) if e.get('locality') else None
+                if key in merged:
+                    merged[key]['segments'] = sorted(merged[key]['segments'] + e['segments'], key=lambda s: s['start'])
+                else:
+                    merged[key] = e
+            p['entries'] = list(merged.values())
 
     def has_signals(v):
         return os.path.exists(os.path.join(out_dir, f'{v}_signals.npz'))
@@ -919,6 +1348,7 @@ with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'templates', 
           encoding='utf-8') as _f:
     COUNTRIES = re.findall(r'<option value="([^"]+)" \{\{ "selected" if country ==', _f.read())
 
+REVIEW_PAGE = 50  # videos with something left to decide shown at once in the review page
 MAX_MERGE_GAP_S = 2  # wider gaps are excluded footage (stops, freeway), not suggested splits
 
 LOCALITY_FIELDS = ('lat', 'lon', 'gmp', 'population_locality', 'population_country', 'traffic_mortality',
@@ -982,6 +1412,8 @@ button.tod.night { background: #2a3f8f; color: #fff; border-color: #2a3f8f; }
 label.vehicle { margin-left: 16px; font-size: 14px; }
 tr.entryhead td { border-top: 0; padding-top: 8px; }
 .locbox { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.locmap { flex-basis: 100%; font-size: 12px; color: #666; }
+.locmap iframe { width: 420px; height: 240px; border: 1px solid #ccc; display: block; margin-top: 4px; }
 .locbox input, .locbox select { font-size: 14px; padding: 3px 6px; }
 .locwrap { position: relative; }
 .loc-suggestions { display: none; position: absolute; top: 100%; left: 0; min-width: 320px; z-index: 5;
@@ -1014,13 +1446,15 @@ tr.seg.active td:first-child { box-shadow: inset 4px 0 #007bff; }
     <div class="keys">Keys for the outlined segment: <b>A</b> start here · <b>S</b> end here ·
       <b>D</b> whole video · <b>Q</b> day · <b>W</b> night · <b>F</b> split time here</div>
     <div id="status"></div>
+    {% if waiting > open_videos | length %}<div class="keys">Showing {{ open_videos | length }} of {{ waiting }}
+      videos left to decide; the next appear as you finish these.</div>{% endif %}
     <button id="apply" disabled>Apply approved segments to the mapping</button>
     <div id="log"></div>
   </div>
 </header>
 <main>
 {% for p in plan if p.entries and p.video in open_videos %}
-<div class="video"><div class="main">
+<div class="video" data-duration="{{ durations.get(p.video) or '' }}"><div class="main">
   <h3>{{ p.title }}</h3>
   <a href="https://www.youtube.com/watch?v={{ p.video }}" target="_blank">{{ p.video }}</a>
   <label class="vehicle">Vehicle (whole video):
@@ -1053,6 +1487,8 @@ tr.seg.active td:first-child { box-shadow: inset 4px 0 #007bff; }
           {% if e.locality %}<option selected>{{ e.locality[2] }}</option>{% endif %}</select>
         <span class="locstatus guess">{% if e.guessed %}guessed from title{% elif not e.locality %}
           ⚠ not set: approved segments cannot be added{% endif %}</span>
+        <div class="locmap"{% if e.locality and e.locality | tojson in new_localities %}
+             data-new="1"{% endif %}></div>
       </div>
       {% endif %}
     </td></tr>
@@ -1063,8 +1499,10 @@ tr.seg.active td:first-child { box-shadow: inset 4px 0 #007bff; }
       <td class="times">{% set t0 = '%d:%02d' % (s.start // 60, s.start % 60) %}
           {%- set t1 = '%d:%02d' % (s.end // 60, s.end % 60) %}
           {%- if s.applied %}{{ t0 }} – {{ t1 }}{% else %}
-          <input class="t-start" value="{{ t0 }}" title="start (m:ss)" onchange="editTimes(this)"> –
-          <input class="t-end" value="{{ t1 }}" title="end (m:ss)" onchange="editTimes(this)">{% endif %}
+          <input class="t-start" value="{{ t0 }}" title="start (m:ss)" autocomplete="off"
+                 onchange="editTimes(this)"> –
+          <input class="t-end" value="{{ t1 }}" title="end (m:ss)" autocomplete="off"
+                 onchange="editTimes(this)">{% endif %}
           <span class="dur">({{ '%d:%02d' % ((s.end - s.start) // 60, (s.end - s.start) % 60) }})</span></td>
       <td>{% if s.applied %}{{ 'night' if s.night else 'day' }}{% else %}
           <button class="small tod {{ 'night' if s.night else '' }}" title="switch day/night"
@@ -1075,7 +1513,8 @@ tr.seg.active td:first-child { box-shadow: inset 4px 0 #007bff; }
           <button class="small yes" onclick="decide(this, 'approve', true)">Approve</button>
           <button class="small no" onclick="decide(this, 'reject')">Reject</button>{% endif %}</td>
       <td>{% if not s.applied %}
-          <input class="at" placeholder="m:ss" title="time to split at, e.g. where the drive enters another locality">
+          <input class="at" placeholder="m:ss"
+                 autocomplete="off" title="time to split at, e.g. where the drive enters another locality">
           <button class="small" onclick="splitAt(this)">Split</button>
           <button class="small" onclick="moveSegment(this)" title="put this segment under another locality">
           → other locality</button>{% endif %}</td>
@@ -1116,7 +1555,9 @@ tr.seg.active td:first-child { box-shadow: inset 4px 0 #007bff; }
   </div>
 </div>
 {% endfor %}
-{% if not open_videos %}<p>Nothing left to decide in this plan.</p>{% endif %}
+{% if not open_videos %}<p>Nothing left to decide in this plan.</p>
+{% elif waiting > open_videos | length %}<p class="more">{{ waiting - open_videos | length }} more videos to decide:
+  they appear here as you finish these {{ open_videos | length }} (reload the page).</p>{% endif %}
 <details><summary>Excluded videos ({{ plan | selectattr('exclude') | list | length }})</summary>
 {% for p in plan if p.exclude %}
 <div class="excluded"><a href="https://www.youtube.com/watch?v={{ p.video }}" target="_blank">{{ p.video }}</a>
@@ -1234,7 +1675,9 @@ document.addEventListener('keydown', e => {
   }
   if (key === 'a') setBounds(row, t, +row.dataset.end);
   if (key === 's') setBounds(row, +row.dataset.start, t);
-  if (key === 'd') setBounds(row, 0, Math.floor(ytPlayer.getDuration()) - 1);
+  // the saved length: right after a switch the player still reports the previous video's
+  const length = +row.closest('.video').dataset.duration || Math.floor(ytPlayer.getDuration());
+  if (key === 'd') setBounds(row, 0, length - 1);
   const tod = row.querySelector('button.tod');
   if (tod && (key === 'q' || key === 'w') && tod.classList.contains('night') !== (key === 'w')) toggleNight(tod);
 });
@@ -1315,7 +1758,34 @@ async function saveLocality(el) {
   if (out.merged) { reloadKeepingPlace(); return; }  // joined another group of this video with that locality
   status.textContent = out.new ? 'new locality: created on Apply, with the lookups the add-video form makes'
                                : '✓ in the mapping';
+  showMap(box, out.new);
 }
+async function showMap(box, isNew) {
+  // a locality not in the mapping yet: where the add-video lookups put it, to check before Apply creates it
+  const map = box.querySelector('.locmap');
+  map.innerHTML = '';
+  if (!isNew) return;
+  const q = new URLSearchParams({ locality: box.querySelector('.loc-name').value.trim(),
+    state: box.querySelector('.loc-state').value.trim(), country: box.querySelector('.loc-country').value });
+  map.textContent = 'finding it on the map…';
+  const res = await fetch('where?' + q);
+  const out = await res.json();
+  if (!res.ok) { map.textContent = '⚠ ' + out.error; return; }
+  const d = 0.12, bbox = [out.lon - d * 1.6, out.lat - d, out.lon + d * 1.6, out.lat + d].join(',');
+  map.innerHTML = `new locality at ${out.lat.toFixed(4)}, ${out.lon.toFixed(4)}
+    (<a href="https://www.openstreetmap.org/?mlat=${out.lat}&mlon=${out.lon}#map=12/${out.lat}/${out.lon}"
+        target="_blank">larger map</a>)
+    <iframe loading="lazy"
+      src="https://www.openstreetmap.org/export/embed.html?bbox=${bbox}&layer=mapnik&marker=${out.lat},${out.lon}">
+    </iframe>`;
+}
+document.querySelectorAll('.locmap[data-new]').forEach(m => showMap(m.closest('.locbox'), true));
+// after a reload (a join, a split) the browser refills inputs by position, so rows that moved would show another
+// row's times, which a later edit would then save: always show the saved ones
+window.addEventListener('pageshow', () => {
+  document.querySelectorAll('tr.seg').forEach(r => { if (r.querySelector('.t-start')) showBounds(r); });
+  document.querySelectorAll('input.at').forEach(i => { i.value = ''; });
+});
 function parseTime(text) {
   const parts = text.trim().split(':').map(Number);
   return parts.length && parts.every(n => Number.isFinite(n)) ? parts.reduce((a, b) => a * 60 + b, 0) : NaN;
@@ -1474,14 +1944,23 @@ def review(plan_path, port=None):
 
     @app.route('/')
     def index():
-        # only videos with something left to decide; finished ones stay in the plan but off the page
+        # the first REVIEW_PAGE videos with something left to decide; finished ones stay in the plan but off the
+        # page, and make room for the next on reload
         plan = load()
         segs = {p['video']: [s for e in p['entries'] for s in e['segments']] for p in plan if 'entries' in p}
-        open_videos = {v for v, ss in segs.items() if any(not s.get('decision') and not s.get('applied') for s in ss)}
+        waiting = [v for v, ss in segs.items() if any(not s.get('decision') and not s.get('applied') for s in ss)]
+        open_videos = set(waiting[:REVIEW_PAGE])
         approved_hidden = sum(s.get('decision') == 'approve' and not s.get('applied')
                               for v, ss in segs.items() if v not in open_videos for s in ss)
         descriptions = {v: describe(v) for v in open_videos}
+        mapping = add_video.load_csv(add_video.FILE_PATH)
+        shown = {tuple(e['locality']) for p in plan if p['video'] in open_videos
+                 for e in p['entries'] if e.get('locality')}
+        new_localities = {json.dumps(list(loc)) for loc in shown
+                          if add_video.get_existing_locality_row(mapping, *loc)[0] is None}
         return render_template_string(REVIEW_HTML, plan=plan, open_videos=open_videos, approved_hidden=approved_hidden,
+                                      new_localities=new_localities, waiting=len(waiting),
+                                      durations={v: video_duration(v) for v in open_videos},
                                       max_merge_gap=MAX_MERGE_GAP_S, countries=COUNTRIES, vehicle_types=VEHICLE_TYPES,
                                       descriptions={v: d for v, d in descriptions.items() if d})
 
@@ -1506,6 +1985,15 @@ def review(plan_path, port=None):
                     return (f"that would overlap this video's segment {o['start'] // 60}:{o['start'] % 60:02d}"
                             f"–{o['end'] // 60}:{o['end'] % 60:02d}")
         return None
+
+    def video_duration(video_id):
+        """The video's length in s from its saved metadata, or None."""
+        path = os.path.join(plan_dir, f'{video_id}_meta.json')
+        if not os.path.exists(path):
+            return None
+        with open(path) as f:
+            duration = json.load(f).get('duration')
+        return int(duration) if duration else None
 
     def describe(video_id):
         """Description (escaped, with its timestamps as play links) and chapters from the saved metadata."""
@@ -1540,6 +2028,9 @@ def review(plan_path, port=None):
         start, end = int(d['start']), int(d['end'])
         if not 0 <= start < end:
             return jsonify(error='the start must be before the end'), 400
+        length = video_duration(p['video'])
+        if length and end > length:
+            return jsonify(error=f'the video is only {length // 60}:{length % 60:02d} long'), 400
         if s.get('decision') != 'reject' and (error := overlap(p, s, start, end)):
             return jsonify(error=error), 400
         s['start'], s['end'] = start, end
@@ -1562,11 +2053,8 @@ def review(plan_path, port=None):
         if any(a <= start < b for a, b in taken):
             return jsonify(error=f'{start // 60}:{start % 60:02d} is inside an existing segment: split that '
                                  'segment instead, or play a part of the video no segment covers'), 400
-        duration = d.get('duration')
-        meta_path = os.path.join(plan_dir, f"{p['video']}_meta.json")
-        if not duration and os.path.exists(meta_path):
-            with open(meta_path) as f:
-                duration = json.load(f).get('duration')
+        # the saved length first: right after a switch the player still reports the previous video's
+        duration = video_duration(p['video']) or d.get('duration')
         ends = [a for a, _ in taken if a > start] + ([int(duration)] if duration else [])
         if not ends:
             return jsonify(error="the video's length is unknown: play it first, then add the segment"), 400
@@ -1648,6 +2136,24 @@ def review(plan_path, port=None):
         hits.sort(key=lambda h: (h[0], h[1], h[2] or '', h[3]))  # some localities have no state
         return jsonify([{'label': label(*h[1:4]) + (' (new: created on Apply)' if h[4] else ''),
                          'value': list(h[1:4])} for h in hits[:30]])
+
+    @lru_cache(maxsize=None)
+    def coordinates(locality, state, country):
+        country = common.correct_country(country)
+        data = add_video.get_locality_data(locality, common.get_iso2_country_code(country), state)
+        return add_video.get_coordinates(locality, state, country, data)
+
+    @app.route('/where')
+    def where():
+        """Coordinates of a locality not in the mapping yet, found as the add-video form will find them."""
+        locality, country = request.args.get('locality', ''), request.args.get('country', '')
+        try:
+            lat, lon = coordinates(locality, request.args.get('state') or None, country)
+        except Exception as e:  # the lookups raise anything from network errors to missing fields
+            return jsonify(error=f'could not find {locality} ({e})'), 404
+        if lat is None or lon is None:
+            return jsonify(error=f'could not find {locality}, {country} on the map'), 404
+        return jsonify(lat=float(lat), lon=float(lon))
 
     @app.route('/locality', methods=['POST'])
     def set_locality():
