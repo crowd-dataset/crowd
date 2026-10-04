@@ -5,7 +5,8 @@ The traffic index (how much slower than free flow traffic is on the road nearest
 reading per locality. Pending: localities with an index of 0 (older entries also stored failed requests as 0) or
 whose last reading was taken at local night. Only localities where it is daytime now (08:00-20:00 local solar time)
 are queried, so run it in the morning (Asia and Oceania in daytime) and in the evening (Europe, Africa and the
-Americas), Central European time. At most --limit requests per run: TomTom's free tier allows about 2,500 a day.
+Americas), Central European time. At most --limit requests per run: TomTom's free tier for this API (Traffic
+Flow segment data) allows 20,000 requests a month.
 
 Each reading is appended to traffic_index_log.csv, which records what is done; mapping.csv gets the new values
 (empty where TomTom has no road data near the point). Run until it reports that nothing is pending.

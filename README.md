@@ -740,19 +740,26 @@ The file is a single JSON object:
 }
 ```
 
+Which keys you need depends on what you run:
+- **analysis of the released dataset** (`analysis.py`): none; `carto_api_key` is optional.
+- **adding videos** (`add_video.py`): `geonames_username`, `restcountries_api_key`, `tomtom_api_key` and `youtube_api_key`; `bea_api_key` for US localities.
+- **proposing segments from channels** (`propose_segments.py`): `youtube_api_key`; `geonames_username` and `locationiq_api_key` help.
+- **updating the traffic index** (`update_traffic_index.py`): `tomtom_api_key`.
+- **processing videos** (`main.py`): `ftp_username` and `ftp_password` for the VideoFiles server; the email keys only if `email_send` is on in `config`.
+
 | Key | Used by | What for | Where to get it |
 |---|---|---|---|
-| `geonames_username` | `add_video.py` | locality population and a fallback for coordinates | free account at [GeoNames](https://www.geonames.org/login) (enable web services in the account) |
+| `geonames_username` | `add_video.py`, `propose_segments.py` | locality population, a fallback for coordinates, and place lookups | free account at [GeoNames](https://www.geonames.org/login); see below |
 | `po_token` | — | not used by the current code; kept for YouTube proof-of-origin tokens | — |
-| `bea_api_key` | `add_video.py` | GDP of US metropolitan areas | [BEA](https://apps.bea.gov/api/signup) |
-| `tomtom_api_key` | `add_video.py`, `update_traffic_index.py` | traffic index from TomTom traffic flow | [TomTom](https://developer.tomtom.com/user/register) |
-| `trafiklab_api_key` | `add_video.py` | alternative traffic index | [Trafiklab](https://www.trafiklab.se/api/trafiklab-apis) |
-| `numbeo_api_key` | `add_video.py` | traffic index from Numbeo (paid) | [Numbeo](https://www.numbeo.com/common/api.jsp) |
-| `restcountries_api_key` | `add_video.py` | country population, continent and Gini | [REST Countries](https://restcountries.com) |
-| `email_smtp`, `email_account`, `email_password` | `main.py` | email when a job finishes (`email_send` in `config`) | your email provider's SMTP settings |
-| `ftp_username`, `ftp_password` | `main.py` | downloading videos from the [VideoFiles](https://files.mobility-squad.com/) server | project maintainers |
-| `carto_api_key` | `utils/plotting/maps.py` | basemaps for the map figures | [CARTO](https://carto.com) |
-| `youtube_api_key` | `propose_segments.py` | listing a channel's videos and their length, upload date and channel, without downloading them | see below |
+| `bea_api_key` | `add_video.py` | GDP of US localities | free key from [BEA](https://apps.bea.gov/API/signup/); see below |
+| `tomtom_api_key` | `add_video.py`, `update_traffic_index.py` | traffic index from TomTom traffic flow | free account at [TomTom](https://developer.tomtom.com/); see below |
+| `trafiklab_api_key` | — | not used by the current code (an alternative traffic index that is not called) | [Trafiklab](https://www.trafiklab.se/api/trafiklab-apis) |
+| `numbeo_api_key` | — | not used by the current code (Numbeo was the source of older, often country-level, traffic index values) | [Numbeo](https://www.numbeo.com/common/api.jsp) (paid) |
+| `restcountries_api_key` | `add_video.py` | country population, continent and Gini | free account at [REST Countries](https://restcountries.com/sign-up); see below |
+| `email_smtp`, `email_account`, `email_password` | `main.py` | email when a job finishes (`email_send` in `config`) | your email provider; see below |
+| `ftp_username`, `ftp_password` | `main.py` | downloading videos from the [VideoFiles](https://files.mobility-squad.com/) server | the maintainers (see [Contact](#contact)) |
+| `carto_api_key` | `utils/plotting/maps.py` | optional: basemap tiles for the Mapbox-style maps without CARTO's watermark; without a key, CARTO's free basemap is used | [CARTO](https://carto.com); see below |
+| `youtube_api_key` | `propose_segments.py`, `add_video.py` | listing a channel's videos and their length, upload date and channel, without downloading them | see below |
 | `locationiq_api_key` | `propose_segments.py` | optional: faster place lookups (localities from titles, descriptions and chapters, and the towns along a drive "from A to B") | see below |
 
 #### Getting a YouTube Data API key
@@ -771,6 +778,50 @@ The key is free; the default quota of 10,000 units a day covers several large ch
 1. Sign up for the free plan at [locationiq.com](https://locationiq.com) and confirm your email address.
 2. Open the dashboard's **Access Tokens** page and copy the token there.
 3. Put it in `secret` as `"locationiq_api_key": "..."`. Nothing else needs changing; running channel batches pick it up from their next chunk.
+
+#### Getting a GeoNames username
+GeoNames is free; an account allows 10,000 requests a day and 1,000 an hour.
+
+1. Create an account at [geonames.org/login](https://www.geonames.org/login) and confirm your email address with the link GeoNames sends.
+2. Sign in and open your [account page](https://www.geonames.org/manageaccount). At the bottom, click **Click here to enable** the free web services. Requests are refused until this is done.
+3. Put your username (not your email address) in `secret` as `"geonames_username": "..."`.
+
+#### Getting a BEA API key
+The U.S. Bureau of Economic Analysis key is free and is used only for localities in the USA.
+
+1. Fill in your name and email address at [apps.bea.gov/API/signup](https://apps.bea.gov/API/signup/).
+2. BEA emails you the key (a 36-character code); click the activation link in that email.
+3. Put the key in `secret` as `"bea_api_key": "..."`.
+
+#### Getting a TomTom API key
+The traffic index uses TomTom's Traffic Flow API (segment data). Its free tier allows 20,000 requests a month, with no payment details needed.
+
+1. Create an account at [developer.tomtom.com](https://developer.tomtom.com/) and confirm your email address.
+2. Open the **Dashboard**: a key is created with the account (**Keys** section). Copy it.
+3. Put it in `secret` as `"tomtom_api_key": "..."`.
+
+`update_traffic_index.py` uses one request per locality and only queries localities where it is local daytime; requests beyond the free tier are refused unless payment details are added to the TomTom account.
+
+#### Getting a REST Countries API key
+`add_video.py` uses version 5 of the [REST Countries](https://restcountries.com) API, which needs a key. The free plan allows 1,000 requests a month, with no payment details.
+
+1. Sign up at [restcountries.com/sign-up](https://restcountries.com/sign-up) and confirm your email address.
+2. Create an API key in the dashboard and copy it.
+3. Put it in `secret` as `"restcountries_api_key": "..."`.
+
+#### Email settings
+`main.py` can email you when a job finishes (`email_send`, `email_sender` and `email_recipients` in `config`). It connects to the SMTP server over SSL on port 465.
+
+- `email_smtp`: the SMTP server of your provider, e.g. `smtp.gmail.com` for Gmail.
+- `email_account`: the full email address you send from.
+- `email_password`: for Gmail, an **app password**, not your normal password. Turn on 2-Step Verification for the Google account, then create an app password at [myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords) and paste the 16 characters. Other providers have similar app passwords or use the account password.
+
+#### Getting a CARTO key (optional)
+The Mapbox-style maps (`mapbox_map_*`) use CARTO's free basemap, which shows a CARTO watermark. With a key, `maps.py` loads CARTO's basemap tiles with the key instead.
+
+1. Create an account at [carto.com](https://carto.com).
+2. In the CARTO Workspace, create an API access token under **Developers → Credentials** and copy it.
+3. Put it in `secret` as `"carto_api_key": "..."`.
 
 ## Example of YOLO output for a video with dashcam footage
 
