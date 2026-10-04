@@ -1661,7 +1661,9 @@ tr.split td { font-size: 12px; color: #777; border-top: 0; padding-top: 0; paddi
 #copied { color: green; font-size: 13px; }
 .keys { font-size: 12px; color: #555; margin-bottom: 6px; }
 tr.seg.active td:first-child { box-shadow: inset 4px 0 #007bff; }
-.routemap { width: 640px; max-width: 100%; height: 300px; margin: 8px 0; border: 1px solid #ccc; }
+/* its own stacking context: Leaflet's layers (z-index 400+) would otherwise scroll over the sticky player */
+.routemap { width: 640px; max-width: 100%; height: 300px; margin: 8px 0; border: 1px solid #ccc;
+            position: relative; z-index: 0; }
 .routemap .leaflet-tooltip { font-size: 11px; padding: 1px 4px; }
 </style>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
