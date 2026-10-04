@@ -735,7 +735,8 @@ The file is a single JSON object:
   "ftp_username": "",
   "ftp_password": "",
   "carto_api_key": "",
-  "youtube_api_key": ""
+  "youtube_api_key": "",
+  "locationiq_api_key": ""
 }
 ```
 
@@ -752,6 +753,7 @@ The file is a single JSON object:
 | `ftp_username`, `ftp_password` | `main.py` | downloading videos from the [VideoFiles](https://files.mobility-squad.com/) server | project maintainers |
 | `carto_api_key` | `utils/plotting/maps.py` | basemaps for the map figures | [CARTO](https://carto.com) |
 | `youtube_api_key` | `propose_segments.py` | listing a channel's videos and their length, upload date and channel, without downloading them | see below |
+| `locationiq_api_key` | `propose_segments.py` | optional: faster place lookups (localities from titles, descriptions and chapters, and the towns along a drive "from A to B") | see below |
 
 #### Getting a YouTube Data API key
 The key is free; the default quota of 10,000 units a day covers several large channels (listing a channel's search results costs 100 units per 50 videos, video details 1 unit per 50 videos).
@@ -762,6 +764,13 @@ The key is free; the default quota of 10,000 units a day covers several large ch
 4. Open **APIs & Services → Credentials → Create credentials → API key**. Copy the key that appears.
 5. Recommended: click the new key → under **API restrictions** choose **Restrict key** → select **YouTube Data API v3** → **Save**, so the key cannot be used for anything else.
 6. Put the key in `secret` as `"youtube_api_key": "..."`.
+
+#### Getting a LocationIQ key (optional)
+`propose_segments.py` looks places up on OpenStreetMap: to guess a video's locality from a named place ("Al Khan Beach" is in Sharjah) and to split a drive "from A to B" into the towns along its route (about 25 lookups per such drive). Without a key it uses the public [Nominatim](https://nominatim.org) server, which allows one request a second and refuses requests for a while when a busy day goes over that. [LocationIQ](https://locationiq.com) runs the same OpenStreetMap search with a free key: 5,000 requests a day at two a second, with no payment details. With a key in `secret`, lookups go to LocationIQ; once its daily requests are used up, they fall back to the public server.
+
+1. Sign up for the free plan at [locationiq.com](https://locationiq.com) and confirm your email address.
+2. Open the dashboard's **Access Tokens** page and copy the token there.
+3. Put it in `secret` as `"locationiq_api_key": "..."`. Nothing else needs changing; running channel batches pick it up from their next chunk.
 
 ## Example of YOLO output for a video with dashcam footage
 

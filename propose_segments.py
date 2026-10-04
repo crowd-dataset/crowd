@@ -20,14 +20,16 @@ import time
 import unicodedata
 import webbrowser
 from collections import Counter
-from functools import lru_cache
+from functools import lru_cache, wraps
 from threading import Timer
 from urllib.parse import parse_qs, unquote, urlparse
 
 import cv2
+import pycountry
 import numpy as np
 import requests
-from geopy.exc import GeopyError
+from geopy.exc import (GeocoderAuthenticationFailure, GeocoderInsufficientPrivileges, GeocoderQuotaExceeded,
+                       GeocoderRateLimited, GeopyError)
 from geopy.geocoders import Nominatim
 
 import add_video
@@ -822,41 +824,127 @@ def place_phrases(text, limit=4):
     return list(dict.fromkeys(with_state + sorted(unique, key=lambda p: -len(p.split()))))[:limit]
 
 
-@lru_cache(maxsize=None)
+NOMINATIM_SLOT = os.path.join(tempfile.gettempdir(), 'crowd_nominatim.slot')
+
+
+class _LocationIQ(Nominatim):
+    """LocationIQ: Nominatim on OpenStreetMap data with a free key (5,000 requests a day, 2 a second)."""
+    geocode_path, reverse_path = '/v1/search', '/v1/reverse'
+
+    def __init__(self, key):
+        super().__init__(user_agent='crowd-dataset-propose-segments', domain='us1.locationiq.com', scheme='https')
+        self.key = key
+
+    def _construct_url(self, base_api, params):
+        return super()._construct_url(base_api, {**params, 'key': self.key})
+
+
+def _locationiq_key():
+    try:
+        return common.get_secrets('locationiq_api_key')
+    except (KeyError, OSError, ValueError):
+        return None
+
+
+def _nominatim(method, *args, **kwargs):
+    """A geocode or reverse call: through LocationIQ when the secret file has "locationiq_api_key" (2 a second),
+    else, or when LocationIQ refuses (its daily 5,000 are used up), through the public Nominatim at most once a
+    second across every process on this computer (its usage policy; a channel run and a review page may ask at
+    the same time). When Nominatim answers "too many requests" it is asked again after 1, 2 and 4 minutes."""
+    if key := _locationiq_key():
+        time.sleep(0.5)
+        try:
+            return getattr(_LocationIQ(key), method)(*args, **kwargs)
+        except (GeocoderRateLimited, GeocoderQuotaExceeded, GeocoderAuthenticationFailure,
+                GeocoderInsufficientPrivileges):
+            pass
+    for wait in (60, 120, 240, None):
+        with open(NOMINATIM_SLOT, 'a+') as slot:
+            fcntl.flock(slot, fcntl.LOCK_EX)
+            slot.seek(0)
+            last = float(slot.read() or 0)
+            time.sleep(max(0.0, last + 1.1 - time.time()))
+            try:
+                return getattr(Nominatim(user_agent='crowd-dataset-propose-segments'), method)(*args, **kwargs)
+            except GeocoderRateLimited:
+                if wait is None:
+                    raise
+            finally:
+                slot.seek(0)
+                slot.truncate()
+                slot.write(str(time.time()))
+        time.sleep(wait)
+
+
+def _region_code(address):
+    """The ISO 3166-2 code of an address's state ("US-PA"): Nominatim gives it, LocationIQ only the state's name."""
+    if address.get('ISO3166-2-lvl4'):
+        return address['ISO3166-2-lvl4']
+    try:
+        subdivisions = pycountry.subdivisions.get(country_code=(address.get('country_code') or '').upper()) or []
+    except (KeyError, LookupError):
+        return ''
+    state = _name_key(address.get('state') or '')
+    return next((d.code for d in subdivisions if _name_key(d.name) == state), '') if state else ''
+
+
+def _osm_name(raw):
+    """A result's own name (LocationIQ may give only the full display name, whose first part it is)."""
+    return raw.get('name') or (raw.get('display_name') or '').split(',')[0]
+
+
+def _osm_type(raw):
+    return raw.get('addresstype') or raw.get('type')
+
+
+def _remembered(fn):
+    """Like lru_cache, but a lookup that failed (no connection, a refusing server) is not remembered as an
+    answer: it returns None this time and is asked again next time."""
+    cache = {}
+
+    @wraps(fn)
+    def wrapper(*args):
+        if args not in cache:
+            try:
+                cache[args] = fn(*args)
+            except (GeopyError, requests.RequestException, ValueError, KeyError, IndexError):
+                return None
+        return cache[args]
+    return wrapper
+
+
+@_remembered
 def _osm_place(phrase, country_codes, near=None, reach_km=None):
     """(town, region, country code, region code, lat, lon) of an OpenStreetMap feature called phrase in those
     countries (a beach, a road, a district or a town): town is the one it lies in, region its state or emirate.
     near=(lat, lon): the nearest of the matches within reach of there, as the place a channel from there means
     ("Longwood in the Bronx" for a New York channel, not Longwood in Boston; Cutler, CA not Cutler, IL)."""
-    time.sleep(1)  # Nominatim's usage policy: one request a second
     box = {}
     if near:
         deg = (reach_km or ABROAD_KM) / 111
         box = {'viewbox': [(near[0] - deg, near[1] - deg), (near[0] + deg, near[1] + deg)], 'bounded': True}
-    try:
-        found = Nominatim(user_agent='crowd-dataset-propose-segments').geocode(
-            phrase, exactly_one=False, limit=10, country_codes=list(country_codes), addressdetails=True,
-            language='en', timeout=15, **box) or []
-    except (GeopyError, ValueError):
-        return None
+    found = _nominatim('geocode', phrase, exactly_one=False, limit=10, country_codes=list(country_codes),
+                       addressdetails=True, language='en', timeout=15, **box) or []
     wanted = _name_key(phrase)
 
     def fits(r):
         # a feature of that name that is a place (a town, district, beach, park, mountain) or a main road:
         # shops, offices and side streets named alike are everywhere ("Colombo" jewellers, a "Grand Avenue")
-        name = _name_key(r.raw.get('name', ''))
-        return (r.raw.get('addresstype') != 'country' and name and (name in wanted or wanted in name)
+        name = _name_key(_osm_name(r.raw))
+        return (_osm_type(r.raw) != 'country' and name and (name in wanted or wanted in name)
                 and (r.raw.get('class') in ('place', 'boundary', 'tourism', 'natural', 'leisure', 'landuse')
                      or r.raw.get('class') == 'highway' and r.raw.get('type') in ('motorway', 'trunk', 'primary')))
     found = [r for r in found if fits(r)]
     if not found:
         return None
-    r = min(found, key=lambda r: _km(near[0], near[1], r.latitude, r.longitude)) if near else found[0]
+    # the exact name first ("Plains" is Plains, PA, not White Plains, NY), then the nearest
+    r = min(found, key=lambda r: (_name_key(_osm_name(r.raw)) != wanted,
+                                  _km(near[0], near[1], r.latitude, r.longitude) if near else 0))
     a = r.raw.get('address', {})
     town = a.get('city') or a.get('town') or a.get('village') or a.get('municipality')
     if town:  # OpenStreetMap calls some towns "City of Mount Vernon", "Town of Hempstead"
         town = re.sub(r'^(?:City|Town|Village|Borough|Township) of ', '', town)
-    return (town, a.get('state'), a.get('country_code', '').upper(), a.get('ISO3166-2-lvl4', ''),
+    return (town, a.get('state'), a.get('country_code', '').upper(), _region_code(a),
             r.latitude, r.longitude, float(r.raw.get('importance') or 0))
 
 
@@ -907,44 +995,182 @@ def place_localities(phrases, df, home=None):
         # namesake (Longwood, PA for Longwood in the Bronx) would only look like a second town
         hits = [(p, h if p == anchor[0] else _osm_place(p, codes, anchor[1][4:6], 50)) for p, h in hits]
     for phrase, hit in hits:
-        if not usable(hit):
-            continue
-        town, region, code, region_code = hit[:4]
-        rows = df[df['country'] == countries[code]]
-        # where the country's localities in the mapping carry a state (US-NY -> NY), the town must be in it:
-        # Mount Vernon, NY is not the Mount Vernon, WA of the mapping
-        with_state = rows['state'].notna().mean() > 0.5
-        state = region_code.split('-')[-1] if with_state and region_code else None
-        if state:
-            rows = rows[rows['state'] == state]
-        known = {_name_key(n): r for n, r in zip(rows['locality'], rows.itertuples())}
-        # the town it lies in; only a place in no town (a mountain park) goes by its region
-        for name in ((town,) if town else (region,)):
-            if name and _name_key(name) in known:
-                r = known[_name_key(name)]
-                yield [r.locality, r.state if isinstance(r.state, str) else None, r.country], phrase
-                break
+        if usable(hit) and (loc := _hit_locality(hit, df, countries)):
+            yield loc, phrase
+
+
+def _hit_locality(hit, df, countries):
+    """[locality, state, country] of an OpenStreetMap hit: the mapping locality of the town it lies in, else of its
+    region when that is a locality (a mountain park in an emirate), else that town as a new locality."""
+    town, region, code, region_code = hit[:4]
+    if code not in countries:
+        return None
+    rows = df[df['country'] == countries[code]]
+    # where the country's localities in the mapping carry a state (US-NY -> NY), the town must be in it:
+    # Mount Vernon, NY is not the Mount Vernon, WA of the mapping
+    with_state = rows['state'].notna().mean() > 0.5
+    state = region_code.split('-')[-1] if with_state and region_code else None
+    if state:
+        rows = rows[rows['state'] == state]
+    known = {_name_key(n): r for n, r in zip(rows['locality'], rows.itertuples())}
+    for name in ((town,) if town else (region,)):
+        if name and _name_key(name) in known:
+            r = known[_name_key(name)]
+            return [r.locality, r.state if isinstance(r.state, str) else None, r.country]
+    return [town, state, countries[code]] if town else None
+
+
+# "Driving from Hazle Township to White Haven, Pennsylvania": where a drive starts and where it ends
+FROM_TO = re.compile(r"\bfrom\s+(.+?)\s+to\s+(.+?)\s*(?:,|\||\(|\s-\s|\s–\s|\bin\b|\bvia\b|$)", re.I)
+ROUTE_SAMPLES = 20     # points along a route whose town is looked up (one OpenStreetMap request a second each)
+
+
+@_remembered
+def _osm_reverse(lat, lon):
+    """(town, region, country code, region code) at a point; town is the city, town, village or township."""
+    r = _nominatim('reverse', (lat, lon), zoom=14, addressdetails=True, language='en', timeout=15)
+    a = (r.raw.get('address') or {}) if r else {}
+    town = a.get('city') or a.get('town') or a.get('village') or a.get('municipality') or a.get('hamlet')
+    if town:
+        town = re.sub(r'^(?:City|Town|Village|Borough|Township) of ', '', town)
+    return (town, a.get('state'), a.get('country_code', '').upper(), _region_code(a)) if a else None
+
+
+@_remembered
+def _route(start, end):
+    """([(lat, lon) every 1/ROUTE_SAMPLES of the driving time], the route's path thinned to at most 300 points)
+    of the OSRM car route between two points."""
+    r = requests.get(f'https://router.project-osrm.org/route/v1/driving/{start[1]},{start[0]};{end[1]},{end[0]}',
+                     params={'overview': 'full', 'geometries': 'geojson', 'annotations': 'duration'}, timeout=30)
+    r.raise_for_status()
+    route = r.json()['routes'][0]
+    coords = route['geometry']['coordinates']
+    durations = np.array([d for leg in route['legs'] for d in leg['annotation']['duration']])
+    if len(coords) < 2 or durations.sum() <= 0:
+        return None
+    done = np.r_[0, np.cumsum(durations)] / durations.sum()
+    samples = [tuple(reversed(coords[min(int(np.searchsorted(done, f)), len(coords) - 1)]))
+               for f in np.linspace(0, 1, ROUTE_SAMPLES + 1)]
+    step = max(1, len(coords) // 300)
+    path = [[round(lat, 5), round(lon, 5)] for lon, lat in coords[::step] + [coords[-1]]]
+    return samples, path
+
+
+def route_localities(title, df, home=None):
+    """([(share of the drive where it starts, where it ends, locality)], the route for a map) along the car route
+    of a drive "from A to B" through two different towns, else ([], None). The towns on the way are looked up on
+    OpenStreetMap every 1/ROUTE_SAMPLES of the driving time, so the borders are an estimate that assumes the video
+    follows that route at an even pace."""
+    m = FROM_TO.search(title or '')
+    if not m:
+        return [], None
+    countries = {common.get_iso2_country_code(common.correct_country(c)): c for c in df['country'].dropna().unique()}
+    countries.pop(None, None)
+    codes = tuple(sorted(countries))
+    first, last = m.group(1).strip(), m.group(2).strip()
+    a = _osm_place(first, codes, (home[3], home[4]) if home else None)
+    b = _osm_place(last, codes, a[4:6] if a else (home[3], home[4]) if home else None, 300)
+    # a drive between two towns is short: each end is also looked for near the other, and the closest pair is
+    # meant ("from Plains to Hughestown": Plains Township next to Hughestown, not a Plains in New Jersey)
+    pairs = [(x, y) for x in (a, b and _osm_place(first, codes, b[4:6], 60))
+             for y in (b, a and _osm_place(last, codes, a[4:6], 60)) if x and y]
+    a, b = min(pairs, key=lambda xy: _km(xy[0][4], xy[0][5], xy[1][4], xy[1][5])) if pairs else (None, None)
+    start, end = a and _hit_locality(a, df, countries), b and _hit_locality(b, df, countries)
+    if not (start and end) or start == end:
+        return [], None
+    points, path = _route(a[4:6], b[4:6]) or ([], None)
+    locs = [start] + [_hit_locality(h, df, countries) if (h := _osm_reverse(round(lat, 4), round(lon, 4))) else None
+                      for lat, lon in points[1:-1]] + [end]
+    points = [a[4:6]] + list(points[1:-1]) + [b[4:6]]
+    out, stops = [], []
+    for i, loc in enumerate(locs):
+        loc = loc or (out[-1][2] if out else start)  # a point in no town is still in the one before
+        if out and out[-1][2] == loc:
+            out[-1] = (out[-1][0], (i + 1) / len(locs), loc)
         else:
-            if town:  # a new locality
-                yield [town, state, countries[code]], phrase
+            out.append((i / len(locs), (i + 1) / len(locs), loc))
+            stops.append([round(points[min(i, len(points) - 1)][0], 5), round(points[min(i, len(points) - 1)][1], 5),
+                          loc[0]])
+    if len(out) < 2:
+        return [], None
+    return out, {'path': path or [p[:2] for p in stops], 'stops': stops}
 
 
-@lru_cache(maxsize=None)
+def split_routes(plan_path):
+    """split_route for every proposal in a plan nobody has decided anything in yet; returns how many were split.
+    The plan is locked per video, so a review page and a channel run can stay open meanwhile."""
+    df = add_video.load_csv(add_video.FILE_PATH)
+    with open(plan_path) as f:
+        plan = {p['video']: p for p in json.load(f)}
+    channels = Counter(p.get('channel_id') for p in plan.values() if p.get('channel_id'))
+    home = channel_home(channels.most_common(1)[0][0], df, plan) if channels else None
+    country = home[2] if home else None
+    in_reach = (df['country'] == country) | (np.array([_km(home[3], home[4], lat, lon) <= ABROAD_KM
+                                                       for lat, lon in zip(df['lat'], df['lon'])]) if home else False)
+    done = 0
+    for vid in list(plan):
+        p = json.loads(json.dumps(plan[vid]))
+        if not split_route(p, df[in_reach], home):
+            continue
+        with plan_lock(plan_path):  # write only if the video is still untouched in the plan on disk
+            with open(plan_path) as f:
+                current = json.load(f)
+            i = next((i for i, q in enumerate(current) if q['video'] == vid), None)
+            if i is None or current[i].get('entries') != plan[vid].get('entries'):
+                continue
+            current[i] = p
+            tmp = plan_path + '.tmp'
+            with open(tmp, 'w') as f:
+                json.dump(current, f, indent=1)
+            os.replace(tmp, plan_path)
+        done += 1
+        print(f"{vid} {p['title'][:60]}: {', '.join(e['locality'][0] for e in p['entries'])}", flush=True)
+    return done
+
+
+def split_by_stretches(segments, stretches):
+    """Locality groups {locality: segments} of segments cut at the (start s, end s, locality) stretches."""
+    groups = {}
+    for seg in segments:
+        for a, b, loc in stretches:
+            lo, hi = max(seg['start'], a), min(seg['end'], b)
+            if hi - lo >= 5:
+                groups.setdefault(tuple(loc), []).append({'start': int(lo), 'end': int(hi), 'night': seg['night']})
+    return [{'locality': list(loc), 'guessed': True, 'segments': segs} for loc, segs in groups.items()]
+
+
+def split_route(p, df, home=None):
+    """Split an untouched one-group proposal of a drive "from A to B" into the localities along its route, the
+    driving time spread over them as on the route. Returns whether it was split."""
+    if len(p.get('entries', [])) != 1:
+        return False
+    segs = p['entries'][0]['segments']
+    if not segs or any(s.get('decision') or s.get('applied') for s in segs):
+        return False
+    shares, route = route_localities(p.get('title'), df, home)
+    if not shares:
+        return False
+    t0, t1 = min(s['start'] for s in segs), max(s['end'] for s in segs)
+    stretches = [(t0 + a * (t1 - t0), t0 + b * (t1 - t0), loc) for a, b, loc in shares]
+    p['entries'] = split_by_stretches(segs, stretches)
+    p['route'] = route
+    p['note'] = (f"{p.get('note') or ''}; localities along the route, borders estimated from driving time "
+                 "(check them): " + ', '.join(f'{loc[0]} from {int(a) // 60}:{int(a) % 60:02d}'
+                                              for a, _, loc in stretches)).lstrip('; ')
+    return True
+
+
+@_remembered
 def town_near(name, home):
     """[locality, state, country] of the town a place of that name near the channel's home is: itself, or for
     a neighbourhood the city it is part of (Echo Park is Los Angeles, Beverly Hills its own city). OpenStreetMap
     tells them apart; GeoNames calls both a section of a populated place."""
-    time.sleep(1)  # Nominatim's usage policy: one request a second
-    try:
-        r = Nominatim(user_agent='crowd-dataset-propose-segments').geocode(
-            f'{name}, {home[2]}', featuretype='settlement', addressdetails=True, timeout=15,
-            viewbox=[(home[3] - 1, home[4] - 1), (home[3] + 1, home[4] + 1)], bounded=True)
-    except (GeopyError, ValueError):
-        return None
+    r = _nominatim('geocode', f'{name}, {home[2]}', featuretype='settlement', addressdetails=True, timeout=15,
+                   viewbox=[(home[3] - 1, home[4] - 1), (home[3] + 1, home[4] + 1)], bounded=True)
     if r is None or _km(home[3], home[4], r.latitude, r.longitude) > 60:
         return None
     address = r.raw.get('address', {})
-    if r.raw.get('addresstype') in ('city', 'town', 'village', 'municipality'):
+    if _osm_type(r.raw) in ('city', 'town', 'village', 'municipality'):
         town = name
     else:
         town = address.get('city') or address.get('town') or address.get('village')
@@ -1254,13 +1480,7 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
                 e['locality'], e['guessed'] = stretches[0][2], True
                 p['note'] = f"{p['note']}; locality {stretches[0][2][0]} from the chapters".lstrip('; ')
             continue
-        groups = {}
-        for seg in e['segments']:
-            for a, b, loc in stretches:
-                lo, hi = max(seg['start'], a), min(seg['end'], b)
-                if hi - lo >= 5:
-                    groups.setdefault(tuple(loc), []).append({'start': lo, 'end': hi, 'night': seg['night']})
-        p['entries'] = [{'locality': list(loc), 'guessed': True, 'segments': segs} for loc, segs in groups.items()]
+        p['entries'] = split_by_stretches(e['segments'], stretches)
         p['note'] = (f"{p['note']}; localities from the chapters: "
                      + ', '.join(f'{loc[0]} from {a // 60}:{a % 60:02d}' for a, _, loc in stretches)).lstrip('; ')
     # a named place ("Sun Rise at Al Khan Beach") is in some town: look it up on OpenStreetMap
@@ -1290,6 +1510,9 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
             if found:
                 e['locality'], e['guessed'] = list(found[0]), True
                 p['note'] = f"{p['note']}; locality {found[0][0]} from where '{found[1]}' is".lstrip('; ')
+    # a drive "from A to B" without chapters passes through A, B and the towns between: split it along its route
+    for p in new:
+        split_route(p, df[in_reach], home)
     if home:
         iso2 = common.get_iso2_country_code(common.correct_country(home[2]))
         for p in new:
@@ -1438,7 +1661,12 @@ tr.split td { font-size: 12px; color: #777; border-top: 0; padding-top: 0; paddi
 #copied { color: green; font-size: 13px; }
 .keys { font-size: 12px; color: #555; margin-bottom: 6px; }
 tr.seg.active td:first-child { box-shadow: inset 4px 0 #007bff; }
-</style></head><body>
+.routemap { width: 640px; max-width: 100%; height: 300px; margin: 8px 0; border: 1px solid #ccc; }
+.routemap .leaflet-tooltip { font-size: 11px; padding: 1px 4px; }
+</style>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+</head><body>
 <header>
   <div id="player"></div>
   <div>
@@ -1469,6 +1697,8 @@ tr.seg.active td:first-child { box-shadow: inset 4px 0 #007bff; }
        alt="YouTube thumbnail of {{ p.video }} (not analysed)">
   {% else %}
   <img class="sheet" src="sheet/{{ p.video }}.jpg" loading="lazy" alt="frames from {{ p.video }}">
+  {% if p.route %}<div class="routemap" data-route='{{ p.route | tojson }}'
+       title="the car route the localities were estimated from"></div>{% endif %}
   {% endif %}
   <table>
   {% for e in p.entries %}{% set ei = loop.index0 %}
@@ -1487,7 +1717,7 @@ tr.seg.active td:first-child { box-shadow: inset 4px 0 #007bff; }
           {% if e.locality %}<option selected>{{ e.locality[2] }}</option>{% endif %}</select>
         <span class="locstatus guess">{% if e.guessed %}guessed from title{% elif not e.locality %}
           ⚠ not set: approved segments cannot be added{% endif %}</span>
-        <div class="locmap"{% if e.locality and e.locality | tojson in new_localities %}
+        <div class="locmap"{% if e.locality and e.locality | tojson in new_localities and not p.route %}
              data-new="1"{% endif %}></div>
       </div>
       {% endif %}
@@ -1902,6 +2132,22 @@ if (resume) {
   play(resume.video, resume.t);
 }
 </script>
+<script>
+// a drive "from A to B": its car route, with where each locality on the way starts
+document.querySelectorAll('.routemap').forEach(el => {
+  if (!window.L) { el.textContent = 'the map needs internet (Leaflet from unpkg.com)'; return; }
+  const route = JSON.parse(el.dataset.route);
+  const map = L.map(el, { scrollWheelZoom: false });
+  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+              { maxZoom: 18, attribution: '&copy; OpenStreetMap contributors' }).addTo(map);
+  const line = L.polyline(route.path, { color: '#2a6fdb', weight: 4 }).addTo(map);
+  route.stops.forEach(([lat, lon, name], i) => {
+    L.circleMarker([lat, lon], { radius: 5, color: i ? '#c0392b' : '#27ae60', fillOpacity: 1 })
+      .bindTooltip(`${i + 1}. ${name}`, { permanent: true, direction: 'right' }).addTo(map);
+  });
+  map.fitBounds(line.getBounds(), { padding: [20, 20] });
+});
+</script>
 <script src="https://www.youtube.com/iframe_api"></script>
 </body></html>"""
 
@@ -2289,9 +2535,13 @@ if __name__ == '__main__':
     ap.add_argument('--no-download', action='store_true',
                     help='propose whole videos from YouTube Data API metadata, without downloading or analysing')
     ap.add_argument('--review', metavar='PLAN_JSON', help='open the review page for a plan file')
+    ap.add_argument('--split-routes', metavar='PLAN_JSON',
+                    help='split untouched drives "from A to B" in a plan into the localities along their route')
     args = ap.parse_args()
     if args.review:
         review(args.review)
+    elif args.split_routes:
+        print(f'{split_routes(args.split_routes)} drives split along their route in {args.split_routes}')
     elif args.channel:
         name = re.sub(r'\W+', '_', re.sub(r'^.*youtube\.com/(?:channel/)?@?', '', args.channel).split('/')[0])
         out = process_channel(args.channel, args.country, args.out or os.path.join('_output/proposals', name),
