@@ -32,11 +32,13 @@ SHEET_CSV = ('https://docs.google.com/spreadsheets/d/18O6C0Ar-JxLoqsrbuSwKAHLOVV
 ROOT = '_output/proposals'
 STATE = os.path.join(ROOT, 'channels.json')
 TO_REVIEW = os.path.join(ROOT, 'to_review.md')
+PAUSE = os.path.join(ROOT, 'pause')  # created while the user travels (Travel calendar)
 # the sheet's short country names, as the mapping writes them
 COUNTRY = {'USA': 'United States', 'US': 'United States', 'UK': 'United Kingdom', 'UAE': 'United Arab Emirates',
            'Korea': 'South Korea'}
 BLOCKED_WAIT_S = 15 * 60
 IDLE_WAIT_S = 10 * 60
+QUOTA_WAIT_S = 60 * 60  # the API quota resets at midnight Pacific time
 
 
 def log(msg):
@@ -144,19 +146,20 @@ def on_hotspot():
     return 'gateway: 172.20.10.' in r.stdout
 
 
-def run_chunk(url, country, chunk):
-    """One batch of the channel with the latest code; its output, streamed."""
+def run_chunk(url, country, chunk, single_city=False):
+    """One batch of the channel with the latest code; its output, streamed. single_city: only drives within one
+    city (set "single_city": true for the channel in channels.json)."""
     env = dict(os.environ)
     if os.path.exists('cookies.txt'):
         env.setdefault('YT_DLP_COOKIES', 'cookies.txt')
     cmd = [sys.executable, '-u', 'propose_segments.py', '--channel', url, '--country', country,
-           '--limit', str(chunk)]
+           '--limit', str(chunk)] + (['--single-city'] if single_city else [])
     out = []
     with subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env) as proc:
         for line in proc.stdout:
-            if on_hotspot():  # stop downloading at once; the batch continues once off the hotspot
+            if on_hotspot() or os.path.exists(PAUSE):  # stop downloading at once; the batch continues later
                 proc.terminate()
-                out.append('switched to the hotspot\n')
+                out.append('switched to the hotspot or paused\n')
                 break
             if 'Warning' not in line:
                 print('  ' + line.rstrip()[:200], flush=True)
@@ -183,6 +186,11 @@ def main():
             while on_hotspot():
                 time.sleep(60)
             log('off the hotspot: continuing')
+        if os.path.exists(PAUSE):
+            log('paused (travelling): waiting until the pause file is removed')
+            while os.path.exists(PAUSE):
+                time.sleep(60)
+            log('pause removed: continuing')
         try:
             sheet = sheet_rows()
         except requests.RequestException as e:
@@ -215,7 +223,7 @@ def main():
         c['country'] = country
         save_state(state)
         log(f'row {n} {url} ({country}): next {args.chunk} proposals')
-        out = run_chunk(url, country, args.chunk)
+        out = run_chunk(url, country, args.chunk, c.get('single_city', False))
         if 'Could not list the channel' not in out:
             c.pop('list_failures', None)
         if 'Traceback (most recent call last)' in out:
@@ -228,6 +236,10 @@ def main():
         elif 'three videos in a row could not be analysed' in out:
             log('three videos in a row failed (YouTube blocking or no connection?): waiting 15 min')
             time.sleep(BLOCKED_WAIT_S)
+        elif 'exceeded your' in out and 'quota' in out:
+            # not the channel's fault: stay on it until the quota resets instead of counting a failure
+            log('YouTube Data API quota exceeded: waiting 60 min, the channel stays in progress')
+            time.sleep(QUOTA_WAIT_S)
         elif 'so it is rejected' in out:
             c['status'] = 'rejected'
         elif 'Could not list the channel' in out:

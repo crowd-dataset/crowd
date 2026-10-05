@@ -68,6 +68,13 @@ PARAMS = {
     'angle_spread': 0.3,
     'angle_share': 0.6,       # sideways in this share of the moving frames over a minute: cut that stretch
     'shake_jitter': 1.0,      # spread of the vertical shift over 10 s (normal: 0.02-0.46; shaking: 1.8)
+    # rural driving: YOLO sees fewer than this many cars, people, traffic lights, stop signs and hydrants per frame
+    # over a minute (labelled towns: 1.0-7 per frame, a rural drive through the Poconos: 0-0.4); day only
+    'urban_objects': 0.6,
+    # highway driving: fewer than this many people, bikes, traffic lights, stop signs and hydrants per frame over a
+    # minute while cars still pass (Kensington, Philadelphia: 0.33-3.5; I-81 through Scranton: 0-0.08); day only
+    # ponytail: calibrated on two videos; quiet suburbs with no one about may need it lower
+    'street_objects': 0.15,
     'problem_min_s': 60,      # angle and shaking stretches shorter than this are kept (turns, bumps: ~30 s)
 }
 VIDEO_SIDEWAYS_SHARE = 0.5   # sideways in more than this share of all moving frames: the video is excluded
@@ -432,6 +439,15 @@ def propose(sig, p=PARAMS):
         share = _rolling_mean(sideways.astype(float), 60 * FPS) / np.maximum(moving_share, 1e-6)
         # judged only over minutes with enough driving; a stop says nothing about where the camera points
         problems.append(('camera not facing forward', (share > p['angle_share']) & (moving_share > 0.3)))
+    if 'urban' in sig:
+        per_frame = np.repeat(sig['urban'], URBAN_EVERY_S * FPS)[:n]
+        per_frame = np.pad(per_frame, (0, n - len(per_frame)), mode='edge')
+        day = _rolling_median(sig['sky'], 60 * FPS) >= p['night_sky']  # YOLO sees little at night anywhere
+        problems.append(('rural driving', (_rolling_mean(per_frame, 60 * FPS) < p['urban_objects']) & day))
+        if 'street' in sig:  # signals saved before the highway check have no street trace
+            street = np.repeat(sig['street'], URBAN_EVERY_S * FPS)[:n]
+            street = np.pad(street, (0, n - len(street)), mode='edge')
+            problems.append(('highway driving', (_rolling_mean(street, 60 * FPS) < p['street_objects']) & day))
     if 'shift_y' in sig:
         problems.append(('camera shaking', _rolling_median(_jitter(sig), 30 * FPS) > p['shake_jitter']))
     for label, bad in problems:
@@ -479,6 +495,40 @@ def channel_vehicle_type(channel_id, df=None):
     return vt, k / sum(counts.values())
 
 
+URBAN_EVERY_S = 5  # one YOLO frame this often
+HERE = os.path.dirname(os.path.abspath(__file__))
+YOLO_PYTHON = os.path.join(HERE, '.venv', 'bin', 'python')
+URBAN_CODE = """
+import sys, cv2, torch
+from ultralytics import YOLO
+model, cap = YOLO('yolo11x.pt'), cv2.VideoCapture(sys.argv[1])
+device = 'mps' if torch.backends.mps.is_available() else 'cpu'  # the Mac's GPU: 3x faster, far less battery
+step = max(1, round(cap.get(cv2.CAP_PROP_FPS) * float(sys.argv[2])))
+for f in range(0, int(cap.get(cv2.CAP_PROP_FRAME_COUNT)), step):
+    cap.set(cv2.CAP_PROP_POS_FRAMES, f)
+    ok, img = cap.read()
+    if not ok:
+        break
+    cls = model(img, imgsz=448, conf=0.25, device=device, verbose=False)[0].boxes.cls.tolist()
+    print(sum(c in (0, 1, 2, 3, 5, 9, 10, 11) for c in cls), sum(c in (0, 1, 9, 10, 11) for c in cls), flush=True)
+"""
+
+
+def urban_objects(path):
+    """[(all, street)] objects YOLO finds in a frame every URBAN_EVERY_S seconds: all are people, bikes, cars, buses,
+    traffic lights, hydrants and stop signs (few for minutes: rural driving), street those without the cars and
+    buses (few while cars pass: highway driving). YOLO runs in the project's .venv (torch); None without it."""
+    if not os.path.exists(YOLO_PYTHON):
+        return None
+    r = subprocess.run([YOLO_PYTHON, '-c', URBAN_CODE, path, str(URBAN_EVERY_S)], capture_output=True, text=True,
+                       cwd=HERE)
+    counts = [[int(x) for x in line.split()] for line in r.stdout.splitlines() if line.strip()]
+    if r.returncode or not counts:
+        print(f'  YOLO failed, no rural or highway check: {r.stderr.strip()[-300:]}', flush=True)
+        return None
+    return np.array(counts, float)
+
+
 def skip_events(path):
     """(time s, scene score, ratio to the local median) of each frame that changes far more from the frame before
     than the frames around it do: an edit cut. At the full frame rate consecutive frames of a drive are nearly
@@ -524,6 +574,100 @@ def footage_skip(sig):
     return None
 
 
+GPS_PROBE_S = (10, 45, 90)  # where the first frames are read for a GPS overlay; without one there, none is read
+GPS_EVERY_S = 30            # then one frame this often
+# "N40.12345 W75.12345", "40.12345N 75.12345W", "40.123456, -75.123456" as dashcams print them
+GPS_HEMI = re.compile(r'([NS])\s*(\d{1,2}[.,]\d{3,})\D{0,4}?([EW])\s*(\d{1,3}[.,]\d{3,})'
+                      r'|(\d{1,2}[.,]\d{3,})\s*°?\s*([NS])\W{0,4}(\d{1,3}[.,]\d{3,})\s*°?\s*([EW])')
+GPS_SIGNED = re.compile(r'(?<![\d.])(-?\d{1,2}\.\d{4,})\s*[,;]?\s+(-?\d{1,3}\.\d{4,})(?![\d.])')
+
+
+def parse_gps(text):
+    """(lat, lon) of the first coordinates in a frame's text, else None."""
+    if m := GPS_HEMI.search(text):
+        g = m.groups()
+        ns, la, ew, lo = g[:4] if g[0] else (g[5], g[4], g[7], g[6])
+        lat, lon = float(la.replace(',', '.')), float(lo.replace(',', '.'))
+        lat, lon = -lat if ns == 'S' else lat, -lon if ew == 'W' else lon
+    elif m := GPS_SIGNED.search(text):
+        lat, lon = float(m.group(1)), float(m.group(2))
+    else:
+        return None
+    return (lat, lon) if abs(lat) <= 90 and abs(lon) <= 180 and (lat, lon) != (0, 0) else None
+
+
+def _frame_text(stream, t):
+    """What tesseract reads in the frame at t seconds of a stream (url, HTTP headers) ('' when nothing)."""
+    url, headers = stream
+    png = subprocess.run(['ffmpeg', '-v', 'error', '-headers', headers, '-ss', str(t), '-i', url, '-frames:v', '1',
+                          '-vf', 'format=gray', '-f', 'image2pipe', '-vcodec', 'png', '-'],
+                         capture_output=True, timeout=120).stdout
+    if not png:
+        return ''
+    return subprocess.run(['tesseract', 'stdin', 'stdout', '--psm', '11'], input=png, capture_output=True,
+                          timeout=120).stdout.decode(errors='ignore')
+
+
+def gps_track(video_id, duration):
+    """[(t, lat, lon)] read from a GPS overlay in the picture, or None when the first frames show none. Frames
+    come from the 720p stream (the 240p copy is too small to read), so only a few are fetched."""
+    if not shutil.which('tesseract') or not duration:
+        return None
+    try:
+        # YouTube refuses the stream (403) without the headers yt-dlp asked for it with
+        m = json.loads(_yt_dlp('-j', '-f', 'bv*[height<=720][ext=mp4]/bv*[height<=720]', _url(video_id)))
+        stream = m['url'], ''.join(f'{k}: {v}\r\n' for k, v in (m.get('http_headers') or {}).items())
+        probe = [(t, parse_gps(_frame_text(stream, t))) for t in GPS_PROBE_S if t < duration]
+        if not any(xy for _, xy in probe):
+            return None
+        track = [(t, *xy) for t, xy in probe if xy]
+        track += [(t, *xy) for t in range(GPS_EVERY_S * 4, int(duration), GPS_EVERY_S)
+                  if (xy := parse_gps(_frame_text(stream, t)))]
+    except (RuntimeError, subprocess.TimeoutExpired, KeyError, ValueError) as e:
+        print(f'  GPS overlay not read: {e}', flush=True)
+        return None
+    track.sort()
+    # a misread digit puts a point far off: keep points a car could have reached from the one before
+    kept = track[:1]
+    for t, lat, lon in track[1:]:
+        if _km(kept[-1][1], kept[-1][2], lat, lon) <= 1 + (t - kept[-1][0]) / 3600 * MAX_KMH:
+            kept.append((t, lat, lon))
+    return kept if len(kept) >= 2 else None
+
+
+def split_gps(p, df, out_dir):
+    """Split an untouched one-group proposal into the localities its GPS overlay passes through. Returns whether
+    it was split."""
+    path = os.path.join(out_dir, f"{p['video']}_signals.npz")
+    if len(p.get('entries', [])) != 1 or not os.path.exists(path):
+        return False
+    e, sig = p['entries'][0], np.load(path)
+    if 'gps' not in sig or not e['segments'] or (e.get('locality') and not e.get('guessed')) \
+            or any(s.get('decision') or s.get('applied') for s in e['segments']):
+        return False
+    countries = {common.get_iso2_country_code(common.correct_country(c)): c for c in df['country'].dropna().unique()}
+    countries.pop(None, None)
+    track = sig['gps'].tolist()
+    stretches = []
+    for i, (t, lat, lon) in enumerate(track):
+        h = _osm_reverse(round(lat, 3), round(lon, 3))
+        loc = (_hit_locality(h, df, countries, (lat, lon)) if h else None) if _urban(lat, lon) else None
+        a = 0 if i == 0 else (track[i - 1][0] + t) / 2  # a border half way between two readings
+        if stretches and stretches[-1][2] == loc:
+            continue
+        if stretches:
+            stretches[-1] = (stretches[-1][0], a, stretches[-1][2])
+        stretches.append((a, float('inf'), loc))
+    entries = split_by_stretches(e['segments'], stretches)
+    if not entries:
+        return False
+    p['entries'] = entries
+    p['note'] = (f"{p.get('note') or ''}; localities from the GPS overlay: "
+                 + ', '.join(f"{loc[0] if loc else 'rural (left out)'} from {int(a) // 60}:{int(a) % 60:02d}"
+                             for a, _, loc in stretches)).lstrip('; ')
+    return True
+
+
 def analyse_video(video_id, out_dir, meta=None):
     """Download a low resolution copy, propose segments, write a contact sheet; the copy is deleted."""
     meta = meta or fetch_metadata(video_id)
@@ -532,6 +676,13 @@ def analyse_video(video_id, out_dir, meta=None):
     try:
         sig = signals(path)
         sig['skips'] = skip_events(path)
+        urban = urban_objects(path)
+        if urban is not None:
+            sig['urban'], sig['street'] = urban[:, 0], urban[:, 1]
+        gps = gps_track(video_id, meta['duration'])
+        if gps:
+            sig['gps'] = np.array(gps, float)
+            print(f'  GPS overlay: {len(gps)} positions', flush=True)
         contact_sheet(path, meta['duration'] or len(sig['motion']) / FPS,
                       os.path.join(out_dir, f'{video_id}.jpg'))
     finally:
@@ -544,6 +695,7 @@ def analyse_video(video_id, out_dir, meta=None):
 
 MIN_UPLOAD_S = 300  # the paper requires source uploads of at least five minutes
 EXCLUDE_TITLE = re.compile(r'walking tour|walk tour|city walk|time[- ]?lapse|hyperlapse|compilation'
+                           r'|sped[- ]?up|speed(?:ed)?[- ]?up|fast[- ]?forward|\b\d(?:\.\d)?x speed\b|\bx\d speed\b'
                            r'|\bcrash|\baccident', re.I)
 # highway driving and road trips; "via I-5" only passes along it on an otherwise urban drive
 HIGHWAY_TITLE = re.compile(r'(?i:road ?trip|\bhighway\b|\bfreeway\b|\bhwy\b|\bmotorway\b|\bautobahn\b)'
@@ -668,6 +820,13 @@ def exclusion_reason(meta):
     return None
 
 
+def title_countries(title):
+    """The countries of the mapping a title names, not inside a US state's name: "New Jersey" is not Jersey,
+    "Atlanta, Georgia" not the country."""
+    title = re.sub('|'.join(rf'\b{re.escape(s)}\b' for s in add_video.US_STATE_CODES), ' ', title or '', flags=re.I)
+    return [c for c in COUNTRIES if re.search(rf'\b{re.escape(c)}\b', title)]
+
+
 def guess_locality(title, country, df):
     """[locality, state, country] when the title names exactly one mapping locality of that country, else None.
     A drive "from A to B in C" with C a locality is in C: neighbourhoods of a big city ("from Hollywood to Venice
@@ -773,7 +932,8 @@ def _title_locality(title, df, exact_case=False, word_needs_state=False):
                 continue
             # short aliases such as "LA" only count in capitals, so "la" in a Spanish title does not match
             flags = 0 if exact_case or len(name) <= 3 else re.I
-            pattern = rf'(?<!\w){re.escape(name)}(?!\w)'
+            # "New Ringgold" is not Ringgold: a "New" before a name makes it another place
+            pattern = rf'(?<!\w)(?<![Nn]ew\s){re.escape(name)}(?!\w)'
             if word_needs_state and name.lower() in COMMON_WORDS:
                 if not isinstance(row['state'], str):
                     continue
@@ -793,6 +953,12 @@ def _title_locality(title, df, exact_case=False, word_needs_state=False):
              and not any(other != loc and re.fullmatch(r',\s*', title[y:a])
                          and add_video.US_STATE_CODES.get(title[a:b].lower()) == other[1]
                          for other, (x, y) in found)}
+    # a title naming a US state is in it: Davenport, FL is a namesake of the one in "Davenport, Iowa", and
+    # Philadelphia, MS of the one in "Philadelphia, Pennsylvania"
+    states = {code for name, code in add_video.US_STATE_CODES.items()
+              if re.search(rf'\b{re.escape(name)}\b', title, re.I) or re.search(rf',\s*{code}\b', title)}
+    if states:
+        found = {loc for loc in found if loc[2] != 'United States' or not loc[1] or loc[1] in states}
     return list(found.pop()) if len(found) == 1 else None
 
 
@@ -831,10 +997,19 @@ def place_phrases(text, limit=4):
         if len(run) > 1 or run and len(run[0]) > 3 and run[0].lower() not in COMMON_WORDS:
             phrases.append(' '.join(run))
         run = []
-    # a name written with its state ("Cutler,Ca") is a place even when it is also a word, and goes first
+    # a name written with its state ("Cutler,Ca", "Dorado,Puerto Rico") is a place even when it is also a word,
+    # and goes first
     with_state = re.findall(r"\b([A-Z][a-z'’-]+(?: [A-Z][a-z'’-]+){0,3}),\s*[A-Z][A-Za-z]\b", text)
+    with_state += [x for x, y in re.findall(r"\b([A-Z][a-z'’-]+(?: [A-Z][a-z'’-]+){0,3})\s*,\s*"
+                                            r"([A-Z][\w'’]*(?: [A-Z][\w'’]*){0,2})", text) if y in _region_names()]
     unique = list(dict.fromkeys(p for p in phrases if len(p.split()) <= 5))
     return list(dict.fromkeys(with_state + sorted(unique, key=lambda p: -len(p.split()))))[:limit]
+
+
+@lru_cache(maxsize=1)
+def _region_names():
+    """Names of the countries of the mapping and of every state, province or region (pycountry)."""
+    return set(COUNTRIES) | {sub.name for sub in pycountry.subdivisions}
 
 
 NOMINATIM_SLOT = os.path.join(tempfile.gettempdir(), 'crowd_nominatim.slot')
@@ -889,6 +1064,16 @@ def _nominatim(method, *args, **kwargs):
         time.sleep(wait)
 
 
+# OpenStreetMap files these US territories under the US ("US-PR"); the mapping has them as countries
+US_TERRITORIES = {'PR', 'GU', 'VI', 'AS', 'MP'}
+
+
+def _country_code(address):
+    """The ISO country code of an address, a US territory as its own: Adjuntas is in PR, not the US."""
+    code, region = (address.get('country_code') or '').upper(), _region_code(address)
+    return region[3:] if code == 'US' and region[3:] in US_TERRITORIES else code
+
+
 def _region_code(address):
     """The ISO 3166-2 code of an address's state ("US-PA"): Nominatim gives it, LocationIQ only the state's name."""
     if address.get('ISO3166-2-lvl4'):
@@ -936,7 +1121,8 @@ def _osm_place(phrase, country_codes, near=None, reach_km=None):
     if near:
         deg = (reach_km or ABROAD_KM) / 111
         box = {'viewbox': [(near[0] - deg, near[1] - deg), (near[0] + deg, near[1] + deg)], 'bounded': True}
-    found = _nominatim('geocode', phrase, exactly_one=False, limit=10, country_codes=list(country_codes),
+    codes = set(country_codes) | ({'US'} if US_TERRITORIES & set(country_codes) else set())
+    found = _nominatim('geocode', phrase, exactly_one=False, limit=10, country_codes=sorted(codes),
                        addressdetails=True, language='en', timeout=15, **box) or []
     wanted = _name_key(phrase)
 
@@ -944,21 +1130,27 @@ def _osm_place(phrase, country_codes, near=None, reach_km=None):
         # a feature of that name that is a place (a town, district, beach, park, mountain) or a main road:
         # shops, offices and side streets named alike are everywhere ("Colombo" jewellers, a "Grand Avenue")
         name = _name_key(_osm_name(r.raw))
-        return (_osm_type(r.raw) != 'country' and name and (name in wanted or wanted in name)
+        return (_osm_type(r.raw) not in ('country', 'state') and name and (name in wanted or wanted in name)
                 and (r.raw.get('class') in ('place', 'boundary', 'tourism', 'natural', 'leisure', 'landuse')
                      or r.raw.get('class') == 'highway' and r.raw.get('type') in ('motorway', 'trunk', 'primary')))
     found = [r for r in found if fits(r)]
     if not found:
         return None
-    # the exact name first ("Plains" is Plains, PA, not White Plains, NY), then the nearest
-    r = min(found, key=lambda r: (_name_key(_osm_name(r.raw)) != wanted,
+    # the exact name first ("Plains" is Plains, PA, not White Plains, NY), in a town ("Lancaster" is the city,
+    # not Lancaster County), then the nearest
+    in_town = lambda r: any(r.raw.get('address', {}).get(k) for k in ('city', 'town', 'village', 'municipality'))
+    r = min(found, key=lambda r: (_name_key(_osm_name(r.raw)) != wanted, not in_town(r),
                                   _km(near[0], near[1], r.latitude, r.longitude) if near else 0))
     a = r.raw.get('address', {})
-    kind = next((k for k in ('city', 'town', 'village', 'municipality') if a.get(k)), None)
+    kind = next((k for k in ('city', 'town', 'village', 'municipality', 'hamlet') if a.get(k)), None)
     town = a.get(kind) if kind else None
+    if not town and r.raw.get('class') == 'boundary' and _osm_type(r.raw) not in ('county', 'state', 'country', 'region'):
+        town = _osm_name(r.raw)  # a municipality's own boundary has no town in its address (Little Silver, NJ)
+    if not town and _country_code(a) in US_TERRITORIES:  # Puerto Rico's municipios (Guayama) are its counties
+        town = re.sub(r' Municipio$', '', a.get('county') or '') or None
     if town:  # OpenStreetMap calls some towns "City of Mount Vernon", "Town of Hempstead"
         town = re.sub(r'^(?:City|Town|Village|Borough|Township) of ', '', town)
-    return (town, a.get('state'), a.get('country_code', '').upper(), _region_code(a),
+    return (town, a.get('state'), _country_code(a), _region_code(a),
             r.latitude, r.longitude, float(r.raw.get('importance') or 0), kind)
 
 
@@ -977,6 +1169,9 @@ def _name_key(name):
     """Name compared without accents, case, punctuation or a trailing "Emirate", "City", "Province"."""
     name = unicodedata.normalize('NFKD', str(name)).encode('ascii', 'ignore').decode().lower()
     name = ' '.join(re.sub(r'\W+', ' ', name).split())
+    name = re.sub(r'^(?:city|town|village|borough|township) of ', '', name)  # OpenStreetMap's "City of Newburgh"
+    # "St. Clair" (OpenStreetMap) is "Saint Clair" (GeoNames); Mt. and Ft. alike
+    name = re.sub(r'\b(?:st|saint) ', 'saint ', re.sub(r'\bmt ', 'mount ', re.sub(r'\bft ', 'fort ', name)))
     return re.sub(r' (?:emirate|city|province|prefecture|governorate|municipality|county)$', '', name)
 
 
@@ -993,15 +1188,28 @@ def place_localities(phrases, df, home=None):
     locality."""
     countries = {common.get_iso2_country_code(common.correct_country(c)): c for c in df['country'].dropna().unique()}
     countries.pop(None, None)
-    country_names = {_name_key(c) for c in COUNTRIES}
     codes = tuple(sorted(countries))
+    states = {_name_key(sub.name): sub.name for code in codes
+              for sub in pycountry.subdivisions.get(country_code=code) or []
+              if not (code == 'US' and sub.code[3:] in US_TERRITORIES)}  # Puerto Rico is a country here
+    # a state of the countries searched is the state ("Atlanta, Georgia"), else "GEORGIA" in a title is the country
+    country_names = {_name_key(c) for c in COUNTRIES} - set(states)
+    named = {states[_name_key(p)] for p in phrases if _name_key(p) in states}
 
     def usable(hit):
-        return hit and hit[2] in countries and not (home and _km(home[3], home[4], hit[4], hit[5]) > ABROAD_KM)
+        return (hit and hit[2] in countries and not (home and _km(home[3], home[4], hit[4], hit[5]) > ABROAD_KM)
+                and (len(named) != 1 or hit[1] in named))
     # "from Longwood to West Farms in the Bronx, New York": the best-known place a text names (the Bronx) is the
     # anchor, and each other name is the place of that name nearest it, not the one nearest the channel's home
-    hits = [(p, _osm_place(p, codes, (home[3], home[4]) if home else None)) for p in phrases
-            if _name_key(p) not in country_names]  # "GEORGIA" in a travel title is the country
+    if home and {_name_key(p) for p in phrases} & (country_names - {_name_key(home[2])}):
+        home = None  # the text names another country ("…en Adjuntas, Puerto Rico"): it is there, however far
+    phrases = [p for p in phrases if _name_key(p) not in country_names]
+    # a state only qualifies the town named with it ("Palmerton, Pennsylvania"): as a place of its own it would
+    # be the anchor, or match some "Pennsylvania" road in another town; the town is looked up in it
+    phrases = [p for p in phrases if _name_key(p) not in states] or phrases
+    if len(named) == 1 and any(_name_key(p) not in states for p in phrases):
+        phrases = [f'{p}, {next(iter(named))}' for p in phrases]
+    hits = [(p, _osm_place(p, codes, (home[3], home[4]) if home else None)) for p in phrases]
     hits = [(p, h) for p, h in hits if usable(h)]
     if len(hits) > 1:
         anchor = max(hits, key=lambda ph: ph[1][6])
@@ -1009,7 +1217,9 @@ def place_localities(phrases, df, home=None):
         # namesake (Longwood, PA for Longwood in the Bronx) would only look like a second town
         hits = [(p, h if p == anchor[0] else _osm_place(p, codes, anchor[1][4:6], 50)) for p, h in hits]
     for phrase, hit in hits:
-        if usable(hit) and (loc := _hit_locality(hit, df, countries)):
+        # the town the phrase itself names keeps its name ("Hazlet"); a sight in a town counts as usual
+        itself = hit and hit[0] and _name_key(phrase.split(',')[0]) == _name_key(re.sub(r' Township$', '', hit[0]))
+        if usable(hit) and (loc := _hit_locality(hit, df, countries, named=bool(itself))):
             yield loc, phrase
 
 
@@ -1052,9 +1262,14 @@ def _urban(lat, lon):
     """Whether a point is in or next to a town: within 1 km + 0.6 km x sqrt(population in thousands) of a GeoNames
     place of 1,000+ inhabitants (1.6 km for a village, 4 km for Hazleton, 5 km for Wilkes-Barre). True when
     GeoNames does not answer, so nothing is left out for lack of data."""
-    # ponytail: town size as a disc around its centre; a land-use or population-density map would follow real edges
     places = _nearby_places(lat, lon)
-    return places is None or any(_km(lat, lon, la, lo) <= 1 + 0.6 * (pop / 1000) ** 0.5 for _, pop, la, lo in places)
+    return places is None or any(_km(lat, lon, la, lo) <= _town_km(pop) for _, pop, la, lo in places)
+
+
+def _town_km(population):
+    """How far a town reaches from its centre."""
+    # ponytail: town size as a disc around its centre; a land-use or population-density map would follow real edges
+    return 1 + 0.6 * (population / 1000) ** 0.5
 
 
 def _major_town(lat, lon, town, kind=None):
@@ -1070,21 +1285,30 @@ def _major_town(lat, lon, town, kind=None):
     own = [p for p in places if not township and _name_key(p[0]) == _name_key(town)]
     own = min(own, key=lambda p: _km(lat, lon, p[2], p[3])) if own else None
     small = township or (own[1] < SMALL_POP if own else kind in ('village', 'municipality', 'hamlet'))
-    bigger = [p for p in places if p[1] >= SMALL_POP and p is not own]
+    bigger = [p for p in places if p[1] >= SMALL_POP and p is not own
+              and _km(lat, lon, p[2], p[3]) <= MAJOR_TOWN_KM]  # places come from a wider radius
+    if own:  # a town of its own counts for a bigger one only when they touch (Hughestown and Pittston, 1.4 km),
+        # not across fields (Coopersburg and Hellertown, 8.6 km)
+        bigger = [p for p in bigger if _km(own[2], own[3], p[2], p[3]) <= _town_km(own[1]) + _town_km(p[1])]
+    if township and not bigger:  # a township around a small borough counts for it: Bridgewater Township is Montrose
+        bigger = [p for p in places if _km(lat, lon, p[2], p[3]) <= MAJOR_TOWN_KM]
     if not small or not bigger:
         return None
     return min(bigger, key=lambda p: _km(lat, lon, p[2], p[3]))[0]
 
 
-def _hit_locality(hit, df, countries, at=None):
+def _hit_locality(hit, df, countries, at=None, named=False):
     """[locality, state, country] of an OpenStreetMap hit: the mapping locality of the town it lies in, else of its
     region when that is a locality (a mountain park in an emirate), else that town as a new locality. A small
     place counts for the bigger one nearest the hit (or at=(lat, lon)), in the mapping or new (_major_town).
-    Neighbourhoods come as their city already (Brooklyn is New York)."""
+    Neighbourhoods come as their city already (Brooklyn is New York). named: a title names the town itself, so it
+    stays (Hazlet, not the Union Beach a "Hazlet Township" would count for)."""
     town, region, code, region_code = hit[:4]
     kind = hit[-1] if len(hit) in (5, 8) else None
     at = hit[4:6] if len(hit) > 5 else at
-    if town and at:
+    if town and named:
+        town = re.sub(r' Township$', '', town)
+    elif town and at:
         town = _major_town(at[0], at[1], town, kind) or town
     if code not in countries:
         return None
@@ -1096,17 +1320,26 @@ def _hit_locality(hit, df, countries, at=None):
     if state:
         rows = rows[rows['state'] == state]
     known = {_name_key(n): r for n, r in zip(rows['locality'], rows.itertuples())}
+    # alternative names too: a place merged into a locality (West Pittston into Pittston) counts for it
+    known.update({_name_key(a): r for aka, r in zip(rows['locality_aka'], rows.itertuples()) if isinstance(aka, str)
+                  for a in aka.strip('[]').split(',') if a.strip() and _name_key(a) not in known})
     for name in ((town,) if town else (region,)):
         if name and _name_key(name) in known:
             r = known[_name_key(name)]
             return [r.locality, r.state if isinstance(r.state, str) else None, r.country]
-    return [town, state, countries[code]] if town else None
+    # a new locality is spelled one way whichever source named it, as most of the mapping does: St. Clair
+    return [re.sub(r'^Saint ', 'St. ', town), state, countries[code]] if town else None
 
 
 # "Driving from Hazle Township to White Haven, Pennsylvania": where a drive starts and where it ends
-FROM_TO = re.compile(r"\bfrom\s+(.+?)\s+to\s+(.+?)\s*(?:,|\||\(|\s-\s|\s–\s|\bin\b|\bvia\b|$)", re.I)
+# "Desde Sabana Grande a Ponce", "Ponce a Juana Diaz,Puerto Rico": in Spanish too, tried in this order
+_END = r"\s*(?:,|\||\(|\s-\s|\s–\s|\bin\b|\ben\b|\bvia\b|\bpor\b|$)"
+FROM_TO = (re.compile(r"\bfrom\s+(.+?)\s+to\s+(.+?)" + _END, re.I),
+           re.compile(r"\b(?:[Dd]esde|de)\s+(?:el |la )?(.+?)\s+(?:hasta|a|al)\s+(?:el |la )?(.+?)" + _END),
+           re.compile(r"^(?:el |la )?(.+?)\s+(?:hasta|a|al)\s+(?:el |la )?(.+?)" + _END))
 MAJOR_TOWN_KM = 10    # a small place counts for the nearest bigger one this close
 SMALL_POP = 3000      # places of fewer inhabitants (and townships) count for a bigger one nearby
+MAX_KMH = 120         # no drive in a video covers more than this many km an hour as the crow flies
 ROUTE_SAMPLES = 20     # points along a route whose town is looked up (one OpenStreetMap request a second each)
 
 
@@ -1119,7 +1352,7 @@ def _osm_reverse(lat, lon):
     town = a.get(kind) if kind else None
     if town:
         town = re.sub(r'^(?:City|Town|Village|Borough|Township) of ', '', town)
-    return (town, a.get('state'), a.get('country_code', '').upper(), _region_code(a), kind) if a else None
+    return (town, a.get('state'), _country_code(a), _region_code(a), kind) if a else None
 
 
 @_remembered
@@ -1142,27 +1375,81 @@ def _route(start, end):
     return samples, path
 
 
-def route_localities(title, df, home=None):
-    """([(share of the drive where it starts, where it ends, locality)], the route for a map) along the car route
-    of a drive "from A to B" through two different towns, else ([], None). The towns on the way are looked up on
-    OpenStreetMap every 1/ROUTE_SAMPLES of the driving time, so the borders are an estimate that assumes the video
-    follows that route at an even pace."""
-    m = FROM_TO.search(title or '')
+def drive_ends(title, df, home=None):
+    """(OpenStreetMap hit, locality) of where a drive "from A to B" starts and of where it ends (either may be
+    None when not found), or None when the title names no such drive."""
+    m = next((m for r in FROM_TO if (m := r.search(title or ''))), None)
     if not m:
-        return [], None
+        return None
+    if home and any(c != home[2] for c in title_countries(title)):
+        home = None  # the title names another country ("Ponce a Juana Diaz,Puerto Rico"): it is there, however far
     countries = {common.get_iso2_country_code(common.correct_country(c)): c for c in df['country'].dropna().unique()}
     countries.pop(None, None)
     codes = tuple(sorted(countries))
     first, last = m.group(1).strip(), m.group(2).strip()
+    # "from Newburgh to Brewster, New York": both ends in the states the title names (Maine has both too); with
+    # one state named, each end is looked up in it ("Newburgh, New York")
+    named = {sub.name for code in codes for sub in pycountry.subdivisions.get(country_code=code) or []
+             if sub.name not in COUNTRIES  # Puerto Rico is a US subdivision but a country of the mapping
+             and re.search(rf'\b{re.escape(sub.name)}\b', title)}
+    if len(named) == 1:
+        state = next(iter(named))
+        first, last = (x if state in x else f'{x}, {state}' for x in (first, last))
     a = _osm_place(first, codes, (home[3], home[4]) if home else None)
     b = _osm_place(last, codes, a[4:6] if a else (home[3], home[4]) if home else None, 300)
+    if not b and a and home:  # A was a far namesake (Longwood upstate for the one in the Bronx): B near home
+        b = _osm_place(last, codes, (home[3], home[4]))
     # a drive between two towns is short: each end is also looked for near the other, and the closest pair is
     # meant ("from Plains to Hughestown": Plains Township next to Hughestown, not a Plains in New Jersey)
     pairs = [(x, y) for x in (a, b and _osm_place(first, codes, b[4:6], 60))
              for y in (b, a and _osm_place(last, codes, a[4:6], 60)) if x and y]
-    a, b = min(pairs, key=lambda xy: _km(xy[0][4], xy[0][5], xy[1][4], xy[1][5])) if pairs else (None, None)
-    start, end = a and _hit_locality(a, df, countries), b and _hit_locality(b, df, countries)
-    if not (start and end):
+    if named:
+        pairs = [(x, y) for x, y in pairs if x[1] in named and y[1] in named]
+    if pairs:
+        a, b = min(pairs, key=lambda xy: _km(xy[0][4], xy[0][5], xy[1][4], xy[1][5]))
+    elif named:  # one end only: it must be in the state named
+        a, b = (x if x and x[1] in named else None for x in (a, b))
+    end = b and _hit_locality(b, df, countries)
+    # "…to West Farms in the Bronx", "…hasta el Barrio Portugues en Adjuntas": the drive ends in that place, and a
+    # namesake of the end elsewhere (another Barrio Portugués) is not it
+    if area := re.match(r"\s*(?:in|en)\s+(?:the\s+)?([A-Z][\w'’.-]*(?: [A-Z][\w'’.-]*){0,3})", title[m.end(2):]):
+        c = _osm_place(area.group(1) + (f', {next(iter(named))}' if len(named) == 1 else ''), codes,
+                       a[4:6] if a else (home[3], home[4]) if home else None, 300)
+        if c and (in_c := _hit_locality(c, df, countries)) and end != in_c:
+            b, end = c, in_c
+    return (a, a and _hit_locality(a, df, countries)), (b, end)
+
+
+def between_towns(title, df, home=None):
+    """Whether a title is a drive from one locality to another: "from A to B" with A and B in different
+    localities, or not found (Kensington to Germantown in Philadelphia is one city)."""
+    if DRIVE_AREA.search(title or ''):  # "from Longwood to West Farms in the Bronx": the whole drive is in it
+        return False
+    ends = drive_ends(title, df, home)
+    if not ends:
+        return False
+    found = [loc for _, loc in ends if loc]
+    if len(found) == 1:  # one end not found ("Midtown Manhattan"): within one city when the title names a city
+        # around both (New York), not when that city is just the end found ("from Pen Agryl to Bangor")
+        m = next(m for r in FROM_TO if (m := r.search(title)))
+        city = guess_locality(title, found[0][2], df)
+        return not (city == found[0] and _name_key(city[0]) not in _name_key(m.group(1) + ' ' + m.group(2)))
+    return not (found and found[0] == found[1])
+
+
+def route_localities(title, df, home=None, max_km=None):
+    """([(share of the drive where it starts, where it ends, locality)], the route for a map) along the car route
+    of a drive "from A to B" through two different towns, else ([], None). The towns on the way are looked up on
+    OpenStreetMap every 1/ROUTE_SAMPLES of the driving time, so the borders are an estimate that assumes the video
+    follows that route at an even pace. max_km: A and B are at most this far apart (as the crow flies); farther
+    means one of them is a namesake (Bear Creek near Baltimore for Bear Creek Village, PA)."""
+    ends = drive_ends(title, df, home)
+    if not ends:
+        return [], None
+    (a, start), (b, end) = ends
+    countries = {common.get_iso2_country_code(common.correct_country(c)): c for c in df['country'].dropna().unique()}
+    countries.pop(None, None)
+    if not (start and end) or max_km and _km(a[4], a[5], b[4], b[5]) > max_km:
         return [], None
     if start == end:  # a drive within one locality (between its neighbourhoods): one stretch, no route needed
         return [(0.0, 1.0, start)], None
@@ -1186,6 +1473,11 @@ def route_localities(title, df, home=None):
     return out, {'path': path or [p[:2] for p in stops], 'stops': stops}
 
 
+def title_reach(df, in_reach, title):
+    """in_reach and the countries a title names: "Cayey a Gurabo, Puerto Rico" from a New York channel."""
+    return in_reach | df['country'].isin(title_countries(title))
+
+
 def split_routes(plan_path):
     """split_route for every proposal in a plan nobody has decided anything in yet; returns how many were split.
     The plan is locked per video, so a review page and a channel run can stay open meanwhile."""
@@ -1197,10 +1489,11 @@ def split_routes(plan_path):
     country = home[2] if home else None
     in_reach = (df['country'] == country) | (np.array([_km(home[3], home[4], lat, lon) <= ABROAD_KM
                                                        for lat, lon in zip(df['lat'], df['lon'])]) if home else False)
+    in_reach |= df['country'].isin(filmed_countries(channels, df))
     done = 0
     for vid in list(plan):
         p = json.loads(json.dumps(plan[vid]))
-        if not split_route(p, df[in_reach], home):
+        if not split_route(p, df[title_reach(df, in_reach, p.get('title'))], home):
             continue
         with plan_lock(plan_path):  # write only if the video is still untouched in the plan on disk
             with open(plan_path) as f:
@@ -1214,7 +1507,8 @@ def split_routes(plan_path):
                 json.dump(current, f, indent=1)
             os.replace(tmp, plan_path)
         done += 1
-        print(f"{vid} {p['title'][:60]}: {', '.join(e['locality'][0] for e in p['entries'])}", flush=True)
+        print(f"{vid} {p['title'][:60]}: "
+              f"{p.get('exclude') or ', '.join(e['locality'][0] for e in p['entries'])}", flush=True)
     return done
 
 
@@ -1239,7 +1533,8 @@ def split_route(p, df, home=None):
     segs = p['entries'][0]['segments']
     if not segs or any(s.get('decision') or s.get('applied') for s in segs):
         return False
-    shares, route = route_localities(p.get('title'), df, home)
+    t1 = max(s['end'] for s in segs)
+    shares, route = route_localities(p.get('title'), df, home, max_km=t1 / 3600 * MAX_KMH)
     if not shares:
         return False
     if all(loc is None for _, _, loc in shares):
@@ -1253,7 +1548,8 @@ def split_route(p, df, home=None):
         e['locality'], e['guessed'] = shares[0][2], True
         p['note'] = f"{p.get('note') or ''}; locality {shares[0][2][0]}: the drive starts and ends in it".lstrip('; ')
         return True
-    t0, t1 = min(s['start'] for s in segs), max(s['end'] for s in segs)
+    # the video is the drive from A: footage left out at its start (a dark or parked opening) is on the way too
+    t0 = 0
     stretches = [(t0 + a * (t1 - t0), t0 + b * (t1 - t0), loc) for a, b, loc in shares]
     p['entries'] = split_by_stretches(segs, stretches)
     if not p['entries']:
@@ -1307,6 +1603,14 @@ def _place_near(name, iso2, lat, lon, km=60):
     return any(_km(lat, lon, float(p['lat']), float(p['lng'])) <= km for p in places)
 
 
+def filmed_countries(channels, df):
+    """The countries the plan's channel already has localities in, in the mapping: a travel channel's trips."""
+    if not channels:
+        return set()
+    own = df['channel'].astype(str).str.contains(channels.most_common(1)[0][0], regex=False)
+    return set(df.loc[own, 'country'].dropna())
+
+
 def channel_home(channel_id, df, plan):
     """(locality, state, country, lat, lon) where a channel mostly films: from its videos already in the mapping
     and localities set by hand in the plan, else from title guesses; None if nothing points anywhere."""
@@ -1358,7 +1662,7 @@ def plan_lock(plan_path):
             fcntl.flock(f, fcntl.LOCK_UN)
 
 
-def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True):
+def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True, single_city=False):
     """Propose segments for every new video of a channel and write plan.json for the review page.
 
     Re-running resumes: videos already in the plan keep their entry and decisions, finished analyses are
@@ -1429,6 +1733,7 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
 
     stopped = None
     touched = []  # videos added or re-analysed in this run
+    single_home = None  # the channel's home, looked up once for single_city
     failures_in_a_row = 0
     skips_in_a_row = 0
     try:
@@ -1472,6 +1777,12 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
             with open(meta_path, 'w') as f:
                 json.dump(meta, f)
             reason = exclusion_reason(meta)
+            if not reason and single_city:
+                if single_home is None:
+                    single_home = channel_home(meta.get('channel_id'), df, plan) or False
+                named = title_countries(meta['title'])
+                if between_towns(meta['title'], df[df['country'].isin([country] + named)], single_home or None):
+                    reason = 'a drive from one town to another (this channel: only drives within one city)'
             if reason:
                 plan[vid] = {'video': vid, 'title': meta['title'], 'exclude': reason}
                 touched.append(vid)
@@ -1563,8 +1874,10 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
                 metas[p['video']] = json.load(f)
     channels = Counter(p.get('channel_id') for p in plan.values() if p.get('channel_id'))
     home = channel_home(channels.most_common(1)[0][0], df, plan) if channels else None
-    # places a video may be in: the channel's country, and abroad within reach of its home
-    in_reach = df['country'] == country
+    # places a video may be in: the channel's country, abroad within reach of its home, and the countries it has
+    # filmed in before (a travel channel's trips; Puerto Rico for a New York channel), not anywhere: a title's
+    # "Campo Alegre" is not the one in Brazil
+    in_reach = (df['country'] == country) | df['country'].isin(filmed_countries(channels, df))
     if home:
         in_reach |= np.array([_km(home[3], home[4], lat, lon) <= ABROAD_KM for lat, lon in zip(df['lat'], df['lon'])])
     for p in new:
@@ -1574,7 +1887,9 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
             # a capitalised title name of one locality abroad ("Entering Tijuana" from an LA channel); "New Mexico"
             # or "Little Tokyo" are not trips abroad. Then the description, where "from Los Angeles to Ensenada"
             # names two places and so decides nothing
-            found = _title_locality(p['title'], df[in_reach & (df['country'] != country)], exact_case=True)
+            # a country the title names is in reach however far ("…en Adjuntas, Puerto Rico" from New York)
+            reach = in_reach | df['country'].isin(title_countries(p['title']))
+            found = _title_locality(p['title'], df[reach & (df['country'] != country)], exact_case=True)
             if found and home and not abroad_is_nearest(found, df, home, country):
                 found = None
             if not found:
@@ -1611,12 +1926,13 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
             # every place the title names, then the description's first one; two towns in a title (a drive
             # from one to the other) decide nothing
             in_title = {}
-            for loc, phrase in place_localities(place_phrases(p['title']), df[in_reach], home):
+            reach = in_reach | df['country'].isin(title_countries(p['title']))
+            for loc, phrase in place_localities(place_phrases(p['title']), df[reach], home):
                 in_title.setdefault(tuple(loc), phrase)
             area = DRIVE_AREA.search(p['title'])
             if len(in_title) > 1 and area:
                 # "Driving from Longwood to West Farms in the Bronx, New York": the drive is in the Bronx
-                inside = place_locality([area.group(1)], df[in_reach], home)
+                inside = place_locality([area.group(1)], df[reach], home)
                 if inside:
                     in_title = {tuple(inside[0]): inside[1]}
             if len(in_title) > 1:
@@ -1630,7 +1946,7 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
                 p['note'] = f"{p['note']}; locality {found[0][0]} from where '{found[1]}' is".lstrip('; ')
     # a drive "from A to B" without chapters passes through A, B and the towns between: split it along its route
     for p in new:
-        split_route(p, df[in_reach], home)
+        split_gps(p, df, out_dir) or split_route(p, df[title_reach(df, in_reach, p['title'])], home)
     if home:
         iso2 = common.get_iso2_country_code(common.correct_country(home[2]))
         for p in new:
@@ -1699,16 +2015,17 @@ LOCALITY_FIELDS = ('lat', 'lon', 'gmp', 'population_locality', 'population_count
                    'continent', 'locality_aka', 'literacy_rate', 'avg_height', 'med_age', 'gini', 'traffic_index')
 
 
-def apply_segments(video_id, locality, state, country, segments, vehicle_type, upload_date, channel_id, near=None):
+def apply_segments(video_id, locality, state, country, segments, vehicle_type, upload_date, channel_id, near=None,
+                   at=None):
     """Add reviewed segments to a locality through the add-video form's own submit path, so its overlap and
     value checks apply. A locality not in the mapping yet is created from the same lookups the form makes.
-    Writes the mapping file."""
+    at=(lat, lon): where the reviewer put a new locality on the map. Writes the mapping file."""
     client = add_video.app.test_client()
     new_row = None
     for seg in segments:
         _, row = add_video.get_existing_locality_row(add_video.load_csv(add_video.FILE_PATH), locality, state, country)
         if row is None:
-            new_row = new_row or add_video.new_locality_row(locality, state or None, country, near=near)
+            new_row = new_row or add_video.new_locality_row(locality, state or None, country, near=near, at=at)
             row = new_row
         # the form re-saves the locality fields it shows, so send them back exactly as it would render them
         form = {k: str(row[k]) for k in LOCALITY_FIELDS}
@@ -1718,7 +2035,10 @@ def apply_segments(video_id, locality, state, country, segments, vehicle_type, u
             'start_time': str(seg['start']), 'end_time': str(seg['end']),
             'upload_date_video': upload_date or '', 'channel_video': channel_id or '', 'submit_data': '1',
         })
-        html = client.post('/', data=form).get_data(as_text=True)
+        # one change to the mapping at a time across processes: two review pages applying at once would each save
+        # the mapping they read, and the later save would drop the other's rows
+        with plan_lock(add_video.FILE_PATH):
+            html = client.post('/', data=form).get_data(as_text=True)
         if 'Video added or updated successfully' not in html:
             msg = html.split('<h3>', 1)[-1].split('</h3>', 1)[0].strip()
             raise RuntimeError(f'{video_id} {seg}: {msg}')
@@ -1757,7 +2077,9 @@ label.vehicle { margin-left: 16px; font-size: 14px; }
 tr.entryhead td { border-top: 0; padding-top: 8px; }
 .locbox { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
 .locmap { flex-basis: 100%; font-size: 12px; color: #666; }
-.locmap iframe { width: 420px; height: 240px; border: 1px solid #ccc; display: block; margin-top: 4px; }
+.locmap .leafmap { width: 420px; height: 240px; border: 1px solid #ccc; margin-top: 4px; }
+/* Leaflet's own layers reach z-index 1000: keep them under the sticky player and the locality suggestions */
+.routemap, .locmap .leafmap { position: relative; z-index: 0; }
 .locbox input, .locbox select { font-size: 14px; padding: 3px 6px; }
 .locwrap { position: relative; }
 .loc-suggestions { display: none; position: absolute; top: 100%; left: 0; min-width: 320px; z-index: 5;
@@ -1809,7 +2131,7 @@ tr.seg.active td:first-child { box-shadow: inset 4px 0 #007bff; }
   <h3>{{ p.title }}</h3>
   <a href="https://www.youtube.com/watch?v={{ p.video }}" target="_blank">{{ p.video }}</a>
   <label class="vehicle">Vehicle (whole video):
-    <select onchange="setVehicle('{{ p.video }}', this)">
+    <select autocomplete="off" onchange="setVehicle('{{ p.video }}', this)">
     {% for code, name in vehicle_types.items() %}
       <option value="{{ code }}" {{ 'selected' if code == p.vehicle_type }}>{{ code }} ({{ name }})</option>
     {% endfor %}
@@ -1820,7 +2142,9 @@ tr.seg.active td:first-child { box-shadow: inset 4px 0 #007bff; }
        alt="YouTube thumbnail of {{ p.video }} (not analysed)">
   {% else %}
   <img class="sheet" src="sheet/{{ p.video }}.jpg" loading="lazy" alt="frames from {{ p.video }}">
-  {% if p.route %}<div class="routemap" data-route='{{ p.route | tojson }}'
+  {% if p.route %}{% set times = {} %}{% for e in p.entries if e.locality %}{% set _ = times.setdefault(
+       e.locality[0], []).extend(e.segments | rejectattr('decision', 'equalto', 'reject')) %}{% endfor %}
+  <div class="routemap" data-route='{{ p.route | tojson }}' data-times='{{ times | tojson }}'
        title="the car route the localities were estimated from"></div>{% endif %}
   {% endif %}
   <table>
@@ -1835,12 +2159,14 @@ tr.seg.active td:first-child { box-shadow: inset 4px 0 #007bff; }
           <div class="loc-suggestions"></div></span>
         <input class="loc-state" placeholder="State (optional)" size="14" autocomplete="off"
             value="{{ e.locality[1] if e.locality and e.locality[1] else '' }}" onchange="saveLocality(this)">
-        <select class="loc-country" onfocus="fillCountries(this)" onmousedown="fillCountries(this)"
+        <select class="loc-country" autocomplete="off" onfocus="fillCountries(this)" onmousedown="fillCountries(this)"
             onchange="saveLocality(this)"><option value="">Country</option>
-          {% if e.locality %}<option selected>{{ e.locality[2] }}</option>{% endif %}</select>
+          {% set known = p.entries | selectattr('locality') | map(attribute='locality') | list %}
+          {%- set c = e.locality[2] if e.locality else known[0][2] if known else video_country[p.video] %}
+          {%- if c %}<option selected>{{ c }}</option>{% endif %}</select>
         <span class="locstatus guess">{% if e.guessed %}guessed from title{% elif not e.locality %}
           ⚠ not set: approved segments cannot be added{% endif %}</span>
-        <div class="locmap"{% if e.locality and e.locality | tojson in new_localities and not p.route %}
+        <div class="locmap"{% if e.locality and e.locality | tojson in new_localities %}
              data-new="1"{% endif %}></div>
       </div>
       {% endif %}
@@ -2121,18 +2447,29 @@ async function showMap(box, isNew) {
   map.innerHTML = '';
   if (!isNew) return;
   const q = new URLSearchParams({ locality: box.querySelector('.loc-name').value.trim(),
-    state: box.querySelector('.loc-state').value.trim(), country: box.querySelector('.loc-country').value });
+    state: box.querySelector('.loc-state').value.trim(), country: box.querySelector('.loc-country').value,
+    video: box.dataset.video, entry: box.dataset.entry });
   map.textContent = 'finding it on the map…';
   const res = await fetch('where?' + q);
   const out = await res.json();
   if (!res.ok) { map.textContent = '⚠ ' + out.error; return; }
-  const d = 0.12, bbox = [out.lon - d * 1.6, out.lat - d, out.lon + d * 1.6, out.lat + d].join(',');
-  map.innerHTML = `new locality at ${out.lat.toFixed(4)}, ${out.lon.toFixed(4)}
-    (<a href="https://www.openstreetmap.org/?mlat=${out.lat}&mlon=${out.lon}#map=12/${out.lat}/${out.lon}"
-        target="_blank">larger map</a>)
-    <iframe loading="lazy"
-      src="https://www.openstreetmap.org/export/embed.html?bbox=${bbox}&layer=mapnik&marker=${out.lat},${out.lon}">
-    </iframe>`;
+  map.innerHTML = '<span class="where"></span><div class="leafmap"></div>';
+  const where = map.querySelector('.where');
+  const say = (lat, lon, moved) => where.textContent =
+    `new locality at ${lat.toFixed(4)}, ${lon.toFixed(4)}` + (moved ? ' (moved by hand)' : ': drag the marker if it is off');
+  say(out.lat, out.lon, out.moved);
+  if (!window.L) { where.textContent += ' (the map needs internet: Leaflet from unpkg.com)'; return; }
+  const leaf = L.map(map.querySelector('.leafmap'), { scrollWheelZoom: false }).setView([out.lat, out.lon], 12);
+  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+              { maxZoom: 18, attribution: '&copy; OpenStreetMap contributors' }).addTo(leaf);
+  const marker = L.marker([out.lat, out.lon], { draggable: true }).addTo(leaf);
+  marker.on('dragend', async () => {
+    const { lat, lng } = marker.getLatLng();
+    const res = await fetch('at', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ video: box.dataset.video, entry: +box.dataset.entry, lat, lon: lng }) });
+    if (!res.ok) { alert((await res.json()).error); return; }
+    say(lat, lng, true);
+  });
 }
 document.querySelectorAll('.locmap[data-new]').forEach(m => showMap(m.closest('.locbox'), true));
 // after a reload (a join, a split) the browser refills inputs by position, so rows that moved would show another
@@ -2140,6 +2477,11 @@ document.querySelectorAll('.locmap[data-new]').forEach(m => showMap(m.closest('.
 window.addEventListener('pageshow', () => {
   document.querySelectorAll('tr.seg').forEach(r => { if (r.querySelector('.t-start')) showBounds(r); });
   document.querySelectorAll('input.at').forEach(i => { i.value = ''; });
+  // and the saved country and vehicle, not what the browser restored by position ("Country" after a reload)
+  document.querySelectorAll('select').forEach(s => {
+    const saved = [...s.options].find(o => o.defaultSelected);
+    if (saved) s.value = saved.value;
+  });
 });
 function parseTime(text) {
   const parts = text.trim().split(':').map(Number);
@@ -2148,7 +2490,8 @@ function parseTime(text) {
 function reloadKeepingPlace(video, t) {
   // after a reload, come back to the same video and moment instead of an empty player
   if (!video && ytReady && playingVideo()) { video = playingVideo(); t = ytPlayer.getCurrentTime(); }
-  if (video) sessionStorage.setItem('resume', JSON.stringify({ video, t: t || 0 }));
+  // nothing playing: come back to the same scroll position
+  sessionStorage.setItem('resume', JSON.stringify(video ? { video, t: t || 0 } : { y: window.scrollY }));
   location.reload();
 }
 async function newSegment(btn) {
@@ -2260,25 +2603,27 @@ const resume = JSON.parse(sessionStorage.getItem('resume') || 'null');
 if (resume) {
   sessionStorage.removeItem('resume');
   history.scrollRestoration = 'manual';  // otherwise the browser's own scroll restore wins after loading
-  const row = document.querySelector(`tr.seg[data-video="${resume.video}"]`);
-  const scroll = () => row && row.closest('.video').scrollIntoView({ block: 'start' });
+  const row = resume.video && document.querySelector(`tr.seg[data-video="${resume.video}"]`);
+  const scroll = () => row ? row.closest('.video').scrollIntoView({ block: 'start' }) : window.scrollTo(0, resume.y || 0);
   scroll();
   window.addEventListener('load', () => setTimeout(scroll, 50));
-  play(resume.video, resume.t);
+  if (resume.video) play(resume.video, resume.t);
 }
 </script>
 <script>
-// a drive "from A to B": its car route, with where each locality on the way starts
+// a drive "from A to B": its car route, with where each locality on the way starts and its segments' times
 document.querySelectorAll('.routemap').forEach(el => {
   if (!window.L) { el.textContent = 'the map needs internet (Leaflet from unpkg.com)'; return; }
-  const route = JSON.parse(el.dataset.route);
+  const route = JSON.parse(el.dataset.route), times = JSON.parse(el.dataset.times);
+  const mss = t => `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`;
   const map = L.map(el, { scrollWheelZoom: false });
   L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',
               { maxZoom: 18, attribution: '&copy; OpenStreetMap contributors' }).addTo(map);
   const line = L.polyline(route.path, { color: '#2a6fdb', weight: 4 }).addTo(map);
   route.stops.forEach(([lat, lon, name], i) => {
     L.circleMarker([lat, lon], { radius: 5, color: i ? '#c0392b' : '#27ae60', fillOpacity: 1 })
-      .bindTooltip(`${i + 1}. ${name}`, { permanent: true, direction: 'right' }).addTo(map);
+      .bindTooltip(`${i + 1}. ${name}` + (times[name] || []).map((s, j) => `${j ? ',' : ''} ${mss(s.start)}–${mss(s.end)}`)
+                    .join(''), { permanent: true, direction: 'right' }).addTo(map);
   });
   map.fitBounds(line.getBounds(), { padding: [20, 20] });
 });
@@ -2339,7 +2684,14 @@ def review(plan_path, port=None):
                  for e in p['entries'] if e.get('locality')}
         new_localities = {json.dumps(list(loc)) for loc in shown
                           if add_video.get_existing_locality_row(mapping, *loc)[0] is None}
+        # a new locality group starts in the country of the video's other groups, else the one its title names
+        # ("…,Puerto Rico"), else the batch's usual one
+        usual = (Counter(e['locality'][2] for p in plan for e in p.get('entries', []) if e.get('locality'))
+                 .most_common(1) or [(None,)])[0][0]
+        video_country = {p['video']: next(iter(title_countries(p.get('title'))), usual)
+                         for p in plan if p['video'] in open_videos}
         return render_template_string(REVIEW_HTML, plan=plan, open_videos=open_videos, approved_hidden=approved_hidden,
+                                      video_country=video_country,
                                       new_localities=new_localities, waiting=len(waiting),
                                       durations={v: video_duration(v) for v in open_videos},
                                       max_merge_gap=MAX_MERGE_GAP_S, countries=COUNTRIES, vehicle_types=VEHICLE_TYPES,
@@ -2541,15 +2893,42 @@ def review(plan_path, port=None):
 
     @app.route('/where')
     def where():
-        """Coordinates of a locality not in the mapping yet, found as the add-video form will find them."""
+        """Coordinates of a locality not in the mapping yet: where the marker was dragged to, else found as the
+        add-video form will find them."""
         locality, country = request.args.get('locality', ''), request.args.get('country', '')
+        p = next((p for p in load() if p['video'] == request.args.get('video') and 'entries' in p), None)
+        entry = int(request.args.get('entry', -1))
+        if p and 0 <= entry < len(p['entries']) and p['entries'][entry].get('at'):
+            lat, lon = p['entries'][entry]['at']
+            return jsonify(lat=lat, lon=lon, moved=True)
+        # where the route put it (a drive through several towns): Apply takes it when the lookup by name lands
+        # over 15 km away, at a namesake
+        near = next(((la, lo) for la, lo, name in ((p or {}).get('route') or {}).get('stops', []) if name == locality), None)
         try:
             lat, lon = coordinates(locality, request.args.get('state') or None, country)
         except Exception as e:  # the lookups raise anything from network errors to missing fields
-            return jsonify(error=f'could not find {locality} ({e})'), 404
+            if not near:
+                return jsonify(error=f'could not find {locality} ({e})'), 404
+            lat = lon = None
+        if near and (lat is None or lon is None or _km(float(lat), float(lon), *near) > 15):
+            lat, lon = near
         if lat is None or lon is None:
             return jsonify(error=f'could not find {locality}, {country} on the map'), 404
         return jsonify(lat=float(lat), lon=float(lon))
+
+    @app.route('/at', methods=['POST'])
+    def set_at():
+        """Where a new locality is, as dragged on its map: for every group of the plan with that locality."""
+        d = request.get_json()
+        plan = load()
+        p = next((p for p in plan if p['video'] == d['video'] and 'entries' in p), None)
+        if p is None or d['entry'] >= len(p['entries']) or not p['entries'][d['entry']].get('locality'):
+            return jsonify(error=stale), 409
+        loc = p['entries'][d['entry']]['locality']
+        for e in (e for q in plan for e in q.get('entries', []) if e.get('locality') == loc):
+            e['at'] = [round(float(d['lat']), 6), round(float(d['lon']), 6)]
+        save(plan)
+        return jsonify(ok=True)
 
     @app.route('/locality', methods=['POST'])
     def set_locality():
@@ -2572,6 +2951,12 @@ def review(plan_path, port=None):
             save(plan)
             return jsonify(ok=True, merged=True)
         e['locality'], e['guessed'] = [locality, state, country], False
+        # a marker dragged for this locality elsewhere in the plan holds here too; one for the old locality not
+        at = next((o['at'] for q in plan for o in q.get('entries', []) if o is not e and o.get('at')
+                   and o.get('locality') == e['locality']), None)
+        e.pop('at', None)
+        if at:
+            e['at'] = at
         save(plan)
         idx, _ = add_video.get_existing_locality_row(add_video.load_csv(add_video.FILE_PATH), locality, state, country)
         return jsonify(ok=True, new=idx is None)
@@ -2662,7 +3047,7 @@ def review(plan_path, port=None):
                         near = next(((lat, lon) for lat, lon, name in (p.get('route') or {}).get('stops', [])
                                      if name == e['locality'][0]), None)
                         apply_segments(p['video'], *e['locality'], [s], p['vehicle_type'],
-                                       p['upload_date'], p['channel_id'], near)
+                                       p['upload_date'], p['channel_id'], near, e.get('at'))
                     except Exception as ex:
                         log.append(f"{p['video']} {s['start']}-{s['end']}: not added: {ex}")
                         continue
@@ -2687,6 +3072,8 @@ if __name__ == '__main__':
     ap.add_argument('--limit', type=int, help='stop after this many new proposals (one batch to review)')
     ap.add_argument('--no-download', action='store_true',
                     help='propose whole videos from YouTube Data API metadata, without downloading or analysing')
+    ap.add_argument('--single-city', action='store_true',
+                    help='leave out drives from one town to another ("from A to B"): only drives within one city')
     ap.add_argument('--review', metavar='PLAN_JSON', help='open the review page for a plan file')
     ap.add_argument('--split-routes', metavar='PLAN_JSON',
                     help='split untouched drives "from A to B" in a plan into the localities along their route')
@@ -2698,7 +3085,7 @@ if __name__ == '__main__':
     elif args.channel:
         name = re.sub(r'\W+', '_', re.sub(r'^.*youtube\.com/(?:channel/)?@?', '', args.channel).split('/')[0])
         out = process_channel(args.channel, args.country, args.out or os.path.join('_output/proposals', name),
-                              args.pause, args.limit, download=not args.no_download)
+                              args.pause, args.limit, download=not args.no_download, single_city=args.single_city)
         if out:
             with open(out) as f:
                 if any('entries' in p for p in json.load(f)):

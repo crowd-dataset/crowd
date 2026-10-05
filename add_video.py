@@ -189,7 +189,11 @@ def save_csv(df, file_path):
     for col in ('population_locality', 'population_country'):
         if col in df.columns:
             df[col] = df[col].astype('Int64')
-    df.to_csv(file_path, index=False)
+    # written beside it and swapped in: a process stopped while writing (a server restart during Apply) leaves the
+    # old mapping whole instead of a file cut off part way
+    tmp = f'{file_path}.{os.getpid()}.tmp'
+    df.to_csv(tmp, index=False)
+    os.replace(tmp, file_path)
 
 
 def _compact_python_literal(value):
@@ -764,10 +768,17 @@ def get_latest_segment_values(start_times, end_times, time_of_day_values):
     return out
 
 
-def new_locality_row(locality, state, country, locality_aka=None, near=None):
+def new_locality_row(locality, state, country, locality_aka=None, near=None, at=None):
     """Row values for a locality not yet in the mapping, looked up from the web services. near=(lat, lon): where
     the locality is known to be (footage filmed there); a lookup by name landing farther away found a namesake
-    (Butler Township, PA in Butler County for the one near Hazleton), so near is used instead."""
+    (Butler Township, PA in Butler County for the one near Hazleton), so near is used instead. at=(lat, lon):
+    where the reviewer put it on the map, used as is. A name with accents also gets its plain spelling as an
+    alternative name (Guánica: Guanica)."""
+    aka = [a.strip() for a in (locality_aka[1:-1].split(',') if isinstance(locality_aka, str)
+                               else locality_aka or []) if a.strip()]
+    plain = ''.join(c for c in unicodedata.normalize('NFKD', locality) if not unicodedata.combining(c))
+    if plain != locality and plain.isascii() and plain not in aka:  # not for other scripts or letters like ß
+        aka.append(plain)
     country_corrected = common.correct_country(country)
     iso2_code = common.get_iso2_country_code(country_corrected)
     iso3_code = common.get_iso3_country_code(country_corrected)
@@ -783,11 +794,12 @@ def new_locality_row(locality, state, country, locality_aka=None, near=None):
         locate_future = pool.submit(locate)
         mortality_future = pool.submit(get_country_traffic_mortality, iso3_code)
         literacy_future = pool.submit(get_country_literacy_rate, iso3_code)
-        gmp_future = pool.submit(get_gmp, locality, state, iso3_code, locality_aka)
+        gmp_future = pool.submit(get_gmp, locality, state, iso3_code, aka)
     country_data = country_future.result()
     locality_data, lat, lon, traffic = locate_future.result()
+    near = at or near
     namesake = bool(near and (lat is None or lon is None or geodesic((lat, lon), near).km > 15))
-    if namesake:
+    if namesake or at:
         lat, lon = near
         traffic = get_traffic_index_lat_lon(lat, lon)
 
@@ -797,7 +809,7 @@ def new_locality_row(locality, state, country, locality_aka=None, near=None):
         country_population = get_country_population(country_data)
     return {
         'locality': locality,
-        'locality_aka': [] if locality_aka is None else locality_aka,
+        'locality_aka': f"[{','.join(aka)}]",  # as the mapping writes it
         'country': country,
         'iso3': iso3_code,
         'lat': lat,

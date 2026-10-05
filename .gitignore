@@ -76,3 +76,6 @@ crowd_index.jsonl
 
 # YouTube login cookies for yt-dlp (YT_DLP_COOKIES), never committed
 cookies.txt
+
+# lock taken while the mapping is written (propose_segments.py, fix_coords.py)
+mapping.csv.lock
