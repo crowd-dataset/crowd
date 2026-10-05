@@ -111,6 +111,7 @@ def main():
 
     stamp = now.isoformat(timespec="seconds")
     new_log = not os.path.exists(LOG)
+    new_values = {}
     with open(LOG, "a", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
         if new_log:
@@ -118,9 +119,16 @@ def main():
         for r, (status, value) in zip(batch, results):
             w.writerow([r[i_id], stamp, status, "" if value is None else value])
             if status == "ok":
-                r[i_t] = str(float(value))
+                new_values[r[i_id]] = str(float(value))
             elif status == "no coverage":
-                r[i_t] = ""  # no data, not free-flowing traffic
+                new_values[r[i_id]] = ""  # no data, not free-flowing traffic
+
+    # re-read: the channel routine may have saved the mapping while the requests ran
+    raw = open(mapping, newline="", encoding="utf-8").read()
+    rows = list(csv.reader(io.StringIO(raw)))
+    for r in rows[1:]:
+        if r[i_id] in new_values:
+            r[i_t] = new_values[r[i_id]]
     out = io.StringIO()
     csv.writer(out, lineterminator="\r\n" if "\r\n" in raw[:5000] else "\n").writerows(rows)
     with open(mapping, "w", newline="", encoding="utf-8") as f:
