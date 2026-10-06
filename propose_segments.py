@@ -27,6 +27,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 import cv2
 import pycountry
 import numpy as np
+import pandas as pd
 import requests
 from geopy.exc import (GeocoderAuthenticationFailure, GeocoderInsufficientPrivileges, GeocoderQuotaExceeded,
                        GeocoderRateLimited, GeopyError)
@@ -1376,8 +1377,33 @@ def _hit_locality(hit, df, countries, at=None, named=False):
         if name and _name_key(name) in known:
             r = known[_name_key(name)]
             return [r.locality, r.state if isinstance(r.state, str) else None, r.country]
+    if town and at and (metro := _metro_city(town, at, rows, state)):
+        return metro
     # a new locality is spelled one way whichever source named it, as most of the mapping does: St. Clair
     return [re.sub(r'^Saint ', 'St. ', town), state, countries[code]] if town else None
+
+
+METRO_POP = 1_000_000  # a city this big has a metropolitan area: towns around it count as the city
+METRO_KM = 30          # within this many km of its centre (Yonkers 25 km from Manhattan, Bellflower 20 km from LA)
+METRO_TOWN_POP = 250_000  # a town this big stays a city of its own (Newark, Jersey City)
+
+
+def _metro_city(town, at, rows, state=None):
+    """[locality, state, country] of the big city (METRO_POP or more, in rows: the mapping's localities of the
+    country) whose metropolitan area a new town at (lat, lon) in that state lies in, else None. Another state is
+    another city: Jersey City, NJ is not New York City. Towns already in the mapping keep their own entry; this is
+    only for new ones."""
+    pop = pd.to_numeric(rows['population_locality'], errors='coerce')
+    big = [(_km(at[0], at[1], float(r.lat), float(r.lon)), r) for r in rows[pop >= METRO_POP].itertuples()
+           if pd.notna(r.lat) and pd.notna(r.lon) and not (state and isinstance(r.state, str) and r.state != state)]
+    big = [(d, r) for d, r in big if d <= METRO_KM and _name_key(r.locality) != _name_key(town)]
+    if not big:
+        return None
+    own = [p[1] for p in _nearby_places(at[0], at[1]) or [] if _name_key(p[0]) == _name_key(town)]
+    if own and max(own) >= METRO_TOWN_POP:
+        return None
+    r = min(big, key=lambda dr: dr[0])[1]
+    return [r.locality, r.state if isinstance(r.state, str) else None, r.country]
 
 
 # "Driving from Hazle Township to White Haven, Pennsylvania": where a drive starts and where it ends
