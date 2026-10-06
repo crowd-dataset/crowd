@@ -16,6 +16,7 @@ Usage: python update_traffic_index.py [--limit 1200] [--dry-run]
 
 import argparse
 import csv
+import fcntl
 import io
 import os
 import time
@@ -123,16 +124,19 @@ def main():
             elif status == "no coverage":
                 new_values[r[i_id]] = ""  # no data, not free-flowing traffic
 
-    # re-read: the channel routine may have saved the mapping while the requests ran
-    raw = open(mapping, newline="", encoding="utf-8").read()
-    rows = list(csv.reader(io.StringIO(raw)))
-    for r in rows[1:]:
-        if r[i_id] in new_values:
-            r[i_t] = new_values[r[i_id]]
-    out = io.StringIO()
-    csv.writer(out, lineterminator="\r\n" if "\r\n" in raw[:5000] else "\n").writerows(rows)
-    with open(mapping, "w", newline="", encoding="utf-8") as f:
-        f.write(out.getvalue())
+    # re-read under the mapping lock: other scripts may have saved the mapping while the requests ran
+    with open(mapping + ".lock", "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        raw = open(mapping, newline="", encoding="utf-8").read()
+        rows = list(csv.reader(io.StringIO(raw)))
+        for r in rows[1:]:
+            if r[i_id] in new_values:
+                r[i_t] = new_values[r[i_id]]
+        out = io.StringIO()
+        csv.writer(out, lineterminator="\r\n" if "\r\n" in raw[:5000] else "\n").writerows(rows)
+        with open(mapping + ".tmp", "w", newline="", encoding="utf-8") as f:
+            f.write(out.getvalue())
+        os.replace(mapping + ".tmp", mapping)
 
     counts = {}
     for status, _ in results:
