@@ -1152,13 +1152,16 @@ def _osm_place(phrase, country_codes, near=None, reach_km=None):
         return None
     # the exact name first ("Plains" is Plains, PA, not White Plains, NY), in a town ("Lancaster" is the city,
     # not Lancaster County), then the nearest
-    in_town = lambda r: any(r.raw.get('address', {}).get(k) for k in ('city', 'town', 'village', 'municipality'))
+
+    def in_town(r):
+        return any(r.raw.get('address', {}).get(k) for k in ('city', 'town', 'village', 'municipality'))
     r = min(found, key=lambda r: (_name_key(_osm_name(r.raw)) != wanted, not in_town(r),
                                   _km(near[0], near[1], r.latitude, r.longitude) if near else 0))
     a = r.raw.get('address', {})
     kind = next((k for k in ('city', 'town', 'village', 'municipality', 'hamlet') if a.get(k)), None)
     town = a.get(kind) if kind else None
-    if not town and r.raw.get('class') == 'boundary' and _osm_type(r.raw) not in ('county', 'state', 'country', 'region'):
+    if (not town and r.raw.get('class') == 'boundary'
+            and _osm_type(r.raw) not in ('county', 'state', 'country', 'region')):
         town = _osm_name(r.raw)  # a municipality's own boundary has no town in its address (Little Silver, NJ)
     if not town and _country_code(a) in US_TERRITORIES:  # Puerto Rico's municipios (Guayama) are its counties
         town = re.sub(r' Municipio$', '', a.get('county') or '') or None
@@ -1464,7 +1467,8 @@ def between_towns(title, df, home=None):
     (a, start), (b, end) = ends
     area = DRIVE_AREA.search(title or '')
     if area:  # "from Longwood to West Farms in the Bronx": all in that city, unless it is a county ("in Nassau")
-        countries = {common.get_iso2_country_code(common.correct_country(c)): c for c in df['country'].dropna().unique()}
+        countries = {common.get_iso2_country_code(common.correct_country(c)): c
+                     for c in df['country'].dropna().unique()}
         codes = tuple(sorted(c for c in countries if c))
         state = [n.title() for n in add_video.US_STATE_CODES if re.search(rf'\b{re.escape(n)}\b', title, re.I)]
         q = area.group(1) + (f', {state[0]}' if len(state) == 1 else '')
@@ -1473,6 +1477,7 @@ def between_towns(title, df, home=None):
         if hit and hit[0] and not re.search(r'\bCounty$', hit[0]) and _hit_locality(hit, df, countries):
             return False
     return bool(start and end and start != end)
+
 
 def route_localities(title, df, home=None, max_km=None):
     """([(share of the drive where it starts, where it ends, locality)], the route for a map) along the car route
@@ -1756,6 +1761,7 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
             with open(tmp, 'w') as f:
                 json.dump(list(disk.values()), f, indent=1)
             os.replace(tmp, plan_path)
+
     def mapping_videos(df):
         return {v for cell in df['videos'] for v in add_video._parse_videos_cell(cell)}
     df = add_video.load_csv(add_video.FILE_PATH)
@@ -2256,7 +2262,8 @@ tr.seg.active td:first-child { box-shadow: inset 4px 0 #007bff; }
           '%d:%02d' % (n.start // 60, n.start % 60) }}{% else %}{% endif %}</td>
       <td><button class="small" onclick="play('{{ p.video }}', {{ [s.end - 5, 0] | max }})">▶ {{
           'split' if split else 'gap' }}</button></td>
-      <td><button class="small" onclick="mergeSplit(this, '{{ p.video }}', {{ ei }}, {{ loop.index0 }})"{% if not split %}
+      <td><button class="small"
+          onclick="mergeSplit(this, '{{ p.video }}', {{ ei }}, {{ loop.index0 }})"{% if not split %}
           title="one segment from {{ '%d:%02d' % (s.start // 60, s.start % 60) }} to {{
           '%d:%02d' % (n.end // 60, n.end % 60) }}, the left-out part and the first one's day/night included"
           {% endif %}>{{ 'Remove split' if split else 'Join' }}</button></td>
@@ -2482,7 +2489,10 @@ async function saveLocality(el) {
   const status = box.querySelector('.locstatus');
   if (!locality || !country) { status.textContent = '⚠ not set: give a locality and a country'; return; }
   // the mapping writes a state for these countries: wait for it instead of refusing the town typed first
-  if (!state && STATE_COUNTRIES.includes(country)) { status.textContent = '⚠ add the state (e.g. PA) to save'; return; }
+  if (!state && STATE_COUNTRIES.includes(country)) {
+    status.textContent = '⚠ add the state (e.g. PA) to save';
+    return;
+  }
   const res = await fetch('locality', { method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ video: box.dataset.video, entry: +box.dataset.entry,
                            locality: [locality, state, country] }) });
@@ -2508,7 +2518,8 @@ async function showMap(box, isNew) {
   map.innerHTML = '<span class="where"></span><div class="leafmap"></div>';
   const where = map.querySelector('.where');
   const say = (lat, lon, moved) => where.textContent =
-    `new locality at ${lat.toFixed(4)}, ${lon.toFixed(4)}` + (moved ? ' (moved by hand)' : ': drag the marker if it is off');
+    `new locality at ${lat.toFixed(4)}, ${lon.toFixed(4)}` +
+    (moved ? ' (moved by hand)' : ': drag the marker if it is off');
   say(out.lat, out.lon, out.moved);
   if (!window.L) { where.textContent += ' (the map needs internet: Leaflet from unpkg.com)'; return; }
   const leaf = L.map(map.querySelector('.leafmap'), { scrollWheelZoom: false }).setView([out.lat, out.lon], 12);
@@ -2656,7 +2667,8 @@ if (resume) {
   sessionStorage.removeItem('resume');
   history.scrollRestoration = 'manual';  // otherwise the browser's own scroll restore wins after loading
   const row = resume.video && document.querySelector(`tr.seg[data-video="${resume.video}"]`);
-  const scroll = () => row ? row.closest('.video').scrollIntoView({ block: 'start' }) : window.scrollTo(0, resume.y || 0);
+  const scroll = () => row ? row.closest('.video').scrollIntoView({ block: 'start' })
+                           : window.scrollTo(0, resume.y || 0);
   scroll();
   window.addEventListener('load', () => setTimeout(scroll, 50));
   if (resume.video) play(resume.video, resume.t);
@@ -2674,7 +2686,8 @@ document.querySelectorAll('.routemap').forEach(el => {
   const line = L.polyline(route.path, { color: '#2a6fdb', weight: 4 }).addTo(map);
   route.stops.forEach(([lat, lon, name], i) => {
     L.circleMarker([lat, lon], { radius: 5, color: i ? '#c0392b' : '#27ae60', fillOpacity: 1 })
-      .bindTooltip(`${i + 1}. ${name}` + (times[name] || []).map((s, j) => `${j ? ',' : ''} ${mss(s.start)}–${mss(s.end)}`)
+      .bindTooltip(`${i + 1}. ${name}` +
+                   (times[name] || []).map((s, j) => `${j ? ',' : ''} ${mss(s.start)}–${mss(s.end)}`)
                     .join(''), { permanent: true, direction: 'right' }).addTo(map);
   });
   map.fitBounds(line.getBounds(), { padding: [20, 20] });
@@ -2957,7 +2970,8 @@ def review(plan_path, port=None):
             return jsonify(lat=lat, lon=lon, moved=True)
         # where the route put it (a drive through several towns): Apply takes it when the lookup by name lands
         # over 15 km away, at a namesake
-        near = next(((la, lo) for la, lo, name in ((p or {}).get('route') or {}).get('stops', []) if name == locality), None)
+        stops = ((p or {}).get('route') or {}).get('stops', [])
+        near = next(((la, lo) for la, lo, name in stops if name == locality), None)
         try:
             lat, lon = coordinates(locality, request.args.get('state') or None, country)
         except Exception as e:  # the lookups raise anything from network errors to missing fields

@@ -90,11 +90,13 @@ h1 { font-size: 15px; margin: 10px; }
 <script>
 const rows = {{ rows | tojson }}, fixes = {{ fixes | tojson }};
 const map = L.map('map');
-L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; OpenStreetMap contributors' }).addTo(map);
+L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+            { maxZoom: 19, attribution: '&copy; OpenStreetMap contributors' }).addTo(map);
 const list = document.getElementById('list'), bounds = [];
 for (const r of rows) {
   const k = `${r.locality}|${r.state}|${r.country}`, at = fixes[k] || [+r.lat, +r.lon];
-  const m = L.marker(at, { draggable: true }).addTo(map).bindTooltip(r.locality, { permanent: true, direction: 'right' });
+  const m = L.marker(at, { draggable: true }).addTo(map)
+    .bindTooltip(r.locality, { permanent: true, direction: 'right' });
   const item = document.createElement('div');
   const show = (lat, lon) => item.innerHTML = `${r.locality}<small>${lat.toFixed(5)}, ${lon.toFixed(5)}` +
     (fixes[k] ? ` (moved; was ${(+r.lat).toFixed(5)}, ${(+r.lon).toFixed(5)})` : '') + '</small>';
@@ -102,7 +104,8 @@ for (const r of rows) {
   item.onclick = () => map.setView(m.getLatLng(), 15);
   m.on('dragend', async () => {
     const { lat, lng } = m.getLatLng();
-    const res = await fetch('fix', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key: k, lat, lon: lng }) });
+    const res = await fetch('fix', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                     body: JSON.stringify({ key: k, lat, lon: lng }) });
     if (!res.ok) { alert('not saved'); return; }
     fixes[k] = [lat, lng]; item.classList.add('moved'); show(lat, lng);
   });
