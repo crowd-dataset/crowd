@@ -56,8 +56,9 @@ PARAMS = {
     'blank_std': 6.0,         # frame this flat is blank or a title card
     'night_sky': 95.0,        # sky brightness below this is night (calibrated on labelled segments)
     'night_window_s': 60,     # night/day must hold this long to count as a transition
-    'night_inside_day_s': 300,  # dark this long or shorter with daylight before and after is a bridge, tunnel or
-                                # elevated railway: night falls over many minutes and does not lift again
+    # dark this long or shorter with daylight before and after is a bridge, tunnel or elevated railway (10 min under
+    # the 7 train on Roosevelt Ave): night falls once and does not lift again within a drive
+    'night_inside_day_s': 3 * 3600,
     'min_segment_s': 30,      # drop proposed segments shorter than this
     'driver_window_s': 60,    # a big face in more than driver_share of the frames over this window means the
     'driver_share': 0.1,      # camera faces the driver (found in only 10-40% of its frames: sunglasses, small
@@ -464,8 +465,12 @@ def propose(sig, p=PARAMS):
     night = _rolling_median((sig['sky'] < p['night_sky']).astype(float), window) > 0.5
     # brief dark or bright spells (underpasses, a flickering sky near the threshold) must not split a segment
     night = _drop_short_runs(night, window)
+    # a switch at an edit cut is footage stitched together (a night drive after a day drive): it stays night; under a
+    # bridge or the El the dark comes and goes without one
+    edits = np.r_[np.flatnonzero(cut), np.array(skip_times(sig)) * FPS]
     for a, b in _runs(night):
-        if a > 0 and b < n and (b - a) / FPS <= p['night_inside_day_s']:
+        stitched = any(abs(e - x) <= window for e in edits for x in (a, b))
+        if a > 0 and b < n and (b - a) / FPS <= p['night_inside_day_s'] and not stitched:
             night[a:b] = False
 
     segments = []
@@ -564,18 +569,25 @@ SKIP_RATIO, SKIP_SCORE, SKIP_ALONE_S, SKIP_INTRO_S, SKIP_OUTRO_S = 25, 0.06, 10,
 SKIP_STREAK = 10       # this many analysed videos of a channel in a row with skips: the channel edits its drives
 
 
-def footage_skip(sig):
-    """Where the video skips footage (an edit cut), as m:ss, else None. Waiting at intersections is what gets
-    cut most and what the dataset needs, so such a video is left out whole."""
+def skip_times(sig):
+    """Seconds at which the video skips footage (edit cuts), from the skip candidates that are strong and alone."""
     ev = np.asarray(sig.get('skips', np.zeros((0, 3)))).reshape(-1, 3)
-    end = len(sig['motion']) / FPS
+    out = []
     for t, score, ratio in ev:
-        if ratio < SKIP_RATIO or score < SKIP_SCORE or not SKIP_INTRO_S < t < end - SKIP_OUTRO_S:
+        if ratio < SKIP_RATIO or score < SKIP_SCORE:
             continue
         gap = np.abs(ev[:, 0] - t)
         if not ((gap > 0.5) & (gap <= SKIP_ALONE_S)).any():  # frames right at a cut can both jump
-            return f'{int(t) // 60}:{int(t) % 60:02d}'
-    return None
+            out.append(float(t))
+    return out
+
+
+def footage_skip(sig):
+    """Where the video skips footage (an edit cut), as m:ss, else None. Waiting at intersections is what gets
+    cut most and what the dataset needs, so such a video is left out whole."""
+    end = len(sig['motion']) / FPS
+    t = next((t for t in skip_times(sig) if SKIP_INTRO_S < t < end - SKIP_OUTRO_S), None)
+    return None if t is None else f'{int(t) // 60}:{int(t) % 60:02d}'
 
 
 GPS_PROBE_S = (10, 45, 90)  # where the first frames are read for a GPS overlay; without one there, none is read
