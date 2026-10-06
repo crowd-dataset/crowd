@@ -1465,6 +1465,8 @@ def drive_ends(title, df, home=None):
     # "from Chinatown in Manhattan to …": the start is in that borough or town, which is found where the
     # neighbourhood is not
     first = re.sub(r"^.+?\s+(?:in|en)\s+(?:the\s+)?(?=[A-Z])", '', first)
+    # "el Puerto de San Juan", "Centro de Adjuntas": a sight or part of a town is looked for as that town
+    first, last = (re.sub(r"^(?:el |la )?\S.*?\s+(?:de|del)\s+(?=[A-ZÀ-Þ])", '', x) for x in (first, last))
     # "from Newburgh to Brewster, New York": both ends in the states the title names (Maine has both too); with
     # one state named, each end is looked up in it ("Newburgh, New York")
     named = {sub.name for code in codes for sub in pycountry.subdivisions.get(country_code=code) or []
@@ -1475,14 +1477,23 @@ def drive_ends(title, df, home=None):
         first, last = (x if state in x else f'{x}, {state}' for x in (first, last))
     # a named state says where, however far from home: no box around home (San Jose is 48 degrees from New York)
     near = (home[3], home[4]) if home and not named else None
-    a = _osm_place(first, codes, near)
-    b = _osm_place(last, codes, a[4:6] if a else near, 300 if a else None)
+    # a country the title names holds both ends: "Carolina a … San Juan, Puerto Rico" is not a Carolina in the US
+    only = {code for code, name in countries.items() if name in title_countries(title)}
+    if only and not named:  # looked up in it, as with a state ("Carolina, Puerto Rico")
+        country = countries[next(iter(only))]
+        first, last = (x if country in x else f'{x}, {country}' for x in (first, last))
+
+    def place(phrase, near=None, reach=None):
+        hit = _osm_place(phrase, codes, near, reach)
+        return hit if hit and (not only or hit[2] in only) else None
+    a = place(first, near)
+    b = place(last, a[4:6] if a else near, 300 if a else None)
     if not b and a and home:  # A was a far namesake (Longwood upstate for the one in the Bronx): B near home
-        b = _osm_place(last, codes, (home[3], home[4]))
+        b = place(last, (home[3], home[4]))
     # a drive between two towns is short: each end is also looked for near the other, and the closest pair is
     # meant ("from Plains to Hughestown": Plains Township next to Hughestown, not a Plains in New Jersey)
-    pairs = [(x, y) for x in (a, b and _osm_place(first, codes, b[4:6], 60))
-             for y in (b, a and _osm_place(last, codes, a[4:6], 60)) if x and y]
+    pairs = [(x, y) for x in (a, b and place(first, b[4:6], 60))
+             for y in (b, a and place(last, a[4:6], 60)) if x and y]
     if named:
         pairs = [(x, y) for x, y in pairs if x[1] in named and y[1] in named]
     if pairs:
@@ -2348,10 +2359,11 @@ tr.seg.active td:first-child { box-shadow: inset 4px 0 #007bff; }
   </div>
   <div class="desc">{% set d = descriptions.get(p.video) %}
     {% if d %}
-      {% if d.chapters %}<div class="chapters"><b>Chapters</b>{% for t, title in d.chapters %}
-        <div><a href="#" onclick="play('{{ p.video }}', {{ t }}); return false;">
-          {{ '%d:%02d' % (t // 60, t % 60) }}</a> {{ title }}</div>{% endfor %}</div>{% endif %}
       <div class="desctext">{{ d.html }}</div>
+      <div class="chapters" data-video="{{ p.video }}"{% if not d.fetched %} data-pending="1"{% endif %}>
+        {% if d.chapters %}<b>Chapters</b>{% for t, title in d.chapters %}
+        <div><a href="#" onclick="play('{{ p.video }}', {{ t }}); return false;">
+          {{ '%d:%02d' % (t // 60, t % 60) }}</a> {{ title }}</div>{% endfor %}{% endif %}</div>
     {% else %}<span class="excluded">no description saved for this video</span>{% endif %}
   </div>
 </div>
@@ -2376,6 +2388,8 @@ function play(video, t) {
   if (!ytReady) { pending = [video, t]; return; }
   pending = null;
   ytPlayer.mute();
+  // the video already in the player: jump there (reloading it can start it at 0:00 instead)
+  if (playingVideo() === video) { ytPlayer.seekTo(Math.max(0, Math.floor(t)), true); ytPlayer.playVideo(); return; }
   ytPlayer.loadVideoById({ videoId: video, startSeconds: Math.max(0, Math.floor(t)) });
 }
 function playRow(btn, which) {
@@ -2599,6 +2613,18 @@ async function showMap(box, isNew) {
   });
 }
 document.querySelectorAll('.locmap[data-new]').forEach(m => showMap(m.closest('.locbox'), true));
+// YouTube's chapters, fetched once per video and one video at a time so the page stays quick
+(async () => {
+  for (const box of document.querySelectorAll('.chapters[data-pending]')) {
+    try {
+      const list = await (await fetch('chapters/' + box.dataset.video)).json();
+      if (!list.length) continue;
+      box.innerHTML = '<b>Chapters</b>' + list.map(([t, title]) =>
+        `<div><a href="#" onclick="play('${box.dataset.video}', ${t}); return false;">${fmt(t)}</a> ` +
+        `${title.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c])}</div>`).join('');
+    } catch (e) { /* no connection: the next page load tries again */ }
+  }
+})();
 // after a reload (a join, a split) the browser refills inputs by position, so rows that moved would show another
 // row's times, which a later edit would then save: always show the saved ones
 window.addEventListener('pageshow', () => {
@@ -2874,8 +2900,27 @@ def review(plan_path, port=None):
                           video_id, int(h or 0) * 3600 + int(mins) * 60 + int(secs), m.group(0))]
             last = m.end()
         parts.append(escape(text[last:]))
-        chapters = [(int(start or 0), title) for title, start in meta.get('chapters') or []]
-        return {'html': Markup('').join(parts), 'chapters': chapters} if text or chapters else None
+        chapters = video_chapters(meta)  # YouTube's, else the description's timestamped lines
+        return {'html': Markup('').join(parts), 'chapters': chapters, 'fetched': 'yt_chapters' in meta}
+
+    @app.route('/chapters/<video_id>')
+    def chapters(video_id):
+        """The video's chapters, fetched from YouTube once (the Data API that listed the channel has none)."""
+        path = os.path.join(plan_dir, f'{video_id}_meta.json')
+        if not re.fullmatch(r'[\w-]{11}', video_id) or not os.path.exists(path):
+            return jsonify([])
+        with open(path) as f:
+            meta = json.load(f)
+        if 'yt_chapters' not in meta:
+            try:
+                meta['chapters'] = fetch_metadata(video_id)['chapters']
+            except Exception:  # a bot check or no connection: try again on the next page load
+                return jsonify(video_chapters(meta))
+            meta['yt_chapters'] = True
+            with open(path + '.tmp', 'w') as f:
+                json.dump(meta, f)
+            os.replace(path + '.tmp', path)
+        return jsonify(video_chapters(meta))
 
     @app.route('/bounds', methods=['POST'])
     def bounds():
