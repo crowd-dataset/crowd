@@ -1473,8 +1473,10 @@ def drive_ends(title, df, home=None):
     if len(named) == 1:
         state = next(iter(named))
         first, last = (x if state in x else f'{x}, {state}' for x in (first, last))
-    a = _osm_place(first, codes, (home[3], home[4]) if home else None, 5000 if named else None)  # Wisconsin too
-    b = _osm_place(last, codes, a[4:6] if a else (home[3], home[4]) if home else None, 300 if a else 5000)
+    # a named state says where, however far from home: no box around home (San Jose is 48 degrees from New York)
+    near = (home[3], home[4]) if home and not named else None
+    a = _osm_place(first, codes, near)
+    b = _osm_place(last, codes, a[4:6] if a else near, 300 if a else None)
     if not b and a and home:  # A was a far namesake (Longwood upstate for the one in the Bronx): B near home
         b = _osm_place(last, codes, (home[3], home[4]))
     # a drive between two towns is short: each end is also looked for near the other, and the closest pair is
@@ -1958,6 +1960,13 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
         })
         commit([vid])  # appears in an open review page straight away
 
+    # a run cut off (hotspot, pause) saved its videos but never got to their localities: this run finishes them
+    for v, p in plan.items():
+        if (v not in touched and 'entries' in p and not p.get('located')
+                and not any(e.get('locality') for e in p['entries'])
+                and not any(s.get('decision') or s.get('applied') for e in p['entries'] for s in e['segments'])):
+            touched.append(v)
+            committed[v] = json.dumps(p, sort_keys=True)  # saved below only if nobody changed it meanwhile
     new = [plan[v] for v in touched]
     # a channel films around one area: a title place whose mapping match is far from the channel's home is a
     # namesake when a place of that name exists near home ("Hollywood" from an LA channel is not Hollywood, FL),
@@ -2092,6 +2101,8 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
             plan[later].pop('entries')
             plan[later]['exclude'] = f're-upload of {earlier} (same footage)'
 
+    for p in new:
+        p['located'] = True  # localities looked for; a cut-off run leaves this unset
     commit(touched)
     kept = sum('entries' in p for p in new)
     print(f'{len(new)} videos added or re-analysed: {kept} proposed, {len(new) - kept} excluded -> {plan_path}')
