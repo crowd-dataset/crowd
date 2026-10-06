@@ -75,8 +75,11 @@ PARAMS = {
     # minute while cars still pass (Kensington, Philadelphia: 0.33-3.5; I-81 through Scranton: 0-0.08); day only
     # ponytail: calibrated on two videos; quiet suburbs with no one about may need it lower
     'street_objects': 0.15,
+    # rural and highway stretches are long (I-81: 37 min); a quiet town street goes by in 1-2 (Kutztown, Bellefonte)
+    'quiet_min_s': 180,
     'problem_min_s': 60,      # angle and shaking stretches shorter than this are kept (turns, bumps: ~30 s)
 }
+ONE_PLACE = {**PARAMS, 'quiet_min_s': float('inf')}  # no rural or highway check: a drive within one town
 VIDEO_SIDEWAYS_SHARE = 0.5   # sideways in more than this share of all moving frames: the video is excluded
 
 
@@ -451,8 +454,9 @@ def propose(sig, p=PARAMS):
     if 'shift_y' in sig:
         problems.append(('camera shaking', _rolling_median(_jitter(sig), 30 * FPS) > p['shake_jitter']))
     for label, bad in problems:
+        min_s = p['quiet_min_s'] if label in ('highway driving', 'rural driving') else p['problem_min_s']
         for a, b in _runs(bad):
-            if (b - a) / FPS >= p['problem_min_s']:
+            if (b - a) / FPS >= min_s:
                 keep[a:b] = False
                 notes.append(f'{label} {a / FPS:.0f}-{b / FPS:.0f}s')
 
@@ -823,7 +827,10 @@ def exclusion_reason(meta):
 def title_countries(title):
     """The countries of the mapping a title names, not inside a US state's name: "New Jersey" is not Jersey,
     "Atlanta, Georgia" not the country."""
-    title = re.sub('|'.join(rf'\b{re.escape(s)}\b' for s in add_video.US_STATE_CODES), ' ', title or '', flags=re.I)
+    states = '|'.join(re.escape(s) for s in add_video.US_STATE_CODES)
+    # a country's name before a US state is a town of that name: "Lebanon, Pennsylvania", "Peru, Indiana"
+    title = re.sub(rf"\b[A-Z][\w'’ ]*?\s*,\s*(?:{states}|[A-Z]{{2}})\b", ' ', title or '', flags=re.I)
+    title = re.sub(rf'\b(?:{states})\b', ' ', title, flags=re.I)
     return [c for c in COUNTRIES if re.search(rf'\b{re.escape(c)}\b', title)]
 
 
@@ -952,7 +959,10 @@ def _title_locality(title, df, exact_case=False, word_needs_state=False):
              if not any(x <= a and b <= y and (x, y) != (a, b) for other, (x, y) in found if other != loc)
              and not any(other != loc and re.fullmatch(r',\s*', title[y:a])
                          and add_video.US_STATE_CODES.get(title[a:b].lower()) == other[1]
-                         for other, (x, y) in found)}
+                         for other, (x, y) in found)
+             # a state's name after a comma is the state, also when the town before it is new: "Johnson City, New
+             # York" is not New York City
+             and not (title[a:b].lower() in add_video.US_STATE_CODES and re.search(r'\w\s*,\s*$', title[:a]))}
     # a title naming a US state is in it: Davenport, FL is a namesake of the one in "Davenport, Iowa", and
     # Philadelphia, MS of the one in "Philadelphia, Pennsylvania"
     states = {code for name, code in add_video.US_STATE_CODES.items()
@@ -999,9 +1009,13 @@ def place_phrases(text, limit=4):
         run = []
     # a name written with its state ("Cutler,Ca", "Dorado,Puerto Rico") is a place even when it is also a word,
     # and goes first
-    with_state = re.findall(r"\b([A-Z][a-z'’-]+(?: [A-Z][a-z'’-]+){0,3}),\s*[A-Z][A-Za-z]\b", text)
-    with_state += [x for x, y in re.findall(r"\b([A-Z][a-z'’-]+(?: [A-Z][a-z'’-]+){0,3})\s*,\s*"
-                                            r"([A-Z][\w'’]*(?: [A-Z][\w'’]*){0,2})", text) if y in _region_names()]
+    word = r"[A-ZÀ-Þ](?:[^\W\d_]|['’-])+"  # accents too: San Sebastián, Peñuelas
+    with_state = re.findall(rf"\b({word}(?: {word}){{0,3}}),\s*[A-Z][A-Za-z]\b", text)
+    # the state or country named that way comes along: it says where to look for the name ("New York" itself
+    # is no run of the words above, "New" being no place word)
+    with_state += [z for x, y in re.findall(rf"\b({word}(?: {word}){{0,3}})\s*,\s*"
+                                            r"([A-Z][\w'’]*(?: [A-Z][\w'’]*){0,2})", text) if y in _region_names()
+                   for z in (x, y)]
     unique = list(dict.fromkeys(p for p in phrases if len(p.split()) <= 5))
     return list(dict.fromkeys(with_state + sorted(unique, key=lambda p: -len(p.split()))))[:limit]
 
@@ -1181,6 +1195,18 @@ def place_locality(phrases, df, home=None):
     return next(place_localities(phrases, df, home), None)
 
 
+def _geonames_town(phrase, state):
+    """A hit for a US town of exactly that name in the state, from GeoNames, else None: OpenStreetMap names some
+    "Village of Johnson City" and finds hamlets called Johnson for "Johnson City, New York"."""
+    name = phrase.split(',')[0].strip()
+    data = add_video.get_locality_data(name, 'US', state) or {}
+    g = next((g for g in data.get('geonames') or [] if _name_key(g.get('name', '')) == _name_key(name)), None)
+    if not g:
+        return None
+    return (g['name'], g.get('adminName1'), 'US', f"US-{g.get('adminCode1')}", float(g['lat']), float(g['lng']), 0.5,
+            'town' if int(g.get('population') or 0) >= SMALL_POP else 'village')
+
+
 def place_localities(phrases, df, home=None):
     """([locality, state, country], phrase) for each phrase OpenStreetMap finds in df's countries (and near
     home when known): the mapping locality of the town it lies in ("Al Khan Beach" is in Sharjah), else of its
@@ -1203,13 +1229,18 @@ def place_localities(phrases, df, home=None):
     # anchor, and each other name is the place of that name nearest it, not the one nearest the channel's home
     if home and {_name_key(p) for p in phrases} & (country_names - {_name_key(home[2])}):
         home = None  # the text names another country ("…en Adjuntas, Puerto Rico"): it is there, however far
-    phrases = [p for p in phrases if _name_key(p) not in country_names]
+    # a country's name with a state is a town ("Lebanon, Pennsylvania"), else the country ("GEORGIA" in a travel title)
+    phrases = [p for p in phrases if named or _name_key(p) not in country_names]
     # a state only qualifies the town named with it ("Palmerton, Pennsylvania"): as a place of its own it would
     # be the anchor, or match some "Pennsylvania" road in another town; the town is looked up in it
-    phrases = [p for p in phrases if _name_key(p) not in states] or phrases
+    phrases = [p for p in phrases if _name_key(p) not in states]  # a state alone is no locality
     if len(named) == 1 and any(_name_key(p) not in states for p in phrases):
         phrases = [f'{p}, {next(iter(named))}' for p in phrases]
     hits = [(p, _osm_place(p, codes, (home[3], home[4]) if home else None)) for p in phrases]
+    if len(named) == 1 and 'US' in codes:
+        # GeoNames only where OpenStreetMap found the name somewhere else: Brooklyn is both, in New York City
+        hits = [(p, g if (g := _geonames_town(p, next(iter(named)))) and not (h and _km(h[4], h[5], g[4], g[5]) <= 5)
+                 else h) for p, h in hits]
     hits = [(p, h) for p, h in hits if usable(h)]
     if len(hits) > 1:
         anchor = max(hits, key=lambda ph: ph[1][6])
@@ -1387,6 +1418,9 @@ def drive_ends(title, df, home=None):
     countries.pop(None, None)
     codes = tuple(sorted(countries))
     first, last = m.group(1).strip(), m.group(2).strip()
+    # "from Chinatown in Manhattan to …": the start is in that borough or town, which is found where the
+    # neighbourhood is not
+    first = re.sub(r"^.+?\s+(?:in|en)\s+(?:the\s+)?(?=[A-Z])", '', first)
     # "from Newburgh to Brewster, New York": both ends in the states the title names (Maine has both too); with
     # one state named, each end is looked up in it ("Newburgh, New York")
     named = {sub.name for code in codes for sub in pycountry.subdivisions.get(country_code=code) or []
@@ -1413,29 +1447,32 @@ def drive_ends(title, df, home=None):
     # "…to West Farms in the Bronx", "…hasta el Barrio Portugues en Adjuntas": the drive ends in that place, and a
     # namesake of the end elsewhere (another Barrio Portugués) is not it
     if area := re.match(r"\s*(?:in|en)\s+(?:the\s+)?([A-Z][\w'’.-]*(?: [A-Z][\w'’.-]*){0,3})", title[m.end(2):]):
+        # near the drive: "in Nassau" is the county by Queens, not the village of Nassau near Albany
         c = _osm_place(area.group(1) + (f', {next(iter(named))}' if len(named) == 1 else ''), codes,
-                       a[4:6] if a else (home[3], home[4]) if home else None, 300)
+                       a[4:6] if a else b[4:6] if b else (home[3], home[4]) if home else None, 60)
         if c and (in_c := _hit_locality(c, df, countries)) and end != in_c:
             b, end = c, in_c
     return (a, a and _hit_locality(a, df, countries)), (b, end)
 
 
 def between_towns(title, df, home=None):
-    """Whether a title is a drive from one locality to another: "from A to B" with A and B in different
-    localities, or not found (Kensington to Germantown in Philadelphia is one city)."""
-    if DRIVE_AREA.search(title or ''):  # "from Longwood to West Farms in the Bronx": the whole drive is in it
-        return False
+    """Whether a title is a drive from one locality to another: "from A to B" with A and B found in different
+    localities. A drive whose end is not found is kept for the reviewer (left out, it would never come back)."""
     ends = drive_ends(title, df, home)
     if not ends:
         return False
-    found = [loc for _, loc in ends if loc]
-    if len(found) == 1:  # one end not found ("Midtown Manhattan"): within one city when the title names a city
-        # around both (New York), not when that city is just the end found ("from Pen Agryl to Bangor")
-        m = next(m for r in FROM_TO if (m := r.search(title)))
-        city = guess_locality(title, found[0][2], df)
-        return not (city == found[0] and _name_key(city[0]) not in _name_key(m.group(1) + ' ' + m.group(2)))
-    return not (found and found[0] == found[1])
-
+    (a, start), (b, end) = ends
+    area = DRIVE_AREA.search(title or '')
+    if area:  # "from Longwood to West Farms in the Bronx": all in that city, unless it is a county ("in Nassau")
+        countries = {common.get_iso2_country_code(common.correct_country(c)): c for c in df['country'].dropna().unique()}
+        codes = tuple(sorted(c for c in countries if c))
+        state = [n.title() for n in add_video.US_STATE_CODES if re.search(rf'\b{re.escape(n)}\b', title, re.I)]
+        q = area.group(1) + (f', {state[0]}' if len(state) == 1 else '')
+        near = (b or a)[4:6] if (b or a) else (home[3], home[4]) if home else None
+        hit = _osm_place(q, codes, near, 60) or _osm_place('the ' + q, codes, near, 60)
+        if hit and hit[0] and not re.search(r'\bCounty$', hit[0]) and _hit_locality(hit, df, countries):
+            return False
+    return bool(start and end and start != end)
 
 def route_localities(title, df, home=None, max_km=None):
     """([(share of the drive where it starts, where it ends, locality)], the route for a map) along the car route
@@ -1957,10 +1994,22 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
                 _, row = add_video.get_existing_locality_row(df, *loc)
                 if row is None or _km(home[3], home[4], float(row['lat']), float(row['lon'])) < 100:
                     continue
+                # a title naming the state means that one: "Milton, Pennsylvania" is not the Milton near New York
+                if loc[1] and any(code == loc[1] for name, code in add_video.US_STATE_CODES.items()
+                                  if re.search(rf'\b{re.escape(name)}\b|,\s*{code}\b', p['title'] or '', re.I)):
+                    continue
                 if _place_near(loc[0], iso2, home[3], home[4]):
                     p['note'] = f"{p['note']}; {loc[0]} here is the place of that name near {home[0]}, " \
                                 f"not {', '.join(filter(None, loc))}".lstrip('; ')
                     e['locality'] = list(home[:3])
+    # a video the title puts in one place ("Driving by Milton, Pennsylvania") is all in it: a quiet street there is no
+    # rural or highway driving to leave out (Kutztown, Bellefonte, Milton); those checks are for drives between towns
+    for p in new:
+        es, sig_path = p.get('entries', []), os.path.join(out_dir, f"{p['video']}_signals.npz")
+        if (len(es) == 1 and es[0].get('locality') and not p.get('route') and os.path.exists(sig_path)
+                and not any(s.get('decision') or s.get('applied') for s in es[0]['segments'])):
+            es[0]['segments'] = propose(dict(np.load(sig_path)), ONE_PLACE)[0]
+            p['note'] = re.sub(r'; (?:rural|highway) driving \d+-\d+s', '', p.get('note') or '')
     for p in new:  # chapters whose places turned out the same ("Hollywood", "Los Angeles") are one group
         if len(p.get('entries', [])) > 1:
             merged = {}
@@ -2386,6 +2435,7 @@ function goToNextOpen(row) {
   play(next.dataset.video, +next.dataset.start);
 }
 const COUNTRIES = {{ countries | tojson }};
+const STATE_COUNTRIES = {{ state_countries | tojson }};
 function fillCountries(select) {
   // the full list is added on first use, so 100 videos do not each carry 248 options
   if (select.dataset.filled) return;
@@ -2431,6 +2481,8 @@ async function saveLocality(el) {
   const country = box.querySelector('.loc-country').value;
   const status = box.querySelector('.locstatus');
   if (!locality || !country) { status.textContent = '⚠ not set: give a locality and a country'; return; }
+  // the mapping writes a state for these countries: wait for it instead of refusing the town typed first
+  if (!state && STATE_COUNTRIES.includes(country)) { status.textContent = '⚠ add the state (e.g. PA) to save'; return; }
   const res = await fetch('locality', { method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ video: box.dataset.video, entry: +box.dataset.entry,
                            locality: [locality, state, country] }) });
@@ -2692,6 +2744,8 @@ def review(plan_path, port=None):
                          for p in plan if p['video'] in open_videos}
         return render_template_string(REVIEW_HTML, plan=plan, open_videos=open_videos, approved_hidden=approved_hidden,
                                       video_country=video_country,
+                                      state_countries=sorted(c for c, has in mapping.groupby('country')['state']
+                                                             .agg(lambda x: x.notna().mean() > 0.5).items() if has),
                                       new_localities=new_localities, waiting=len(waiting),
                                       durations={v: video_duration(v) for v in open_videos},
                                       max_merge_gap=MAX_MERGE_GAP_S, countries=COUNTRIES, vehicle_types=VEHICLE_TYPES,
@@ -2944,6 +2998,11 @@ def review(plan_path, port=None):
         state = state or None
         if not locality or country not in COUNTRIES:
             return jsonify(error='give a locality and pick a country'), 400
+        rows = add_video.load_csv(add_video.FILE_PATH)
+        rows = rows[rows['country'] == country]
+        if not state and len(rows) and rows['state'].notna().mean() > 0.5:
+            # without it Apply would make a second Northampton next to Northampton, MA
+            return jsonify(error=f'give the state too: the mapping writes one for {country} (e.g. PA)'), 400
         same = [o for o in p['entries'] if o is not e and o.get('locality') == [locality, state, country]]
         if same:  # this video already has a group for that locality: join it
             same[0]['segments'] = sorted(same[0]['segments'] + e['segments'], key=lambda s: s['start'])
