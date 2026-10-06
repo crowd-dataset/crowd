@@ -1238,7 +1238,9 @@ def place_localities(phrases, df, home=None):
     named = {states[_name_key(p)] for p in phrases if _name_key(p) in states}
 
     def usable(hit):
-        return (hit and hit[2] in countries and not (home and _km(home[3], home[4], hit[4], hit[5]) > ABROAD_KM)
+        # the reach of home is for places abroad: Elkhart, Indiana is far from New York but in the same country
+        return (hit and hit[2] in countries
+                and not (home and countries[hit[2]] != home[2] and _km(home[3], home[4], hit[4], hit[5]) > ABROAD_KM)
                 and (len(named) != 1 or hit[1] in named))
     # "from Longwood to West Farms in the Bronx, New York": the best-known place a text names (the Bronx) is the
     # anchor, and each other name is the place of that name nearest it, not the one nearest the channel's home
@@ -1251,7 +1253,8 @@ def place_localities(phrases, df, home=None):
     phrases = [p for p in phrases if _name_key(p) not in states]  # a state alone is no locality
     if len(named) == 1 and any(_name_key(p) not in states for p in phrases):
         phrases = [f'{p}, {next(iter(named))}' for p in phrases]
-    hits = [(p, _osm_place(p, codes, (home[3], home[4]) if home else None)) for p in phrases]
+    # looked for nearest home, and with a state named anywhere in the country, not only within reach of home
+    hits = [(p, _osm_place(p, codes, (home[3], home[4]) if home else None, 5000 if named else None)) for p in phrases]
     if len(named) == 1 and 'US' in codes:
         # GeoNames only where OpenStreetMap found the name somewhere else: Brooklyn is both, in New York City
         hits = [(p, g if (g := _geonames_town(p, next(iter(named)))) and not (h and _km(h[4], h[5], g[4], g[5]) <= 5)
@@ -1444,8 +1447,8 @@ def drive_ends(title, df, home=None):
     if len(named) == 1:
         state = next(iter(named))
         first, last = (x if state in x else f'{x}, {state}' for x in (first, last))
-    a = _osm_place(first, codes, (home[3], home[4]) if home else None)
-    b = _osm_place(last, codes, a[4:6] if a else (home[3], home[4]) if home else None, 300)
+    a = _osm_place(first, codes, (home[3], home[4]) if home else None, 5000 if named else None)  # Wisconsin too
+    b = _osm_place(last, codes, a[4:6] if a else (home[3], home[4]) if home else None, 300 if a else 5000)
     if not b and a and home:  # A was a far namesake (Longwood upstate for the one in the Bronx): B near home
         b = _osm_place(last, codes, (home[3], home[4]))
     # a drive between two towns is short: each end is also looked for near the other, and the closest pair is
@@ -1470,6 +1473,24 @@ def drive_ends(title, df, home=None):
     return (a, a and _hit_locality(a, df, countries)), (b, end)
 
 
+def area_city(title, df, home=None, near=None):
+    """[locality, state, country] of the city C of a drive "from A to B in C" when C is a city ("in the Bronx" is
+    New York), else None (no such title, or C a county: "in Nassau")."""
+    area = DRIVE_AREA.search(title or '')
+    if not area:
+        return None
+    countries = {common.get_iso2_country_code(common.correct_country(c)): c for c in df['country'].dropna().unique()}
+    countries.pop(None, None)
+    codes = tuple(sorted(countries))
+    state = [n.title() for n in add_video.US_STATE_CODES if re.search(rf'\b{re.escape(n)}\b', title, re.I)]
+    q = area.group(1) + (f', {state[0]}' if len(state) == 1 else '')
+    near = near or ((home[3], home[4]) if home else None)
+    hit = _osm_place(q, codes, near, 60) or _osm_place('the ' + q, codes, near, 60)
+    if hit and hit[0] and not re.search(r'\bCounty$', hit[0]):
+        return _hit_locality(hit, df, countries)
+    return None
+
+
 def between_towns(title, df, home=None):
     """Whether a title is a drive from one locality to another: "from A to B" with A and B found in different
     localities. A drive whose end is not found is kept for the reviewer (left out, it would never come back)."""
@@ -1477,17 +1498,9 @@ def between_towns(title, df, home=None):
     if not ends:
         return False
     (a, start), (b, end) = ends
-    area = DRIVE_AREA.search(title or '')
-    if area:  # "from Longwood to West Farms in the Bronx": all in that city, unless it is a county ("in Nassau")
-        countries = {common.get_iso2_country_code(common.correct_country(c)): c
-                     for c in df['country'].dropna().unique()}
-        codes = tuple(sorted(c for c in countries if c))
-        state = [n.title() for n in add_video.US_STATE_CODES if re.search(rf'\b{re.escape(n)}\b', title, re.I)]
-        q = area.group(1) + (f', {state[0]}' if len(state) == 1 else '')
-        near = (b or a)[4:6] if (b or a) else (home[3], home[4]) if home else None
-        hit = _osm_place(q, codes, near, 60) or _osm_place('the ' + q, codes, near, 60)
-        if hit and hit[0] and not re.search(r'\bCounty$', hit[0]) and _hit_locality(hit, df, countries):
-            return False
+    # "from Longwood to West Farms in the Bronx": all in that city, unless it is a county ("in Nassau")
+    if area_city(title, df, home, (b or a)[4:6] if (b or a) else None):
+        return False
     return bool(start and end and start != end)
 
 
@@ -1501,6 +1514,8 @@ def route_localities(title, df, home=None, max_km=None):
     if not ends:
         return [], None
     (a, start), (b, end) = ends
+    if city := area_city(title, df, home, (b or a)[4:6] if (b or a) else None):
+        return [(0.0, 1.0, city)], None  # "… in the Bronx": all in New York, no route (upstate has a Longwood too)
     countries = {common.get_iso2_country_code(common.correct_country(c)): c for c in df['country'].dropna().unique()}
     countries.pop(None, None)
     if not (start and end) or max_km and _km(a[4], a[5], b[4], b[5]) > max_km:
