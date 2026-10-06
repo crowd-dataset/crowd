@@ -155,8 +155,8 @@ The dataset is available on [kaggle](https://www.kaggle.com/datasets/anonymousau
 | 134 | 🇹🇳 Tunisia | 5 | 15 | 5.1 |
 | 135 | 🇹🇹 Trinidad and Tobago | 3 | 5 | 4.6 |
 | 136 | 🇪🇷 Eritrea | 11 | 27 | 4.6 |
-| 137 | 🇳🇮 Nicaragua | 8 | 17 | 4.6 |
-| 138 | 🇦🇩 Andorra | 8 | 45 | 4.6 |
+| 137 | 🇦🇩 Andorra | 8 | 45 | 4.6 |
+| 138 | 🇳🇮 Nicaragua | 8 | 17 | 4.6 |
 | 139 | 🇬🇺 Guam | 10 | 41 | 4.5 |
 | 140 | 🇲🇴 Macau | 2 | 15 | 4.5 |
 | 141 | 🇰🇵 North Korea | 1 | 19 | 4.4 |
