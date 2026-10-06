@@ -64,5 +64,8 @@ jobs:
             echo "Nothing changed."
           else
             git commit -m "Update README statistics and dataset figures"
+            # a commit pushed while this ran (one that leaves mapping.csv alone starts no run of its own) would
+            # reject the push: put the figures on top of it
+            git pull --rebase origin main
             git push
           fi
