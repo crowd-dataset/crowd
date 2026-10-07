@@ -1261,6 +1261,7 @@ def _name_key(name):
     name = unicodedata.normalize('NFKD', str(name)).encode('ascii', 'ignore').decode().lower()
     name = ' '.join(re.sub(r'\W+', ' ', name).split())
     name = re.sub(r'^(?:city|town|village|borough|township) of ', '', name)  # OpenStreetMap's "City of Newburgh"
+    name = re.sub(r'^the ', '', name)  # "The Bronx" is the Bronx
     # "St. Clair" (OpenStreetMap) is "Saint Clair" (GeoNames); Mt. and Ft. alike
     name = re.sub(r'\b(?:st|saint) ', 'saint ', re.sub(r'\bmt ', 'mount ', re.sub(r'\bft ', 'fort ', name)))
     return re.sub(r' (?:emirate|city|province|prefecture|governorate|municipality|county)$', '', name)
@@ -1318,8 +1319,9 @@ def place_localities(phrases, df, home=None):
     # looked for nearest home, and with a state named anywhere in the country, not only within reach of home
     hits = [(p, _osm_place(p, codes, (home[3], home[4]) if home else None, 5000 if named else None)) for p in phrases]
     if len(named) == 1 and 'US' in codes:
-        # GeoNames only where OpenStreetMap found the name somewhere else: Brooklyn is both, in New York City
-        hits = [(p, g if (g := _geonames_town(p, next(iter(named)))) and not (h and _km(h[4], h[5], g[4], g[5]) <= 5)
+        # GeoNames only where OpenStreetMap found the name somewhere else (Johnson City: a hamlet 100 km away);
+        # a borough's two centres can lie 5-10 km apart (the Bronx, Brooklyn: both in New York City)
+        hits = [(p, g if (g := _geonames_town(p, next(iter(named)))) and not (h and _km(h[4], h[5], g[4], g[5]) <= 15)
                  else h) for p, h in hits]
     hits = [(p, h) for p, h in hits if usable(h)]
     if len(hits) > 1:
@@ -1838,6 +1840,24 @@ def plan_lock(plan_path):
             fcntl.flock(f, fcntl.LOCK_UN)
 
 
+def locate_now(p, df, home, sig_path=None):
+    """The locality of a just-proposed video from its title: split along its route for a drive between towns, else the
+    one town its title names; a video then in one place gets no rural or highway cuts (ONE_PLACE)."""
+    e = p['entries'][0]
+    if not e.get('locality') and not split_route(p, df, home):
+        title = p.get('title') or ''
+        if not any(r.search(title) for r in FROM_TO):
+            hits = {tuple(loc): phrase for loc, phrase in place_localities(place_phrases(title), df, home)}
+            if len(hits) == 1:
+                (loc, phrase), = hits.items()
+                e['locality'], e['guessed'] = list(loc), True
+                p['note'] = f"{p['note']}; locality {loc[0]} from where '{phrase}' is".lstrip('; ')
+    es = p.get('entries') or []
+    if sig_path and len(es) == 1 and es[0].get('locality') and not p.get('route'):
+        es[0]['segments'] = propose(dict(np.load(sig_path)), ONE_PLACE)[0]
+        p['note'] = re.sub(r'; (?:rural|highway) driving \d+-\d+s', '', p['note'])
+
+
 def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True, single_city=False):
     """Propose segments for every new video of a channel and write plan.json for the review page.
 
@@ -1911,6 +1931,7 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
     stopped = None
     touched = []  # videos added or re-analysed in this run
     single_home = None  # the channel's home, looked up once for single_city
+    early = None  # (home, localities in reach) for the locality of each video as soon as it is proposed
     failures_in_a_row = 0
     skips_in_a_row = 0
     try:
@@ -1926,7 +1947,13 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
         if cached.get('date') == today and cached.get('url') == url:
             ids = cached['ids']
         else:
-            ids = list_channel_api(url) if use_api else list_channel(url)
+            try:
+                ids = list_channel_api(url) if use_api else list_channel(url)
+            except RuntimeError as e:
+                if not use_api:
+                    raise
+                print(f'YouTube Data API refused ({str(e)[:80]}): listing with yt-dlp instead', flush=True)
+                ids, use_api = list_channel(url), False  # the quota is used up: details come from yt-dlp too
             with open(listed + '.tmp', 'w') as f:
                 json.dump({'date': today, 'url': url, 'ids': ids}, f)
             os.replace(listed + '.tmp', listed)
@@ -1991,7 +2018,11 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
             break
         except Exception as e:
             failures_in_a_row += 1
-            if vid not in reanalyse:  # a whole-video proposal stays as it was
+            # no connection (a dropped network, an unresolved name): not the video's fault, so it is not recorded and
+            # a later run tries it again
+            offline = re.search(r'Failed to resolve|Unable to download API page|timed out|Connection (?:reset|refused|'
+                                r'aborted)|Network is unreachable|nodename nor servname', str(e))
+            if vid not in reanalyse and not offline:  # a whole-video proposal stays as it was
                 plan[vid] = {'video': vid, 'title': '', 'exclude': f'could not analyse: {e}'}
                 touched.append(vid)
                 commit([vid])
@@ -2053,6 +2084,19 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
             'vehicle_type': 0 if vt is None else vt, 'upload_date': meta['upload_date'], 'channel_id': ch,
             'note': '; '.join(filter(None, ['; '.join(notes), vehicle_note])),
         })
+        try:  # its locality at once, before it shows in an open review page (the full step follows after the batch)
+            if early is None:
+                counts = Counter(q.get('channel_id') for q in plan.values() if q.get('channel_id'))
+                early_home = channel_home(counts.most_common(1)[0][0], df, plan) if counts else None
+                reach = (df['country'] == country) | df['country'].isin(filmed_countries(counts, df))
+                if early_home:
+                    reach |= np.array([_km(early_home[3], early_home[4], la, lo) <= ABROAD_KM
+                                       for la, lo in zip(df['lat'], df['lon'])])
+                early = early_home, reach
+            locate_now(plan[vid], df[title_reach(df, early[1], meta['title'])], early[0],
+                       sig_path if analysed else None)
+        except Exception as e:  # a lookup gone wrong must not stop the batch; the full step tries again
+            print(f'  locality not found yet ({type(e).__name__})', flush=True)
         commit([vid])  # appears in an open review page straight away
 
     # a run cut off (hotspot, pause) saved its videos but never got to their localities: this run finishes them
@@ -2445,7 +2489,7 @@ tr.seg.active td:first-child { box-shadow: inset 4px 0 #007bff; }
   <button class="small" data-video="{{ p.video }}" onclick="addLocality(this)"
           title="an empty locality group: pick its locality, then add segments to it with + new segment">
     + add a locality</button>
-  <button class="small" onclick="approveRest(this)">Approve the rest of this video</button>
+  <button class="small approve-rest" onclick="approveRest(this)">Approve the rest of this video</button>
   <button class="small" onclick="rejectVideo(this)">Reject whole video</button>
   </div>
   <div class="desc">{% set d = descriptions.get(p.video) %}
@@ -2668,6 +2712,7 @@ async function saveLocality(el) {
   if (!res.ok) { alert((await res.json()).error); return; }
   const out = await res.json();
   if (out.merged) { reloadKeepingPlace(); return; }  // joined another group of this video with that locality
+  updateApproveRest(box.closest('.video'));
   status.textContent = out.new ? 'new locality: created on Apply, with the lookups the add-video form makes'
                                : '✓ in the mapping';
   showMap(box, out.new);
@@ -2795,6 +2840,16 @@ async function mergeSplit(btn, video, entry, seg) {
   if (!res.ok) { btn.disabled = false; alert((await res.json()).error); return; }
   reloadKeepingPlace();
 }
+// approving needs a locality: without one the approved segments could not be added to the mapping
+function updateApproveRest(video) {
+  const btn = video && video.querySelector('.approve-rest');
+  if (!btn) return;
+  const missing = [...video.querySelectorAll('.locbox')].some(b =>
+    !b.querySelector('.loc-name').value.trim() || !b.querySelector('.loc-country').value);
+  btn.disabled = missing;
+  btn.title = missing ? 'set the locality (and its country) first' : '';
+}
+document.querySelectorAll('.video').forEach(updateApproveRest);
 async function approveRest(btn) {
   const video = btn.closest('.video');
   for (const row of video.querySelectorAll('tr.seg:not(.approve):not(.reject):not(.applied)')) {
