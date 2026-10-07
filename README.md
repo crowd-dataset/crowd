@@ -1007,6 +1007,57 @@ The form accepts the following shortcuts and click events:
 4. **Q**: selecting "Day" value for "Time of day" field.
 5. **W**: selecting "Night" value for "Time of day" field.
 
+## Proposing segments from YouTube channels
+Instead of finding segments by hand in `add_video.py`, whole YouTube channels can be processed automatically: `propose_segments.py` downloads each video of a channel at low resolution, proposes segments, localities, time of day and vehicle type, and a curator reviews the proposals on a web page and applies the approved ones to the `mapping` file. Nothing is written to the mapping before a curator applies it.
+
+**1. Channels to process.** `run_channels.py` takes channels from a Google Sheet (the sheet URL is set in `run_channels.py`): column A is the channel URL, column B its status and column C its country. It works from the bottom of the sheet up, through channels with an empty status, and proposes segments for each in chunks of videos (`--chunk`, default 15), each chunk in a new process, so changes to the code apply from the next chunk:
+
+```bash
+python run_channels.py
+```
+
+It runs until stopped (`--max-minutes N` stops after N minutes) and continues where it stopped when restarted. It cannot write to the sheet: it logs lines starting with `SHEET:` (set row N to Processing, Processed or Rejected) for the curator to copy into the sheet. Without a country in column C, it uses the channel's country on YouTube. A single channel can also be processed directly:
+
+```bash
+python propose_segments.py --channel https://www.youtube.com/@CHANNEL --country "Netherlands" --limit 20
+```
+
+The country must be written as in the `add_video.py` form. `--single-city` treats all of a channel's videos as one city (no drives from A to B), and `--no-download` proposes whole videos from YouTube metadata only. Downloading needs `yt-dlp`, `ffmpeg` and `node`; when YouTube asks to sign in, put a `cookies.txt` exported from your browser in the root of the project. The `youtube_api_key` in the `secret` file is needed to list channels (see [The `secret` file](#the-secret-file)).
+
+**2. What is proposed automatically.** Videos are left out from their metadata when they are shorter than 5 minutes, live, portrait, or walking tours, time-lapses, compilations, crash videos, highway drives or road trips. For the others, a 160x90 copy is analysed at 2 frames per second:
+- *segments:* stationary stretches at the start and end are trimmed and stops longer than 3 minutes are cut out; hard cuts (edits), blank frames and title cards end a segment; footage with the camera facing the driver, not facing forward or shaking, and rural or highway stretches (from YOLO detections) are left out; segments shorter than 30 seconds are dropped. Whole videos are left out for picture-in-picture or skipped footage, and a channel where ten videos in a row have skips is rejected;
+- *time of day:* night when the sky or the street is dark for at least a minute, with a hint at dusk;
+- *vehicle:* the most common vehicle type of the channel's videos already in the mapping (a car, with a note, for a new channel);
+- *locality:* from the title, then the description, then the chapters (a video with chapters for several places is split), and otherwise a named place looked up on OpenStreetMap; drives "from A to B" are split into the towns along the route; a town within 30 km of a city with over a million people counts as that city unless it has 250,000 people itself;
+- *re-uploads* of a video already in the mapping are recognised and left out.
+
+The proposals of a channel are kept in `_output/proposals/<channel>/plan.json`, with frames and signals of each video.
+
+**3. Reviewing.** Run `python review_hub.py` and open [http://127.0.0.1:8770](http://127.0.0.1:8770): it lists the channels with videos to review, and clicking one opens its review page (also available directly with `python propose_segments.py --review _output/proposals/<channel>/plan.json`). For each video, the page shows the player, the title and description, a contact sheet of frames, a route map, and the proposed segments with the reasons for each cut. Per segment, the curator can change the start and end, switch day and night, approve, reject, split it at a time, move it to another locality, or add a new segment; per video, change the vehicle, locality, state and country (with a map for a new locality), approve the rest of the video or reject it. Shortcuts: **A** sets the start and **S** the end of a segment to the current time of the player, **D** takes the whole video, **Q** and **W** set day and night, and **F** puts the current time in the split box.
+
+**4. Applying.** **Apply** adds the approved segments to the `mapping` file through the same code as the `add_video.py` form: the video, its segments, time of day, vehicle type, upload date and channel, and for a new locality a new row with its coordinates, population and other values. Applied segments are marked in `plan.json` and cannot be changed on the page any more. Overlapping segments are refused, and writes to the mapping file are locked, so several review pages and a running channel batch can be used at once. Do not stop a review page while it is applying.
+
+**5. Merging towns into cities.** `python review_merges.py` serves a page at [http://127.0.0.1:8772](http://127.0.0.1:8772) with towns of under 250,000 people within 30 km of a city of over a million in the same state, side by side on maps: **Y** merges a town into the city, **N** keeps it separate. `python review_merges.py --apply` merges the accepted towns: their videos move to the city and their name is added to the city's other names.
+
+## Who added the videos
+Videos are added by several people, each in their own copy of the mapping file: `mapping.csv` is Pavlo's, `mapping-olena.csv` Olena's, `mapping-shadab.csv` Shadab's and, in general, `mapping-NAME.csv` NAME's. Each video is credited to the file it first appeared in (`video_contributors.csv`, built from the git history with `python -m utils.analytics.contributors` and extended by `analysis.py` with new videos). A video that appeared in `mapping.csv` and another file at the same time is credited to `mapping.csv`, as the other files are refreshed with copies of it. The table counts the videos in the dataset now.
+
+<!-- contributors:start -->
+<!-- Generated by analysis.py, do not edit by hand. -->
+| # | Contributor | Videos | Footage (h) | Localities | Countries | First added | Last added |
+|---|---|---|---|---|---|---|---|
+| 1 | Pavlo | 70,797 | 32,238.1 | 7,501 | 234 | 2023-12-17 | 2026-10-07 |
+| 2 | Olena | 4,489 | 1,673.5 | 933 | 90 | 2025-05-03 | 2026-10-06 |
+| 3 | Shadab | 456 | 125.1 | 91 | 13 | 2025-09-17 | 2026-07-22 |
+| 4 | Margarida | 54 | 25.0 | 34 | 4 | 2025-05-02 | 2025-06-05 |
+| 5 | Aloysia | 38 | 18.3 | 17 | 2 | 2025-04-29 | 2025-07-08 |
+| 6 | EPFL | 29 | 18.2 | 1 | 1 | 2025-07-14 | 2025-07-14 |
+| 7 | Faye | 40 | 13.9 | 28 | 10 | 2026-07-01 | 2026-07-12 |
+
+[![Footage in the dataset over time by who added it](figures/area_contributors_footage.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/area_contributors_footage.html)
+Footage in the dataset over time, by who added it (cumulative hours of the videos in the dataset now, by the date they were added).
+<!-- contributors:end -->
+
 ## Contact
 If you have any questions or suggestions, feel free to reach out to md_shadab_alam@outlook.com or pavlo.bazilinskyy@gmail.com.
 

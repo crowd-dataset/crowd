@@ -9,7 +9,9 @@ name: Dataset figures
 on:
   push:
     branches: [main]
-    paths: [mapping.csv]
+    # mapping-NAME.csv too: videos are credited to whoever added them (video_contributors.csv) before they are
+    # merged into mapping.csv
+    paths: [mapping.csv, mapping-*.csv]
   workflow_dispatch:
 
 permissions:
@@ -59,7 +61,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email \
             "41898283+github-actions[bot]@users.noreply.github.com"
-          git add README.md figures
+          git add README.md figures video_contributors.csv
           if git diff --staged --quiet; then
             echo "Nothing changed."
           else

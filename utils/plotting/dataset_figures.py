@@ -717,6 +717,43 @@ def _dumbbell(df: pl.DataFrame, label: str, values: dict, x_title: str, name: st
                  legend=dict(orientation="h", x=0.5, xanchor="center", y=1.0, yanchor="bottom")), name)
 
 
+def contributor_figures(seg: pl.DataFrame, credits: dict) -> pl.DataFrame:
+    """Who added the videos in the dataset (credits: video -> (contributor, added_utc), see
+    utils/analytics/contributors.py): cumulative footage over time per contributor, and the README table."""
+    who = pl.DataFrame([(v, c, t) for v, (c, t) in credits.items()], schema=["video", "contributor", "added"],
+                       orient="row").with_columns(pl.col("added").str.to_datetime("%Y-%m-%dT%H:%M:%SZ"))
+    videos = (seg.group_by("video").agg((pl.sum("seconds") / 3600).alias("hours"), pl.first("id"), pl.first("iso3"))
+                 .join(who, on="video", how="left")
+                 .with_columns(pl.col("contributor").fill_null("Unknown")))
+    totals = videos.group_by("contributor").agg(pl.sum("hours")).sort("hours", descending=True)
+    order = totals["contributor"].to_list()
+    colors = dict(zip(order, ["#0072B2", "#E69F00", "#009E73", "#CC79A7", "#56B4E9", "#D55E00", "#F0E442",
+                              "#999999", "#000000", "#882255"] * 2))
+    daily = (videos.drop_nulls("added").with_columns(pl.col("added").dt.date().alias("day"))
+                   .group_by("contributor", "day").agg(pl.sum("hours")).sort("day"))
+    days = pl.DataFrame({"day": pl.date_range(daily["day"].min(), daily["day"].max(), eager=True)})
+    fig = go.Figure()
+    for c in order[::-1]:  # the largest at the bottom of the stack
+        d = days.join(daily.filter(pl.col("contributor") == c), on="day", how="left").with_columns(
+            pl.col("hours").fill_null(0).cum_sum().alias("cumulative"))
+        total = totals.filter(pl.col("contributor") == c)["hours"][0]
+        fig.add_trace(go.Scatter(x=d["day"], y=d["cumulative"], name=f"{c} ({total:,.0f} h)", mode="lines",
+                                 stackgroup="all",
+                                 line=dict(width=0.5, color=colors[c]),
+                                 hovertemplate=f"{c}: %{{y:,.0f}} hours by %{{x|%d %b %Y}}<extra></extra>"))
+    fig.update_xaxes(title_text="Date added to the dataset", dtick="M12", tickformat="%Y", showgrid=True,
+                     gridcolor="#e5e5e5")
+    fig.update_yaxes(title_text="Footage (hours, cumulative)", showgrid=True, gridcolor="#e5e5e5")
+    _save(_style(fig, legend=dict(x=0.01, y=0.99, bgcolor="rgba(255,255,255,0.8)", traceorder="reversed")),
+          "area_contributors_footage")
+    return (videos.group_by("contributor")
+                  .agg(pl.len().alias("Videos"), pl.sum("hours").round(1).alias("Footage (h)"),
+                       pl.col("id").n_unique().alias("Localities"), pl.col("iso3").n_unique().alias("Countries"),
+                       pl.col("added").min().dt.strftime("%Y-%m-%d").alias("First added"),
+                       pl.col("added").max().dt.strftime("%Y-%m-%d").alias("Last added"))
+                  .sort("Footage (h)", descending=True).rename({"contributor": "Contributor"}))
+
+
 # Figures based on YOLO detections, with their README captions, in the order they appear in the README.
 DETECTION_FIGURES = {
     "map_detection_coverage": "Share of each country's footage that has been analysed with YOLO (countries with less "
