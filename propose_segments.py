@@ -1302,13 +1302,18 @@ def place_localities(phrases, df, home=None):
 
     def usable(hit):
         # the reach of home is for places abroad: Elkhart, Indiana is far from New York but in the same country
-        return (hit and hit[2] in countries
+        return (hit and hit[2] in countries and (not only or hit[2] in only)
                 and not (home and countries[hit[2]] != home[2] and _km(home[3], home[4], hit[4], hit[5]) > ABROAD_KM)
                 and (len(named) != 1 or hit[1] in named))
     # "from Longwood to West Farms in the Bronx, New York": the best-known place a text names (the Bronx) is the
     # anchor, and each other name is the place of that name nearest it, not the one nearest the channel's home
     if home and {_name_key(p) for p in phrases} & (country_names - {_name_key(home[2])}):
         home = None  # the text names another country ("…en Adjuntas, Puerto Rico"): it is there, however far
+    # and only there: "San Lorenzo, Puerto Rico" is not San Lorenzo, California
+    only = {code for code, name in countries.items() if _name_key(name) in {_name_key(p) for p in phrases}}
+    if only and not named:
+        country = countries[next(iter(only))]
+        phrases = [p if _name_key(p) in country_names else f'{p}, {country}' for p in phrases]
     # a country's name with a state is a town ("Lebanon, Pennsylvania"), else the country ("GEORGIA" in a travel title)
     phrases = [p for p in phrases if named or _name_key(p) not in country_names]
     # a state only qualifies the town named with it ("Palmerton, Pennsylvania"): as a place of its own it would
@@ -1840,13 +1845,35 @@ def plan_lock(plan_path):
             fcntl.flock(f, fcntl.LOCK_UN)
 
 
+def one_end_city(title, df, home=None):
+    """The locality of a drive "from A to B" where one end was found and the other was not, when a shorter part of
+    the other ("Queens Village" or "Queens" of "Queens Village Queens") lies in that same locality; else None."""
+    ends = drive_ends(title, df, home)
+    m = next((m for r in FROM_TO if (m := r.search(title or ''))), None)
+    if not ends or not m:
+        return None
+    found = [loc for _, loc in ends if loc]
+    if len(found) != 1:
+        return None
+    words = (m.group(1) if not ends[0][1] else m.group(2)).split()
+    state = [n.title() for n in add_video.US_STATE_CODES if re.search(rf'\b{re.escape(n)}\b', title, re.I)]
+    for part in [' '.join(words[:i]) for i in range(len(words) - 1, 0, -1)] + [' '.join(words[i:])
+                                                                               for i in range(1, len(words))]:
+        if part[:1].isupper() and (loc := place_locality([part] + state[:1], df, home)) and list(loc[0]) == found[0]:
+            return found[0]
+    return None
+
+
 def locate_now(p, df, home, sig_path=None):
     """The locality of a just-proposed video from its title: split along its route for a drive between towns, else the
     one town its title names; a video then in one place gets no rural or highway cuts (ONE_PLACE)."""
     e = p['entries'][0]
     if not e.get('locality') and not split_route(p, df, home):
         title = p.get('title') or ''
-        if not any(r.search(title) for r in FROM_TO):
+        if (same := one_end_city(title, df, home)):  # "… to Queens Village Queens": part of the end names it
+            e['locality'], e['guessed'] = same, True
+            p['note'] = f"{p['note']}; locality {same[0]}: both ends of the drive are in it".lstrip('; ')
+        elif not any(r.search(title) for r in FROM_TO):
             hits = {tuple(loc): phrase for loc, phrase in place_localities(place_phrases(title), df, home)}
             if len(hits) == 1:
                 (loc, phrase), = hits.items()
@@ -2977,6 +3004,9 @@ def review(plan_path, port=None):
         segs = {p['video']: [s for e in p['entries'] for s in e['segments']] for p in plan if 'entries' in p}
         waiting = [v for v, ss in segs.items() if any(not s.get('decision') and not s.get('applied') for s in ss)]
         open_videos = set(waiting[:REVIEW_PAGE])
+        # approved but held back for want of a locality: shown until it is set, or Apply can never add them
+        open_videos |= {p['video'] for p in plan for e in p.get('entries', []) if not e.get('locality')
+                        and any(s.get('decision') == 'approve' and not s.get('applied') for s in e['segments'])}
         approved_hidden = sum(s.get('decision') == 'approve' and not s.get('applied')
                               for v, ss in segs.items() if v not in open_videos for s in ss)
         descriptions = {v: describe(v) for v in open_videos}
