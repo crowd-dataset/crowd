@@ -2,9 +2,10 @@
 Who added each video to the dataset, from the mapping file it first appeared in.
 
 Each contributor adds videos to their own mapping file: mapping.csv is Pavlo's, and mapping-NAME.csv is NAME's (for
-example mapping-olena.csv is Olena's; a trailing number is ignored, so mapping-epfl2.csv is EPFL's). A video is
-credited to the file it appeared in first; when it appeared in mapping.csv and another file in the same commit, it is
-credited to mapping.csv, since contributors' files are refreshed with copies of mapping.csv.
+example mapping-olena.csv is Olena's; a trailing number is ignored, so mapping-epfl2.csv is EPFL's). Videos added to
+mapping.csv in commits from the account of another contributor (ACCOUNTS, e.g., Shadab) are credited to them. A video
+is credited to the file it appeared in first; when it appeared in mapping.csv and another file in the same commit, it
+is credited to mapping.csv, since contributors' files are refreshed with copies of mapping.csv.
 
 The credits are kept in video_contributors.csv (video, contributor, added_utc):
 - `python -m utils.analytics.contributors` builds it from the git history (needs the full history; run once);
@@ -27,6 +28,14 @@ MAIN = "Pavlo"  # contributor of mapping.csv
 VIDEO_LIST = re.compile(r"\[((?:[A-Za-z0-9_-]{11},?)+)\]")
 VIDEO_URL = re.compile(r"(?:watch\?v=|youtu\.be/)([A-Za-z0-9_-]{11})")  # the first versions stored YouTube links
 ACRONYMS = {"epfl"}
+# contributors who also commit to mapping.csv from their own account: a word in the commit author's name or email
+ACCOUNTS = {"shadab": "Shadab", "fayefang": "Faye", "ying.fayeda": "Faye"}
+
+
+def account_owner(author: str) -> str:
+    """Contributor of videos added to mapping.csv in a commit by `author` ("name <email>"): Pavlo unless the author
+    is in ACCOUNTS."""
+    return next((who for key, who in ACCOUNTS.items() if key in author.lower()), MAIN)
 
 
 def contributor(path: str) -> str | None:
@@ -71,24 +80,28 @@ def backfill_from_git() -> dict:
     """Credit every video in the history of the mapping files to the file it first appeared in. Reads the history as
     a stream: commits that replace a whole mapping file have diffs of several MB."""
     proc = subprocess.Popen(
-        ["git", "log", "--reverse", "--date-order", "-p", "--unified=0", "--no-color", "--format=@@COMMIT %ct",
+        ["git", "log", "--reverse", "--date-order", "-p", "--unified=0", "--no-color",
+         "--format=@@COMMIT %ct %an <%ae>",
          "--", "mapping.csv", "mapping-*.csv"],
         cwd=common.root_dir, stdout=subprocess.PIPE, text=True, errors="replace")
     credits: dict = {}
     added: dict = {}  # contributor -> new video IDs in the current commit
-    stamp, who = None, None
+    stamp, who, owner = None, None, MAIN
 
     def flush():
-        # mapping.csv first: a video added to it and to a contributor's copy in the same commit is Pavlo's
+        # mapping.csv first: a video added to it and to a contributor's copy in the same commit is a copy; videos added
+        # to mapping.csv go to the owner of the commit's account (Pavlo unless in ACCOUNTS)
         for w in sorted(added, key=lambda c: c != MAIN):
             for video in added[w] - credits.keys():
-                credits[video] = (w, stamp)
+                credits[video] = (owner if w == MAIN else w, stamp)
         added.clear()
 
     for line in proc.stdout:
         if line.startswith("@@COMMIT "):
             flush()
-            stamp = datetime.fromtimestamp(int(line.split()[1]), timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            _, timestamp, author = line.rstrip("\n").split(" ", 2)
+            stamp = datetime.fromtimestamp(int(timestamp), timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            owner = account_owner(author)
         elif line.startswith("diff --git "):
             who = contributor(line.rstrip("\n").split(" b/", 1)[-1])
         elif who and line.startswith("+") and not line.startswith("+++"):
@@ -98,6 +111,18 @@ def backfill_from_git() -> dict:
     flush()
     proc.wait()
     return credits
+
+
+def _git(*args) -> str:
+    return subprocess.run(["git", *args], cwd=common.root_dir, capture_output=True, text=True).stdout.strip()
+
+
+def _author_of_mapping() -> str:
+    """Who added the latest changes to mapping.csv: the local git user while it has uncommitted changes, else the
+    author of the last commit that changed it (also in a shallow clone, as in the GitHub Action)."""
+    if _git("status", "--porcelain", "--", "mapping.csv"):
+        return f"{_git('config', 'user.name')} <{_git('config', 'user.email')}>"
+    return _git("log", "-1", "--format=%an <%ae>", "--", "mapping.csv")
 
 
 def update() -> dict:
@@ -111,10 +136,11 @@ def update() -> dict:
             with open(path, encoding="utf-8", errors="replace") as f:
                 current[who] = video_ids(f.read())
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    owner = account_owner(_author_of_mapping())
     new = 0
-    for who in sorted(current, key=lambda w: w != MAIN):  # in mapping.csv and a copy: Pavlo's
+    for who in sorted(current, key=lambda w: w != MAIN):  # in mapping.csv and a copy: credited for mapping.csv
         for video in current[who] - credits.keys():
-            credits[video] = (who, now)
+            credits[video] = (owner if who == MAIN else who, now)
             new += 1
     if new or not os.path.exists(FILE):
         save(credits)
@@ -128,6 +154,9 @@ if __name__ == "__main__":
         sys.exit("The repository has no full history (shallow clone): run `git fetch --unshallow` first.")
     assert contributor("mapping.csv") == "Pavlo" and contributor("x/mapping-olena.csv") == "Olena"
     assert contributor("mapping-epfl2.csv") == "EPFL" and contributor("mapping_remaining.csv") is None
+    assert account_owner("MD SHADAB ALAM <88769183+Shaadalam9@users.noreply.github.com>") == "Shadab"
+    assert account_owner("Pavlo Bazilinskyy <pavlo.bazilinskyy@gmail.com>") == "Pavlo"
+    assert account_owner("FayeFang-creator <ying.fayeda@gmail.com>") == "Faye"
     assert contributor("mapping-faye.csv") == "Faye" and video_ids("x,https://www.youtube.com/watch?v=G1I_PlmL_YA,0") \
         == {"G1I_PlmL_YA"}
     assert video_ids("1,A,[abcdEFGH123,ZYXW-_98765],[Gmfidadvlbo],[UC20vyRWEaC2GIS8DkmeRQaA]") == {
