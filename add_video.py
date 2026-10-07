@@ -1505,7 +1505,7 @@ def get_country_traffic_mortality(iso3_code):
         return ''
 
 
-def get_locality_data(locality, country_code, state=None):
+def get_locality_data(locality, country_code, state=None, fuzzy=None):
     params = {
         "q": locality,
         "country": country_code,
@@ -1513,6 +1513,8 @@ def get_locality_data(locality, country_code, state=None):
         "featureClass": "P",   # populated places only — filters out admin regions, parks, etc.
         "username": common.get_secrets('geonames_username')
     }
+    if fuzzy:
+        params["fuzzy"] = fuzzy  # 0-1: how close a misspelt name must be
 
     state_clean = str(state).strip() if state and str(state).strip().lower() not in ('', 'none', 'nan') else None
 

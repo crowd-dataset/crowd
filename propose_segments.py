@@ -9,6 +9,7 @@ Nothing here writes to the mapping file.
 import argparse
 import contextlib
 import fcntl
+import difflib
 import json
 import os
 import random
@@ -1280,6 +1281,12 @@ def _geonames_town(phrase, state):
     data = add_video.get_locality_data(name, 'US', state) or {}
     g = next((g for g in data.get('geonames') or [] if _name_key(g.get('name', '')) == _name_key(name)), None)
     if not g:
+        # a misspelt title ("Pougkeepsie"): the closest name, if it is spelt nearly the same
+        data = add_video.get_locality_data(name, 'US', state, fuzzy=0.8) or {}
+        g = next((g for g in data.get('geonames') or []
+                  if difflib.SequenceMatcher(None, _name_key(g.get('name', '')), _name_key(name)).ratio() >= 0.85),
+                 None)
+    if not g:
         return None
     return (g['name'], g.get('adminName1'), 'US', f"US-{g.get('adminCode1')}", float(g['lat']), float(g['lng']), 0.5,
             'town' if int(g.get('population') or 0) >= SMALL_POP else 'village')
@@ -1864,6 +1871,9 @@ def one_end_city(title, df, home=None):
     return None
 
 
+IN_PLACE = re.compile(r"\b(?:in|en) (?:the )?([A-Z][\w'’.-]*(?: [A-Z][\w'’.-]*){0,3})\s*(?:,|$)")
+
+
 def locate_now(p, df, home, sig_path=None):
     """The locality of a just-proposed video from its title: split along its route for a drive between towns, else the
     one town its title names; a video then in one place gets no rural or highway cuts (ONE_PLACE)."""
@@ -1875,6 +1885,10 @@ def locate_now(p, df, home, sig_path=None):
             p['note'] = f"{p['note']}; locality {same[0]}: both ends of the drive are in it".lstrip('; ')
         elif not any(r.search(title) for r in FROM_TO):
             hits = {tuple(loc): phrase for loc, phrase in place_localities(place_phrases(title), df, home)}
+            # "by Hillcrest in Queens, New York": the place is part of the city named after "in" (the Hillcrest
+            # found on its own is a namesake upstate)
+            if len(hits) > 1 and (inside := IN_PLACE.search(title)):
+                hits = {loc: ph for loc, ph in hits.items() if ph.split(',')[0] == inside.group(1)} or hits
             if len(hits) == 1:
                 (loc, phrase), = hits.items()
                 e['locality'], e['guessed'] = list(loc), True
@@ -1897,10 +1911,14 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
     os.makedirs(out_dir, exist_ok=True)
     plan_path = os.path.join(out_dir, 'plan.json')
     plan = {}  # video -> plan entry, in plan order
+    failed = set()  # videos an earlier run could not analyse: tried again, but after the others
     if os.path.exists(plan_path):
         with open(plan_path) as f:
-            plan = {p['video']: p for p in json.load(f)
-                    if not str(p.get('exclude', '')).startswith('could not analyse')}
+            for p in json.load(f):
+                if str(p.get('exclude', '')).startswith('could not analyse'):
+                    failed.add(p['video'])
+                else:
+                    plan[p['video']] = p
 
     def undecided(p):
         return not any(s.get('decision') or s.get('applied') for e in p.get('entries', []) for s in e['segments'])
@@ -1996,7 +2014,8 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
     except RuntimeError as e:
         print(f'Could not list the channel: {e}')
         return None
-    for n, vid in enumerate(ids, 1):
+    # a video YouTube keeps refusing (503 on its stream while others download) would otherwise stop every run
+    for n, vid in sorted(enumerate(ids, 1), key=lambda x: x[1] in failed):
         if vid not in todo:
             continue
         if limit and sum('entries' in plan[v] for v in touched) >= limit:
