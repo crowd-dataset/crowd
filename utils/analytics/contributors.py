@@ -2,7 +2,8 @@
 Who added each video to the dataset, from the mapping file it first appeared in.
 
 Each contributor adds videos to their own mapping file: mapping.csv is Pavlo's, and mapping-NAME.csv is NAME's (for
-example mapping-olena.csv is Olena's; a trailing number is ignored, so mapping-epfl2.csv is EPFL's). Videos added to
+example mapping-olena.csv is Olena's; a trailing number is ignored), except files in FILE_OWNERS (mapping-epfl*.csv:
+Shadab's). Videos added to
 mapping.csv in commits from the account of another contributor (ACCOUNTS, e.g., Shadab) are credited to them. A video
 is credited to the file it appeared in first; when it appeared in mapping.csv and another file in the same commit, it
 is credited to mapping.csv, since contributors' files are refreshed with copies of mapping.csv.
@@ -27,7 +28,7 @@ MAIN = "Pavlo"  # contributor of mapping.csv
 # a bracketed, comma-separated list of 11-character YouTube video IDs, e.g. [abcdEFGH123,ZYXW-_98765]
 VIDEO_LIST = re.compile(r"\[((?:[A-Za-z0-9_-]{11},?)+)\]")
 VIDEO_URL = re.compile(r"(?:watch\?v=|youtu\.be/)([A-Za-z0-9_-]{11})")  # the first versions stored YouTube links
-ACRONYMS = {"epfl"}
+FILE_OWNERS = {"epfl": "Shadab"}  # mapping-NAME.csv files kept by another contributor
 # contributors who also commit to mapping.csv from their own account: a word in the commit author's name or email
 ACCOUNTS = {"shadab": "Shadab", "fayefang": "Faye", "ying.fayeda": "Faye"}
 
@@ -39,7 +40,7 @@ def account_owner(author: str) -> str:
 
 
 def contributor(path: str) -> str | None:
-    """mapping.csv -> Pavlo, mapping-olena.csv -> Olena, mapping-epfl2.csv -> EPFL; None for other files."""
+    """mapping.csv -> Pavlo, mapping-olena.csv -> Olena, mapping-epfl2.csv -> Shadab; None for other files."""
     name = os.path.basename(path)
     if name == "mapping.csv":
         return MAIN
@@ -47,7 +48,7 @@ def contributor(path: str) -> str | None:
     if not m:
         return None
     who = m.group(1)
-    return who.upper() if who.lower() in ACRONYMS else who.capitalize()  # EPFL, Olena
+    return FILE_OWNERS.get(who.lower(), who.capitalize())
 
 
 def video_ids(text: str) -> set:
@@ -153,7 +154,7 @@ if __name__ == "__main__":
     if shallow == "true":
         sys.exit("The repository has no full history (shallow clone): run `git fetch --unshallow` first.")
     assert contributor("mapping.csv") == "Pavlo" and contributor("x/mapping-olena.csv") == "Olena"
-    assert contributor("mapping-epfl2.csv") == "EPFL" and contributor("mapping_remaining.csv") is None
+    assert contributor("mapping-epfl2.csv") == "Shadab" and contributor("mapping_remaining.csv") is None
     assert account_owner("MD SHADAB ALAM <88769183+Shaadalam9@users.noreply.github.com>") == "Shadab"
     assert account_owner("Pavlo Bazilinskyy <pavlo.bazilinskyy@gmail.com>") == "Pavlo"
     assert account_owner("FayeFang-creator <ying.fayeda@gmail.com>") == "Faye"
