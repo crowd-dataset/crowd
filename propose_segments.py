@@ -55,11 +55,20 @@ PARAMS = {
     'cut_confirm_ratio': 15,  # a cut stands only with a full-frame-rate jump this strong within a second
     'cut_pan_ncc': None,      # a cut that matches this well once shifted sideways is a corner (not yet calibrated)
     'blank_std': 6.0,         # frame this flat is blank or a title card
-    'night_sky': 95.0,        # sky brightness below this is night (calibrated on labelled segments)
+    # night: the sky darker than this, or the street darker than night_ground. On 19 night and 20 day segments
+    # labelled in CharruaNYC (2026-10-07) this finds 12 of the night ones (the sky alone at 95: 10) and calls no day
+    # segment night (darkest day sky 112, street 75); 7 labelled night look like daylight in sky and street
+    'night_sky': 100.0,
+    'night_ground': 65.0,
     'night_window_s': 60,     # night/day must hold this long to count as a transition
     # dark this long or shorter with daylight before and after is a bridge, tunnel or elevated railway (10 min under
     # the 7 train on Roosevelt Ave): night falls once and does not lift again within a drive
     'night_inside_day_s': 3 * 3600,
+    'night_edge_s': 300,
+    # possibly dusk (a hint in the note, never a label): saturation above this or lit orange lamps above this % of
+    # the picture; on 8 bright segments labelled night and 20 day ones (CharruaNYC) it flags 5 and no day one
+    'dusk_saturation': 125,
+    'dusk_lamps': 0.015,      # dark this long or shorter at the start or end, daylight after or before: a structure
     'min_segment_s': 30,      # drop proposed segments shorter than this
     'driver_window_s': 60,    # a big face in more than driver_share of the frames over this window means the
     'driver_share': 0.1,      # camera faces the driver (found in only 10-40% of its frames: sunglasses, small
@@ -265,6 +274,7 @@ def signals(path):
     slides one way, a shaking one jumps up and down)."""
     band = slice(int(H * 0.25), int(H * 0.70))   # road and buildings: no sky, no bonnet
     motion, ncc, pan, std, sky, face, shift_x, shift_y, spread = [], [], [], [], [], [], [], [], []
+    ground = []  # brightness of the road and buildings: dark streets under a still-light sky are night too
     third = W // 3
     prev = prev_thumb = None
     for f in frames(path):
@@ -291,9 +301,11 @@ def signals(path):
             ncc.append(float((thumb * prev_thumb).mean()))
         std.append(float(f.std()))
         sky.append(float(f[: H // 3].mean()))
+        ground.append(float(f[band].mean()))
         prev, prev_thumb = f, thumb
     return {k: np.array(v) for k, v in
-            (('motion', motion), ('ncc', ncc), ('pan', pan), ('std', std), ('sky', sky), ('face', face),
+            (('motion', motion), ('ncc', ncc), ('pan', pan), ('std', std), ('sky', sky), ('ground', ground),
+             ('face', face),
              ('shift_x', shift_x), ('shift_y', shift_y), ('spread', spread))}
 
 
@@ -463,7 +475,10 @@ def propose(sig, p=PARAMS):
                 notes.append(f'{label} {a / FPS:.0f}-{b / FPS:.0f}s')
 
     window = p['night_window_s'] * FPS
-    night = _rolling_median((sig['sky'] < p['night_sky']).astype(float), window) > 0.5
+    dark = sig['sky'] < p['night_sky']
+    if 'ground' in sig:  # signals saved before the street brightness have the sky only
+        dark = dark | (sig['ground'][:len(dark)] < p['night_ground'])
+    night = _rolling_median(dark.astype(float), window) > 0.5
     # brief dark or bright spells (underpasses, a flickering sky near the threshold) must not split a segment
     night = _drop_short_runs(night, window)
     # a switch at an edit cut is footage stitched together (a night drive after a day drive): it stays night; under a
@@ -471,7 +486,11 @@ def propose(sig, p=PARAMS):
     edits = np.r_[np.flatnonzero(cut), np.array(skip_times(sig)) * FPS]
     for a, b in _runs(night):
         stitched = any(abs(e - x) <= window for e in edits for x in (a, b))
-        if a > 0 and b < n and (b - a) / FPS <= p['night_inside_day_s'] and not stitched:
+        inside = a > 0 and b < n and (b - a) / FPS <= p['night_inside_day_s']
+        # a short dark start or end with daylight on the other side is the El or a bridge too (Marble Hill under the
+        # 1 train, Roosevelt Ave under the 7); night falls over many minutes
+        edge = (a == 0) != (b == n) and (b - a) / FPS <= p['night_edge_s']
+        if (inside or edge) and not stitched:
             night[a:b] = False
 
     segments = []
@@ -481,7 +500,36 @@ def propose(sig, p=PARAMS):
             if (e - s) / FPS >= p['min_segment_s']:
                 segments.append({'start': int(np.ceil(s / FPS)), 'end': int(e // FPS),
                                  'night': int(round(night[s:e].mean()))})
+    # dusk with street lights on looks like day to the brightness checks (the camera brightens it): only a hint
+    if 'saturation' in sig:
+        for seg in segments:
+            first = seg['start'] // DUSK_EVERY_S
+            span = slice(first, max(seg['end'] // DUSK_EVERY_S, first + 1))
+            sat, lamps = sig['saturation'][span], sig['lamps'][span]
+            if not seg['night'] and len(sat) and (np.median(sat) > p['dusk_saturation']
+                                                  or np.median(lamps) > p['dusk_lamps']):
+                notes.append(f"possibly dusk {seg['start']}-{seg['end']}s: street lights may be on, check night")
     return segments, notes
+
+
+DUSK_EVERY_S = 10  # one colour frame this often for the dusk hint
+
+
+def dusk_colours(path):
+    """(saturation, % of lit orange lamp pixels) of a colour frame every DUSK_EVERY_S seconds."""
+    cap = cv2.VideoCapture(path)
+    step = max(1, round(cap.get(cv2.CAP_PROP_FPS) * DUSK_EVERY_S))
+    sat, lamps = [], []
+    for f in range(0, int(cap.get(cv2.CAP_PROP_FRAME_COUNT)), step):
+        cap.set(cv2.CAP_PROP_POS_FRAMES, f)
+        ok, img = cap.read()
+        if not ok:
+            break
+        img = cv2.resize(img, (W, H))
+        sat.append(float(cv2.cvtColor(img, cv2.COLOR_BGR2HSV)[..., 1].mean()))
+        b, g, r = (img[..., k].astype(int) for k in range(3))
+        lamps.append(float(((r > 200) & (g > 120) & (b < 110)).mean() * 100))
+    return np.array(sat), np.array(lamps)
 
 
 def channel_vehicle_type(channel_id, df=None):
@@ -693,6 +741,7 @@ def analyse_video(video_id, out_dir, meta=None):
     try:
         sig = signals(path)
         sig['skips'] = skip_events(path)
+        sig['saturation'], sig['lamps'] = dusk_colours(path)
         urban = urban_objects(path)
         if urban is not None:
             sig['urban'], sig['street'] = urban[:, 0], urban[:, 1]
@@ -999,7 +1048,9 @@ PLACE_JOINERS = {'al', 'el', 'de', 'del', 'la', 'le', 'of', 'the', 'bin', 'bu', 
 
 # "...from A to B in the Bronx, New York (2026)": the place after the last "in" holds the whole drive, when no
 # other name follows it but its state or country
-DRIVE_AREA = re.compile(r"\bfrom\b.+\bto\b.+\bin (?:the )?([A-Z][\w'’.-]*(?: [A-Z][\w'’.-]*){0,3})"
+# and in Spanish: "Desde Hato Rey hasta Rio Piedras en San Juan, Puerto Rico" (area_city checks the start is in it)
+DRIVE_AREA = re.compile(r"(?:\bfrom\b.+\bto\b|\b(?:[Dd]esde|de)\b.+\b(?:hasta|a|al)\b|^.+\b(?:hasta|al?)\b).+"
+                        r"\b(?:in|en) (?:the )?([A-Z][\w'’.-]*(?: [A-Z][\w'’.-]*){0,3})"
                         r"(?:,\s*[A-Z][\w .'-]*)?\s*(?:\bin \d{4}\b.*|[|(].*)?$")
 
 
@@ -1026,6 +1077,10 @@ def place_phrases(text, limit=4):
     with_state = re.findall(rf"\b({word}(?: {word}){{0,3}}),\s*[A-Z][A-Za-z]\b", text)
     # the state or country named that way comes along: it says where to look for the name ("New York" itself
     # is no run of the words above, "New" being no place word)
+    # "Coram in Suffolk, New York": the town before " in " is named that way too, ahead of the county after it
+    with_state += [x for x, y in re.findall(rf"\b({word}(?: {word}){{0,3}}) in ({word}(?: {word}){{0,3}})\s*,\s*"
+                                            rf"[A-Z][\w'’]*(?: [A-Z][\w'’]*){{0,2}}", text)
+                   if not set(x.lower().split()) & NOT_PLACE]  # not "Driving" in "Driving in Brooklyn, New York"
     with_state += [z for x, y in re.findall(rf"\b({word}(?: {word}){{0,3}})\s*,\s*"
                                             r"([A-Z][\w'’]*(?: [A-Z][\w'’]*){0,2})", text) if y in _region_names()
                    for z in (x, y)]
@@ -1122,6 +1177,9 @@ def _osm_type(raw):
     return raw.get('addresstype') or raw.get('type')
 
 
+LOOKUP_FAILURES = [0]  # lookups that failed in this process: a video left without a locality then is tried again
+
+
 def _remembered(fn):
     """Like lru_cache, but a lookup that failed (no connection, a refusing server) is not remembered as an
     answer: it returns None this time and is asked again next time."""
@@ -1133,6 +1191,7 @@ def _remembered(fn):
             try:
                 cache[args] = fn(*args)
             except (GeopyError, requests.RequestException, ValueError, KeyError, IndexError):
+                LOOKUP_FAILURES[0] += 1
                 return None
         return cache[args]
     return wrapper
@@ -1176,6 +1235,8 @@ def _osm_place(phrase, country_codes, near=None, reach_km=None):
     if (not town and r.raw.get('class') == 'boundary'
             and _osm_type(r.raw) not in ('county', 'state', 'country', 'region')):
         town = _osm_name(r.raw)  # a municipality's own boundary has no town in its address (Little Silver, NJ)
+    if town and re.search(r'\bCounty$', town):  # a county is no locality: "Suffolk" in "Coram in Suffolk"
+        town = None
     if not town and _country_code(a) in US_TERRITORIES:  # Puerto Rico's municipios (Guayama) are its counties
         town = re.sub(r' Municipio$', '', a.get('county') or '') or None
     if town:  # OpenStreetMap calls some towns "City of Mount Vernon", "Town of Hempstead"
@@ -1373,7 +1434,8 @@ def _hit_locality(hit, df, countries, at=None, named=False):
     # alternative names too: a place merged into a locality (West Pittston into Pittston) counts for it
     known.update({_name_key(a): r for aka, r in zip(rows['locality_aka'], rows.itertuples()) if isinstance(aka, str)
                   for a in aka.strip('[]').split(',') if a.strip() and _name_key(a) not in known})
-    for name in ((town,) if town else (region,)):
+    # a region is the locality only where localities have no state (an emirate): New York State is not New York City
+    for name in ((town,) if town else () if with_state else (region,)):
         if name and _name_key(name) in known:
             r = known[_name_key(name)]
             return [r.locality, r.state if isinstance(r.state, str) else None, r.country]
@@ -1526,7 +1588,13 @@ def area_city(title, df, home=None, near=None):
     near = near or ((home[3], home[4]) if home else None)
     hit = _osm_place(q, codes, near, 60) or _osm_place('the ' + q, codes, near, 60)
     if hit and hit[0] and not re.search(r'\bCounty$', hit[0]):
-        return _hit_locality(hit, df, countries)
+        city = _hit_locality(hit, df, countries)
+        # the start is a town of its own next to C ("from Alexandria to the Pentagon in Arlington"): not all in C;
+        # a far start is a namesake of a place in C (Longwood upstate for the one in the Bronx)
+        a, start = (drive_ends(title, df, home) or ((None, None),))[0]
+        if a and start and start != city and _km(a[4], a[5], hit[4], hit[5]) <= METRO_KM:
+            return None
+        return city
     return None
 
 
@@ -1846,9 +1914,25 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
     failures_in_a_row = 0
     skips_in_a_row = 0
     try:
-        ids = list_channel_api(url) if use_api else list_channel(url)
+        # the channel's video list is kept for a day: listing 8,000 videos costs ~170 of the API's 10,000 daily
+        # units, and a batch runs every few minutes
+        listed = os.path.join(out_dir, 'channel_list.json')
+        today = time.strftime('%Y-%m-%d')
+        try:
+            with open(listed) as f:
+                cached = json.load(f)
+        except (OSError, ValueError):
+            cached = {}
+        if cached.get('date') == today and cached.get('url') == url:
+            ids = cached['ids']
+        else:
+            ids = list_channel_api(url) if use_api else list_channel(url)
+            with open(listed + '.tmp', 'w') as f:
+                json.dump({'date': today, 'url': url, 'ids': ids}, f)
+            os.replace(listed + '.tmp', listed)
         todo = [v for v in ids if v not in in_mapping and (v not in plan or v in reanalyse)]
-        api_meta = fetch_metadata_api(todo) if use_api else {}
+        # details only for the videos this batch can reach (one unit per 50); others come with a later batch
+        api_meta = fetch_metadata_api(todo[:limit * 10] if limit else todo) if use_api else {}
         saved = [os.path.join(out_dir, f) for f in os.listdir(out_dir) if f.endswith('_meta.json')]
         boilerplate = channel_boilerplate([m.get('description') for m in api_meta.values()]
                                           + [json.load(open(f)).get('description') for f in saved])
@@ -1979,6 +2063,7 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
             touched.append(v)
             committed[v] = json.dumps(p, sort_keys=True)  # saved below only if nobody changed it meanwhile
     new = [plan[v] for v in touched]
+    failures_before = LOOKUP_FAILURES[0]
     # a channel films around one area: a title place whose mapping match is far from the channel's home is a
     # namesake when a place of that name exists near home ("Hollywood" from an LA channel is not Hollywood, FL),
     # and a genuine trip otherwise ("Seattle" has no namesake near LA)
@@ -2048,7 +2133,8 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
             area = DRIVE_AREA.search(p['title'])
             if len(in_title) > 1 and area:
                 # "Driving from Longwood to West Farms in the Bronx, New York": the drive is in the Bronx
-                inside = place_locality([area.group(1)], df[reach], home)
+                inside = place_locality([area.group(1)] + [p_ for p_ in place_phrases(p['title'])
+                                                           if p_.lower() in add_video.US_STATE_CODES], df[reach], home)
                 if inside:
                     in_title = {tuple(inside[0]): inside[1]}
             if len(in_title) > 1:
@@ -2073,9 +2159,11 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
                 _, row = add_video.get_existing_locality_row(df, *loc)
                 if row is None or _km(home[3], home[4], float(row['lat']), float(row['lon'])) < 100:
                     continue
-                # a title naming the state means that one: "Milton, Pennsylvania" is not the Milton near New York
-                if loc[1] and any(code == loc[1] for name, code in add_video.US_STATE_CODES.items()
-                                  if re.search(rf'\b{re.escape(name)}\b|,\s*{code}\b', p['title'] or '', re.I)):
+                # a title naming a state means that state: "Milton, Pennsylvania" is not the Milton near New York,
+                # and "… in Arlington, Virginia" is no place near New York at all
+                named = {code for name, code in add_video.US_STATE_CODES.items()
+                         if re.search(rf'\b{re.escape(name)}\b|,\s*{code}\b', p['title'] or '', re.I)}
+                if named and (loc[1] in named or home[1] not in named):
                     continue
                 if _place_near(loc[0], iso2, home[3], home[4]):
                     p['note'] = f"{p['note']}; {loc[0]} here is the place of that name near {home[0]}, " \
@@ -2113,7 +2201,10 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
             plan[later]['exclude'] = f're-upload of {earlier} (same footage)'
 
     for p in new:
-        p['located'] = True  # localities looked for; a cut-off run leaves this unset
+        # localities looked for; a cut-off run leaves this unset, and so does a lookup that failed (no connection, a
+        # refusing server) for a video that got none: the next run tries it again
+        if failures_before == LOOKUP_FAILURES[0] or any(e.get('locality') for e in p.get('entries', [])):
+            p['located'] = True
     commit(touched)
     kept = sum('entries' in p for p in new)
     print(f'{len(new)} videos added or re-analysed: {kept} proposed, {len(new) - kept} excluded -> {plan_path}')
