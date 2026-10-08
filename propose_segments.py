@@ -1011,7 +1011,8 @@ def _title_locality(title, df, exact_case=False, word_needs_state=False):
             # short aliases such as "LA" only count in capitals, so "la" in a Spanish title does not match
             flags = 0 if exact_case or len(name) <= 3 else re.I
             # "New Ringgold" is not Ringgold: a "New" before a name makes it another place
-            pattern = rf'(?<!\w)(?<![Nn]ew\s){re.escape(name)}(?!\w)'
+            # and "Jerome Ave" is a street, not Jerome
+            pattern = rf'(?<!\w)(?<![Nn]ew\s){re.escape(name)}(?!\w)(?!\.?\s+(?:{STREETS}|St)\b)'
             if word_needs_state and name.lower() in COMMON_WORDS:
                 if not isinstance(row['state'], str):
                     continue
@@ -1031,9 +1032,10 @@ def _title_locality(title, df, exact_case=False, word_needs_state=False):
              and not any(other != loc and re.fullmatch(r',\s*', title[y:a])
                          and add_video.US_STATE_CODES.get(title[a:b].lower()) == other[1]
                          for other, (x, y) in found)
-             # a state's name after a comma is the state, also when the town before it is new: "Johnson City, New
-             # York" is not New York City
-             and not (title[a:b].lower() in add_video.US_STATE_CODES and re.search(r'\w\s*,\s*$', title[:a]))}
+             # a state's name or code after a comma is the state, also when the town before it is new: "Johnson City,
+             # New York" and "Scarsdale, Westchester, NY" are not New York City
+             and not ((title[a:b].lower() in add_video.US_STATE_CODES
+                       or title[a:b] in add_video.US_STATE_CODES.values()) and re.search(r'\w\s*,\s*$', title[:a]))}
     # a title naming a US state is in it: Davenport, FL is a namesake of the one in "Davenport, Iowa", and
     # Philadelphia, MS of the one in "Philadelphia, Pennsylvania"
     states = {code for name, code in add_video.US_STATE_CODES.items()
@@ -1064,6 +1066,13 @@ DRIVE_AREA = re.compile(r"(?:\bfrom\b.+\bto\b|\b(?:[Dd]esde|de)\b.+\b(?:hasta|ha
                         r"(?:,\s*[A-Z][\w .'-]*)?\s*(?:\bin \d{4}\b.*|[|(].*)?$")
 
 
+STREET_WORDS = {'ave', 'avenue', 'blvd', 'boulevard', 'rd', 'road', 'street', 'hwy', 'highway', 'pkwy', 'parkway',
+                'expy', 'expressway'}
+
+
+STREETS = '|'.join(w.capitalize() for w in STREET_WORDS)
+
+
 def place_phrases(text, limit=4):
     """Runs of capitalised words in a title or description that may name a place, longest first: "Al Khan
     Beach" from "Beautiful Sun Rise at Al Khan Beach, unedited sounds". Hashtags and links are skipped."""
@@ -1071,6 +1080,11 @@ def place_phrases(text, limit=4):
     phrases, run = [], []
     for token in re.findall(r"[^\W\d_][\w'’-]*|[^\w\s]+|\d\w*", text) + ['.']:
         word = token.lower()
+        # a street is no place: "3 Ave Bronx" names the Bronx, "Jerome Ave" no town Jerome ("St" only after a
+        # name: "St. Clair" is Saint Clair)
+        if word in STREET_WORDS or word == 'st' and run:
+            run = []
+            continue
         # a two-letter word that joins nothing ends a name: "Orosi,Ca Cutler,Ca" names Orosi and Cutler
         if (token[:1].isupper() and word not in NOT_PLACE and (len(token) > 2 or word in PLACE_JOINERS)
                 or run and word in PLACE_JOINERS):
@@ -1579,6 +1593,8 @@ def drive_ends(title, df, home=None):
     b = place(last, a[4:6] if a else near, 300 if a else None)
     if not b and a and home:  # A was a far namesake (Longwood upstate for the one in the Bronx): B near home
         b = place(last, (home[3], home[4]))
+    if not b and a:  # far from home too ("Sunrise- Fort Lauderdale": a Sunrise near New York): B anywhere, A near it
+        b = place(last)
     # a drive between two towns is short: each end is also looked for near the other, and the closest pair is
     # meant ("from Plains to Hughestown": Plains Township next to Hughestown, not a Plains in New Jersey)
     pairs = [(x, y) for x in (a, b and place(first, b[4:6], 60))
@@ -2368,7 +2384,17 @@ def apply_segments(video_id, locality, state, country, segments, vehicle_type, u
     for seg in segments:
         _, row = add_video.get_existing_locality_row(add_video.load_csv(add_video.FILE_PATH), locality, state, country)
         if row is None:
-            new_row = new_row or add_video.new_locality_row(locality, state or None, country, near=near, at=at)
+            if new_row is None:
+                df = add_video.load_csv(add_video.FILE_PATH)
+                same = df[(df['country'] == country) & (df['state'].fillna('') == (state or ''))]
+                # a typo of a locality the mapping has ("Montouk" for Montauk) is no new locality
+                close = difflib.get_close_matches(locality, same['locality'].dropna().tolist(), n=1, cutoff=0.85)
+                if close and not at:
+                    raise ValueError(f'"{locality}" is not in the mapping, but {close[0]} is: pick it, or put the new '
+                                     f'locality on the map if it really is another place')
+                new_row = add_video.new_locality_row(locality, state or None, country, near=near, at=at)
+                if new_row['lat'] is None or new_row['lon'] is None:
+                    raise ValueError(f'no coordinates found for "{locality}": check its spelling, or put it on the map')
             row = new_row
         # the form re-saves the locality fields it shows, so send them back exactly as it would render them
         form = {k: str(row[k]) for k in LOCALITY_FIELDS}
@@ -2969,11 +2995,17 @@ document.getElementById('apply').onclick = async () => {
                (open ? `\n${open} undecided segment(s) stay here for later.` : ''))) return;
   const btn = document.getElementById('apply');
   btn.disabled = true; btn.textContent = 'Applying…';
-  const res = await fetch('apply', { method: 'POST' });
-  const out = await res.json();
+  let res = null, out;
+  try {
+    res = await fetch('apply', { method: 'POST' });
+    out = await res.json();
+  } catch (e) {  // the answer got lost (server restarted, sleep): what was added is marked applied in the plan
+    out = { error: `No answer from the page server (${e.message}). Reload the page: segments already added ` +
+                   'show as applied, the others can be applied again.' };
+  }
   document.getElementById('log').textContent = out.error || out.log.join('\\n');
-  btn.textContent = 'Apply approved segments to the mapping';
-  if (res.ok) setTimeout(() => location.reload(), 4000);
+  btn.disabled = false; btn.textContent = 'Apply approved segments to the mapping';
+  if (res && res.ok && !out.error) setTimeout(() => location.reload(), 4000);
 };
 update();
 const resume = JSON.parse(sessionStorage.getItem('resume') || 'null');
@@ -3439,8 +3471,15 @@ def review(plan_path, port=None):
 
     @app.route('/apply', methods=['POST'])
     def apply():
-        plan = load()
         log = []
+        try:
+            _apply(load(), log)
+        except Exception as ex:  # an answer either way, or the page waits for ever
+            log.append(f'stopped: {ex}')
+            return jsonify(log=log, error='\n'.join(log)), 500
+        return jsonify(log=log or ['nothing to add'])
+
+    def _apply(plan, log):
         for p in plan:
             for e in p.get('entries', []):
                 if not e.get('locality'):
@@ -3465,7 +3504,6 @@ def review(plan_path, port=None):
                     save(plan)  # after every segment, so a failure part way never re-applies one
                 if done:
                     log.append(f"{p['video']}: {done} segment(s) added to {e['locality'][0]}")
-        return jsonify(log=log or ['nothing to add'])
 
     port = port or 5000 + random.randint(0, 999)
     Timer(1.25, lambda: webbrowser.open(f'http://127.0.0.1:{port}')).start()

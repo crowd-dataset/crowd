@@ -9,7 +9,7 @@ _output/proposals/channels.json, and the batches left to review are listed in _o
 
 The sheet cannot be written from here (it needs a Google login): lines starting with "SHEET:" say which row to
 set to "Processing" (started here), "Processed" (all its videos reviewed) or "Rejected" (it edits its drives),
-with "Claude" in column E (Processed by).
+with "Claude+Pavlo" in column E (Processed by).
 
     python run_channels.py [--chunk 15] [--max-minutes 110]
 """
@@ -122,7 +122,7 @@ def write_to_review(state):
 
 
 OURS = ('', 'Processing')  # sheet statuses of a channel this routine works on
-BY = ', column E (Processed by) to Claude'  # the channels this routine works on
+BY = ', column E (Processed by) to Claude+Pavlo'  # the channels this routine works on
 
 
 def check_reviews(state, sheet):
