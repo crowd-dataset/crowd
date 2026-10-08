@@ -2095,6 +2095,51 @@ README_DETECTIONS = {
 }
 
 
+DETECTION_SNAPSHOT = os.path.join("figures", "detection_counts.csv")
+
+
+def _segment_lookup(df_mapping: pl.DataFrame) -> dict:
+    """Map "{vid}_{start_time}" -> (mapping row id, video, start, processed seconds) for every mapping segment."""
+    segment_to_id = {}
+    for row in df_mapping.select(["id", "videos", "start_time", "end_time"]).iter_rows(named=True):
+        vids = MetricsCache._parse_videos_cell(row["videos"])
+        for vid, starts, ends in zip(vids, Dataset_Stats._parse_nested_list(row["start_time"]),
+                                     Dataset_Stats._parse_nested_list(row["end_time"])):
+            for st, et in zip(starts, ends):
+                seconds = processed_segment_duration_seconds(st, et)
+                segment_to_id[f"{vid}_{int(st)}"] = (row["id"], vid, int(st), seconds)
+    return segment_to_id
+
+
+def load_detection_snapshot(df_mapping: pl.DataFrame) -> tuple[pl.DataFrame, int] | None:
+    """Load the committed per-segment detection counts, for runs without access to the bbox CSVs (e.g. CI).
+
+    The snapshot is keyed by (video, start) because mapping row ids change when rows are edited or renumbered; ids
+    and processed seconds are refreshed from the current mapping, and segments no longer in the mapping are dropped.
+    """
+    if not os.path.isfile(DETECTION_SNAPSHOT):
+        return None
+    try:
+        snap = pl.read_csv(DETECTION_SNAPSHOT, schema_overrides={"video": pl.Utf8, "start": pl.Int64})
+    except Exception as e:
+        logger.warning(f"Could not read {DETECTION_SNAPSHOT}: {e}")
+        return None
+    lookup = _segment_lookup(df_mapping)
+    rows = []
+    for r in snap.iter_rows(named=True):
+        segment = lookup.get(f"{r['video']}_{r['start']}")
+        if segment is not None:
+            rows.append({**r, "id": segment[0], "detected_seconds": segment[3]})
+    if not rows:
+        return None
+    columns = ["id", "video", "start", *README_DETECTIONS, "detected_seconds"]
+    schema = {"id": df_mapping.schema["id"], "video": pl.Utf8, "start": pl.Int64,
+              **dict.fromkeys([*README_DETECTIONS, "detected_seconds"], pl.Int64)}
+    df = pl.DataFrame(rows, schema=schema).select(columns)
+    logger.info(f"Using the committed detection snapshot {DETECTION_SNAPSHOT} ({df.height:,} segments).")
+    return df, df.height
+
+
 def count_detections(df_mapping: pl.DataFrame) -> tuple[pl.DataFrame, int] | None:
     """Count unique tracked objects per segment and YOLO class from the data/*/bbox CSVs.
 
@@ -2105,18 +2150,10 @@ def count_detections(df_mapping: pl.DataFrame) -> tuple[pl.DataFrame, int] | Non
     """
     files = [f for d in common.get_configs("data") for f in glob.glob(os.path.join(d, "bbox", "*.csv"))]
     if not files:
-        return None
+        return load_detection_snapshot(df_mapping)
 
-    # "{vid}_{start_time}" -> (mapping row id, video, start, processed seconds) (CSV files are named
-    # {vid}_{start_time}_{fps}.csv)
-    segment_to_id = {}
-    for row in df_mapping.select(["id", "videos", "start_time", "end_time"]).iter_rows(named=True):
-        vids = MetricsCache._parse_videos_cell(row["videos"])
-        for vid, starts, ends in zip(vids, Dataset_Stats._parse_nested_list(row["start_time"]),
-                                     Dataset_Stats._parse_nested_list(row["end_time"])):
-            for st, et in zip(starts, ends):
-                seconds = processed_segment_duration_seconds(st, et)
-                segment_to_id[f"{vid}_{int(st)}"] = (row["id"], vid, int(st), seconds)
+    # CSV files are named {vid}_{start_time}_{fps}.csv
+    segment_to_id = _segment_lookup(df_mapping)
 
     min_conf = float(common.get_configs("min_confidence"))
     id_to_class = {v: k for k, v in README_DETECTIONS.items()}
@@ -2145,12 +2182,16 @@ def count_detections(df_mapping: pl.DataFrame) -> tuple[pl.DataFrame, int] | Non
         counts[segment[:3]] = row
 
     if not n_read:
-        return None
-    return pl.DataFrame(
+        return load_detection_snapshot(df_mapping)
+    result = pl.DataFrame(
         [{"id": k[0], "video": k[1], "start": k[2], **v} for k, v in counts.items()],
         schema={"id": df_mapping.schema["id"], "video": pl.Utf8, "start": pl.Int64,
                 **dict.fromkeys([*README_DETECTIONS, "detected_seconds"], pl.Int64)},
-    ), n_read
+    )
+    # Keep a committed snapshot so that runs without the bbox CSVs (CI) still report the object counts.
+    os.makedirs(os.path.dirname(DETECTION_SNAPSHOT), exist_ok=True)
+    result.select("video", "start", *README_DETECTIONS).sort("video", "start").write_csv(DETECTION_SNAPSHOT)
+    return result, n_read
 
 
 def _now() -> str:
