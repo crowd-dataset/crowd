@@ -1008,7 +1008,7 @@ Adding a video to Delft, Netherlands 🇳🇱 (with no state), before fetching i
 **Fetch data** checks whether the locality is already in the mapping file and looks up the rest. For the video: its upload date and channel from YouTube. For a new locality: its coordinates, population and gross metropolitan product (GDP), the country's population, road deaths, continent, literacy rate, average height, median age and Gini index, and the traffic index (see [The `secret` file](#the-secret-file) for the services used). The video plays next to the form, with the current second of the player, the last second of the video and a map of the locality.
 
 ![Form with new locality](readme/form_new_city.webp)
-A video for Orosi, California 🇺🇸 (state CA), after fetching its data: Orosi is not in the mapping file yet, so the form adds a new locality. Its coordinates are shown on the map under the video; dragging the marker adjusts them.
+The same video after fetching its data, from before Delft was in the mapping file: with no entry for Delft yet, the form adds it as a new locality. Its coordinates are shown on the map under the video; dragging the marker adjusts them.
 
 ![Form with existing locality](readme/form_existing_city.webp)
 Kyiv, Ukraine 💙💛 is in the mapping file (with 569 videos), so the form adds the video to it. This video is in the mapping file already: the form shows its existing segments in red (here from second 1 to 1408) next to the player, so a new segment is added after them or the existing ones can be checked.
