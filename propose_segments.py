@@ -2007,9 +2007,10 @@ def one_end_city(title, df, home=None):
 IN_PLACE = re.compile(r"\b(?:in|en) (?:the )?([A-Z][\w'’.-]*(?: [A-Z][\w'’.-]*){0,3})\s*(?:,|$)")
 
 
-def locate_now(p, df, home, sig_path=None):
+def locate_now(p, df, home, sig_path=None, meta=None, boilerplate=frozenset()):
     """The locality of a just-proposed video from its title: split along its route for a drive between towns, else the
-    one town its title names; a video then in one place gets no rural or highway cuts (ONE_PLACE)."""
+    one town its title names, else its chapters (split at them when they name several), else its description
+    (meta: the video's details); a video then in one place gets no rural or highway cuts (ONE_PLACE)."""
     e = p['entries'][0]
     if not e.get('locality') and not split_route(p, df, home):
         title = p.get('title') or ''
@@ -2033,6 +2034,21 @@ def locate_now(p, df, home, sig_path=None):
                 e['locality'], e['guessed'] = list(loc), True
                 p['note'] = f"{p['note']}; locality {loc[0]} from where '{phrase}' is".lstrip('; ')
     es = p.get('entries') or []
+    if meta and len(es) == 1 and not es[0].get('locality') and not p.get('route'):
+        e = es[0]
+        near_home = (lambda name: town_near(name, home)) if home else None
+        stretches = chapter_localities(video_chapters(meta), df, near_home)
+        if len(stretches) == 1:
+            e['locality'], e['guessed'] = stretches[0][2], True
+            p['note'] = f"{p['note']}; locality {stretches[0][2][0]} from the chapters".lstrip('; ')
+        elif stretches:
+            p['entries'] = split_by_stretches(e['segments'], stretches)
+            p['note'] = (f"{p['note']}; localities from the chapters: "
+                         + ', '.join(f'{loc[0]} from {a // 60}:{a % 60:02d}' for a, _, loc in stretches)).lstrip('; ')
+        elif found := description_locality(meta.get('description'), df, boilerplate):
+            e['locality'], e['guessed'] = found, True
+            p['note'] = f"{p['note']}; locality {found[0]} from the description".lstrip('; ')
+        es = p.get('entries') or []
     if sig_path and len(es) == 1 and es[0].get('locality') and not p.get('route'):
         es[0]['segments'] = propose(dict(np.load(sig_path)), ONE_PLACE)[0]
         p['note'] = re.sub(r'; (?:rural|highway) driving \d+-\d+s', '', p['note'])
@@ -2280,7 +2296,7 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
                                        for la, lo in zip(df['lat'], df['lon'])])
                 early = early_home, reach
             locate_now(plan[vid], df[title_reach(df, early[1], meta['title'])], early[0],
-                       sig_path if analysed else None)
+                       sig_path if analysed else None, meta, boilerplate)
         except Exception as e:  # a lookup gone wrong must not stop the batch; the full step tries again
             print(f'  locality not found yet ({type(e).__name__})', flush=True)
         commit([vid])  # appears in an open review page straight away
