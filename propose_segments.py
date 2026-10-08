@@ -157,9 +157,29 @@ def download_low_res(video_id, out_dir):
     raise RuntimeError(f'download produced no file for {video_id}')
 
 
-def frames(path):
-    """Yield grey analysis frames at FPS."""
-    cmd = ['ffmpeg', '-v', 'error', '-i', path, '-vf', f'fps={FPS},scale={W}:{H},format=gray',
+def letterbox(path, samples=30, black=12):
+    """(top, bottom) shares of the picture height that are black bars (a letterboxed video: XqNV7dDs5hs), else
+    (0, 0). Bars are rows black in every sampled frame, about as high at the top as at the bottom: a dark night
+    sky is only at the top, so it is never taken for one."""
+    cmd = ['ffmpeg', '-v', 'error', '-i', path, '-vf', 'thumbnail=300,scale=160:90,format=gray',
+           '-frames:v', str(samples), '-f', 'rawvideo', '-']
+    g = np.frombuffer(subprocess.run(cmd, capture_output=True).stdout, np.uint8)
+    if g.size < 160 * 90:
+        return 0.0, 0.0
+    rows = g[:g.size // (160 * 90) * 160 * 90].reshape(-1, 90, 160).mean(axis=2).max(axis=0)  # brightest per row
+    dark = rows < black
+    top = int(np.argmin(dark)) if not dark.all() else 0
+    bottom = int(np.argmin(dark[::-1])) if not dark.all() else 0
+    if min(top, bottom) < 2 or abs(top - bottom) > 3:
+        return 0.0, 0.0
+    return top / 90, bottom / 90
+
+
+def frames(path, bars=(0.0, 0.0)):
+    """Yield grey analysis frames at FPS, without letterbox bars (bars: top and bottom shares, see letterbox)."""
+    top, bottom = bars
+    crop = f'crop=iw:ih*{1 - top - bottom:.4f}:0:ih*{top:.4f},' if top or bottom else ''
+    cmd = ['ffmpeg', '-v', 'error', '-i', path, '-vf', f'{crop}fps={FPS},scale={W}:{H},format=gray',
            '-f', 'rawvideo', '-pix_fmt', 'gray', '-']
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE)
     size = W * H
@@ -285,7 +305,7 @@ def signals(path):
     ground = []  # brightness of the road and buildings: dark streets under a still-light sky are night too
     third = W // 3
     prev = prev_thumb = None
-    for f in frames(path):
+    for f in frames(path, letterbox(path)):  # the sky is the top of the picture, not a black bar above it
         face.append(_big_face(f))
         thumb = _normalised_thumb(f)
         if prev is None:
@@ -493,6 +513,13 @@ def propose(sig, p=PARAMS):
                 keep[a:b] = False
                 notes.append(f'{label} {a / FPS:.0f}-{b / FPS:.0f}s')
 
+    fades = np.asarray(sig.get('fades', np.zeros((0, 4))))
+    fades = fades.reshape(len(fades), -1) if fades.size else np.zeros((0, 4))  # 4 or 5 columns: start, end first
+    ghosts = [a for a, b, *_ in fades if b - a >= FADE_MIN_S and SKIP_INTRO_S < a < n / FPS - SKIP_OUTRO_S]
+    if ghosts:  # a hint only: tunnels and slow night traffic look alike (see fade_events)
+        notes.append('possible fades between scenes (ghosts: an edited drive?) at '
+                     + ', '.join(f'{int(t) // 60}:{int(t) % 60:02d}' for t in ghosts[:5])
+                     + (f' and {len(ghosts) - 5} more' if len(ghosts) > 5 else ''))
     window = p['night_window_s'] * FPS
     dark = sig['sky'] < p['night_sky']
     if 'ground' in sig:  # signals saved before the street brightness have the sky only
@@ -536,15 +563,11 @@ DUSK_EVERY_S = 10  # one colour frame this often for the dusk hint
 
 def dusk_colours(path):
     """(saturation, % of lit orange lamp pixels) of a colour frame every DUSK_EVERY_S seconds."""
-    cap = cv2.VideoCapture(path)
-    step = max(1, round(cap.get(cv2.CAP_PROP_FPS) * DUSK_EVERY_S))
+    # ffmpeg reads the frames in one pass: OpenCV seeking in an AV1 download can hang (MilesofAmbience, 2026-10-08)
+    raw = subprocess.run(['ffmpeg', '-v', 'error', '-i', path, '-an', '-vf', f'fps=1/{DUSK_EVERY_S},scale={W}:{H}',
+                          '-f', 'rawvideo', '-pix_fmt', 'bgr24', '-'], capture_output=True, timeout=1800).stdout
     sat, lamps = [], []
-    for f in range(0, int(cap.get(cv2.CAP_PROP_FRAME_COUNT)), step):
-        cap.set(cv2.CAP_PROP_POS_FRAMES, f)
-        ok, img = cap.read()
-        if not ok:
-            break
-        img = cv2.resize(img, (W, H))
+    for img in np.frombuffer(raw, np.uint8)[:len(raw) // (W * H * 3) * W * H * 3].reshape(-1, H, W, 3):
         sat.append(float(cv2.cvtColor(img, cv2.COLOR_BGR2HSV)[..., 1].mean()))
         b, g, r = (img[..., k].astype(int) for k in range(3))
         lamps.append(float(((r > 200) & (g > 120) & (b < 110)).mean() * 100))
@@ -629,12 +652,33 @@ def skip_events(path):
     return np.column_stack([t[keep], score[keep], ratio[keep]])
 
 
+def fade_events(path, k=3, ratio=0.42, change=0.5):
+    """[(start s, end s, lowest blend ratio, largest change)] of stretches where the picture may fade from one scene
+    into another ("ghosts": both scenes show at once). Frames at 10 a second, brightness and contrast evened out
+    (tunnels, headlights); a frame in a fade is close to the average of the frames k before and after it, which
+    differ by at least change. A cut detector misses fades: no two frames differ much. Only a hint: slow, smooth
+    stretches look alike (brittrips: 1-6 in 5-7 min; normal drives 0-3 in 11-23 min; a tunnel drive: 28 in 10)."""
+    raw = subprocess.run(['ffmpeg', '-v', 'error', '-i', path, '-an', '-vf', 'fps=10,scale=96:54,format=gray',
+                          '-f', 'rawvideo', '-'], capture_output=True).stdout
+    g = np.frombuffer(raw, np.uint8).reshape(-1, 54, 96).astype(np.float32)
+    if len(g) <= 2 * k:
+        return np.zeros((0, 4))
+    g = (g - g.mean(axis=(1, 2), keepdims=True)) / (g.std(axis=(1, 2), keepdims=True) + 1)
+    before, mid, after = g[:-2 * k], g[k:-k], g[2 * k:]
+    d = np.abs(before - after).mean(axis=(1, 2))
+    r = np.abs(mid - (before + after) / 2).mean(axis=(1, 2)) / np.maximum(d, 1e-3)
+    out = [((a + k) / 10, (b + k) / 10, r[a:b].min(), d[a:b].max())
+           for a, b in _runs((r < ratio) & (d > change)) if b - a >= FADE_MIN_S * 10]
+    return np.array(out, float).reshape(-1, 4)
+
+
 # an edit cut that skips footage: a frame changing SKIP_RATIO times more than the frames around it and by at
 # least SKIP_SCORE, alone (livestream stutter and intro montages jump many times in a row), and not in the first
 # SKIP_INTRO_S (title cards) or last SKIP_OUTRO_S (end screens). Checked on whole approved videos: these keep
 # the waits cut out at red lights and the cuts to other streets, and none of the stutter or fades.
 SKIP_RATIO, SKIP_SCORE, SKIP_ALONE_S, SKIP_INTRO_S, SKIP_OUTRO_S = 25, 0.06, 10, 30, 10
 SKIP_STREAK = 10       # this many analysed videos of a channel in a row with skips: the channel edits its drives
+FADE_MIN_S = 0.4       # a fade between scenes lasts at least this; shorter dips are flicker
 
 
 def skip_times(sig):
@@ -760,6 +804,7 @@ def analyse_video(video_id, out_dir, meta=None):
     try:
         sig = signals(path)
         sig['skips'] = skip_events(path)
+        sig['fades'] = fade_events(path)
         sig['saturation'], sig['lamps'] = dusk_colours(path)
         urban = urban_objects(path)
         if urban is not None:
@@ -1032,7 +1077,9 @@ def _title_locality(title, df, exact_case=False, word_needs_state=False):
             flags = 0 if exact_case or len(name) <= 3 else re.I
             # "New Ringgold" is not Ringgold: a "New" before a name makes it another place
             # and "Jerome Ave" is a street, not Jerome
-            pattern = rf'(?<!\w)(?<![Nn]ew\s){re.escape(name)}(?!\w)(?!\.?\s+(?:{STREETS}|St)\b)'
+            # likewise "Mt. Lebanon" is not Lebanon, nor "Fort Lee" Lee or "Port Jefferson" Jefferson
+            pattern = (rf'(?<!\w)(?<![Nn]ew\s)(?<!Mt\.\s)(?<!Mt\s)(?<!Mount\s)(?<!Ft\.\s)(?<!Fort\s)(?<!St\.\s)'
+                       rf'(?<!Saint\s)(?<!Port\s){re.escape(name)}(?!\w)(?!\.?\s+(?:{STREETS}|St)\b)')
             if word_needs_state and name.lower() in COMMON_WORDS:
                 if not isinstance(row['state'], str):
                     continue
@@ -1073,7 +1120,10 @@ NOT_PLACE = {'drive', 'drives', 'driving', 'beautiful', 'relax', 'relaxing', 'ch
              'uhd', 'hd', 'fps', 'live', 'stream', 'subscribe', 'thanks', 'watching', 'enjoy', 'please', 'new',
              'route', 'journey', 'heavy', 'windy', 'cloudy', 'rainy', 'foggy', 'nice', 'view', 'best', 'my', 'i',
              'friday', 'saturday', 'sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'january', 'february',
-             'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december'}
+             'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december',
+             # travel-vlog titles: "Exploring Worthington, Ohio | Historic Village, Beautiful Downtown"
+             'exploring', 'explore', 'discover', 'discovering', 'welcome', 'touring', 'cruising', 'inside',
+             'historic', 'charming', 'scenic', 'downtown', 'village', 'communities', 'community', 'one', 'pov'}
 PLACE_JOINERS = {'al', 'el', 'de', 'del', 'la', 'le', 'of', 'the', 'bin', 'bu', 'van', 'von', 'da', 'do', 'dos'}
 
 
@@ -1112,6 +1162,12 @@ def place_phrases(text, limit=4):
     Beach" from "Beautiful Sun Rise at Al Khan Beach, unedited sounds". Hashtags and links are skipped."""
     text = english_states(text)
     text = re.sub(r'#\w+|https?://\S+|www\.\S+', ' ', text or '')
+
+    # "Mt. Lebanon" is one name (Mount Lebanon), not Lebanon; "Main St. Hackensack" keeps its street
+    def saint(m):
+        street = m.group(1) == 'St' and re.search(r"\b[A-Z][\w'’]*\s*$", text[:m.start()])  # "Main St."
+        return m.group(0) if street else {'Mt': 'Mount ', 'Ft': 'Fort ', 'St': 'Saint '}[m.group(1)]
+    text = re.sub(r"\b(Mt|Ft|St)\.?\s+(?=[A-Z])", saint, text)
     phrases, run = [], []
     for token in re.findall(r"[^\W\d_][\w'’-]*|[^\w\s]+|\d\w*", text) + ['.']:
         word = token.lower()

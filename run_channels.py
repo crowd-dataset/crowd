@@ -137,7 +137,8 @@ def write_sheet_todo(state, sheet):
     and does not yet, in SHEET_TODO."""
     status = {url: s for _, url, s, _ in sheet}
     want = {'processing': 'Processing', 'to review': 'Processing', 'reviewed': 'Processed', 'rejected': 'Rejected'}
-    todo = [{'row': c['row'], 'url': url, 'status': want[c['status']], 'by': WHO} for url, c in state.items()
+    todo = [{'row': c['row'], 'url': url, 'status': want[c['status']], 'by': WHO, 'comment': c.get('comment', '')}
+            for url, c in state.items()
             if c['status'] in want and status.get(url, '') in OURS
             and (status.get(url, '') != want[c['status']] or PROCESSED_BY.get(url, '') != WHO)]
     with open(SHEET_TODO + '.tmp', 'w') as f:
@@ -184,7 +185,7 @@ def run_chunk(url, country, chunk, single_city=False):
                 out.append('switched to the hotspot or paused\n')
                 break
             if 'Warning' not in line:
-                print('  ' + line.rstrip()[:200], flush=True)
+                print(f'{time.strftime("%H:%M")}   ' + line.rstrip()[:200], flush=True)
                 out.append(line)
     return ''.join(out)
 
@@ -268,6 +269,9 @@ def main():
             time.sleep(QUOTA_WAIT_S)
         elif 'so it is rejected' in out:
             c['status'] = 'rejected'
+            # why, for the sheet's Comments column ("Ghosts detected: ...")
+            c['comment'] = next((ln.strip().removeprefix('Stopped early: ').split(', so it is rejected')[0]
+                                 for ln in out.splitlines() if 'so it is rejected' in ln), '')
         elif 'Could not list the channel' in out:
             # usually a block or a dropped connection: wait; give up on the channel only after 3 tries in a row
             c['list_failures'] = c.get('list_failures', 0) + 1
