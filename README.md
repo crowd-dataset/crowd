@@ -862,6 +862,22 @@ Video: [https://www.youtube.com/watch?v=U0pdQ8eZtHY](https://www.youtube.com/wat
 
 Video: [https://www.youtube.com/watch?v=rdx7UFXYSz0](https://www.youtube.com/watch?v=rdx7UFXYSz0).
 
+## Verification of segments
+After segments were added, they were checked again by hand. The checks were done by Md Shadab Alam, on the `main` branch, for the segments of `mapping.csv`, including the videos that other contributors of this repository added (see [Who added the videos](#who-added-the-videos)).
+
+**1. Candidate cuts.** Points inside segments where the footage may break (a jump in time, a different clip, or a part that should not be analysed) are listed in `cut_times.csv`, with the video, the segment start and the time of the candidate cut.
+
+**2. Reviewing.** For each candidate cut, the YouTube video was played for a few seconds around the cut. The reviewer marked the candidate as `yes` (a real cut), `no` (not a cut) or `unavailable` (YouTube no longer plays or embeds the video), and could add a note. The decision and the time of the review are saved in `cut_times.csv`.
+
+In total, 52,838 cuts were analysed.
+
+**3. What the reviewer looked for.**
+- **Cuts in videos added by other contributors.** The segments of the videos added by the other authors of the repository were checked for cuts, in the same way as the others.
+- **Videos that are not at normal speed.** Videos that play faster or slower than 1x (for example fast-forwarded footage or time-lapses) are not suitable, because speeds and crossing times in them are wrong. Such cases are noted, for example as `fast forward`.
+- **Advertisements in the footage.** An advertisement that was cut into the middle of a video is not footage of the road. Where one was found, it was removed from the segments by the reviewer.
+
+**4. Applying the result.** Each candidate marked `yes` splits its segment in `mapping.csv` into the part before and the part after the cut, and the detection CSV of the segment is split at the same time, so that the footage around the cut is not analysed. Segments that become too short are removed. Detection CSVs that no longer match a segment in `mapping.csv` are removed from the data folder.
+
 ## Description and analysis of dataset
 > **Note:** The interactive figures are displayed using `htmlpreview.github.io`, which may be blocked on some institutional or education networks. If an interactive figure does not open, try another network or download the corresponding `.html` file from the `figures` directory and open it locally in a web browser.
 
