@@ -54,6 +54,13 @@ PARAMS = {
     'cut_neighbour_ncc': 0.6,  # ...when the frames either side of it are this coherent
     'bridge_dip': 0.5,        # a cut whose sky darkens below this share of its surroundings is a bridge
     'cut_confirm_ratio': 15,  # a cut stands only with a full-frame-rate jump this strong within a second
+    # a map shown before the drive (brittrips: 4mGZZ9BGunA, aERXkCaV9BA, xkOEm0jFTcE) is far more colourful than
+    # road footage: a first colour sample above intro_saturation and intro_saturation_ratio times the video's
+    # median (maps 182-232 vs 45-100; 592 videos: 95% of first samples under 117) is an intro, which ends at the
+    # last edit cut before forward driving starts, within intro_max_s
+    'intro_saturation': 150,
+    'intro_saturation_ratio': 2,
+    'intro_max_s': 60,
     'cut_pan_ncc': None,      # a cut that matches this well once shifted sideways is a corner (not yet calibrated)
     'blank_std': 6.0,         # frame this flat is blank or a title card
     # night: the sky darker than this, or the street darker than night_ground. On 19 night and 20 day segments
@@ -426,6 +433,17 @@ def propose(sig, p=PARAMS):
 
     keep = ~blank
     notes = []
+    sat = sig.get('saturation')
+    if (sat is not None and len(sat) and sig.get('skips') is not None and 'spread' in sig
+            and sat[0] > max(p['intro_saturation'], p['intro_saturation_ratio'] * np.median(sat))):
+        moving_now = sig['motion'] > 2 * p['moving_flow']
+        forward = moving_now & (sig['spread'] / (sig['motion'] + 0.05) >= p['angle_spread'])
+        drive = np.flatnonzero(_rolling_mean(forward.astype(float), 5 * FPS) > 0.5)
+        start = drive[0] / FPS if len(drive) else p['intro_max_s']
+        cuts = [t for t in np.asarray(sig['skips']).reshape(-1, 3)[:, 0] if 0 < t <= min(start + 1, p['intro_max_s'])]
+        end = int((max(cuts) if cuts else min(start, p['intro_max_s'])) * FPS)
+        keep[:end] = False
+        notes.append(f'intro 0-{end / FPS:.0f}s (a map or title before the drive)')
     stopped = ~moving
     for order in (slice(None), slice(None, None, -1)):  # the start, then the end read backwards
         runs = _runs(stopped[order])
@@ -2412,7 +2430,8 @@ def apply_segments(video_id, locality, state, country, segments, vehicle_type, u
                                      f'locality on the map if it really is another place')
                 new_row = add_video.new_locality_row(locality, state or None, country, near=near, at=at)
                 if new_row['lat'] is None or new_row['lon'] is None:
-                    raise ValueError(f'no coordinates found for "{locality}": check its spelling, or put it on the map')
+                    raise ValueError(f'no coordinates found for "{locality}": check its spelling, '
+                                     'or put it on the map')
             row = new_row
         # the form re-saves the locality fields it shows, so send them back exactly as it would render them
         form = {k: str(row[k]) for k in LOCALITY_FIELDS}
