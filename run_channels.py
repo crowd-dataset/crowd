@@ -8,7 +8,8 @@ are all proposed waits for review and the next channel starts. Progress is kept 
 _output/proposals/channels.json, and the batches left to review are listed in _output/proposals/to_review.md.
 
 The sheet cannot be written from here (it needs a Google login): lines starting with "SHEET:" say which row to
-set to "Processing" (started here), "Processed" (all its videos reviewed) or "Rejected" (it edits its drives).
+set to "Processing" (started here), "Processed" (all its videos reviewed) or "Rejected" (it edits its drives),
+with "Claude" in column E (Processed by).
 
     python run_channels.py [--chunk 15] [--max-minutes 110]
 """
@@ -121,6 +122,7 @@ def write_to_review(state):
 
 
 OURS = ('', 'Processing')  # sheet statuses of a channel this routine works on
+BY = ', column E (Processed by) to Claude'  # the channels this routine works on
 
 
 def check_reviews(state, sheet):
@@ -131,10 +133,10 @@ def check_reviews(state, sheet):
         if c['status'] == 'to review' and review_counts(c['name'])[0] == 0:
             c['status'] = 'reviewed'
         if c['status'] in ('processing', 'to review') and status.get(url) == '':
-            log(f"SHEET: set row {c['row']} ({url}) to Processing")
+            log(f"SHEET: set row {c['row']} ({url}) to Processing{BY}")
         for done, word in (('reviewed', 'Processed'), ('rejected', 'Rejected')):
             if c['status'] == done and status.get(url, '') in OURS:
-                log(f"SHEET: set row {c['row']} ({url}) to {word}")
+                log(f"SHEET: set row {c['row']} ({url}) to {word}{BY}")
             elif c['status'] == done:
                 c['status'] = 'marked'
 
@@ -211,7 +213,7 @@ def main():
             continue
         n, url, sheet_country = todo[0]
         if url not in state:
-            log(f'SHEET: set row {n} ({url}) to Processing')
+            log(f'SHEET: set row {n} ({url}) to Processing{BY}')
         c = state.setdefault(url, {'row': n, 'name': channel_name(url), 'status': 'processing'})
         c['row'] = n
         country = c.get('country') or country_of(url, sheet_country)

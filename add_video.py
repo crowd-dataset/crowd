@@ -821,7 +821,8 @@ def new_locality_row(locality, state, country, locality_aka=None, near=None, at=
         # GeoNames picks by name, so for a namesake its figure is the other place's: Wikidata, by location, first
         'population_locality': int((namesake and get_wikidata_population(locality, lat, lon))
                                    or get_locality_population(locality_data, locality, state)
-                                   or (lat and lon and get_wikidata_population(locality, lat, lon)) or 0),
+                                   or (lat and lon and get_wikidata_population(locality, lat, lon))
+                                   or (lat and lon and get_nearby_population(locality, lat, lon)) or 0),
         'population_country': country_population,
         'traffic_mortality': mortality_future.result(),
         'start_time': [],
@@ -1673,6 +1674,22 @@ def get_wikidata_population(locality, lat, lon, max_km=25):
         amount = max(pops, key=when)['mainsnak']['datavalue']['value']['amount']
         best = (km, int(float(amount)))
     return best[1] if best else 0
+
+
+def get_nearby_population(locality, lat, lon, km=10):
+    """Population of the places GeoNames has around lat/lon, for a locality no source has a figure for: the places
+    whose name the locality's names ("Wildwoods": Wildwood, North Wildwood, Wildwood Crest) added up, else the
+    nearest place. 0 when GeoNames is unreachable or knows no place there."""
+    try:
+        places = requests.get('http://api.geonames.org/findNearbyPlaceNameJSON',
+                              params={'lat': lat, 'lng': lon, 'radius': km, 'maxRows': 20, 'cities': 'cities1000',
+                                      'username': common.get_secrets('geonames_username')},
+                              timeout=10).json().get('geonames') or []
+    except (RequestException, ValueError):
+        return 0
+    stem = re.sub(r'^the\s+|s$', '', locality.strip().lower())
+    named = {g['name']: int(g.get('population') or 0) for g in places if stem in g['name'].lower()}
+    return sum(named.values()) or (int(places[0].get('population') or 0) if places else 0)
 
 
 def get_country_average_height(iso3_code):
