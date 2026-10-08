@@ -1003,15 +1003,15 @@ The detections are automatic outputs, not ground truth. What the detector sees d
 To add videos to the `mapping` file by hand, run `python add_video.py`. It opens a web form (a Flask app on a local port) for one video at a time. Fill in the locality, the state (optional, recommended for the USA 🇺🇸 and Canada 🇨🇦), the country (mandatory, chosen from a list) and the YouTube link, and click **Fetch data**. While you type the locality, the form suggests localities that are already in the mapping file.
 
 ![Form with new video](readme/form_new_video.webp)
-A video to add for Orosi, California 🇺🇸, before fetching its data.
+Adding a video to Delft, Netherlands 🇳🇱 (with no state), before fetching its data. While the locality is typed, the form suggests the matching locality already in the mapping file.
 
 **Fetch data** checks whether the locality is already in the mapping file and looks up the rest. For the video: its upload date and channel from YouTube. For a new locality: its coordinates, population and gross metropolitan product (GDP), the country's population, road deaths, continent, literacy rate, average height, median age and Gini index, and the traffic index (see [The `secret` file](#the-secret-file) for the services used). The video plays next to the form, with the current second of the player, the last second of the video and a map of the locality.
 
 ![Form with new locality](readme/form_new_city.webp)
-Orosi is not in the mapping file yet, so the form adds a new locality. Its coordinates are shown on the map under the video; dragging the marker adjusts them.
+A video for Orosi, California 🇺🇸 (state CA), after fetching its data: Orosi is not in the mapping file yet, so the form adds a new locality. Its coordinates are shown on the map under the video; dragging the marker adjusts them.
 
 ![Form with existing locality](readme/form_existing_city.webp)
-Kyiv, Ukraine 🇺🇦 is in the mapping file (with 569 videos), so the form adds the video to it. This video is in the mapping file already: the form shows its existing segments in red (here from second 1 to 1408) next to the player, so a new segment is added after them or the existing ones can be checked.
+Kyiv, Ukraine 💙💛 is in the mapping file (with 569 videos), so the form adds the video to it. This video is in the mapping file already: the form shows its existing segments in red (here from second 1 to 1408) next to the player, so a new segment is added after them or the existing ones can be checked.
 
 For each segment (part of a video), add the `Time of day` (day or night), the `Vehicle` the footage is filmed from, the `Start time (seconds)` and the `End time (seconds)` (larger than the start), and click **Submit**. A video can have several segments, each starting at or after the end of the previous one; the values of the video (upload date, channel) and of the locality are kept, so for each further segment only its start, end, time of day and vehicle need to be filled in. All values can be corrected in the form before submitting, and by hand in the `mapping` file later.
 
