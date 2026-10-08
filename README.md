@@ -1000,28 +1000,28 @@ The detections are automatic outputs, not ground truth. What the detector sees d
 
 
 ## Adding videos to dataset
-To add more videos to the the `mapping` file, run `python add_video.py`. It is a Flask web form which allows to add new footage. The form understands if the city is already present in the dataset and adds a new videos to the existing row in the mapping file. Providing state is optional, and is recommended for USA 🇺🇸 and Canada 🇨🇦. Providing country is mandatory.
+To add videos to the `mapping` file by hand, run `python add_video.py`. It opens a web form (a Flask app on a local port) for one video at a time. Fill in the locality, the state (optional, recommended for the USA 🇺🇸 and Canada 🇨🇦), the country (mandatory, chosen from a list) and the YouTube link, and click **Fetch data**. While you type the locality, the form suggests localities that are already in the mapping file.
 
-![Form with new video](readme/form_new_video.jpg)
-Adding new video to a city. In the case for Delft, Netherlands 🇳🇱 (with state not mentioned).
+![Form with new video](readme/form_new_video.webp)
+A video to add for Orosi, California 🇺🇸, before fetching its data.
 
-For each video, it is possible to add multiple segments (parts of the video). To add a new segment/video, it is mandatory to add the following information: `Time of day`, `Vehicle`, `Start time (seconds)` (a counter of the current second is shown under the embedded video), `End time (seconds)` (it must be larger than the starting time), and `FPS` (to see the FPS of the video, click with secondary mouse button on the video and go to "Stats for nerds"🤓; FPS value is shown as a value following the resolution, e.g. "1920x1080@30"). All other values are attempted to be fetched automatically from various APIs and by analysing the video. All values can be adjusted by hand in the `mapping` file in case of mistakes/missing information.
+**Fetch data** checks whether the locality is already in the mapping file and looks up the rest. For the video: its upload date and channel from YouTube. For a new locality: its coordinates, population and gross metropolitan product (GDP), the country's population, road deaths, continent, literacy rate, average height, median age and Gini index, and the traffic index (see [The `secret` file](#the-secret-file) for the services used). The video plays next to the form, with the current second of the player, the last second of the video and a map of the locality.
 
-Each video can contain multiple segments (with each new segment starting at the same timestamp as the end of the previous segment or later). All video-level values (including FPS) do not have to be updated for each new segment (i.e., only start and end, time of day, and vehicle type of each new segment shall be provided).
+![Form with new locality](readme/form_new_city.webp)
+Orosi is not in the mapping file yet, so the form adds a new locality. Its coordinates are shown on the map under the video; dragging the marker adjusts them.
 
-![Form with new city](readme/form_new_city.jpg)
-Form understands that there is no entry for Delft, Netherlands in the mapping file yet and allows to add the first video for that city. The latitude and longitude coordinates are fetched for new cities automatically. They are shown on the embed map under the video. Dragging the marker will adjusted the fetched coordinates.
+![Form with existing locality](readme/form_existing_city.webp)
+Kyiv, Ukraine 🇺🇦 is in the mapping file (with 569 videos), so the form adds the video to it. This video is in the mapping file already: the form shows its existing segments in red (here from second 1 to 1408) next to the player, so a new segment is added after them or the existing ones can be checked.
 
-![Form with existing city](readme/form_existing_city.jpg)
-If the city already exists in data, the form extends the entry for that city with the new video. In this example, a new video is added to Kyiv, Ukraine 💙💛. The values in `Start time` and `End time` under the embedded video also indicate that one or multiple segments for this video are already present in the `mapping` file; in this case a new segment would be added to the video.
+For each segment (part of a video), add the `Time of day` (day or night), the `Vehicle` the footage is filmed from, the `Start time (seconds)` and the `End time (seconds)` (larger than the start), and click **Submit**. A video can have several segments, each starting at or after the end of the previous one; the values of the video (upload date, channel) and of the locality are kept, so for each further segment only its start, end, time of day and vehicle need to be filled in. All values can be corrected in the form before submitting, and by hand in the `mapping` file later.
 
 ## Shortcuts and click events
-The form accepts the following shortcuts and click events:
-1. **A**: pasting current timestamp in video to the "Start time (seconds)" field.
-2. **S**: pasting current timestamp in video to the "End time (seconds)" field.
-3. **D**: pasting the value of "Last second" (red value under embedded video) to the "End time (seconds)" field and setting "Start time (seconds)" field as 0. Clicking on "Current time" results in the same behaviour.
-4. **Q**: selecting "Day" value for "Time of day" field.
-5. **W**: selecting "Night" value for "Time of day" field.
+The form accepts the following shortcuts (when the cursor is not in a text field; they also work with non-Latin keyboard layouts):
+1. **A**: the current second of the video into "Start time (seconds)".
+2. **S**: the current second of the video into "End time (seconds)".
+3. **D**: the whole video: "Start time (seconds)" 0 and "End time (seconds)" the last second of the video. Clicking on "Last second" under the video does the same (and copies it).
+4. **Q**: "Day" for "Time of day".
+5. **W**: "Night" for "Time of day".
 
 ## Proposing segments from YouTube channels
 Instead of finding segments by hand in `add_video.py`, whole YouTube channels can be processed automatically: `propose_segments.py` downloads each video of a channel at low resolution, proposes segments, localities, time of day and vehicle type, and a curator reviews the proposals on a web page and applies the approved ones to the `mapping` file. Nothing is written to the mapping before a curator applies it.
@@ -1047,9 +1047,19 @@ The country must be written as in the `add_video.py` form. `--single-city` treat
 - *locality:* from the title, then the description, then the chapters (a video with chapters for several places is split), and otherwise a named place looked up on OpenStreetMap; drives "from A to B" are split into the towns along the route; a town within 30 km of a city with over a million people counts as that city unless it has 250,000 people itself;
 - *re-uploads* of a video already in the mapping are recognised and left out.
 
-The proposals of a channel are kept in `_output/proposals/<channel>/plan.json`, with frames and signals of each video.
+The proposals of a channel are kept in `_output/proposals/<channel>/plan.json`, with frames and signals of each video. Videos left out are listed on the review page with the reason:
 
-**3. Reviewing.** Run `python review_hub.py` and open [http://127.0.0.1:8770](http://127.0.0.1:8770): it lists the channels with videos to review, and clicking one opens its review page (also available directly with `python propose_segments.py --review _output/proposals/<channel>/plan.json`). For each video, the page shows the player, the title and description, a contact sheet of frames, a route map, and the proposed segments with the reasons for each cut. Per segment, the curator can change the start and end, switch day and night, approve, reject, split it at a time, move it to another locality, or add a new segment; per video, change the vehicle, locality, state and country (with a map for a new locality), approve the rest of the video or reject it. Shortcuts: **A** sets the start and **S** the end of a segment to the current time of the player, **D** takes the whole video, **Q** and **W** set day and night, and **F** puts the current time in the split box.
+![Videos left out of the proposals](readme/review_excluded.webp)
+Videos of the same channel as the Kyiv example of `add_video.py`, left out automatically: a video under 5 minutes, a walk, and a drive that skips footage (an edit cut).
+
+**3. Reviewing.** Run `python review_hub.py` and open [http://127.0.0.1:8770](http://127.0.0.1:8770): it lists the channels with videos to review, and clicking one opens its review page (also available directly with `python propose_segments.py --review _output/proposals/<channel>/plan.json`).
+
+![Batches to review](readme/review_hub.webp)
+The review hub: channels with videos still to decide.
+ For each video, the page shows the player, the title and description, a contact sheet of frames, a route map, and the proposed segments with the reasons for each cut. Per segment, the curator can change the start and end, switch day and night, approve, reject, split it at a time, move it to another locality, or add a new segment; per video, change the vehicle, locality, state and country (with a map for a new locality), approve the rest of the video or reject it. Shortcuts: **A** sets the start and **S** the end of a segment to the current time of the player, **D** takes the whole video, **Q** and **W** set day and night, and **F** puts the current time in the split box.
+
+![Review page](readme/review_page.webp)
+The proposal for the Kyiv video used in the `add_video.py` example above: one segment from 0:01 to 23:30 in Kyiv, Ukraine (the locality guessed from the title, the vehicle from the channel's other videos in the mapping), with a contact sheet of frames and the video's description; it matches the segment added by hand (seconds 1 to 1408).
 
 **4. Applying.** **Apply** adds the approved segments to the `mapping` file through the same code as the `add_video.py` form: the video, its segments, time of day, vehicle type, upload date and channel, and for a new locality a new row with its coordinates, population and other values. Applied segments are marked in `plan.json` and cannot be changed on the page any more. Overlapping segments are refused, and writes to the mapping file are locked, so several review pages and a running channel batch can be used at once. Do not stop a review page while it is applying.
 
