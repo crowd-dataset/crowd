@@ -890,6 +890,7 @@ def exclusion_reason(meta):
 def title_countries(title):
     """The countries of the mapping a title names, not inside a US state's name: "New Jersey" is not Jersey,
     "Atlanta, Georgia" not the country."""
+    title = english_states(title)  # "Nueva Jersey" is no Jersey
     states = '|'.join(re.escape(s) for s in add_video.US_STATE_CODES)
     # "Rio Piedra, San Juan, P.R.", "Ponce, PR": Puerto Rico by its postal abbreviation
     pr = ['Puerto Rico'] if re.search(r'\bP\.\s?R\.|,\s*PR\b', title or '') else []
@@ -999,6 +1000,7 @@ def chapter_localities(chapters, df, near_home=None):
 
 
 def _title_locality(title, df, exact_case=False, word_needs_state=False):
+    title = english_states(title)
     found = set()
     for _, row in df.iterrows():
         names = [row['locality']]
@@ -1066,6 +1068,20 @@ DRIVE_AREA = re.compile(r"(?:\bfrom\b.+\bto\b|\b(?:[Dd]esde|de)\b.+\b(?:hasta|ha
                         r"(?:,\s*[A-Z][\w .'-]*)?\s*(?:\bin \d{4}\b.*|[|(].*)?$")
 
 
+# US states as Spanish titles write them ("Allentow, Pensilvania"), read as the English name
+SPANISH_STATES = {'Pensilvania': 'Pennsylvania', 'Nueva York': 'New York', 'Nueva Jersey': 'New Jersey',
+                  'Carolina del Norte': 'North Carolina', 'Carolina del Sur': 'South Carolina',
+                  'Dakota del Norte': 'North Dakota', 'Dakota del Sur': 'South Dakota', 'Nuevo México': 'New Mexico',
+                  'Nuevo Mexico': 'New Mexico', 'Virginia Occidental': 'West Virginia', 'Luisiana': 'Louisiana',
+                  'Misisipi': 'Mississippi', 'Misuri': 'Missouri', 'Míchigan': 'Michigan', 'Oregón': 'Oregon',
+                  'Hawái': 'Hawaii', 'Tennesse': 'Tennessee'}
+_SPANISH_STATE = re.compile(r'\b(' + '|'.join(map(re.escape, SPANISH_STATES)) + r')\b')
+
+
+def english_states(title):
+    return _SPANISH_STATE.sub(lambda m: SPANISH_STATES[m.group(1)], title or '')
+
+
 STREET_WORDS = {'ave', 'avenue', 'blvd', 'boulevard', 'rd', 'road', 'street', 'hwy', 'highway', 'pkwy', 'parkway',
                 'expy', 'expressway'}
 
@@ -1076,6 +1092,7 @@ STREETS = '|'.join(w.capitalize() for w in STREET_WORDS)
 def place_phrases(text, limit=4):
     """Runs of capitalised words in a title or description that may name a place, longest first: "Al Khan
     Beach" from "Beautiful Sun Rise at Al Khan Beach, unedited sounds". Hashtags and links are skipped."""
+    text = english_states(text)
     text = re.sub(r'#\w+|https?://\S+|www\.\S+', ' ', text or '')
     phrases, run = [], []
     for token in re.findall(r"[^\W\d_][\w'’-]*|[^\w\s]+|\d\w*", text) + ['.']:
@@ -1555,6 +1572,7 @@ def _route(start, end):
 def drive_ends(title, df, home=None):
     """(OpenStreetMap hit, locality) of where a drive "from A to B" starts and of where it ends (either may be
     None when not found), or None when the title names no such drive."""
+    title = english_states(title)
     m = next((m for r in FROM_TO if (m := r.search(title or ''))), None)
     if not m:
         return None

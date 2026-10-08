@@ -34,6 +34,8 @@ ROOT = '_output/proposals'
 STATE = os.path.join(ROOT, 'channels.json')
 TO_REVIEW = os.path.join(ROOT, 'to_review.md')
 PAUSE = os.path.join(ROOT, 'pause')  # created while the user travels (Travel calendar)
+# the sheet changes still to make, [{row, url, status, by}], for whoever edits the sheet (the hourly check)
+SHEET_TODO = os.path.join(ROOT, 'sheet_todo.json')
 # the sheet's short country names, as the mapping writes them
 COUNTRY = {'USA': 'United States', 'US': 'United States', 'UK': 'United Kingdom', 'UAE': 'United Arab Emirates',
            'Korea': 'South Korea'}
@@ -46,11 +48,15 @@ def log(msg):
     print(f'{time.strftime("%H:%M")} {msg}', flush=True)
 
 
+PROCESSED_BY = {}  # channel url -> column E (Processed by), as last read
+
+
 def sheet_rows():
     """[(row number, channel url, status, country)] of the channels sheet."""
     r = requests.get(SHEET_CSV, timeout=60)
     r.raise_for_status()
     rows = list(csv.reader(io.StringIO(r.content.decode('utf-8'))))
+    PROCESSED_BY.update({row[0].strip(): row[4].strip() if len(row) > 4 else '' for row in rows[1:] if row})
     return [(n, row[0].strip(), row[1].strip(), row[2].strip() if len(row) > 2 else '')
             for n, row in enumerate(rows[1:], 2) if row and row[0].strip()]
 
@@ -122,7 +128,21 @@ def write_to_review(state):
 
 
 OURS = ('', 'Processing')  # sheet statuses of a channel this routine works on
-BY = ', column E (Processed by) to Claude+Pavlo'  # the channels this routine works on
+WHO = 'Claude+Pavlo'  # column E (Processed by) of the channels this routine works on
+BY = f', column E (Processed by) to {WHO}'
+
+
+def write_sheet_todo(state, sheet):
+    """The status (column B) and Processed by (column E) the sheet should show for the channels worked on here
+    and does not yet, in SHEET_TODO."""
+    status = {url: s for _, url, s, _ in sheet}
+    want = {'processing': 'Processing', 'to review': 'Processing', 'reviewed': 'Processed', 'rejected': 'Rejected'}
+    todo = [{'row': c['row'], 'url': url, 'status': want[c['status']], 'by': WHO} for url, c in state.items()
+            if c['status'] in want and status.get(url, '') in OURS
+            and (status.get(url, '') != want[c['status']] or PROCESSED_BY.get(url, '') != WHO)]
+    with open(SHEET_TODO + '.tmp', 'w') as f:
+        json.dump(todo, f, indent=1)
+    os.replace(SHEET_TODO + '.tmp', SHEET_TODO)
 
 
 def check_reviews(state, sheet):
@@ -200,6 +220,7 @@ def main():
             time.sleep(IDLE_WAIT_S)
             continue
         check_reviews(state, sheet)
+        write_sheet_todo(state, sheet)
         save_state(state)
         write_to_review(state)
         # the next channel from the bottom: one started here and still "Processing", else a new one with no
@@ -207,6 +228,8 @@ def main():
         todo = [(n, url, country) for n, url, status, country in reversed(sheet)
                 if (status == '' and url not in state or status in OURS and url in state)
                 and state.get(url, {}).get('status', 'processing') == 'processing']
+        started = list(state)  # one channel at a time: the earliest started one first, a new one after them
+        todo.sort(key=lambda t: started.index(t[1]) if t[1] in state else len(started))
         if not todo:
             log('no channel left to process; waiting for reviews and the sheet')
             time.sleep(IDLE_WAIT_S)
@@ -216,6 +239,7 @@ def main():
             log(f'SHEET: set row {n} ({url}) to Processing{BY}')
         c = state.setdefault(url, {'row': n, 'name': channel_name(url), 'status': 'processing'})
         c['row'] = n
+        write_sheet_todo(state, sheet)
         country = c.get('country') or country_of(url, sheet_country)
         if not country:
             log(f'row {n} {url}: no country in the sheet or on YouTube; skipped, fill in column C')
