@@ -44,7 +44,7 @@ def index():
     for url, c in rc.load_state().items():
         waiting, proposed = rc.review_counts(c['name'])
         if waiting:
-            state = 'all videos proposed' if c['status'] == 'to review' else 'still being processed'
+            state = 'still being processed' if c['status'] == 'processing' else 'all videos proposed'
             batches.append(dict(name=c['name'], row=c['row'], state=state, waiting=waiting, proposed=proposed))
         elif proposed:
             done.append(c['name'])

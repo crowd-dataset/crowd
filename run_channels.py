@@ -8,7 +8,7 @@ are all proposed waits for review and the next channel starts. Progress is kept 
 _output/proposals/channels.json, and the batches left to review are listed in _output/proposals/to_review.md.
 
 The sheet cannot be written from here (it needs a Google login): lines starting with "SHEET:" say which row to
-set to "Processing" (started here), "Processed" (all its videos reviewed) or "Rejected" (it edits its drives),
+set to "Processing" (started here), "Processed" (all its videos proposed) or "Rejected" (it edits its drives),
 with "Claude+Pavlo" in column E (Processed by).
 
     python run_channels.py [--chunk 15] [--max-minutes 110]
@@ -20,6 +20,7 @@ import io
 import json
 import os
 import re
+import select
 import subprocess
 import sys
 import time
@@ -40,6 +41,7 @@ SHEET_TODO = os.path.join(ROOT, 'sheet_todo.json')
 COUNTRY = {'USA': 'United States', 'US': 'United States', 'UK': 'United Kingdom', 'UAE': 'United Arab Emirates',
            'Korea': 'South Korea'}
 BLOCKED_WAIT_S = 15 * 60
+SILENT_BATCH_S = 45 * 60  # a batch silent this long is stuck (the longest analysis so far: 7 min)
 IDLE_WAIT_S = 10 * 60
 QUOTA_WAIT_S = 60 * 60  # the API quota resets at midnight Pacific time
 
@@ -105,6 +107,8 @@ def load_state():
 
 
 def save_state(state):
+    # channels added meanwhile by sync_workers.py (the workers' channels) stay
+    state = {**load_state(), **state}
     tmp = STATE + '.tmp'
     with open(tmp, 'w') as f:
         json.dump(state, f, indent=1)
@@ -136,7 +140,8 @@ def write_sheet_todo(state, sheet):
     """The status (column B) and Processed by (column E) the sheet should show for the channels worked on here
     and does not yet, in SHEET_TODO."""
     status = {url: s for _, url, s, _ in sheet}
-    want = {'processing': 'Processing', 'to review': 'Processing', 'reviewed': 'Processed', 'rejected': 'Rejected'}
+    # Processed once all its videos are proposed, before the review (user, 2026-10-09)
+    want = {'processing': 'Processing', 'to review': 'Processed', 'reviewed': 'Processed', 'rejected': 'Rejected'}
     todo = [{'row': c['row'], 'url': url, 'status': want[c['status']], 'by': WHO, 'comment': c.get('comment', '')}
             for url, c in state.items()
             if c['status'] in want and status.get(url, '') in OURS
@@ -153,9 +158,9 @@ def check_reviews(state, sheet):
     for url, c in state.items():
         if c['status'] == 'to review' and review_counts(c['name'])[0] == 0:
             c['status'] = 'reviewed'
-        if c['status'] in ('processing', 'to review') and status.get(url) == '':
+        if c['status'] == 'processing' and status.get(url) == '':
             log(f"SHEET: set row {c['row']} ({url}) to Processing{BY}")
-        for done, word in (('reviewed', 'Processed'), ('rejected', 'Rejected')):
+        for done, word in (('to review', 'Processed'), ('reviewed', 'Processed'), ('rejected', 'Rejected')):
             if c['status'] == done and status.get(url, '') in OURS:
                 log(f"SHEET: set row {c['row']} ({url}) to {word}{BY}")
             elif c['status'] == done:
@@ -165,6 +170,8 @@ def check_reviews(state, sheet):
 def on_hotspot():
     """Connected through an iPhone's Personal Hotspot (it always hands out 172.20.10.x; macOS hides the Wi-Fi
     name)."""
+    if sys.platform != 'darwin':  # a worker machine on the campus network has no hotspot
+        return False
     r = subprocess.run(['route', '-n', 'get', 'default'], capture_output=True, text=True)
     return 'gateway: 172.20.10.' in r.stdout
 
@@ -178,15 +185,32 @@ def run_chunk(url, country, chunk, single_city=False):
     cmd = [sys.executable, '-u', 'propose_segments.py', '--channel', url, '--country', country,
            '--limit', str(chunk)] + (['--single-city'] if single_city else [])
     out = []
-    with subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env) as proc:
-        for line in proc.stdout:
-            if on_hotspot() or os.path.exists(PAUSE):  # stop downloading at once; the batch continues later
-                proc.terminate()
-                out.append('switched to the hotspot or paused\n')
+    with subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env) as proc:
+        fd, pending, last, done = proc.stdout.fileno(), b'', time.time(), False
+        while not done:
+            # a read that never returns (a connection dropped mid-request, 2026-10-09) must not hold the routine;
+            # raw reads, so no line waits in a buffer select cannot see
+            ready, _, _ = select.select([fd], [], [], min(60, SILENT_BATCH_S))
+            if not ready:
+                if time.time() - last > SILENT_BATCH_S:
+                    proc.terminate()
+                    log(f'the batch printed nothing for {SILENT_BATCH_S // 60} min (stuck?): stopped it')
+                    break
+                continue
+            chunk = os.read(fd, 65536)
+            if not chunk:
                 break
-            if 'Warning' not in line:
-                print(f'{time.strftime("%H:%M")}   ' + line.rstrip()[:200], flush=True)
-                out.append(line)
+            last = time.time()
+            *lines, pending = (pending + chunk).split(b'\n')
+            for line in (raw.decode(errors='replace') + '\n' for raw in lines):
+                if on_hotspot() or os.path.exists(PAUSE):  # stop downloading at once; the batch continues later
+                    proc.terminate()
+                    out.append('switched to the hotspot or paused\n')
+                    done = True
+                    break
+                if 'Warning' not in line:
+                    print(f'{time.strftime("%H:%M")}   ' + line.rstrip()[:200], flush=True)
+                    out.append(line)
     return ''.join(out)
 
 
@@ -194,6 +218,10 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     ap.add_argument('--chunk', type=int, default=15, help='new proposals per run of propose_segments.py')
     ap.add_argument('--max-minutes', type=float, help='stop after this long (between chunks)')
+    # several machines on one sheet: each takes only its own rows, so two never work on the same channel
+    ap.add_argument('--rows', choices=('even', 'odd'), help='only channels on even or odd sheet rows')
+    ap.add_argument('--no-new', action='store_true',
+                    help='finish the channels started here, start no new one (the worker machines take those)')
     args = ap.parse_args()
     lock = open(os.path.join(ROOT, 'runner.lock'), 'w')
     try:  # one routine at a time: the hourly task may find the last one still running
@@ -203,6 +231,7 @@ def main():
         return
     t0 = time.time()
     state = load_state()
+    code = os.path.getmtime(__file__)
     while not args.max_minutes or time.time() - t0 < args.max_minutes * 60:
         if on_hotspot():
             log('on the iPhone hotspot: waiting until another network is used')
@@ -214,6 +243,10 @@ def main():
             while os.path.exists(PAUSE):
                 time.sleep(60)
             log('pause removed: continuing')
+        if os.path.getmtime(__file__) != code:  # updated (on a worker: by sync_workers.py): run the new code
+            log('run_channels.py changed: restarting with the new code')
+            os.execv(sys.executable, [sys.executable, '-u'] + sys.argv)
+        state = load_state()  # with the workers' progress, as synced by sync_workers.py
         try:
             sheet = sheet_rows()
         except requests.RequestException as e:
@@ -228,7 +261,10 @@ def main():
         # status; a channel someone else marked (even "Processing") is theirs
         todo = [(n, url, country) for n, url, status, country in reversed(sheet)
                 if (status == '' and url not in state or status in OURS and url in state)
-                and state.get(url, {}).get('status', 'processing') == 'processing']
+                and state.get(url, {}).get('status', 'processing') == 'processing'
+                and not state.get(url, {}).get('host')  # a worker machine's channel
+                and (args.rows is None or n % 2 == (args.rows == 'odd'))
+                and not (args.no_new and url not in state)]
         started = list(state)  # one channel at a time: the earliest started one first, a new one after them
         todo.sort(key=lambda t: started.index(t[1]) if t[1] in state else len(started))
         if not todo:

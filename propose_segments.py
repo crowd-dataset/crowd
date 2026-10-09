@@ -453,6 +453,11 @@ def propose(sig, p=PARAMS):
 
     keep = ~blank
     notes = []
+    for a, b in np.asarray(sig.get('garage', np.zeros((0, 2)))).reshape(-1, 2):  # see garage_edges
+        keep[int(a * FPS):int(b * FPS)] = False
+        notes.append(f'in a garage {int(a) // 60}:{int(a) % 60:02d}-{int(b) // 60}:{int(b) % 60:02d}')
+    if (end := montage_end(sig)) is not None:  # a hint: in most channels early cuts are something else
+        notes.append(f'possible montage of highlights 0-{end}s: check where the drive starts')
     sat = sig.get('saturation')
     if (sat is not None and len(sat) and sig.get('skips') is not None and 'spread' in sig
             and sat[0] > max(p['intro_saturation'], p['intro_saturation_ratio'] * np.median(sat))):
@@ -694,6 +699,118 @@ def skip_times(sig):
     return out
 
 
+def dark_edges(sig, max_s=240, min_s=8):
+    """[(start s, end s, 'start'|'end')] candidates for a garage at a video's start or end: within max_s of the
+    edge, the sharpest rise in sky brightness (10 s before vs after, at least 30: driving out), with the stretch
+    before it 35 darker than the video's median, the minute after it about as bright as that, and its sky no
+    brighter than its road (a ceiling). Tunnels, the El and dusk pass this too, hence garage_edges."""
+    sky = _rolling_median(sig['sky'][::FPS], 5)  # per second
+    ground = sig['ground'][:len(sig['sky'])][::FPS]
+    if len(sky) < max_s + 90:
+        return []
+    ref, out = np.median(sky), []
+    for edge, x, y in (('start', sky, ground), ('end', sky[::-1], ground[::-1])):
+        jump = [np.median(x[t:t + 10]) - np.median(x[max(0, t - 10):t]) for t in range(min_s, max_s)]
+        t = min_s + int(np.argmax(jump))
+        if (max(jump) >= 30 and np.median(x[:t]) <= ref - 35 and np.median(x[t:t + 60]) >= ref - 15
+                and np.median(x[:t] - y[:t]) < 20):
+            out.append((0, t, edge) if edge == 'start' else (len(x) - t, len(x), edge))
+    return out
+
+
+GARAGE_CODE = """
+import sys, open_clip, torch
+from PIL import Image
+scenes = ['the inside of a parking garage', 'a road tunnel', 'a street under an elevated railway', 'a road at dusk',
+          'a road at night', 'a city street', 'a road through a forest', 'a highway']
+model, _, prep = open_clip.create_model_and_transforms('ViT-B-32', pretrained='laion2b_s34b_b79k')
+tok = open_clip.get_tokenizer('ViT-B-32')
+with torch.no_grad():
+    text = model.encode_text(tok([f'a dashcam photo of {s}' for s in scenes]))
+    text /= text.norm(dim=-1, keepdim=True)
+    for path in sys.argv[1:]:
+        img = model.encode_image(prep(Image.open(path)).unsqueeze(0))
+        img /= img.norm(dim=-1, keepdim=True)
+        print(float((100 * img @ text.T).softmax(-1)[0, 0]), flush=True)
+"""
+
+
+def garage_edges(path, sig, work_dir):
+    """The dark_edges that CLIP (ViT-B-32, in the project's .venv) sees as the inside of a parking garage: the
+    middle of its scores on three frames at least 0.9. On the 63 dark edges of 818 reviewed videos it found all 18
+    garages (Cur__d1g6j4, UkO_wSNa-zY, ...) and none of the tunnels, El, dusk drives, a street beside a car park,
+    a stop facing a shopfront (0.72 and 0.83 there)."""
+    edges = dark_edges(sig) if 'ground' in sig else []
+    if not edges or not os.path.exists(YOLO_PYTHON):
+        return []
+    shots = []
+    for k, (a, b, _) in enumerate(edges):
+        for q in (0.25, 0.5, 0.75):
+            shot = os.path.join(work_dir, f'garage{k}_{q}.jpg')
+            subprocess.run(['ffmpeg', '-v', 'error', '-y', '-ss', f'{a + (b - a) * q:.1f}', '-i', path,
+                            '-frames:v', '1', shot], capture_output=True)
+            shots.append(shot)
+    r = subprocess.run([YOLO_PYTHON, '-c', GARAGE_CODE, *shots], capture_output=True, text=True, cwd=HERE)
+    for shot in shots:
+        if os.path.exists(shot):
+            os.remove(shot)
+    scores = [float(x) for x in r.stdout.split()]
+    if r.returncode or len(scores) != len(shots):
+        print(f'  CLIP failed, no garage check: {r.stderr.strip()[-300:]}', flush=True)
+        return []
+    return [e for k, e in enumerate(edges) if np.median(scores[3 * k:3 * k + 3]) >= 0.9]
+
+
+def montage_end(sig, within=45, gap=20, tail=15):
+    """Seconds where a montage of highlights at the start of a video ends and the drive begins, else None:
+    at least two strong cuts (scene score 0.1, 50 times the frames around) in the first `within` seconds, at most
+    `gap` apart; it ends at the last cut (15 times) up to `tail` after the last strong one. On five MilesofAmbience
+    videos it puts the start within 0-5 s of the reviewer's (0:17, 0:35, 0:42 for 0:46, 0:19 for 0:15, 0:22 for
+    0:27); other channels cut early for other reasons, hence montage_channel."""
+    ev = np.asarray(sig.get('skips', np.zeros((0, 3)))).reshape(-1, 3)
+    strong = sorted({round(float(t), 1) for t, score, ratio in ev if t <= within and score >= 0.1 and ratio >= 50})
+    run = []
+    for t in strong:
+        if run and t - run[-1] > gap:
+            break
+        run.append(t)
+    if len(run) < 2:
+        return None
+    later = [float(t) for t, _, ratio in ev if run[-1] < t <= run[-1] + tail and ratio >= 15]
+    return round(max(later or [run[-1]]) + 1)
+
+
+def montage_channel(plan, out_dir):
+    """Whether this channel opens its videos with highlight montages: in the videos reviewed so far that have one
+    by montage_end, the reviewer started the drive after it at least 3 times and 3 times as often as not."""
+    after = before = 0
+    for p in plan.values():
+        approved = [s for e in p.get('entries', []) for s in e['segments']
+                    if s.get('decision') == 'approve' or s.get('applied')]
+        path = os.path.join(out_dir, f"{p['video']}_signals.npz")
+        if not approved or not os.path.exists(path):
+            continue
+        end = montage_end(dict(np.load(path)))
+        if end is not None:
+            if min(s['start'] for s in approved) >= end - 5:
+                after += 1
+            else:
+                before += 1
+    return after >= 3 and after >= 3 * before
+
+
+def trim_montage(p, sig):
+    """Start a just-proposed video after its opening montage of highlights."""
+    end = montage_end(sig)
+    if end is None:
+        return
+    for e in p.get('entries', []):
+        e['segments'] = [dict(s, start=max(s['start'], end)) for s in e['segments'] if s['end'] > end + 30]
+    p['entries'] = [e for e in p['entries'] if e['segments']]
+    p['note'] = (f"{p.get('note', '')}; intro 0-{end}s: a montage of highlights (this channel opens with one)"
+                 .lstrip('; '))
+
+
 def footage_skip(sig):
     """Where the video skips footage (an edit cut), as m:ss, else None. Waiting at intersections is what gets
     cut most and what the dataset needs, so such a video is left out whole."""
@@ -702,16 +819,19 @@ def footage_skip(sig):
     return None if t is None else f'{int(t) // 60}:{int(t) % 60:02d}'
 
 
-GPS_PROBE_S = (10, 45, 90)  # where the first frames are read for a GPS overlay; without one there, none is read
+# where the first frames are read for a GPS overlay; without one there, none is read (stream frames misread
+# often: 6 tries)
+GPS_PROBE_S = (10, 45, 90, 150, 210, 270)
 GPS_EVERY_S = 30            # then one frame this often
 # "N40.12345 W75.12345", "40.12345N 75.12345W", "40.123456, -75.123456" as dashcams print them
 GPS_HEMI = re.compile(r'([NS])\s*(\d{1,2}[.,]\d{3,})\D{0,4}?([EW])\s*(\d{1,3}[.,]\d{3,})'
                       r'|(\d{1,2}[.,]\d{3,})\s*°?\s*([NS])\W{0,4}(\d{1,3}[.,]\d{3,})\s*°?\s*([EW])')
-GPS_SIGNED = re.compile(r'(?<![\d.])(-?\d{1,2}\.\d{4,})\s*[,;]?\s+(-?\d{1,3}\.\d{4,})(?![\d.])')
+GPS_SIGNED = re.compile(r'(?<![\d.])(-?\d{1,2}\.\d{4,})(?:\s*[,;]?\s+|\s*(?=-))(-?\d{1,3}\.\d{4,})(?![\d.])')
 
 
 def parse_gps(text):
     """(lat, lon) of the first coordinates in a frame's text, else None."""
+    text = re.sub(r"(\d)['’`/](\d)", r'\1.\2', text or '').replace("'", ' ')  # 49'29065'-123.13081
     if m := GPS_HEMI.search(text):
         g = m.groups()
         ns, la, ew, lo = g[:4] if g[0] else (g[5], g[4], g[7], g[6])
@@ -732,35 +852,76 @@ def _frame_text(stream, t):
                          capture_output=True, timeout=120).stdout
     if not png:
         return ''
-    return subprocess.run(['tesseract', 'stdin', 'stdout', '--psm', '11'], input=png, capture_output=True,
+    text = subprocess.run(['tesseract', 'stdin', 'stdout', '--psm', '11'], input=png, capture_output=True,
                           timeout=120).stdout.decode(errors='ignore')
+    # dashcams print a line along the bottom or top edge ("GARMIN 29-05-2021 12:05:10 49.29065 -123.13081"), too
+    # small for a read of the whole frame: those strips, enlarged, read as one line each
+    # (white text on the picture: enlarged 3 times and turned black on white, 3p9Q_K6pkjo at 720p)
+    for crop in ('iw:ih*0.045:0:ih*0.955', 'iw:ih*0.045:0:0'):
+        strip = subprocess.run(['ffmpeg', '-v', 'error', '-i', '-', '-vf',
+                                f"crop={crop},scale=-2:100,format=gray,lut=y='if(gt(val\\,190)\\,0\\,255)'",
+                                '-f', 'image2pipe', '-vcodec', 'png', '-'], input=png, capture_output=True,
+                               timeout=60).stdout
+        if strip:
+            line = subprocess.run(['tesseract', 'stdin', 'stdout', '--psm', '7', '-c',
+                                   'tessedit_char_whitelist=0123456789.,-:/NSEW '], input=strip,
+                                  capture_output=True, timeout=120).stdout.decode(errors='ignore')
+            text += '\n' + line
+    return text
+
+
+CLOCK = re.compile(r'(?<!\d)([01]?\d|2[0-3])[:.]([0-5]\d)[:.]([0-5]\d)(?!\d)')  # 12:05:10 in a dashcam stamp
+
+
+def parse_clock(text):
+    """Seconds since midnight of the first clock time in a frame's text, else None."""
+    m = CLOCK.search(text or '')
+    return int(m.group(1)) * 3600 + int(m.group(2)) * 60 + int(m.group(3)) if m else None
 
 
 def gps_track(video_id, duration):
-    """[(t, lat, lon)] read from a GPS overlay in the picture, or None when the first frames show none. Frames
-    come from the 720p stream (the 240p copy is too small to read), so only a few are fetched."""
+    """([(t, lat, lon)] read from a GPS overlay in the picture or None, [(t, clock seconds)] read from a time stamp
+    in it), both empty when the first frames show neither. Frames come from the 720p stream (the 240p copy is too
+    small to read), so only a few are fetched."""
     if not shutil.which('tesseract') or not duration:
-        return None
+        return None, []
     try:
         # YouTube refuses the stream (403) without the headers yt-dlp asked for it with
         m = json.loads(_yt_dlp('-j', '-f', 'bv*[height<=720][ext=mp4]/bv*[height<=720]', _url(video_id)))
         stream = m['url'], ''.join(f'{k}: {v}\r\n' for k, v in (m.get('http_headers') or {}).items())
-        probe = [(t, parse_gps(_frame_text(stream, t))) for t in GPS_PROBE_S if t < duration]
-        if not any(xy for _, xy in probe):
-            return None
-        track = [(t, *xy) for t, xy in probe if xy]
-        track += [(t, *xy) for t in range(GPS_EVERY_S * 4, int(duration), GPS_EVERY_S)
-                  if (xy := parse_gps(_frame_text(stream, t)))]
+        texts = [(t, _frame_text(stream, t)) for t in GPS_PROBE_S if t < duration]
+        if not any(parse_gps(x) or parse_clock(x) for _, x in texts):
+            return None, []
+        texts += [(t, _frame_text(stream, t)) for t in range(GPS_EVERY_S * 4, int(duration), GPS_EVERY_S)
+                  if t not in GPS_PROBE_S]
     except (RuntimeError, subprocess.TimeoutExpired, KeyError, ValueError) as e:
         print(f'  GPS overlay not read: {e}', flush=True)
-        return None
-    track.sort()
+        return None, []
+    texts.sort()
+    clock = [(t, c) for t, x in texts if (c := parse_clock(x)) is not None]
+    track = [(t, *xy) for t, x in texts if (xy := parse_gps(x))]
     # a misread digit puts a point far off: keep points a car could have reached from the one before
     kept = track[:1]
     for t, lat, lon in track[1:]:
         if _km(kept[-1][1], kept[-1][2], lat, lon) <= 1 + (t - kept[-1][0]) / 3600 * MAX_KMH:
             kept.append((t, lat, lon))
-    return kept if len(kept) >= 2 else None
+    return (kept if len(kept) >= 2 else None), clock
+
+
+CLOCK_JUMP_S = 15  # the camera's clock running this far ahead of (or behind) the video: footage was cut out
+
+
+def clock_jump(sig):
+    """Where the time stamp in the picture jumps (an edit that cut footage out), as m:ss, else None: the clock
+    minus the video time changes by more than CLOCK_JUMP_S and the next reading agrees with the new difference
+    (one misread digit is no jump)."""
+    clock = np.asarray(sig.get('clock', np.zeros((0, 2)))).reshape(-1, 2)
+    off = [(t, (c - t) % 86400) for t, c in clock]
+    diff = lambda a, b: min(abs(a - b), 86400 - abs(a - b))  # noqa: E731 (past midnight)
+    for (t0, a), (t1, b), (_, c) in zip(off, off[1:], off[2:]):
+        if diff(a, b) > CLOCK_JUMP_S and diff(b, c) <= 3:
+            return f'{int(t0) // 60}:{int(t0) % 60:02d}-{int(t1) // 60}:{int(t1) % 60:02d}'
+    return None
 
 
 def split_gps(p, df, out_dir):
@@ -786,9 +947,15 @@ def split_gps(p, df, out_dir):
         if stretches:
             stretches[-1] = (stretches[-1][0], a, stretches[-1][2])
         stretches.append((a, float('inf'), loc))
+    if all(loc is None for _, _, loc in stretches):  # 1ei5X-4UvIo: country roads by Port Townsend, WA
+        p.pop('entries')
+        p['exclude'] = 'rural driving: the GPS overlay passes no town'
+        return True
     entries = split_by_stretches(e['segments'], stretches)
     if not entries:
         return False
+    for x in entries:  # ground truth: no later guess may move it (vgAi62wCO6w: Richmond, BC is no namesake)
+        x['gps'] = True
     p['entries'] = entries
     p['note'] = (f"{p.get('note') or ''}; localities from the GPS overlay: "
                  + ', '.join(f"{loc[0] if loc else 'rural (left out)'} from {int(a) // 60}:{int(a) % 60:02d}"
@@ -809,10 +976,13 @@ def analyse_video(video_id, out_dir, meta=None):
         urban = urban_objects(path)
         if urban is not None:
             sig['urban'], sig['street'] = urban[:, 0], urban[:, 1]
-        gps = gps_track(video_id, meta['duration'])
+        sig['garage'] = np.array([(a, b) for a, b, _ in garage_edges(path, sig, work_dir)], float).reshape(-1, 2)
+        gps, clock = gps_track(video_id, meta['duration'])
         if gps:
             sig['gps'] = np.array(gps, float)
             print(f'  GPS overlay: {len(gps)} positions', flush=True)
+        if clock:
+            sig['clock'] = np.array(clock, float)
         contact_sheet(path, meta['duration'] or len(sig['motion']) / FPS,
                       os.path.join(out_dir, f'{video_id}.jpg'))
     finally:
@@ -832,6 +1002,9 @@ HIGHWAY_TITLE = re.compile(r'(?i:road ?trip|\bhighway\b|\bfreeway\b|\bhwy\b|\bmo
                            r'|(?<![Vv]ia )(?:\b[Ii]nterstate[- ]?|\bI[- ]?|\bi[- ])\d{1,3}\b')
 # walks and rides on boats are no vehicle type the dataset takes; a title that also says drive keeps the video
 NOT_DRIVING_TITLE = re.compile(r'\b(?:walk(?:s|ing)?|stroll(?:ing)?|hik(?:e|ing)|on foot|(?:boat|ferry) ride)\b', re.I)
+# national parks and forests have no urban driving (yHEDro64z0Y, Zion; none of 28 such titles was approved)
+NATURE_TITLE = re.compile(r'\b(?:national|state|provincial|regional) (?:park|forest|monument|seashore|recreation area'
+                          r'|preserve)s?\b|\bnational parks?\b|\bwilderness\b|\bscenic byway\b', re.I)
 DRIVING_TITLE = re.compile(r'\bdriv(?:e|es|ing)\b|\bdashcam\b', re.I)
 
 
@@ -947,6 +1120,9 @@ def exclusion_reason(meta):
     hit = NOT_DRIVING_TITLE.search(meta.get('title') or '')
     if hit and not DRIVING_TITLE.search(meta.get('title') or ''):
         return f"not a drive (title mentions '{hit.group(0)}')"
+    hit = NATURE_TITLE.search(meta.get('title') or '')
+    if hit:
+        return f"a drive through a park or nature area, no urban driving (title mentions '{hit.group(0)}')"
     return None
 
 
@@ -1875,11 +2051,27 @@ def split_route(p, df, home=None):
     return True
 
 
-@_remembered
-def town_near(name, home):
+def town_near(name, home, df=None):
     """[locality, state, country] of the town a place of that name near the channel's home is: itself, or for
-    a neighbourhood the city it is part of (Echo Park is Los Angeles, Beverly Hills its own city). OpenStreetMap
-    tells them apart; GeoNames calls both a section of a populated place."""
+    a neighbourhood the city it is part of (Echo Park is Los Angeles). A small town not in the mapping (df) next
+    to a big city counts as that city, as for titles (Beverly Hills is Los Angeles: _metro_city)."""
+    hit = _town_near(name, home)
+    if not hit:
+        return None
+    town, lat, lon = hit
+    if df is not None:
+        rows = df[df['country'] == home[2]]
+        known = (rows['locality'].map(_name_key).eq(_name_key(town))  # in that state: Pasadena, TX is another
+                 & (rows['state'].isna() | rows['state'].eq(home[1]))).any()
+        if not known and (metro := _metro_city(town, (lat, lon), rows, home[1])):
+            return metro
+    return [town, home[1], home[2]]
+
+
+@_remembered
+def _town_near(name, home):
+    """(town, lat, lon) of a place of that name near home: OpenStreetMap tells a town from a neighbourhood (and
+    gives the city it is part of); GeoNames calls both a section of a populated place."""
     r = _nominatim('geocode', f'{name}, {home[2]}', featuretype='settlement', addressdetails=True, timeout=15,
                    viewbox=[(home[3] - 1, home[4] - 1), (home[3] + 1, home[4] + 1)], bounded=True)
     if r is None or _km(home[3], home[4], r.latitude, r.longitude) > 60:
@@ -1889,7 +2081,7 @@ def town_near(name, home):
         town = name
     else:
         town = address.get('city') or address.get('town') or address.get('village')
-    return [town, home[1], home[2]] if town else None
+    return (town, r.latitude, r.longitude) if town else None
 
 
 def _km(lat1, lon1, lat2, lon2):
@@ -1922,9 +2114,11 @@ def filmed_countries(channels, df):
     return set(df.loc[own, 'country'].dropna())
 
 
-def channel_home(channel_id, df, plan):
+def channel_home(channel_id, df, plan, country=None):
     """(locality, state, country, lat, lon) where a channel mostly films: from its videos already in the mapping
-    and localities set by hand in the plan, else from title guesses; None if nothing points anywhere."""
+    and localities set by hand in the plan, else from title guesses; None if nothing points anywhere. With the
+    channel's country, a place in it comes first: vancouverdrive films trips to New York too, but lives in
+    Vancouver."""
     counts = Counter()
     for _, row in df.iterrows():
         n = sum(add_video._normalize_optional_text(c) == channel_id
@@ -1938,10 +2132,11 @@ def channel_home(channel_id, df, plan):
     if not counts:
         counts = Counter(tuple(e['locality']) for p in plan.values()
                          for e in p.get('entries', []) if e.get('locality'))
-    for (locality, state, country), _ in counts.most_common():
-        _, row = add_video.get_existing_locality_row(df, locality, state, country)
+    ranked = sorted(counts.most_common(), key=lambda kv: country is not None and kv[0][2] != country)
+    for (locality, state, where), _ in ranked:
+        _, row = add_video.get_existing_locality_row(df, locality, state, where)
         if row is not None:
-            return locality, state, country, float(row['lat']), float(row['lon'])
+            return locality, state, where, float(row['lat']), float(row['lon'])
     return None
 
 
@@ -2012,7 +2207,11 @@ def locate_now(p, df, home, sig_path=None, meta=None, boilerplate=frozenset()):
     one town its title names, else its chapters (split at them when they name several), else its description
     (meta: the video's details); a video then in one place gets no rural or highway cuts (ONE_PLACE)."""
     e = p['entries'][0]
-    if not e.get('locality') and not split_route(p, df, home):
+    # coordinates printed in the picture are ground truth: they decide before the title (user, 2026-10-09)
+    if sig_path and split_gps(p, df, os.path.dirname(sig_path)):
+        if 'entries' not in p:  # left out: the GPS passes no town
+            return
+    elif not e.get('locality') and not split_route(p, df, home):
         title = p.get('title') or ''
         if (same := one_end_city(title, df, home)):  # "… to Queens Village Queens": part of the end names it
             e['locality'], e['guessed'] = same, True
@@ -2036,7 +2235,7 @@ def locate_now(p, df, home, sig_path=None, meta=None, boilerplate=frozenset()):
     es = p.get('entries') or []
     if meta and len(es) == 1 and not es[0].get('locality') and not p.get('route'):
         e = es[0]
-        near_home = (lambda name: town_near(name, home)) if home else None
+        near_home = (lambda name: town_near(name, home, df)) if home else None
         stretches = chapter_localities(video_chapters(meta), df, near_home)
         if len(stretches) == 1:
             e['locality'], e['guessed'] = stretches[0][2], True
@@ -2134,6 +2333,7 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
     early = None  # (home, localities in reach) for the locality of each video as soon as it is proposed
     failures_in_a_row = 0
     skips_in_a_row = 0
+    montages = montage_channel(plan, out_dir)  # this channel opens with highlights: start after them
     try:
         # the channel's video list is kept for a day: listing 8,000 videos costs ~170 of the API's 10,000 daily
         # units, and a batch runs every few minutes
@@ -2200,7 +2400,7 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
             reason = exclusion_reason(meta)
             if not reason and single_city:
                 if single_home is None:
-                    single_home = channel_home(meta.get('channel_id'), df, plan) or False
+                    single_home = channel_home(meta.get('channel_id'), df, plan, country) or False
                 named = title_countries(meta['title'])
                 if between_towns(meta['title'], df[df['country'].isin([country] + named)], single_home or None):
                     reason = 'a drive from one town to another (this channel: only drives within one city)'
@@ -2218,6 +2418,12 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
             stopped = f'YouTube asks to sign in ({e})'
             break
         except Exception as e:
+            if re.search(r'Video unavailable|Private video|members-only|This video has been removed', str(e)):
+                # gone for good (removed, private, members only): left out, not retried, no failure
+                plan[vid] = {'video': vid, 'title': '', 'exclude': f'unavailable on YouTube: {str(e)[-120:]}'}
+                touched.append(vid)
+                commit([vid])
+                continue
             failures_in_a_row += 1
             # no connection (a dropped network, an unresolved name): not the video's fault, so it is not recorded and
             # a later run tries it again
@@ -2238,6 +2444,8 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
                 reason = f'the camera faces the driver (a big face in {n_driver} of {len(frames)} sampled frames)'
             elif at := footage_skip(dict(np.load(sig_path))):
                 reason = f'the video skips footage at {at} (an edit cut; waits at intersections may be missing)'
+            elif at := clock_jump(dict(np.load(sig_path))):
+                reason = f'the video skips footage at {at} (the time stamp in the picture jumps)'
             else:
                 reason = footage_problem(dict(np.load(sig_path)))
             if 'skips' in np.load(sig_path):  # only videos analysed for skips count towards the streak
@@ -2289,7 +2497,7 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
         try:  # its locality at once, before it shows in an open review page (the full step follows after the batch)
             if early is None:
                 counts = Counter(q.get('channel_id') for q in plan.values() if q.get('channel_id'))
-                early_home = channel_home(counts.most_common(1)[0][0], df, plan) if counts else None
+                early_home = channel_home(counts.most_common(1)[0][0], df, plan, country) if counts else None
                 reach = (df['country'] == country) | df['country'].isin(filmed_countries(counts, df))
                 if early_home:
                     reach |= np.array([_km(early_home[3], early_home[4], la, lo) <= ABROAD_KM
@@ -2299,6 +2507,8 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
                        sig_path if analysed else None, meta, boilerplate)
         except Exception as e:  # a lookup gone wrong must not stop the batch; the full step tries again
             print(f'  locality not found yet ({type(e).__name__})', flush=True)
+        if montages and analysed:
+            trim_montage(plan[vid], dict(np.load(sig_path)))
         commit([vid])  # appears in an open review page straight away
 
     # a run cut off (hotspot, pause) saved its videos but never got to their localities: this run finishes them
@@ -2320,7 +2530,7 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
             with open(path) as f:
                 metas[p['video']] = json.load(f)
     channels = Counter(p.get('channel_id') for p in plan.values() if p.get('channel_id'))
-    home = channel_home(channels.most_common(1)[0][0], df, plan) if channels else None
+    home = channel_home(channels.most_common(1)[0][0], df, plan, country) if channels else None
     # places a video may be in: the channel's country, abroad within reach of its home, and the countries it has
     # filmed in before (a travel channel's trips; Puerto Rico for a New York channel), not anywhere: a title's
     # "Campo Alegre" is not the one in Brazil
@@ -2351,7 +2561,7 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
         if len(p.get('entries', [])) != 1 or p['video'] not in metas:
             continue
         stretches = chapter_localities(video_chapters(metas[p['video']]), df[in_reach],
-                                       (lambda name: town_near(name, home)) if home else None)
+                                       (lambda name: town_near(name, home, df)) if home else None)
         if not stretches:
             continue
         e = p['entries'][0]
@@ -2400,7 +2610,7 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
         for p in new:
             for e in p.get('entries', []):
                 loc = e.get('locality')
-                if not loc or not e.get('guessed') or tuple(loc) == home[:3]:
+                if not loc or not e.get('guessed') or e.get('gps') or tuple(loc) == home[:3]:
                     continue
                 _, row = add_video.get_existing_locality_row(df, *loc)
                 if row is None or _km(home[3], home[4], float(row['lat']), float(row['lon'])) < 100:
@@ -2704,6 +2914,10 @@ tr.seg.active td:first-child { box-shadow: inset 4px 0 #007bff; }
     + add a locality</button>
   <button class="small approve-rest" onclick="approveRest(this)">Approve the rest of this video</button>
   <button class="small" onclick="rejectVideo(this)">Reject whole video</button>
+  <button class="small" data-video="{{ p.video }}" onclick="undoRedo(this, 'undo')"
+          title="undo the last change to this video (splits, joins, decisions, localities, times)">↶ Undo</button>
+  <button class="small" data-video="{{ p.video }}" onclick="undoRedo(this, 'redo')"
+          title="redo the change just undone">↷ Redo</button>
   </div>
   <div class="desc">{% set d = descriptions.get(p.video) %}
     {% if d %}
@@ -3077,6 +3291,12 @@ async function addLocality(btn) {
   if (!res.ok) { alert((await res.json()).error); return; }
   reloadKeepingPlace();
 }
+async function undoRedo(btn, what) {
+  const res = await fetch(what, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({ video: btn.dataset.video }) });
+  if (!res.ok) { alert((await res.json()).error); return; }
+  reloadKeepingPlace();
+}
 async function rejectVideo(btn) {
   const video = btn.closest('.video');
   for (const row of video.querySelectorAll('tr.seg:not(.reject):not(.applied)')) {
@@ -3176,17 +3396,58 @@ def review(plan_path, port=None):
     # (adding analysed videos while you review) never interleaves with it
     held = {}
 
+    # undo and redo per video: the video's plan entry before each change made here (kept while the page runs)
+    undo_stack, redo_stack, before = {}, {}, {}
+
     @app.before_request
     def take_lock():
         if request.method == 'POST':
-            held[id(request._get_current_object())] = lock = plan_lock(plan_path)
+            key = id(request._get_current_object())
+            held[key] = lock = plan_lock(plan_path)
             lock.__enter__()
+            video = (request.get_json(silent=True) or {}).get('video')
+            if video and request.path not in ('/apply', '/undo', '/redo'):
+                p = next((p for p in load() if p['video'] == video), None)
+                if p is not None:
+                    before[key] = (video, json.dumps(p))
+
+    @app.after_request
+    def remember(response):
+        change = before.pop(id(request._get_current_object()), None)
+        if change and response.status_code < 400:
+            undo_stack.setdefault(change[0], []).append(change[1])
+            redo_stack.pop(change[0], None)
+        return response
 
     @app.teardown_request
     def release_lock(exc):
         lock = held.pop(id(request._get_current_object()), None)
         if lock:
             lock.__exit__(None, None, None)
+
+    def step(back, forward):
+        """Put a video back to the state on top of back, keeping its current one on forward."""
+        video = request.get_json()['video']
+        if not back.get(video):
+            return jsonify(error='nothing to ' + ('undo' if back is undo_stack else 'redo') + ' for this video'), 400
+        plan = load()
+        i = next((i for i, p in enumerate(plan) if p['video'] == video), None)
+        if i is None:
+            return jsonify(error=stale), 409
+        if any(s.get('applied') for e in plan[i].get('entries', []) for s in e['segments']):
+            return jsonify(error='this video is already (partly) in the mapping: change it there'), 409
+        forward.setdefault(video, []).append(json.dumps(plan[i]))
+        plan[i] = json.loads(back[video].pop())
+        save(plan)
+        return jsonify(ok=True, undo=len(undo_stack.get(video, [])), redo=len(redo_stack.get(video, [])))
+
+    @app.route('/undo', methods=['POST'])
+    def undo():
+        return step(undo_stack, redo_stack)
+
+    @app.route('/redo', methods=['POST'])
+    def redo():
+        return step(redo_stack, undo_stack)
 
     @app.route('/')
     def index():
@@ -3495,8 +3756,16 @@ def review(plan_path, port=None):
             # without it Apply would make a second Northampton next to Northampton, MA
             return jsonify(error=f'give the state too: the mapping writes one for {country} (e.g. PA)'), 400
         same = [o for o in p['entries'] if o is not e and o.get('locality') == [locality, state, country]]
-        if same:  # this video already has a group for that locality: join it
-            same[0]['segments'] = sorted(same[0]['segments'] + e['segments'], key=lambda s: s['start'])
+        if same:  # this video already has a group for that locality: join it, overlapping segments as one
+            joined = []
+            for s in sorted(same[0]['segments'] + e['segments'], key=lambda s: s['start']):
+                prev = joined[-1] if joined else None
+                if (prev and s['start'] < prev['end'] and not prev.get('applied') and not s.get('applied')
+                        and prev.get('decision') == s.get('decision')):
+                    prev['end'] = max(prev['end'], s['end'])  # 40:19-46:27 inside 0:27-64:20 (rQ_b0lwCwCA)
+                else:
+                    joined.append(s)
+            same[0]['segments'] = joined
             p['entries'].remove(e)
             save(plan)
             return jsonify(ok=True, merged=True)

@@ -1475,7 +1475,7 @@ def get_country_gini(country_data: list):
 def get_country_literacy_rate(iso3_code):
     try:
         api_url = f"http://api.worldbank.org/v2/country/{iso3_code}/indicator/SE.ADT.LITR.ZS?format=json"
-        response = requests.get(api_url)
+        response = requests.get(api_url, timeout=30)
         if response.status_code == 200:
             data = response.json()
             if data and len(data) > 1 and data[1]:
@@ -1493,7 +1493,7 @@ def get_country_literacy_rate(iso3_code):
 def get_country_traffic_mortality(iso3_code):
     try:
         api_url = f"http://api.worldbank.org/v2/country/{iso3_code}/indicator/SH.STA.TRAF.P5?format=json"
-        response = requests.get(api_url)
+        response = requests.get(api_url, timeout=30)
         if response.status_code == 200:
             data = response.json()
             if data and len(data) > 1 and data[1]:
@@ -1846,7 +1846,7 @@ def get_traffic_index_lat_lon(lat, lon):
     from TomTom. None when there is no reading (TomTom has no road segment near the point, or the request failed)."""
     url = f"https://api.tomtom.com/traffic/services/4/flowSegmentData/absolute/10/json?key={common.get_secrets('tomtom_api_key')}&point={lat},{lon}"  # noqa: E501
     try:
-        response = requests.get(url)
+        response = requests.get(url, timeout=30)
         if response.status_code != 200:
             print(f"Error fetching traffic index for {lat}, {lon}: {response.status_code}")
             return None
