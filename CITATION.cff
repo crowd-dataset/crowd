@@ -10,7 +10,8 @@ authors:
     given-names: Olena
   - family-names: Bazilinskyy
     given-names: Pavlo
-    email: pavlo.bazilinskyy@gmail.com
+    email: p.bazilinskyy@tue.nl
+    website: "https://bazilinskyy.github.io"
 repository-code: "https://github.com/crowd-dataset/crowd"
 license: MIT
 keywords:

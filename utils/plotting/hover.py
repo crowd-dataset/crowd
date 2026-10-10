@@ -23,15 +23,17 @@ POPUPS_JS = """
 (function () {
   var gd = document.getElementById('{plot_id}'), popups = window.CROWD_POPUPS;
   if (!popups) return;
-  gd.data.forEach(function (t, i) {
-    var update = {};
-    ['hovertext', 'text'].forEach(function (a) {
+  // one restyle per attribute for all traces: one per trace redraws the whole plot each time (slow with many traces)
+  ['hovertext', 'text'].forEach(function (a) {
+    var values = [], traces = [];
+    gd.data.forEach(function (t, i) {
       var v = t[a];
       if (Array.isArray(v) && v.some(function (k) { return typeof k === 'string' && k.charAt(0) === '@'; })) {
-        update[a] = [v.map(function (k) { return popups[k] || k; })];
+        values.push(v.map(function (k) { return popups[k] || k; }));
+        traces.push(i);
       }
     });
-    if (Object.keys(update).length) Plotly.restyle(gd, update, [i]);
+    if (traces.length) { var u = {}; u[a] = values; Plotly.restyle(gd, u, traces); }
   });
 })();
 """

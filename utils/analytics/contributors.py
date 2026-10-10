@@ -8,9 +8,12 @@ mapping.csv in commits from the account of another contributor (ACCOUNTS, e.g., 
 is credited to the file it appeared in first; when it appeared in mapping.csv and another file in the same commit, it
 is credited to mapping.csv, since contributors' files are refreshed with copies of mapping.csv.
 
-The credits are kept in video_contributors.csv (video, contributor, added_utc):
+The credits are kept in video_contributors.csv (video, contributor, added_utc: the time of the commit that added
+the video, file: the mapping file it first appeared in). It is the record of who added what once the history of the
+mapping files is gone, so keep it when rewriting the history:
 - `python -m utils.analytics.contributors` builds it from the git history (needs the full history; run once);
-- update(), run by analysis.py, credits videos that are new since, from the mapping files as they are now.
+- update(), run by analysis.py, credits videos that are new since, from the mapping files as they are now, with
+  the time of the last commit that changed the file (or the current time while it has uncommitted changes).
 """
 
 import csv
@@ -62,19 +65,21 @@ def video_ids(text: str) -> set:
 
 
 def load() -> dict:
-    """video -> (contributor, added_utc)."""
+    """video -> (contributor, added_utc, file)."""
     if not os.path.exists(FILE):
         return {}
     with open(FILE, newline="", encoding="utf-8") as f:
-        return {r["video"]: (r["contributor"], r["added_utc"]) for r in csv.DictReader(f)}
+        return {r["video"]: (r["contributor"], r["added_utc"], r.get("file", "")) for r in csv.DictReader(f)}
 
 
 def save(credits: dict) -> None:
-    with open(FILE, "w", newline="", encoding="utf-8") as f:
+    tmp = FILE + ".tmp"
+    with open(tmp, "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
-        w.writerow(["video", "contributor", "added_utc"])
-        for video, (who, when) in sorted(credits.items(), key=lambda kv: (kv[1][1], kv[0])):
-            w.writerow([video, who, when])
+        w.writerow(["video", "contributor", "added_utc", "file"])
+        for video, (who, when, path) in sorted(credits.items(), key=lambda kv: (kv[1][1], kv[0])):
+            w.writerow([video, who, when, path])
+    os.replace(tmp, FILE)
 
 
 def backfill_from_git() -> dict:
@@ -86,15 +91,15 @@ def backfill_from_git() -> dict:
          "--", "mapping.csv", "mapping-*.csv"],
         cwd=common.root_dir, stdout=subprocess.PIPE, text=True, errors="replace")
     credits: dict = {}
-    added: dict = {}  # contributor -> new video IDs in the current commit
-    stamp, who, owner = None, None, MAIN
+    added: dict = {}  # (contributor, file) -> new video IDs in the current commit
+    stamp, who, owner, path = None, None, MAIN, None
 
     def flush():
         # mapping.csv first: a video added to it and to a contributor's copy in the same commit is a copy; videos added
         # to mapping.csv go to the owner of the commit's account (Pavlo unless in ACCOUNTS)
-        for w in sorted(added, key=lambda c: c != MAIN):
-            for video in added[w] - credits.keys():
-                credits[video] = (owner if w == MAIN else w, stamp)
+        for w, f in sorted(added, key=lambda k: k[0] != MAIN):
+            for video in added[(w, f)] - credits.keys():
+                credits[video] = (owner if w == MAIN else w, stamp, f)
         added.clear()
 
     for line in proc.stdout:
@@ -104,11 +109,12 @@ def backfill_from_git() -> dict:
             stamp = datetime.fromtimestamp(int(timestamp), timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
             owner = account_owner(author)
         elif line.startswith("diff --git "):
-            who = contributor(line.rstrip("\n").split(" b/", 1)[-1])
+            path = line.rstrip("\n").split(" b/", 1)[-1]
+            who = contributor(path)
         elif who and line.startswith("+") and not line.startswith("+++"):
             ids = video_ids(line)
             if ids:
-                added.setdefault(who, set()).update(ids)
+                added.setdefault((who, path), set()).update(ids)
     flush()
     proc.wait()
     return credits
@@ -126,22 +132,32 @@ def _author_of_mapping() -> str:
     return _git("log", "-1", "--format=%an <%ae>", "--", "mapping.csv")
 
 
+def _added_time(path: str) -> str:
+    """When the videos new in a mapping file were added: the time of the last commit that changed it, or now while
+    it has uncommitted changes (or no commit: a file not in git)."""
+    name = os.path.relpath(path, common.root_dir)
+    if not _git("status", "--porcelain", "--", name):
+        stamp = _git("log", "-1", "--format=%ct", "--", name)
+        if stamp:
+            return datetime.fromtimestamp(int(stamp), timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def update() -> dict:
     """Credit videos not in video_contributors.csv yet, from the mapping files as they are now, and save. Returns
-    video -> (contributor, added_utc)."""
+    video -> (contributor, added_utc, file)."""
     credits = load()
     files = {path: contributor(path) for path in glob.glob(os.path.join(common.root_dir, "mapping*.csv"))}
-    current = {}
+    current = []  # (contributor, file name, time it was added, video IDs)
     for path, who in files.items():
         if who:
             with open(path, encoding="utf-8", errors="replace") as f:
-                current[who] = video_ids(f.read())
-    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                current.append((who, os.path.basename(path), _added_time(path), video_ids(f.read())))
     owner = account_owner(_author_of_mapping())
     new = 0
-    for who in sorted(current, key=lambda w: w != MAIN):  # in mapping.csv and a copy: credited for mapping.csv
-        for video in current[who] - credits.keys():
-            credits[video] = (owner if who == MAIN else who, now)
+    for who, name, when, ids in sorted(current, key=lambda c: c[0] != MAIN):  # in mapping.csv and a copy: credited
+        for video in ids - credits.keys():                                    # for mapping.csv
+            credits[video] = (owner if who == MAIN else who, when, name)
             new += 1
     if new or not os.path.exists(FILE):
         save(credits)
@@ -165,7 +181,7 @@ if __name__ == "__main__":
     credits = backfill_from_git()
     save(credits)
     counts: dict = {}
-    for who, _ in credits.values():
+    for who, *_ in credits.values():
         counts[who] = counts.get(who, 0) + 1
     print(f"{len(credits):,} videos credited:", ", ".join(f"{w} {n:,}" for w, n in sorted(counts.items(),
                                                                                           key=lambda kv: -kv[1])))

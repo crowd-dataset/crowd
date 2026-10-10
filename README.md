@@ -941,6 +941,9 @@ Distribution of segments (parts of videos included in dataset) by type of vehicl
 [![Amount of footage per locality against its population](figures/scatter_population_footage.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/scatter_population_footage.html)
 Amount of footage per locality against its population. Large localities with little footage are candidates for adding videos.
 
+[![Footage per locality against its population, relative to the trend](figures/scatter_locality_footage_vs_population.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/scatter_locality_footage_vs_population.html)
+Footage per locality against its population (log scales), coloured by whether a locality has more than three times, about, or less than a third of the footage its size predicts (the dotted least-squares line). Labelled: the most populous localities, those with the most footage, and the most under-covered cities of over a million people, which are the next ones to collect.
+
 [![Amount of footage per locality against its gross metropolitan product](figures/scatter_gmp_footage.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/scatter_gmp_footage.html)
 Amount of footage per locality against its gross metropolitan product (GMP, known for about 200 large cities), with the Spearman rank correlation: whether economically large cities dominate the data.
 
@@ -991,6 +994,9 @@ Share of footage by population of the locality, per continent and overall: what 
 
 [![Effective number of YouTube channels per country](figures/map_effective_channels.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/map_effective_channels.html)
 Effective number of YouTube channels per country (inverse Herfindahl index of the channels' shares of footage): 1 means a single uploader; n means as diverse as n channels with equal shares. Countries with less than 10 hours of footage are grey.
+
+[![Effective number of channels against footage per country](figures/bubble_channels_vs_footage.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/bubble_channels_vs_footage.html)
+Effective number of YouTube channels against hours of footage per country (log scales; circle size: population), coloured by whether a country has more than twice, about, or less than half the channels its amount of footage predicts. Countries below the line rest on few uploaders, so their footage reflects few channels' routes, cameras and styles.
 
 [![Where the 20 channels with the most footage film](figures/map_channel_footprints.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/map_channel_footprints.html)
 Where the 20 YouTube channels with the most footage film, numbered by footage, with the number of countries and hours of each (dot area proportional to hours). Travel channels span many countries; most large channels film in one country or city. In the HTML version, each channel's number links to the channel on YouTube.
@@ -1075,7 +1081,7 @@ The proposal for the Kyiv video used in the `add_video.py` example above: one se
 **5. Merging towns into cities.** `python review_merges.py` serves a page at [http://127.0.0.1:8772](http://127.0.0.1:8772) with towns of under 250,000 people within 30 km of a city of over a million in the same state, side by side on maps: **Y** merges a town into the city, **N** keeps it separate. `python review_merges.py --apply` merges the accepted towns: their videos move to the city and their name is added to the city's other names.
 
 ## Who added the videos
-Videos are added by several people, each in their own copy of the mapping file: `mapping.csv` is Pavlo's, `mapping-olena.csv` Olena's, `mapping-shadab.csv` and `mapping-epfl.csv` Shadab's and, in general, `mapping-NAME.csv` NAME's. Videos added to `mapping.csv` in commits from a contributor's own account (currently Shadab's and Faye's) are credited to that contributor. Each video is credited to the file it first appeared in (`video_contributors.csv`, built from the git history with `python -m utils.analytics.contributors` and extended by `analysis.py` with new videos). A video that appeared in `mapping.csv` and another file at the same time is credited to `mapping.csv`, as the other files are refreshed with copies of it. The table counts the videos in the dataset now.
+Videos are added by several people, each in their own copy of the mapping file: `mapping.csv` is Pavlo's, `mapping-olena.csv` Olena's, `mapping-shadab.csv` and `mapping-epfl.csv` Shadab's and, in general, `mapping-NAME.csv` NAME's. Videos added to `mapping.csv` in commits from a contributor's own account (currently Shadab's and Faye's) are credited to that contributor. Each video is credited to the file it first appeared in. The credits are kept in `video_contributors.csv`: one row per video with the contributor, the time of the commit that added it (UTC) and the mapping file it first appeared in. It was built from the git history with `python -m utils.analytics.contributors`, and `analysis.py` (also in the GitHub Action) adds new videos with the time of the last commit to their mapping file. It is the only record of who added what once the history of the mapping files is gone, so keep it when rewriting the repository's history. A video that appeared in `mapping.csv` and another file at the same time is credited to `mapping.csv`, as the other files are refreshed with copies of it. The table counts the videos in the dataset now.
 
 <!-- contributors:start -->
 <!-- Generated by analysis.py, do not edit by hand. -->
@@ -1093,7 +1099,7 @@ Footage in the dataset over time, by who added it (cumulative hours of the video
 <!-- contributors:end -->
 
 ## Contact
-If you have any questions or suggestions, feel free to reach out to md_shadab_alam@outlook.com or pavlo.bazilinskyy@gmail.com.
+If you have any questions or suggestions, feel free to reach out to Md Shadab Alam (md_shadab_alam@outlook.com) or [Pavlo Bazilinskyy](https://bazilinskyy.github.io) (p.bazilinskyy@tue.nl).
 
 ## Licence
 

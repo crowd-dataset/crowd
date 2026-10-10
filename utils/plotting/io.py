@@ -44,7 +44,7 @@ class IO:
         return False
 
     def save_plotly_figure(self, fig, filename, width=1600, height=900, scale=1, save_final=True, save_png=True,
-                           save_eps=True, post_script=None):
+                           save_eps=True, post_script=None, html_fig=None):
         """
         Saves a Plotly figure as HTML, PNG, SVG, and EPS formats.
 
@@ -56,6 +56,8 @@ class IO:
             scale (int, optional): Scaling factor for the PNG image. Defaults to 3.
             save_final (bool, optional): whether to save the "good" final figure.
             post_script (str, optional): JavaScript run after the HTML figure loads (`{plot_id}` is its div id).
+            html_fig (plotly.graph_objs.Figure, optional): another figure for the HTML version, e.g. one without the
+                labels placed for the static images.
         """
         # Create directory if it doesn't exist
         output_final = os.path.join(common.root_dir, 'figures')
@@ -67,7 +69,7 @@ class IO:
         # hosted on GitHub, so plotly's CDN would not work there.
         # The HTML fills the browser window: a size set for the static images (e.g., for label layout) is dropped.
         logger.info(f"Saving html file for {filename}.")
-        interactive = go.Figure(fig)
+        interactive = go.Figure(html_fig if html_fig is not None else fig)
         interactive.layout.width = None
         interactive.layout.height = None
         # hover popups given as keys are filled in from popups.js, loaded like plotly.min.js (see hover.py)

@@ -113,6 +113,6 @@ See "Selection procedure" in the README for examples.
 
 ## Maintenance
 
-- **Maintainers and contact:** Md Shadab Alam (md_shadab_alam@outlook.com) and Pavlo Bazilinskyy (pavlo.bazilinskyy@gmail.com).
+- **Maintainers and contact:** Md Shadab Alam (md_shadab_alam@outlook.com) and [Pavlo Bazilinskyy](https://bazilinskyy.github.io) (p.bazilinskyy@tue.nl).
 - **Updates:** new videos and localities are added continuously. Each change to `mapping.csv` on GitHub refreshes the README statistics and dataset figures automatically (`.github/workflows/dataset-figures.yml`). Detection-based figures are updated where the YOLO outputs are available.
 - **Errata:** report problems through GitHub issues. Videos that are removed from YouTube can be dropped with `remove_offline_videos.py`.
