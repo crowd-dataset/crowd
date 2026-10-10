@@ -68,15 +68,20 @@ def _hover_args(d: pl.DataFrame, line: str = "") -> dict:
 ZOOM_LABELS = 150
 ZOOM_LABELS_JS = """
 var gd = document.getElementById('{plot_id}');
+var home = [gd._fullLayout.xaxis.range.slice(), gd._fullLayout.yaxis.range.slice()];  // the view as published
 function zoomLabels() {
   var all = gd.data.findIndex(function (t) { return t.meta === 'zoom-labels'; });
   if (all < 0) return;
   var t = gd.data[all], xr = gd._fullLayout.xaxis.range, yr = gd._fullLayout.yaxis.range, n = 0;
   for (var i = 0; i < t.x.length; i++) {
-    var x = gd._fullLayout.xaxis.type === 'log' ? Math.log10(t.x[i]) : t.x[i], y = Math.log10(t.y[i]);
+    var x = gd._fullLayout.xaxis.type === 'log' ? Math.log10(t.x[i]) : t.x[i];
+    var y = gd._fullLayout.yaxis.type === 'log' ? Math.log10(t.y[i]) : t.y[i];
     if (x >= xr[0] && x <= xr[1] && y >= yr[0] && y <= yr[1]) n++;
   }
-  var show = n <= %d;
+  var zoomed = [xr, yr].some(function (r, a) {
+    return Math.abs(r[0] - home[a][0]) + Math.abs(r[1] - home[a][1]) > 1e-9;
+  });
+  var show = zoomed && n <= MAX_LABELS;
   if (!!t.visible === show) return;
   var top = [];
   gd.data.forEach(function (d, i) { if (d.meta === 'top-labels') top.push(i); });
@@ -84,7 +89,7 @@ function zoomLabels() {
   if (top.length) Plotly.restyle(gd, {visible: !show}, top);
 }
 gd.on('plotly_relayout', zoomLabels);
-""" % ZOOM_LABELS
+"""
 
 
 def _literal_list(cell) -> list:
@@ -214,30 +219,46 @@ def _country_map(df: pl.DataFrame, value: str, title: str, scale: str, name: str
 
 def _labelled_scatter(df: pl.DataFrame, x_col: str, y_col: str, label: str, labelled: pl.Expr, x_title: str,
                       y_title: str, name: str, size=(1600, 900), emphasis: pl.Expr = pl.lit(True), note: str = "",
-                      log_x: bool = True):
-    """Log-log scatter (linear x if not `log_x`) coloured by continent. Rows where `labelled` is true get a label
-    placed without overlaps (next to the point, or with a leader line when there is no room); in the HTML, zooming in
-    labels every point.
+                      log_x: bool = True, log_y: bool = True, zoom_labels: int = ZOOM_LABELS,
+                      country_legend: str | None = None):
+    """Log-log scatter (linear axes if not `log_x` / `log_y`) coloured by continent; with `country_legend` (a column
+    with each row's flag and country), the legend lists the countries instead, beside the plot. Rows where `labelled`
+    is true get a label placed without overlaps (next to the point, or with a leader line when there is no room); in
+    the HTML, zooming in labels every point in view once at most `zoom_labels` points are in it.
     Labels of rows where `emphasis` is false are smaller and grey, so the eye goes to the emphasised ones first."""
-    margin = dict(l=90, r=30, t=30, b=80)
-    fx = math.log10 if log_x else float  # data -> axis units (labels are placed in axis units)
-    ix = (lambda v: 10 ** v) if log_x else float  # axis units -> data
+    margin = dict(l=90, r=270 if country_legend else 30, t=30, b=80, autoexpand=False)
+    fx, fy = (math.log10 if log else float for log in (log_x, log_y))  # data -> axis units (labels are placed in
+    ix, iy = ((lambda v: 10 ** v) if log else float for log in (log_x, log_y))  # axis units) and back
     x = np.log10(df[x_col].to_numpy()) if log_x else df[x_col].to_numpy().astype(float)
-    y = np.log10(df[y_col].to_numpy())
+    y = np.log10(df[y_col].to_numpy()) if log_y else df[y_col].to_numpy().astype(float)
     # room on the right for the largest points' labels: in axis units, a third of a decade on log axes
     x_range = (x.min() - 0.1, x.max() + 0.35) if log_x else (x.min() - 0.03 * np.ptp(x), x.max() + 0.12 * np.ptp(x))
-    y_range = (y.min() - 0.15, y.max() + 0.2)
+    y_range = (y.min() - 0.15, y.max() + 0.2) if log_y else (y.min() - 0.03 * np.ptp(y), y.max() + 0.06 * np.ptp(y))
     fig = go.Figure()
-    for continent in CONTINENT_ORDER:
-        d = df.filter(pl.col("continent") == continent)
-        fig.add_trace(go.Scatter(x=d[x_col], y=d[y_col], mode="markers", name=continent,
-                                 marker=dict(color=CONTINENT_COLORS[continent], size=8, opacity=0.75),
-                                 **_hover_args(d)))
+    legend = dict(x=0.01, y=0.99, bgcolor="rgba(255,255,255,0.7)")
+    if country_legend:
+        # one legend entry per country (clicking one hides or shows it), the most footage first; the points keep
+        # their continent's colour. The legend is a column beside the plot, scrolling when it does not fit (the
+        # static image shows its top)
+        order = df.group_by(country_legend).agg(pl.sum(x_col).alias("_total")).sort("_total", descending=True)
+        for country in order[country_legend]:
+            d = df.filter(pl.col(country_legend) == country)
+            fig.add_trace(go.Scatter(x=d[x_col], y=d[y_col], mode="markers", name=country,
+                                     marker=dict(color=[CONTINENT_COLORS.get(c, "#999999") for c in d["continent"]],
+                                                 size=8, opacity=0.75), **_hover_args(d)))
+        legend = dict(orientation="v", x=1.01, xanchor="left", y=1, yanchor="top", font=dict(size=11),
+                      title=dict(text="Countries, most footage first<br>(colours: continents)", side="top"))
+    else:
+        for continent in CONTINENT_ORDER:
+            d = df.filter(pl.col("continent") == continent)
+            fig.add_trace(go.Scatter(x=d[x_col], y=d[y_col], mode="markers", name=continent,
+                                     marker=dict(color=CONTINENT_COLORS[continent], size=8, opacity=0.75),
+                                     **_hover_args(d)))
     # select rows, not names: same-named places (e.g., two Philadelphias) must not share a label
     top = df.with_row_index("_i").with_columns(emphasis.alias("_emphasis")).filter(labelled)
     proj = map_labels.AxisProjection(x_range, y_range, size[0] - margin["l"] - margin["r"],
                                      size[1] - margin["t"] - margin["b"])
-    items = [dict(code=str(r["_i"]), lines=[r[label]], anchor=(fx(r[x_col]), math.log10(r[y_col])),
+    items = [dict(code=str(r["_i"]), lines=[r[label]], anchor=(fx(r[x_col]), fy(r[y_col])),
                   ct=None, scale=1 if r["_emphasis"] else 9 / 11)
              for r in top.sort(y_col, descending=True).iter_rows(named=True)]
     # labels with no free spot are left out of the static image; hover and zoom in the HTML still show them
@@ -249,28 +270,28 @@ def _labelled_scatter(df: pl.DataFrame, x_col: str, y_col: str, label: str, labe
         (ax, ay) = p[1]
         font = strong if code in emphasised else faint
         if p[0] == "dot":  # invisible marker so the text sits beside the point like on the maps
-            fig.add_trace(go.Scatter(x=[ix(ax)], y=[10 ** ay], mode="markers+text", text=[names[code]],
+            fig.add_trace(go.Scatter(x=[ix(ax)], y=[iy(ay)], mode="markers+text", text=[names[code]],
                                      textposition=p[2], textfont=font, marker=dict(size=8, opacity=0),
                                      showlegend=False, hoverinfo="skip", meta="top-labels"))
         else:
             (lx, ly), pos = p[2], p[3]
-            fig.add_trace(go.Scatter(x=[ix(ax), ix(lx)], y=[10 ** ay, 10 ** ly], mode="lines",
+            fig.add_trace(go.Scatter(x=[ix(ax), ix(lx)], y=[iy(ay), iy(ly)], mode="lines",
                                      line=dict(color="#bbbbbb" if font is faint else "grey", width=1),
                                      showlegend=False, hoverinfo="skip",
                                      meta="top-labels"))
-            fig.add_trace(go.Scatter(x=[ix(lx)], y=[10 ** ly], mode="text", text=[names[code]],
+            fig.add_trace(go.Scatter(x=[ix(lx)], y=[iy(ly)], mode="text", text=[names[code]],
                                      textposition=pos, textfont=font, showlegend=False, hoverinfo="skip",
                                      meta="top-labels"))
     # every point's label, shown in the HTML only when zoomed in (see ZOOM_LABELS_JS)
     fig.add_trace(go.Scatter(x=df[x_col], y=df[y_col], mode="text", text=df[label], textposition="top center",
                              textfont=strong, visible=False, showlegend=False, hoverinfo="skip", meta="zoom-labels"))
     fig.update_xaxes(type="log" if log_x else "linear", range=x_range, title_text=x_title, automargin=False)
-    fig.update_yaxes(type="log", range=y_range, title_text=y_title, automargin=False)
+    fig.update_yaxes(type="log" if log_y else "linear", range=y_range, title_text=y_title, automargin=False)
     if note:  # e.g., the correlation, in the bottom-right corner
         fig.add_annotation(text=note, x=0.99, y=0.02, xref="paper", yref="paper", xanchor="right",
                            showarrow=False, font=dict(size=16), bgcolor="rgba(255,255,255,0.8)")
-    _save(_style(fig, width=size[0], height=size[1], margin=margin,
-                 legend=dict(x=0.01, y=0.99, bgcolor="rgba(255,255,255,0.7)")), name, post_script=ZOOM_LABELS_JS)
+    _save(_style(fig, width=size[0], height=size[1], margin=margin, legend=legend), name,
+          post_script=ZOOM_LABELS_JS.replace("MAX_LABELS", str(zoom_labels)))
 
 
 def dataset_figures(df_mapping: pl.DataFrame, seg: pl.DataFrame, flags: dict) -> None:
@@ -282,19 +303,30 @@ def dataset_figures(df_mapping: pl.DataFrame, seg: pl.DataFrame, flags: dict) ->
 
     # footage against number of videos, per locality and per country
     city = (seg.group_by("id").agg(hours, pl.col("video").n_unique().alias("videos"))
-               .join(df_mapping.select("id", "locality", "iso3", "continent"), on="id").join(loc_hover, on="id")
-               .with_columns(pl.concat_str([flag, pl.col("locality")], separator=" ").alias("name")))
+               .join(df_mapping.select("id", "locality", "country", "iso3", "continent"), on="id")
+               .join(loc_hover, on="id")
+               .with_columns(pl.concat_str([flag, pl.col("locality")], separator=" ").alias("name"),
+                             pl.concat_str([flag, pl.col("country")], separator=" ").alias("flag_country")))
     # the 40 localities with most footage labelled, the top ones in larger black text; zoom in the HTML for more
     rank = pl.col("hours").rank("ordinal", descending=True)
     _labelled_scatter(city, "hours", "videos", "name", rank <= 40, "Footage (hours)", "Number of videos",
-                      "scatter_all_total_time-video_count", emphasis=rank <= LABEL_TOP)
+                      "scatter_all_total_time-video_count", emphasis=rank <= LABEL_TOP, country_legend="flag_country")
     # every country labelled with flag and ISO3 code (tall, so the flags fit); the top 30 by footage in black
     country = (seg.group_by("iso3").agg(hours, pl.col("video").n_unique().alias("videos"), pl.first("continent"))
                   .with_columns(pl.concat_str([flag, pl.col("iso3")], separator=" ").alias("name"))
                   .join(cty_hover, on="iso3"))
     _labelled_scatter(country, "hours", "videos", "name", pl.lit(True), "Footage (hours)", "Number of videos",
                       "scatter_all_country_total_time-video_count", size=(1600, 1700),
-                      emphasis=pl.col("hours").rank("ordinal", descending=True) <= 30)
+                      emphasis=pl.col("hours").rank("ordinal", descending=True) <= 30, zoom_labels=country.height)
+    # the same on linear scales: how far the largest localities and countries lead; the 40 localities and 30
+    # countries with the most footage are labelled where there is room, and zooming in the HTML labels every point
+    _labelled_scatter(city, "hours", "videos", "name", rank <= 40, "Footage (hours)", "Number of videos",
+                      "scatter_all_total_time-video_count_linear", emphasis=rank <= LABEL_TOP, log_x=False,
+                      log_y=False, country_legend="flag_country")
+    top30 = pl.col("hours").rank("ordinal", descending=True) <= 30
+    _labelled_scatter(country, "hours", "videos", "name", top30, "Footage (hours)", "Number of videos",
+                      "scatter_all_country_total_time-video_count_linear", size=(1600, 1000), log_x=False,
+                      log_y=False, zoom_labels=country.height)
 
     # day and night footage per continent
     tod = (seg.with_columns(pl.when(pl.col("night")).then(pl.lit("Night")).otherwise(pl.lit("Day")).alias("time"))

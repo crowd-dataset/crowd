@@ -917,11 +917,17 @@ Amount of footage (hours) per country in Oceania. *Note:* the colour scale is lo
 [![Amount of footage per country in South America](figures/map_footage_south_america.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/map_footage_south_america.html)
 Amount of footage (hours) per country in South America. *Note:* the colour scale is logarithmic; countries are grouped by the continent of their cities in the dataset.
 
-[![Number of videos over the total number of seconds of footage in the dataset on the city level](figures/scatter_all_total_time-video_count.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/scatter_all_total_time-video_count.html)
-Number of videos against the total amount of footage per locality (log scales). The 40 localities with the most footage are labelled, the top 12 in larger black text; in the HTML version, zoom in to label every point.
+[![Number of videos against the amount of footage per locality, log scales](figures/scatter_all_total_time-video_count.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/scatter_all_total_time-video_count.html)
+Number of videos against the amount of footage per locality (log scales), coloured by continent, with every country and its flag in the legend on the right, the most footage first (scroll it in the HTML version; click a country to hide or show it); hover over a point for its details. The 40 localities with the most footage are labelled, the top 12 in larger black text; in the HTML version, zoom in to label every point.
 
-[![Number of videos over the total number of seconds of footage in the dataset on the country level](figures/scatter_all_country_total_time-video_count.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/scatter_all_country_total_time-video_count.html)
-Number of videos against the total amount of footage per country (log scales). Countries are labelled with their flag and ISO3 code, the 30 with the most footage in larger black text; in the HTML version, zoom in to label every point.
+[![Number of videos against the amount of footage per locality, linear scales](figures/scatter_all_total_time-video_count_linear.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/scatter_all_total_time-video_count_linear.html)
+The same on linear scales, which show how far the localities with the most footage lead, with the same country legend. The 40 localities with the most footage are labelled, the top 12 in larger black text; in the HTML version, zoom in to label every point.
+
+[![Number of videos against the amount of footage per country, log scales](figures/scatter_all_country_total_time-video_count.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/scatter_all_country_total_time-video_count.html)
+Number of videos against the amount of footage per country (log scales), coloured by continent; hover over a point for its details. Countries are labelled with their flag and ISO3 code, the 30 with the most footage in larger black text; in the HTML version, zoom in to label every point.
+
+[![Number of videos against the amount of footage per country, linear scales](figures/scatter_all_country_total_time-video_count_linear.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/scatter_all_country_total_time-video_count_linear.html)
+The same on linear scales, which show how far the countries with the most footage lead. The 30 countries with the most footage are labelled with their flag and ISO3 code; in the HTML version, zoom in to label every point.
 
 [![Distribution by continent](figures/bar_continent_time_of_day.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/bar_continent_time_of_day.html)
 Distribution of videos by continent. *Note:* continents are based on geography, i.e., the cities in Russia east from Ural mountains are shown as Asia.
