@@ -183,6 +183,7 @@ def place_labels(items: list, proj: Projection, shapes: dict, stack_clusters: bo
 
     Args:
         items: dicts with `code`, `lines` (label as [name, value]), optional `scale` (font size relative to 11px),
+            optional `dot` (diameter of the point in px, e.g. a bubble; labels keep clear of it),
             `anchor` ((lon, lat) inside the part of the
             country shown) and `ct` ((lon, lat) where plotly would centre the label, or None if plotly does not draw
             the country), in order of priority.
@@ -209,11 +210,11 @@ def place_labels(items: list, proj: Projection, shapes: dict, stack_clusters: bo
                 and not any(_overlaps(grown, t) for t in labels) and not any(_overlaps(box, d) for d in dots)
                 and not any(box[0] <= px <= box[2] and box[1] <= py <= box[3] for *_, pts in lines for px, py in pts))
 
-    def line_free(start, end):
+    def line_free(start, end, dot=DOT):
         """A leader line may not cross other lines or labels; it may pass over other countries' dots."""
         n = max(int(math.dist(start, end) / 3), 1)
         pts = [(start[0] + (end[0] - start[0]) * i / n, start[1] + (end[1] - start[1]) * i / n) for i in range(n + 1)]
-        pts = [p for p in pts if math.dist(p, start) > DOT / 2 and math.dist(p, end) > PAD]
+        pts = [p for p in pts if math.dist(p, start) > dot / 2 and math.dist(p, end) > PAD]
         if any(t[0] - GAP <= px <= t[2] + GAP and t[1] - GAP <= py <= t[3] + GAP for t in labels for px, py in pts):
             return None
         if any(_cross(start, end, a, b) for a, b, _ in lines):
@@ -222,7 +223,8 @@ def place_labels(items: list, proj: Projection, shapes: dict, stack_clusters: bo
 
     def dot_box(item):
         x, y = proj(*item["anchor"])
-        return x - DOT / 2, y - DOT / 2, x + DOT / 2, y + DOT / 2
+        d = item.get("dot", DOT)
+        return x - d / 2, y - d / 2, x + d / 2, y + d / 2
 
     # 1) labels inside countries large enough to hold them, largest countries first
     def pixel_area(item):
@@ -352,8 +354,10 @@ def place_labels(items: list, proj: Projection, shapes: dict, stack_clusters: bo
             two = (max(text_width(t) for t in item["lines"]) * k, 2 * LINE_H * k, True)
             near = sorted(NEAR, key=lambda pos: -(NEAR[pos][0] * o[0] + NEAR[pos][1] * o[1])) if o else NEAR
             w, h = one[:2]
+            dot = item.get("dot", DOT)
+            pad = max(PAD, dot / 2 + 1)  # plotly puts the text this far from the centre of a larger marker
             for (bw, bh, stacked), position in ((size, pos) for size in (one, two) for pos in near):
-                box = _box(x, y, bw, bh, position)
+                box = _box(x, y, bw, bh, position, pad=pad)
                 if free(box):
                     labels.append(box)
                     result[item["code"]] = ("dot", item["anchor"], position, stacked)
@@ -362,12 +366,12 @@ def place_labels(items: list, proj: Projection, shapes: dict, stack_clusters: bo
                 # angles (counter-clockwise from east) closest to the outward direction first
                 angles = sorted((math.pi * k / 16 for k in range(32)),
                                 key=lambda a: -(math.cos(a) * o[0] - math.sin(a) * o[1]) if o else 0)
-                for r in range(30, 600, 15):
+                for r in range(max(30, int(dot)), 600, 15):
                     for angle in angles:
                         lx, ly = x + r * math.cos(angle), y - r * math.sin(angle)
                         position = "middle right" if math.cos(angle) >= 0 else "middle left"
                         box = _box(lx, ly, w, h, position, pad=1)
-                        pts = line_free((x, y), (lx, ly)) if free(box) else None
+                        pts = line_free((x, y), (lx, ly), dot) if free(box) else None
                         if pts is not None:
                             labels.append(box)
                             lines.append(((x, y), (lx, ly), pts))

@@ -50,6 +50,7 @@ This datasheet follows the structure of *Datasheets for Datasets* (Gebru et al.,
 | Vehicle | 92.0% is filmed from cars, 2.7% from bicycles, 2.7% from buses and 1.6% from two-wheelers. | `bar_vehicle_type_time_of_day` |
 | Upload date | 91.3% of footage was uploaded in 2020 or later. | `hist_months` |
 | Channels | The 10 largest channels supply 18.6% of footage and the 100 largest 57.8%. A channel's route, camera and style can dominate a city's footage. | `line_channel_concentration`, `map_effective_channels` |
+| Coverage vs wealth | Footage per person grows with GDP per person; several of the most populous countries (China, India, Nigeria, Egypt, Mexico) have less than half the footage their wealth predicts. | `bubble_footage_per_capita_gdp` |
 | Coverage vs population | Coverage grows with city size but varies widely at the same size; 5,106 localities have a single segment. | `scatter_population_footage`, `bar_footage_population_band`, `scatter_indicators_footage` |
 
 **Sensitive content.** The footage shows public streets and incidentally captures people, faces and licence plates. CROWD does not redistribute video; it distributes video IDs, time ranges, labels and automatic detections.

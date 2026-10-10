@@ -6,8 +6,10 @@ per-locality counts of unique tracked objects produced by `analysis.count_detect
 """
 
 import ast
+import json
 import math
 import os
+import time
 import urllib.request
 from datetime import date
 
@@ -15,6 +17,7 @@ import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 import polars as pl
+import requests
 from PIL import Image
 from plotly.subplots import make_subplots
 
@@ -42,9 +45,9 @@ LABEL_TOP = 12  # scatter plots label only the largest points; the rest show on 
 
 
 def _style(fig, **layout):
-    # log axes: label powers of ten only
-    fig.for_each_xaxis(lambda a: a.update(dtick=1) if a.type == "log" else None)
-    fig.for_each_yaxis(lambda a: a.update(dtick=1) if a.type == "log" else None)
+    # log axes: label powers of ten only, unless a figure set its own ticks (e.g., for a narrow range)
+    fig.for_each_xaxis(lambda a: a.update(dtick=1) if a.type == "log" and a.tickvals is None else None)
+    fig.for_each_yaxis(lambda a: a.update(dtick=1) if a.type == "log" and a.tickvals is None else None)
     fig.update_layout(template=common.get_configs("plotly_template"),
                       font=dict(family=common.get_configs("font_family"), size=common.get_configs("font_size")),
                       **layout)
@@ -217,15 +220,68 @@ def _country_map(df: pl.DataFrame, value: str, title: str, scale: str, name: str
     _save(_style(fig, margin=dict(l=0, r=0, t=10, b=0)), name)
 
 
+GDP_PER_CAPITA = "NY.GDP.PCAP.PP.CD"  # World Bank: GDP per person at purchasing-power parity, current int. $
+WEALTH_COLOURS = {"above": "#C8504A", "near": "#BDBDB0", "below": "#6C79C9"}  # as in The Economist's chart
+
+
+def gdp_per_capita(max_age_days: int = 30) -> pl.DataFrame | None:
+    """GDP per person at PPP ($'000) in each country's latest year, from the World Bank (cached in .wb_cache, like
+    update_params.py, and refreshed monthly); None when it cannot be downloaded."""
+    path = os.path.join(".wb_cache", GDP_PER_CAPITA + ".json")
+    if not os.path.exists(path) or time.time() - os.path.getmtime(path) > max_age_days * 86400:
+        try:
+            r = requests.get(f"https://api.worldbank.org/v2/country/all/indicator/{GDP_PER_CAPITA}", timeout=120,
+                             params={"format": "json", "mrnev": 1, "per_page": 1000})
+            r.raise_for_status()
+            os.makedirs(".wb_cache", exist_ok=True)
+            with open(path, "w") as f:
+                f.write(r.text)
+        except requests.RequestException:
+            if not os.path.exists(path):
+                return None
+    with open(path) as f:
+        rows = json.load(f)[1]
+    return pl.DataFrame([{"iso3": r["countryiso3code"], "gdp_pc": r["value"] / 1000} for r in rows
+                         if r.get("value") and r.get("countryiso3code")])
+
+
+def _vs_wealth(df: pl.DataFrame, value: str, title: str, name: str, ratio: float, what: str):
+    """Bubble chart of a per-country `value` against GDP per person (both log scales), the bubbles sized by
+    population and coloured by whether the country's value is over `ratio` times, near, or under 1/`ratio` of what a
+    least-squares line through all countries predicts from its wealth (columns: iso3, name, gdp_pc,
+    population_country, hover, `value`)."""
+    x, y = np.log10(df["gdp_pc"].to_numpy()), np.log10(df[value].to_numpy())
+    slope, intercept = np.polyfit(x, y, 1)
+    gap = y - (slope * x + intercept)  # log10 of value / predicted
+    labels = {"above": f"More than {ratio:g}x what its wealth predicts", "near": "Near what its wealth predicts",
+              "below": f"Less than 1/{ratio:g} of what its wealth predicts"}
+    k = math.log10(ratio)
+    df = df.with_columns(
+        pl.Series("_gap", gap),
+        pl.Series("_group", [labels["above" if g > k else "below" if g < -k else "near"] for g in gap]),
+        (8 + 70 * (pl.col("population_country") / pl.col("population_country").max()).sqrt()).alias("_size"))
+    # labelled: the most populous countries and the furthest from the line either way
+    labelled = ((pl.col("population_country").rank("ordinal", descending=True) <= 15)
+                | (pl.col("_gap").rank("ordinal", descending=True) <= 6) | (pl.col("_gap").rank("ordinal") <= 6))
+    xs = np.linspace(x.min(), x.max(), 50)
+    _labelled_scatter(df, "gdp_pc", value, "name", labelled, "GDP per person ($'000 at purchasing-power parity, "
+                      "log scale)", title, name, groups=("_group", {labels[g]: WEALTH_COLOURS[g] for g in labels}),
+                      bubble="_size", trend=(10 ** xs, 10 ** (slope * xs + intercept)), zoom_labels=df.height,
+                      note=f"Circle size: population · dotted line: {what} predicted from wealth · n = {df.height}")
+
+
 def _labelled_scatter(df: pl.DataFrame, x_col: str, y_col: str, label: str, labelled: pl.Expr, x_title: str,
                       y_title: str, name: str, size=(1600, 900), emphasis: pl.Expr = pl.lit(True), note: str = "",
                       log_x: bool = True, log_y: bool = True, zoom_labels: int = ZOOM_LABELS,
-                      country_legend: str | None = None):
+                      country_legend: str | None = None, groups: tuple | None = None, bubble: str | None = None,
+                      trend: tuple | None = None):
     """Log-log scatter (linear axes if not `log_x` / `log_y`) coloured by continent; with `country_legend` (a column
     with each row's flag and country), the legend lists the countries instead, beside the plot. Rows where `labelled`
     is true get a label placed without overlaps (next to the point, or with a leader line when there is no room); in
     the HTML, zooming in labels every point in view once at most `zoom_labels` points are in it.
-    Labels of rows where `emphasis` is false are smaller and grey, so the eye goes to the emphasised ones first."""
+    Labels of rows where `emphasis` is false are smaller and grey, so the eye goes to the emphasised ones first.
+    `groups` (column, {value: colour} in legend order) colours by that column instead of continents; `bubble` is a
+    column with each point's diameter (px); `trend` is (x values, y values) of a line drawn under the points."""
     margin = dict(l=90, r=270 if country_legend else 30, t=30, b=80, autoexpand=False)
     fx, fy = (math.log10 if log else float for log in (log_x, log_y))  # data -> axis units (labels are placed in
     ix, iy = ((lambda v: 10 ** v) if log else float for log in (log_x, log_y))  # axis units) and back
@@ -249,18 +305,27 @@ def _labelled_scatter(df: pl.DataFrame, x_col: str, y_col: str, label: str, labe
         legend = dict(orientation="v", x=1.01, xanchor="left", y=1, yanchor="top", font=dict(size=11),
                       title=dict(text="Countries, most footage first<br>(colours: continents)", side="top"))
     else:
-        for continent in CONTINENT_ORDER:
-            d = df.filter(pl.col("continent") == continent)
-            fig.add_trace(go.Scatter(x=d[x_col], y=d[y_col], mode="markers", name=continent,
-                                     marker=dict(color=CONTINENT_COLORS[continent], size=8, opacity=0.75),
+        column, colours = groups or ("continent", {c: CONTINENT_COLORS[c] for c in CONTINENT_ORDER})
+        if trend is not None:
+            fig.add_trace(go.Scatter(x=trend[0], y=trend[1], mode="lines", showlegend=False, hoverinfo="skip",
+                                     line=dict(color="#888888", width=1.5, dash="dot")))
+        for group, colour in colours.items():
+            d = df.filter(pl.col(column) == group)
+            if bubble:  # the largest bubbles first, so the smaller ones stay visible on top
+                d = d.sort(bubble, descending=True)
+            fig.add_trace(go.Scatter(x=d[x_col], y=d[y_col], mode="markers", name=group,
+                                     marker=dict(color=colour, size=d[bubble] if bubble else 8,
+                                                 opacity=0.6 if bubble else 0.75,
+                                                 line=dict(width=0.8, color="white") if bubble else None),
                                      **_hover_args(d)))
     # select rows, not names: same-named places (e.g., two Philadelphias) must not share a label
     top = df.with_row_index("_i").with_columns(emphasis.alias("_emphasis")).filter(labelled)
     proj = map_labels.AxisProjection(x_range, y_range, size[0] - margin["l"] - margin["r"],
                                      size[1] - margin["t"] - margin["b"])
     items = [dict(code=str(r["_i"]), lines=[r[label]], anchor=(fx(r[x_col]), fy(r[y_col])),
-                  ct=None, scale=1 if r["_emphasis"] else 9 / 11)
+                  ct=None, scale=1 if r["_emphasis"] else 9 / 11, dot=r[bubble] if bubble else 8)
              for r in top.sort(y_col, descending=True).iter_rows(named=True)]
+    dots = {item["code"]: item["dot"] for item in items}
     # labels with no free spot are left out of the static image; hover and zoom in the HTML still show them
     placed = map_labels.place_labels(items, proj, {}, stack_clusters=False, drop_unplaced=True)
     names = {str(r["_i"]): r[label] for r in top.iter_rows(named=True)}
@@ -271,7 +336,7 @@ def _labelled_scatter(df: pl.DataFrame, x_col: str, y_col: str, label: str, labe
         font = strong if code in emphasised else faint
         if p[0] == "dot":  # invisible marker so the text sits beside the point like on the maps
             fig.add_trace(go.Scatter(x=[ix(ax)], y=[iy(ay)], mode="markers+text", text=[names[code]],
-                                     textposition=p[2], textfont=font, marker=dict(size=8, opacity=0),
+                                     textposition=p[2], textfont=font, marker=dict(size=dots[code], opacity=0),
                                      showlegend=False, hoverinfo="skip", meta="top-labels"))
         else:
             (lx, ly), pos = p[2], p[3]
@@ -287,6 +352,11 @@ def _labelled_scatter(df: pl.DataFrame, x_col: str, y_col: str, label: str, labe
                              textfont=strong, visible=False, showlegend=False, hoverinfo="skip", meta="zoom-labels"))
     fig.update_xaxes(type="log" if log_x else "linear", range=x_range, title_text=x_title, automargin=False)
     fig.update_yaxes(type="log" if log_y else "linear", range=y_range, title_text=y_title, automargin=False)
+    for axis, log, r in ((fig.layout.xaxis, log_x, x_range), (fig.layout.yaxis, log_y, y_range)):
+        if log and r[1] - r[0] < 2:  # under two decades: ticks at 1, 2 and 5 times the powers of ten
+            ticks = [m * 10 ** p for p in range(math.floor(r[0]), math.ceil(r[1]) + 1) for m in (1, 2, 5)
+                     if r[0] <= math.log10(m * 10 ** p) <= r[1]]
+            axis.update(tickvals=ticks, ticktext=[f"{t:,g}" for t in ticks], dtick=None, tickmode="array")
     if note:  # e.g., the correlation, in the bottom-right corner
         fig.add_annotation(text=note, x=0.99, y=0.02, xref="paper", yref="paper", xanchor="right",
                            showarrow=False, font=dict(size=16), bgcolor="rgba(255,255,255,0.8)")
@@ -398,6 +468,16 @@ def dataset_figures(df_mapping: pl.DataFrame, seg: pl.DataFrame, flags: dict) ->
                      .with_columns((pl.col("hours") / pl.col("population_country") * 1e6).alias("per_million")))
     _country_map(per_capita.join(cty_hover, on="iso3"), "per_million", "Hours per million people", "YlOrRd",
                  "map_footage_per_capita", ":,.1f", log=True)
+
+    # footage per person against wealth, as The Economist's innovation chart: bubbles sized by population, coloured
+    # by how far each country is from what its wealth predicts (a least-squares line on the log scales)
+    gdp = gdp_per_capita()
+    if gdp is not None:
+        wealth = (per_capita.join(gdp, on="iso3").join(cty_hover, on="iso3")
+                  .with_columns(pl.concat_str([flag, pl.col("country")], separator=" ").alias("name"))
+                  .filter(pl.col("per_million") > 0))
+        _vs_wealth(wealth, "per_million", "Footage (hours per million people, log scale)",
+                   "bubble_footage_per_capita_gdp", ratio=2, what="footage")
 
     # share of each country's footage from its largest channel: where one uploader dominates the data
     by_channel = seg.drop_nulls("channel").group_by("iso3", "country", "channel").agg(pl.sum("seconds"))
@@ -812,6 +892,10 @@ DETECTION_FIGURES = {
     "line_road_users_upload_year": "Detected road users per minute by year of upload (years with at least 10 analysed "
                                    "hours): newer cameras and higher resolutions can change what the detector sees.",
     "scatter_indicators_pedestrians": "Pedestrians per minute of footage per country against country indicators.",
+    "bubble_pedestrians_gdp": "Pedestrians per minute of footage against GDP per person (countries with at least 10 "
+                              "analysed hours; circle size: population), coloured by whether a country has more "
+                              "than 1.5 times, about, or less than two-thirds of the pedestrians its wealth "
+                              "predicts.",
     "scatter_pedestrians_population": "Pedestrians per minute of footage per locality against its population.",
 }
 TWO_WHEELERS, VEHICLES = ("Bicycles", "Motorcycles"), ("Cars", "Bicycles", "Motorcycles", "Buses", "Trucks")
@@ -988,6 +1072,18 @@ def detection_figures(df_mapping: pl.DataFrame, det: pl.DataFrame, classes: list
 
     rates_ind = country.join(_country_indicators(df_mapping), on="iso3", how="left")
     _vs_indicators(rates_ind, person, "Pedestrians per minute", "scatter_indicators_pedestrians", log_y=False)
+
+    # pedestrians per minute against wealth: which countries have more or fewer people on the street than their
+    # wealth predicts (countries with at least MIN_HOURS of analysed footage)
+    gdp = gdp_per_capita()
+    if gdp is not None:
+        pop = df_mapping.group_by("iso3").agg(pl.col("population_country").filter(pl.col("population_country") > 0)
+                                              .first())
+        wealth = (country.filter(pl.col("hours") >= MIN_HOURS, pl.col(person) > 0).join(gdp, on="iso3")
+                         .join(pop, on="iso3").drop_nulls("population_country"))
+        if wealth.height > 2:
+            _vs_wealth(wealth, person, "Pedestrians per minute (log scale)", "bubble_pedestrians_gdp", ratio=1.5,
+                       what="pedestrians")
 
     # pedestrians per minute per locality against its population: whether more pedestrians just means a larger city
     loc = locality.filter(pl.col("population_locality") > 0, pl.col(person) > 0)

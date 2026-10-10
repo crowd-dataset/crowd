@@ -956,6 +956,9 @@ Share of footage recorded at night per country. Countries with less than 10 hour
 [![Footage per million inhabitants per country](figures/map_footage_per_capita.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/map_footage_per_capita.html)
 Hours of footage per million inhabitants per country: coverage relative to country size (log scale).
 
+[![Footage per million people against GDP per person per country](figures/bubble_footage_per_capita_gdp.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/bubble_footage_per_capita_gdp.html)
+Hours of footage per million people against GDP per person (both log scales; circle size: population), coloured by whether a country has more than twice, about, or less than half the footage its wealth predicts (the dotted least-squares line). GDP per person at purchasing-power parity is the World Bank's latest value.
+
 [![Share of footage from the largest channel per country](figures/map_top_channel_share.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/map_top_channel_share.html)
 Share of each country's footage that comes from its largest YouTube channel. Where it is high, one uploader's routes and camera dominate that country's data. Countries with less than 10 hours of footage are grey.
 
