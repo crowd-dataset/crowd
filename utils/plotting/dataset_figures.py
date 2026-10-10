@@ -10,6 +10,7 @@ import json
 import math
 import os
 import time
+import unicodedata
 import urllib.request
 from datetime import date
 
@@ -327,7 +328,7 @@ def _labelled_scatter(df: pl.DataFrame, x_col: str, y_col: str, label: str, labe
     Labels of rows where `emphasis` is false are smaller and grey, so the eye goes to the emphasised ones first.
     `groups` (column, {value: colour} in legend order) colours by that column instead of continents; `bubble` is a
     column with each point's diameter (px); `trend` is (x values, y values) of a line drawn under the points."""
-    margin = dict(l=90, r=270 if country_legend else 30, t=30, b=80, autoexpand=False)
+    margin = dict(l=90, r=320 if country_legend else 30, t=30, b=80, autoexpand=False)
     fx, fy = (math.log10 if log else float for log in (log_x, log_y))  # data -> axis units (labels are placed in
     ix, iy = ((lambda v: 10 ** v) if log else float for log in (log_x, log_y))  # axis units) and back
     x = np.log10(df[x_col].to_numpy()) if log_x else df[x_col].to_numpy().astype(float)
@@ -339,17 +340,21 @@ def _labelled_scatter(df: pl.DataFrame, x_col: str, y_col: str, label: str, labe
     html_fig = None
     legend = dict(x=0.01, y=0.99, bgcolor="rgba(255,255,255,0.7)")
     if country_legend:
-        # one legend entry per country (clicking one hides or shows it), the most footage first; the points keep
+        # one legend entry per country (clicking one hides or shows it), in alphabetical order; the points keep
         # their continent's colour. The legend is a column beside the plot, scrolling when it does not fit (the
         # static image shows its top)
-        order = df.group_by(country_legend).agg(pl.sum(x_col).alias("_total")).sort("_total", descending=True)
+        order = df.group_by(country_legend).agg(pl.first("country"))
+        # alphabetical ignoring accents: Åland Islands with the As, Türkiye before Turkmenistan
+        order = order.with_columns(pl.col("country").map_elements(
+            lambda c: unicodedata.normalize("NFKD", c).encode("ascii", "ignore").decode().lower(),
+            return_dtype=pl.Utf8).alias("_key")).sort("_key")
         for country in order[country_legend]:
             d = df.filter(pl.col(country_legend) == country)
             fig.add_trace(go.Scatter(x=d[x_col], y=d[y_col], mode="markers", name=country,
                                      marker=dict(color=[CONTINENT_COLORS.get(c, "#999999") for c in d["continent"]],
                                                  size=8, opacity=0.75), **_hover_args(d)))
         legend = dict(orientation="v", x=1.01, xanchor="left", y=1, yanchor="top", font=dict(size=11),
-                      title=dict(text="Countries, most footage first<br>(colours: continents)", side="top"))
+                      title=dict(text="Countries<br>(colours: continents)", side="top"))
         # the HTML: the same points, each country's labels on its own points (no leader lines), so they hide with
         # the country
         html_fig = go.Figure()
@@ -440,7 +445,7 @@ def dataset_figures(df_mapping: pl.DataFrame, seg: pl.DataFrame, flags: dict) ->
                .join(df_mapping.select("id", "locality", "country", "iso3", "continent"), on="id")
                .join(loc_hover, on="id")
                .with_columns(pl.concat_str([flag, pl.col("locality")], separator=" ").alias("name"),
-                             pl.concat_str([flag, pl.col("country")], separator=" ").alias("flag_country")))
+                             pl.format("{} {} ({})", flag, pl.col("country"), pl.col("iso3")).alias("flag_country")))
     # the 40 localities with most footage labelled, the top ones in larger black text; zoom in the HTML for more
     rank = pl.col("hours").rank("ordinal", descending=True)
     _labelled_scatter(city, "hours", "videos", "name", rank <= 40, "Footage (hours)", "Number of videos",
