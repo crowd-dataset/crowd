@@ -461,7 +461,7 @@ def dataset_figures(df_mapping: pl.DataFrame, seg: pl.DataFrame, flags: dict) ->
     # countries with the most footage are labelled where there is room, and zooming in the HTML labels every point
     _labelled_scatter(city, "hours", "videos", "name", rank <= 40, "Footage (hours)", "Number of videos",
                       "scatter_all_total_time-video_count_linear", emphasis=rank <= LABEL_TOP, log_x=False,
-                      log_y=False, country_legend="flag_country")
+                      log_y=False, country_legend="flag_country", zoom_labels=city.height)  # any zoom: all labels
     top30 = pl.col("hours").rank("ordinal", descending=True) <= 30
     _labelled_scatter(country, "hours", "videos", "name", top30, "Footage (hours)", "Number of videos",
                       "scatter_all_country_total_time-video_count_linear", size=(1600, 1000), log_x=False,
@@ -714,7 +714,9 @@ def dataset_figures(df_mapping: pl.DataFrame, seg: pl.DataFrame, flags: dict) ->
     # a 3D globe with a spike on each locality, its height proportional to the hours of footage; the HTML spins
     # until it is touched, then can be dragged
     # no EPS for the globes (the 3D one would be embedded in it as a ~10 MB picture): they are for the screen
-    _save(_globe(dots), "globe_localities_footage_spikes", post_script=SPIN_JS, save_eps=False)
+    _save(_globe(_globe_cells(dots.join(df_mapping.select("id", "iso3"), on="id").with_columns(
+        pl.concat_str([flag, pl.col("locality")], separator=" ").alias("name")))),
+        "globe_localities_footage_spikes", post_script=SPIN_JS, save_eps=False)
 
     # footprints of the channels with the most footage: where each one films (travel channels vs local drivers);
     # channels are numbered by footage; in the HTML each number links to the channel on YouTube
@@ -829,6 +831,28 @@ def _earth_mesh(width: int = 180, height: int = 90):
                      hoverinfo="skip", showscale=False, lighting=dict(ambient=1, diffuse=0, specular=0, fresnel=0))
 
 
+def _globe_cells(dots: pl.DataFrame, deg: float = 2.0) -> pl.DataFrame:
+    """Localities merged into cells of `deg` degrees (about 200 km), one spike each, so that spikes of neighbouring
+    localities do not overlap: the cell's total and night hours, at the footage-weighted centre of its localities.
+    The hover text is the locality's popup for a cell with one locality, else a list of its localities."""
+    cells = (dots.with_columns((pl.col("lat") / deg).round().alias("_r"), (pl.col("lon") / deg).round().alias("_c"))
+                 .sort("hours", descending=True)
+                 .group_by("_r", "_c")
+                 .agg(pl.sum("hours", "night_hours"), ((pl.col("lat") * pl.col("hours")).sum() / pl.sum("hours"))
+                      .alias("lat"), ((pl.col("lon") * pl.col("hours")).sum() / pl.sum("hours")).alias("lon"),
+                      pl.col("name"), pl.col("hours").alias("each"), pl.first("hover"), pl.len().alias("n")))
+
+    def summary(r):
+        if r["n"] == 1:
+            return r["hover"]
+        rows = [f"{n}: {h:,.1f} h" for n, h in zip(r["name"][:10], r["each"][:10])]
+        more = f"<br>and {r['n'] - 10} more" if r["n"] > 10 else ""
+        return (f"<b>{r['n']} localities around {r['name'][0]}</b><br>Footage: {r['hours']:,.1f} h, "
+                f"{r['night_hours'] / r['hours'] * 100:.0f}% at night<br>──────────<br>" + "<br>".join(rows) + more)
+    return cells.with_columns(pl.Series("hover", [summary(r) for r in cells.iter_rows(named=True)])).select(
+        "lat", "lon", "hours", "night_hours", "hover")
+
+
 def _globe(dots: pl.DataFrame, max_height: float = 0.25):
     """3D globe: the Blue Marble image with country borders and a spike on each locality of `dots` (lat, lon,
     locality, hours, night_hours). Spike height is on a log scale, so localities with little footage still show: zero
@@ -854,7 +878,7 @@ def _globe(dots: pl.DataFrame, max_height: float = 0.25):
     for name, r0, r1, color in [("Day", 1.002, r_mid, "#E69F00"), ("Night", r_mid, r_top, "#56B4E9")]:
         p0, p1 = _xyz(dots["lon"], dots["lat"], r0), _xyz(dots["lon"], dots["lat"], r1)
         x, y, z = (np.column_stack([a, b, nan]).ravel() for a, b in zip(p0, p1))
-        fig.add_trace(go.Scatter3d(x=x, y=y, z=z, mode="lines", name=name, line=dict(color=color, width=2.5),
+        fig.add_trace(go.Scatter3d(x=x, y=y, z=z, mode="lines", name=name, line=dict(color=color, width=2),
                                    hoverinfo="skip"))
     # the popup on the spike tips; 3D traces take it as `text` (plotly leaves %{hovertext} empty in 3D)
     tips = _xyz(dots["lon"], dots["lat"], r_top)
@@ -865,8 +889,8 @@ def _globe(dots: pl.DataFrame, max_height: float = 0.25):
     eye = 1.45 * np.array(_xyz(15, 50))  # centred on Europe
     fig.update_layout(scene=dict(xaxis=hidden, yaxis=hidden, zaxis=hidden, aspectmode="data", dragmode="turntable",
                                  camera=dict(eye=dict(x=eye[0], y=eye[1], z=eye[2]), up=dict(x=0, y=0, z=1))))
-    fig.add_annotation(text=f"Spike height: hours of footage on a log scale (6 minutes to {top:,.0f} hours); "
-                       "colours: share of day and night footage",
+    fig.add_annotation(text=f"One spike per ~200 km area: hours of footage on a log scale (6 minutes to "
+                       f"{top:,.0f} h); colours: share of day and night footage",
                        x=0.01, y=0.02, xref="paper", yref="paper", showarrow=False,
                        font=dict(size=14, color="#666666"))
     return _style(fig, width=1200, height=1000, margin=dict(l=0, r=0, t=0, b=0),
