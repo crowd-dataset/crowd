@@ -13,7 +13,7 @@ The dataset is available on [kaggle](https://www.kaggle.com/datasets/anonymousau
 - **Localities (cities):** 10,003
 - **Countries and territories:** 238
 - **Continents:** 6
-- **Last updated:** 2026-10-10 08:33 UTC
+- **Last updated:** 2026-10-10 08:47 UTC
 
 <details><summary><b>All 238 countries and territories</b></summary>
 
