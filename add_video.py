@@ -1531,7 +1531,7 @@ def get_locality_data(locality, country_code, state=None, fuzzy=None):
     url = "http://api.geonames.org/searchJSON"
     try:
         response = requests.get(url, params=params, timeout=10)
-    except requests.exceptions.ConnectionError as e:
+    except requests.exceptions.RequestException as e:  # also a read timeout (GeoNames slow, 2026-10-10)
         print(f"Connection error while getting locality data for {locality}, {country_code}: {e}.")
         return None
 

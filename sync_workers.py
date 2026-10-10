@@ -15,7 +15,7 @@ import subprocess
 import propose_segments as ps
 import run_channels as rc
 
-WORKERS = {'lin5080': 'even', 'mini': 'odd'}  # ssh alias: the sheet rows it takes (run_channels.py --rows)
+WORKERS = {'lin5080': '0/3', 'mini': '1/3'}  # ssh alias: the sheet rows it takes (run_channels.py --rows)
 REMOTE = 'crowd-routine'       # the repository on each worker, relative to its home
 
 
@@ -72,6 +72,11 @@ def sync(host):
     subprocess.run(['scp', '-q', '-o', 'BatchMode=yes', 'mapping.csv', f'{host}:{REMOTE}/mapping.csv.tmp'],
                    check=True, capture_output=True)
     ssh(host, f'mv {REMOTE}/mapping.csv.tmp {REMOTE}/mapping.csv')
+    if os.path.exists(rc.REFRESH_QUEUE):  # the channels done before whose new uploads come next
+        subprocess.run(['scp', '-q', '-o', 'BatchMode=yes', rc.REFRESH_QUEUE,
+                        f'{host}:{REMOTE}/{rc.REFRESH_QUEUE}.tmp'],
+                       check=True, capture_output=True)
+        ssh(host, f'mv {REMOTE}/{rc.REFRESH_QUEUE}.tmp {REMOTE}/{rc.REFRESH_QUEUE}')
 
 
 def main():

@@ -37,6 +37,9 @@ TO_REVIEW = os.path.join(ROOT, 'to_review.md')
 PAUSE = os.path.join(ROOT, 'pause')  # created while the user travels (Travel calendar)
 # the sheet changes still to make, [{row, url, status, by}], for whoever edits the sheet (the hourly check)
 SHEET_TODO = os.path.join(ROOT, 'sheet_todo.json')
+# channels done before whose new uploads come once the sheet's are all done ([{url, country, name, why}],
+# refresh_queue.py; user, 2026-10-10)
+REFRESH_QUEUE = os.path.join(ROOT, 'refresh_queue.json')
 # the sheet's short country names, as the mapping writes them
 COUNTRY = {'USA': 'United States', 'US': 'United States', 'UK': 'United Kingdom', 'UAE': 'United Arab Emirates',
            'Korea': 'South Korea'}
@@ -144,7 +147,7 @@ def write_sheet_todo(state, sheet):
     want = {'processing': 'Processing', 'to review': 'Processed', 'reviewed': 'Processed', 'rejected': 'Rejected'}
     todo = [{'row': c['row'], 'url': url, 'status': want[c['status']], 'by': WHO, 'comment': c.get('comment', '')}
             for url, c in state.items()
-            if c['status'] in want and status.get(url, '') in OURS
+            if c['status'] in want and not c.get('refresh') and status.get(url, '') in OURS
             and (status.get(url, '') != want[c['status']] or PROCESSED_BY.get(url, '') != WHO)]
     with open(SHEET_TODO + '.tmp', 'w') as f:
         json.dump(todo, f, indent=1)
@@ -158,6 +161,8 @@ def check_reviews(state, sheet):
     for url, c in state.items():
         if c['status'] == 'to review' and review_counts(c['name'])[0] == 0:
             c['status'] = 'reviewed'
+        if c.get('refresh'):  # new uploads of a channel done before: the sheet stays as it is
+            continue
         if c['status'] == 'processing' and status.get(url) == '':
             log(f"SHEET: set row {c['row']} ({url}) to Processing{BY}")
         for done, word in (('to review', 'Processed'), ('reviewed', 'Processed'), ('rejected', 'Rejected')):
@@ -176,14 +181,14 @@ def on_hotspot():
     return 'gateway: 172.20.10.' in r.stdout
 
 
-def run_chunk(url, country, chunk, single_city=False):
+def run_chunk(url, country, chunk, single_city=False, new_only=False):
     """One batch of the channel with the latest code; its output, streamed. single_city: only drives within one
     city (set "single_city": true for the channel in channels.json)."""
     env = dict(os.environ)
     if os.path.exists('cookies.txt'):
         env.setdefault('YT_DLP_COOKIES', 'cookies.txt')
     cmd = [sys.executable, '-u', 'propose_segments.py', '--channel', url, '--country', country,
-           '--limit', str(chunk)] + (['--single-city'] if single_city else [])
+           '--limit', str(chunk)] + (['--single-city'] if single_city else []) + (['--new-only'] if new_only else [])
     out = []
     with subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env) as proc:
         fd, pending, last, done = proc.stdout.fileno(), b'', time.time(), False
@@ -214,12 +219,44 @@ def run_chunk(url, country, chunk, single_city=False):
     return ''.join(out)
 
 
+def refresh_todo(state, args):
+    """[(None, state key, url, country, new uploads only)] of the channels done before this machine fetches again:
+    every m-th of the refresh queue (--rows k/m), one started here first."""
+    try:
+        with open(REFRESH_QUEUE) as f:
+            queue = json.load(f)
+    except (OSError, ValueError):
+        return []
+    todo = []
+    for i, q in enumerate(queue):
+        key, c = 'refresh:' + q['url'], state.get('refresh:' + q['url'], {})
+        if (c.get('status', 'processing') == 'processing' and not c.get('host')
+                and (key in state or args.rows is None or i % args.rows[1] == args.rows[0])
+                and (q.get('country') or '').strip().lower() != 'russia'):
+            todo.append((key in state, None, key, q['url'], q.get('country') or '', q.get('new_only', True)))
+    todo.sort(key=lambda t: not t[0])  # one started here first, else the queue's order (its phases)
+    return [t[1:] for t in todo]
+
+
+def rows_rule(text):
+    """--rows: (k, m) for "k/m", (0, 2) for even, (1, 2) for odd."""
+    if text in ('even', 'odd'):
+        return (0, 2) if text == 'even' else (1, 2)
+    k, m = (int(x) for x in text.split('/'))
+    if not 0 <= k < m:
+        raise argparse.ArgumentTypeError('k/m with 0 <= k < m')
+    return k, m
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     ap.add_argument('--chunk', type=int, default=15, help='new proposals per run of propose_segments.py')
     ap.add_argument('--max-minutes', type=float, help='stop after this long (between chunks)')
     # several machines on one sheet: each takes only its own rows, so two never work on the same channel
-    ap.add_argument('--rows', choices=('even', 'odd'), help='only channels on even or odd sheet rows')
+    ap.add_argument('--rows', type=rows_rule, help='only new channels on these sheet rows: even, odd, or k/m '
+                    '(the row number divided by m leaves k); a channel started here is finished either way')
+    ap.add_argument('--sync', action='store_true', help='bring the worker machines\' batches here every hour '
+                    '(sync_workers.py): the machine you review on')
     ap.add_argument('--no-new', action='store_true',
                     help='finish the channels started here, start no new one (the worker machines take those)')
     args = ap.parse_args()
@@ -231,7 +268,7 @@ def main():
         return
     t0 = time.time()
     state = load_state()
-    code = os.path.getmtime(__file__)
+    code, synced = os.path.getmtime(__file__), 0
     while not args.max_minutes or time.time() - t0 < args.max_minutes * 60:
         if on_hotspot():
             log('on the iPhone hotspot: waiting until another network is used')
@@ -246,6 +283,15 @@ def main():
         if os.path.getmtime(__file__) != code:  # updated (on a worker: by sync_workers.py): run the new code
             log('run_channels.py changed: restarting with the new code')
             os.execv(sys.executable, [sys.executable, '-u'] + sys.argv)
+        # the reviewing machine (--sync) brings the workers' batches here every hour, between
+        # batches, so it keeps happening while no Claude session runs the hourly check
+        if args.sync and time.time() - synced > 3600:
+            log('syncing the worker machines')
+            try:
+                subprocess.run([sys.executable, 'sync_workers.py'], timeout=1800)
+            except subprocess.TimeoutExpired:
+                log('the worker sync took over 30 min: stopped it, next try in an hour')
+            synced = time.time()
         state = load_state()  # with the workers' progress, as synced by sync_workers.py
         try:
             sheet = sheet_rows()
@@ -263,30 +309,34 @@ def main():
                 if (status == '' and url not in state or status in OURS and url in state)
                 and state.get(url, {}).get('status', 'processing') == 'processing'
                 and not state.get(url, {}).get('host')  # a worker machine's channel
-                and (args.rows is None or n % 2 == (args.rows == 'odd'))
+                and (url in state or args.rows is None or n % args.rows[1] == args.rows[0])
+                and not (url not in state and country.strip().lower() == 'russia')  # Olena's (user, 2026-10-10)
                 and not (args.no_new and url not in state)]
         started = list(state)  # one channel at a time: the earliest started one first, a new one after them
         todo.sort(key=lambda t: started.index(t[1]) if t[1] in state else len(started))
+        todo = [(n, url, url, country, False) for n, url, country in todo] or refresh_todo(state, args)
         if not todo:
             log('no channel left to process; waiting for reviews and the sheet')
             time.sleep(IDLE_WAIT_S)
             continue
-        n, url, sheet_country = todo[0]
-        if url not in state:
+        n, key, url, sheet_country, new_only = todo[0]  # n is None for a channel done before (refresh_todo)
+        what = f'row {n} {url}' if n is not None else f"{'new uploads' if new_only else 'videos'} of {url}"
+        if key not in state and n is not None:
             log(f'SHEET: set row {n} ({url}) to Processing{BY}')
-        c = state.setdefault(url, {'row': n, 'name': channel_name(url), 'status': 'processing'})
+        c = state.setdefault(key, {'row': n, 'name': channel_name(url), 'status': 'processing',
+                                   **({} if n is not None else {'refresh': True, 'url': url, 'new_only': new_only})})
         c['row'] = n
         write_sheet_todo(state, sheet)
         country = c.get('country') or country_of(url, sheet_country)
         if not country:
-            log(f'row {n} {url}: no country in the sheet or on YouTube; skipped, fill in column C')
+            log(f'{what}: no country in the sheet or on YouTube; skipped, fill in column C')
             c['status'] = 'needs country'
             save_state(state)
             continue
         c['country'] = country
         save_state(state)
-        log(f'row {n} {url} ({country}): next {args.chunk} proposals')
-        out = run_chunk(url, country, args.chunk, c.get('single_city', False))
+        log(f'{what} ({country}): next {args.chunk} proposals')
+        out = run_chunk(url, country, args.chunk, c.get('single_city', False), c.get('new_only', False))
         if 'Could not list the channel' not in out:
             c.pop('list_failures', None)
         if 'Traceback (most recent call last)' in out:
@@ -318,10 +368,10 @@ def main():
                 time.sleep(BLOCKED_WAIT_S)
         elif ps.CHANNEL_DONE in out:
             c['status'] = 'to review'
-            log(f"row {n} {url}: all videos proposed; on to the next channel")
+            log(f"{what}: all videos proposed; on to the next channel")
         elif 'still to do' not in out:
             # cut off (hotspot, killed, stopped early) without saying the channel is done: stay on it
-            log(f'row {n} {url}: the batch ended without finishing the channel; staying on it')
+            log(f'{what}: the batch ended without finishing the channel; staying on it')
             time.sleep(60)
         save_state(state)
         write_to_review(state)
