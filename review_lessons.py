@@ -43,7 +43,9 @@ def main():
             if not os.path.exists(sig_path):
                 continue
             sig = dict(np.load(sig_path))
-            proposed, notes = ps.propose(sig)
+            # as the fetcher proposed it: a drive within one town gets no highway or rural cuts (locate_now)
+            towns = {tuple(e['locality']) for e in p['entries'] if e.get('locality')}
+            proposed, notes = ps.propose(sig, ps.ONE_PLACE if len(towns) == 1 and not p.get('route') else ps.PARAMS)
             mine = [(s['start'], s['end']) for s in proposed]
             final = [(s['start'], s['end']) for s in segs if s.get('decision') == 'approve' or s.get('applied')]
             videos[ch] += 1

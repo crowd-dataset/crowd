@@ -228,6 +228,7 @@ def run_chunk(url, country, chunk, single_city=False, new_only=False):
 
 
 CHANNEL_IDS = '_output/subscriptions/channel_ids.json'  # sheet URL -> channel id (refresh_queue.py, sync_workers.py)
+NEXT_ARGS = os.path.join(ROOT, 'next_args.json')  # ["--rows", "0/2", ...]: this machine's options from its next batch
 TAKEN = os.path.join(ROOT, 'taken.json')  # the channels any machine works or worked on (sync_workers.py)
 
 
@@ -272,6 +273,8 @@ def refresh_todo(state, args):
             queue = json.load(f)
     except (OSError, ValueError):
         return []
+    if args.no_queue:
+        return []
     todo, share = [], args.queue_rows or args.rows
     try:  # started by another machine (sync_workers.py): left to it
         with open(TAKEN) as f:
@@ -284,6 +287,7 @@ def refresh_todo(state, args):
         key, c = 'refresh:' + q['url'], state.get('refresh:' + q['url'], {})
         if (c.get('status', 'processing') == 'processing' and not c.get('host')
                 and (key in state or share is None or i % share[1] == share[0])
+                and (key in state or args.phases is None or q.get('phase') in args.phases)
                 and (q.get('country') or '').strip().lower() != 'russia'):
             todo.append((key in state, None, key, q['url'], q.get('country') or '', q.get('new_only', True)))
     todo.sort(key=lambda t: not t[0])  # one started here first, else the queue's order (its phases)
@@ -293,11 +297,18 @@ def refresh_todo(state, args):
 def push_code_on_change(every_s=60):
     """Forever: when a .py file here changes, send the code to the worker machines (user, 2026-10-10: every update
     reaches them at once, not with the hourly sync), and every hour bring their batches here (sync_workers.py), also
-    while a long batch runs here (a night of 25-minute videos kept them away from 22:42 to 07:44). A thread of the
-    reviewing machine's runner (--sync)."""
+    while a long batch runs here (a night of 25-minute videos kept them away from 22:42 to 07:44), and twice a day
+    write review_lessons.md. A thread of the reviewing machine's runner (--sync)."""
     import sync_workers  # the laptop's: it names the workers
-    seen, synced = None, 0
+    seen, synced, lessons = None, 0, 0
     while True:
+        if time.time() - lessons > 12 * 3600:  # what the reviews overrule, twice a day (user, 2026-10-11)
+            try:
+                subprocess.run([sys.executable, 'review_lessons.py'], timeout=3600, capture_output=True)
+                log(f'review lessons written to {os.path.join(ROOT, "review_lessons.md")}')
+            except subprocess.TimeoutExpired:
+                log('review_lessons.py took over an hour: stopped it, next try in 12 hours')
+            lessons = time.time()
         if time.time() - synced > 3600 and not on_hotspot():
             log('syncing the worker machines')
             try:
@@ -337,6 +348,10 @@ def main():
                     '(the row number divided by m leaves k); a channel started here is finished either way')
     ap.add_argument('--queue-rows', type=rows_rule, help='the share of the refresh queue (default: --rows; '
                     'with --refresh-only and neither: any channel no other machine has started)')
+    ap.add_argument('--phases', type=lambda t: {int(x) for x in t.split(',')},
+                    help='only these phases of the refresh queue, e.g. 2 or 1,3 (1 subscriptions, 2 the sheet\'s '
+                         'processed channels, 3 the unfinished ones); a channel started here is finished first')
+    ap.add_argument('--no-queue', action='store_true', help='new channels on the sheet only, no refresh queue')
     ap.add_argument('--refresh-only', action='store_true',
                     help='no new sheet channel, straight to the refresh queue (user, 2026-10-10: w5090)')
     ap.add_argument('--sync', action='store_true', help='bring the worker machines\' batches here every hour '
@@ -366,6 +381,12 @@ def main():
             while os.path.exists(PAUSE):
                 time.sleep(60)
             log('pause removed: continuing')
+        if os.path.exists(NEXT_ARGS):  # new options for this machine, from its next batch on
+            with open(NEXT_ARGS) as f:
+                argv = [sys.argv[0]] + json.load(f)
+            os.remove(NEXT_ARGS)
+            log(f'restarting with new options: {" ".join(argv[1:])}')
+            os.execv(sys.executable, [sys.executable, '-u'] + argv)
         if os.path.getmtime(__file__) != code:  # updated (on a worker: by sync_workers.py): run the new code
             log('run_channels.py changed: restarting with the new code')
             os.execv(sys.executable, [sys.executable, '-u'] + sys.argv)

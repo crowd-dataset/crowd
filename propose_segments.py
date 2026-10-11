@@ -2919,12 +2919,14 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
                 else:
                     plan[p['video']] = p
 
-    # sped up in review ("Sped up" on the review page): a channel's editing habit, so two such videos reject it
-    sped = [v for v, p in plan.items() if p.get('sped_up')]
-    if len(sped) >= SPED_UP_REJECT:
-        print(f'Stopped early: {len(sped)} videos marked sped up in review ({", ".join(sped[:5])}): this channel '
-              'speeds up its drives, so it is rejected; mark it "Rejected" in the channels sheet')
-        return plan_path
+    # marked in review ("Sped up", "Ghosts" on the review page): a channel's editing habit, so two such videos
+    # reject it
+    for key, (what, habit) in REVIEW_MARKS.items():
+        marked = [v for v, p in plan.items() if p.get(key)]
+        if len(marked) >= MARKED_REJECT:
+            print(f'Stopped early: {len(marked)} videos marked {what} in review ({", ".join(marked[:5])}): this '
+                  f'channel {habit}, so it is rejected; mark it "Rejected" in the channels sheet')
+            return plan_path
 
     def undecided(p):
         return not any(s.get('decision') or s.get('applied') for e in p.get('entries', []) for s in e['segments'])
@@ -3361,7 +3363,10 @@ with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'templates', 
 REVIEW_PAGE = 50  # videos with something left to decide shown at once in the review page
 MAX_MERGE_GAP_S = 2  # wider gaps are excluded footage (stops, freeway), not suggested splits
 CHANNEL_DONE = 'Every video of this channel is proposed or in the mapping.'
-SPED_UP_REJECT = 2  # videos marked sped up in review that reject their channel (user, 2026-10-10)
+MARKED_REJECT = 2  # videos marked sped up (or with ghosts) in review that reject their channel (user, 2026-10-10)
+# plan key -> (what the review button marks, the channel's habit it shows)
+REVIEW_MARKS = {'sped_up': ('sped up', 'speeds up its drives'),
+                'ghosts': ('with ghosts', 'joins scenes with dissolves (ghosts: people and cars fading out)')}
 
 LOCALITY_FIELDS = ('lat', 'lon', 'gmp', 'population_locality', 'population_country', 'traffic_mortality',
                    'continent', 'locality_aka', 'literacy_rate', 'avg_height', 'med_age', 'gini', 'traffic_index')
@@ -3592,6 +3597,9 @@ tr.seg.active td:first-child { box-shadow: inset 4px 0 #007bff; }
   <button class="small" data-video="{{ p.video }}" onclick="markSpedUp(this)"
           title="the footage plays faster than real time: rejects this video; two such videos reject the channel"
           >{{ '⏩ Sped up ✓' if p.sped_up else '⏩ Sped up' }}</button>
+  <button class="small" data-video="{{ p.video }}" onclick="markGhosts(this)"
+          title="scenes joined with a dissolve (people or cars fade out mid-picture): rejects this video; two such
+                 videos reject the channel">{{ '👻 Ghosts ✓' if p.ghosts else '👻 Ghosts' }}</button>
   {% for t in (p.removed_splits or []) | unique | sort %}<button class="small" data-video="{{ p.video }}"
     data-at="{{ t }}" onclick="putSplitBack(this)" title="split the segment that contains {{ '%d:%02d' % (t // 60,
     t % 60) }} there again (a split removed earlier)">↺ split at {{ '%d:%02d' % (t // 60, t % 60) }}</button>
@@ -3986,15 +3994,17 @@ async function addLocality(btn) {
   if (!res.ok) { alert((await res.json()).error); return; }
   reloadKeepingPlace();
 }
-async function markSpedUp(btn) {
-  const res = await fetch('sped_up', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-                                       body: JSON.stringify({ video: btn.dataset.video }) });
+async function markVideo(btn, what, label) {
+  const res = await fetch('mark', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ video: btn.dataset.video, what: what }) });
   if (!res.ok) { alert((await res.json()).error); return; }
   const out = await res.json();
-  if (out.rejects_channel) alert(`${out.marked} videos of this channel are marked sped up: the fetcher rejects the ` +
-                                 'channel before its next batch, and the sheet will say Rejected.');
+  if (out.rejects_channel) alert(`${out.marked} videos of this channel are marked ${label}: the fetcher rejects ` +
+                                 'the channel before its next batch, and the sheet will say Rejected.');
   reloadKeepingPlace(btn.dataset.video, 0);
 }
+const markSpedUp = btn => markVideo(btn, 'sped_up', 'sped up');
+const markGhosts = btn => markVideo(btn, 'ghosts', 'with ghosts');
 async function undoRedo(btn, what) {
   const res = await fetch(what, { method: 'POST', headers: { 'Content-Type': 'application/json' },
                                   body: JSON.stringify({ video: btn.dataset.video }) });
@@ -4515,23 +4525,25 @@ def review(plan_path, port=None):
         save(plan)
         return jsonify(night=seg['night'])
 
-    @app.route('/sped_up', methods=['POST'])
-    def sped_up():
-        """Mark a video sped up and reject what is left of it; two such videos reject the channel (the fetcher
-        checks before each batch)."""
+    @app.route('/mark', methods=['POST'])
+    def mark():
+        """Mark a video sped up or with ghosts (REVIEW_MARKS) and reject what is left of it; two such videos
+        reject the channel (the fetcher checks before each batch)."""
         d = request.get_json()
+        if d.get('what') not in REVIEW_MARKS:
+            return jsonify(error='unknown mark'), 400
         plan = load()
         p = next((p for p in plan if p['video'] == d['video']), None)
         if p is None:
             return jsonify(error=stale), 409
-        p['sped_up'] = True
+        p[d['what']] = True
         for e in p.get('entries', []):
             for seg in e['segments']:
                 if not seg.get('applied'):
                     seg['decision'] = 'reject'
         save(plan)
-        n = sum(bool(q.get('sped_up')) for q in plan)
-        return jsonify(ok=True, marked=n, rejects_channel=n >= SPED_UP_REJECT)
+        n = sum(bool(q.get(d['what'])) for q in plan)
+        return jsonify(ok=True, marked=n, rejects_channel=n >= MARKED_REJECT)
 
     @app.route('/vehicle', methods=['POST'])
     def vehicle():

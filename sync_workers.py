@@ -17,7 +17,8 @@ import run_channels as rc
 
 # ssh alias: the sheet rows and refresh-queue share it takes (run_channels.py --rows, --queue-rows); the laptop
 # takes rows 2/3 and queue 2/4
-WORKERS = {'lin5080': '0/3, queue 0/4', 'mini': '1/3, queue 1/4', 'wsl5090': 'queue only, 3/4'}
+WORKERS = {'lin5080': 'queue phase 2 (new uploads of the sheet\'s processed channels)',
+           'mini': 'sheet rows 1/2, no queue', 'wsl5090': 'queue phases 1 and 3'}
 REMOTE = 'crowd-routine'       # the repository on each worker, relative to its home
 
 
@@ -69,24 +70,25 @@ def sync(host):
                        check=True, capture_output=True)
         plan = json.loads(ssh(host, f'cat {REMOTE}/_output/proposals/{name}/plan.json 2>/dev/null || echo "[]"'))
         added = merge_plan(name, plan)
-        # videos marked sped up in review here go back to the worker: two of them reject the channel there
+        # videos marked sped up or with ghosts in review here go back to the worker: two reject the channel there
         mine_plan = os.path.join(rc.ROOT, name, 'plan.json')
-        sped = sorted(q['video'] for q in json.load(open(mine_plan)) if q.get('sped_up')) \
-            if os.path.exists(mine_plan) else []
-        if sped and not set(sped) <= {q['video'] for q in plan if q.get('sped_up')}:
-            ssh(host, f"cd {REMOTE} && .venv/bin/python -c \"import json, propose_segments as ps\n"
-                      f"path = '_output/proposals/{name}/plan.json'\n"
-                      f"with ps.plan_lock(path):\n"
-                      f"    plan = json.load(open(path))\n"
-                      f"    for q in plan:\n"
-                      f"        q['sped_up'] = q.get('sped_up') or q['video'] in {sped!r}\n"
-                      f"    json.dump(plan, open(path + '.tmp', 'w'), indent=1)\n"
-                      f"    __import__('os').replace(path + '.tmp', path)\"")
-            print(f'{host}: {name}: {len(sped)} videos marked sped up sent')
+        local = json.load(open(mine_plan)) if os.path.exists(mine_plan) else []
+        for key in ps.REVIEW_MARKS:
+            marked = sorted(q['video'] for q in local if q.get(key))
+            if marked and not set(marked) <= {q['video'] for q in plan if q.get(key)}:
+                ssh(host, f"cd {REMOTE} && .venv/bin/python -c \"import json, propose_segments as ps\n"
+                          f"path = '_output/proposals/{name}/plan.json'\n"
+                          f"with ps.plan_lock(path):\n"
+                          f"    plan = json.load(open(path))\n"
+                          f"    for q in plan:\n"
+                          f"        q[{key!r}] = q.get({key!r}) or q['video'] in {marked!r}\n"
+                          f"    json.dump(plan, open(path + '.tmp', 'w'), indent=1)\n"
+                          f"    __import__('os').replace(path + '.tmp', path)\"")
+                print(f'{host}: {name}: {len(marked)} videos marked {ps.REVIEW_MARKS[key][0]} sent')
         mine = state.get(url, {})
         # the review state lives here: a channel reviewed (or marked on the sheet) here stays so
         keep = (mine.get('status') in ('reviewed', 'marked') and c.get('status') == 'to review'
-                or mine.get('status') == 'rejected')  # rejected here (videos marked sped up in review)
+                or mine.get('status') == 'rejected')  # rejected here (videos marked sped up or with ghosts in review)
         state[url] = {**mine, **c, 'host': host, **({'status': mine['status']} if keep else {})}
         print(f'{host}: {name} ({c.get("status")}): {added} new or updated videos')
     rc.save_state(state)
