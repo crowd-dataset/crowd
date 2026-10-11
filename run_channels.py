@@ -23,6 +23,7 @@ import re
 import select
 import subprocess
 import sys
+import threading
 import time
 
 import requests
@@ -68,7 +69,7 @@ def sheet_rows():
 
 def channel_name(url):
     """The folder name propose_segments.py gives the channel."""
-    return re.sub(r'\W+', '_', re.sub(r'^.*youtube\.com/(?:channel/)?@?', '', url).split('/')[0])
+    return ps.channel_folder(url)
 
 
 def country_of(url, sheet_country):
@@ -139,6 +140,12 @@ WHO = 'Claude+Pavlo'  # column E (Processed by) of the channels this routine wor
 BY = f', column E (Processed by) to {WHO}'
 
 
+def ours(url, status):
+    """Whether this routine may set the sheet row of url: blank or "Processing", or marked by it before (a channel
+    found sped up after it was "Processed")."""
+    return status.get(url, '') in OURS or PROCESSED_BY.get(url) == WHO
+
+
 def write_sheet_todo(state, sheet):
     """The status (column B) and Processed by (column E) the sheet should show for the channels worked on here
     and does not yet, in SHEET_TODO."""
@@ -147,7 +154,7 @@ def write_sheet_todo(state, sheet):
     want = {'processing': 'Processing', 'to review': 'Processed', 'reviewed': 'Processed', 'rejected': 'Rejected'}
     todo = [{'row': c['row'], 'url': url, 'status': want[c['status']], 'by': WHO, 'comment': c.get('comment', '')}
             for url, c in state.items()
-            if c['status'] in want and not c.get('refresh') and status.get(url, '') in OURS
+            if c['status'] in want and not c.get('refresh') and ours(url, status)
             and (status.get(url, '') != want[c['status']] or PROCESSED_BY.get(url, '') != WHO)]
     with open(SHEET_TODO + '.tmp', 'w') as f:
         json.dump(todo, f, indent=1)
@@ -166,7 +173,7 @@ def check_reviews(state, sheet):
         if c['status'] == 'processing' and status.get(url) == '':
             log(f"SHEET: set row {c['row']} ({url}) to Processing{BY}")
         for done, word in (('to review', 'Processed'), ('reviewed', 'Processed'), ('rejected', 'Rejected')):
-            if c['status'] == done and status.get(url, '') in OURS:
+            if c['status'] == done and ours(url, status) and status.get(url, '') != word:
                 log(f"SHEET: set row {c['row']} ({url}) to {word}{BY}")
             elif c['status'] == done:
                 c['status'] = 'marked'
@@ -184,7 +191,8 @@ def on_hotspot():
 def run_chunk(url, country, chunk, single_city=False, new_only=False):
     """One batch of the channel with the latest code; its output, streamed. single_city: only drives within one
     city (set "single_city": true for the channel in channels.json)."""
-    env = dict(os.environ)
+    env = {k: v for k, v in os.environ.items() if not k.startswith('MallocStackLogging')}  # macOS: "can't turn off
+    # malloc stack logging because it was not enabled" from every python the app's environment starts
     if os.path.exists('cookies.txt'):
         env.setdefault('YT_DLP_COOKIES', 'cookies.txt')
     cmd = [sys.executable, '-u', 'propose_segments.py', '--channel', url, '--country', country,
@@ -219,6 +227,43 @@ def run_chunk(url, country, chunk, single_city=False, new_only=False):
     return ''.join(out)
 
 
+CHANNEL_IDS = '_output/subscriptions/channel_ids.json'  # sheet URL -> channel id (refresh_queue.py, sync_workers.py)
+TAKEN = os.path.join(ROOT, 'taken.json')  # the channels any machine works or worked on (sync_workers.py)
+
+
+def done_before(url, sheet, state):
+    """Another sheet row (or link) of the same channel that someone did or is doing, else None: @Drivesights1 (row
+    823) is UCjaZ_Lko0XB49cCs-bnlz4A (row 836). Compared: the sheet's rows with any status, the channels in state and
+    those all machines are on (TAKEN, from sync_workers.py)."""
+    import refresh_queue  # imports this module
+    try:
+        with open(CHANNEL_IDS) as f:
+            known = json.load(f)
+    except (OSError, ValueError):
+        known = {}
+    try:
+        with open(TAKEN) as f:
+            taken = set(json.load(f))
+    except (OSError, ValueError):
+        taken = set()
+    rows = {u: n for n, u, status, _ in sheet if status}
+    others = (set(rows) | taken | {c.get('url') or k for k, c in state.items()}) - {url}
+    try:
+        cid = refresh_queue.channel_id(url, known)
+        for u in others:  # each looked up once (one API unit apiece), then kept
+            if u not in known and not u.startswith('refresh:'):
+                refresh_queue.channel_id(u, known)
+    except RuntimeError:  # no API key or quota: start it
+        return None
+    finally:
+        os.makedirs(os.path.dirname(CHANNEL_IDS), exist_ok=True)
+        with open(CHANNEL_IDS + '.tmp', 'w') as f:
+            json.dump(known, f, indent=1)
+        os.replace(CHANNEL_IDS + '.tmp', CHANNEL_IDS)
+    same = [u for u in others if cid and known.get(u) == cid]
+    return (f'row {rows[same[0]]}' if same[0] in rows else same[0]) if same else None
+
+
 def refresh_todo(state, args):
     """[(None, state key, url, country, new uploads only)] of the channels done before this machine fetches again:
     every m-th of the refresh queue (--rows k/m), one started here first."""
@@ -227,15 +272,50 @@ def refresh_todo(state, args):
             queue = json.load(f)
     except (OSError, ValueError):
         return []
-    todo = []
+    todo, share = [], args.queue_rows or args.rows
+    try:  # started by another machine (sync_workers.py): left to it
+        with open(TAKEN) as f:
+            taken = set(json.load(f)) - set(state)
+    except (OSError, ValueError):
+        taken = set()
     for i, q in enumerate(queue):
+        if 'refresh:' + q['url'] in taken:
+            continue
         key, c = 'refresh:' + q['url'], state.get('refresh:' + q['url'], {})
         if (c.get('status', 'processing') == 'processing' and not c.get('host')
-                and (key in state or args.rows is None or i % args.rows[1] == args.rows[0])
+                and (key in state or share is None or i % share[1] == share[0])
                 and (q.get('country') or '').strip().lower() != 'russia'):
             todo.append((key in state, None, key, q['url'], q.get('country') or '', q.get('new_only', True)))
     todo.sort(key=lambda t: not t[0])  # one started here first, else the queue's order (its phases)
     return [t[1:] for t in todo]
+
+
+def push_code_on_change(every_s=60):
+    """Forever: when a .py file here changes, send the code to the worker machines (user, 2026-10-10: every update
+    reaches them at once, not with the hourly sync), and every hour bring their batches here (sync_workers.py), also
+    while a long batch runs here (a night of 25-minute videos kept them away from 22:42 to 07:44). A thread of the
+    reviewing machine's runner (--sync)."""
+    import sync_workers  # the laptop's: it names the workers
+    seen, synced = None, 0
+    while True:
+        if time.time() - synced > 3600 and not on_hotspot():
+            log('syncing the worker machines')
+            try:
+                subprocess.run([sys.executable, 'sync_workers.py'], timeout=1800)
+            except subprocess.TimeoutExpired:
+                log('the worker sync took over 30 min: stopped it, next try in an hour')
+            synced = time.time()
+        now = {f: os.path.getmtime(f) for f in os.listdir('.') if f.endswith('.py')}
+        if seen is not None and now != seen:
+            for host in sync_workers.WORKERS:
+                try:
+                    pushed = sync_workers.push_code(host)
+                    if pushed:
+                        log(f'code sent to {host}: {", ".join(pushed)}')
+                except (subprocess.SubprocessError, OSError) as e:
+                    log(f'code not sent to {host} ({type(e).__name__}): the hourly sync tries again')
+        seen = now
+        time.sleep(every_s)
 
 
 def rows_rule(text):
@@ -255,6 +335,10 @@ def main():
     # several machines on one sheet: each takes only its own rows, so two never work on the same channel
     ap.add_argument('--rows', type=rows_rule, help='only new channels on these sheet rows: even, odd, or k/m '
                     '(the row number divided by m leaves k); a channel started here is finished either way')
+    ap.add_argument('--queue-rows', type=rows_rule, help='the share of the refresh queue (default: --rows; '
+                    'with --refresh-only and neither: any channel no other machine has started)')
+    ap.add_argument('--refresh-only', action='store_true',
+                    help='no new sheet channel, straight to the refresh queue (user, 2026-10-10: w5090)')
     ap.add_argument('--sync', action='store_true', help='bring the worker machines\' batches here every hour '
                     '(sync_workers.py): the machine you review on')
     ap.add_argument('--no-new', action='store_true',
@@ -268,7 +352,9 @@ def main():
         return
     t0 = time.time()
     state = load_state()
-    code, synced = os.path.getmtime(__file__), 0
+    code = os.path.getmtime(__file__)
+    if args.sync:
+        threading.Thread(target=push_code_on_change, daemon=True).start()
     while not args.max_minutes or time.time() - t0 < args.max_minutes * 60:
         if on_hotspot():
             log('on the iPhone hotspot: waiting until another network is used')
@@ -283,16 +369,9 @@ def main():
         if os.path.getmtime(__file__) != code:  # updated (on a worker: by sync_workers.py): run the new code
             log('run_channels.py changed: restarting with the new code')
             os.execv(sys.executable, [sys.executable, '-u'] + sys.argv)
-        # the reviewing machine (--sync) brings the workers' batches here every hour, between
-        # batches, so it keeps happening while no Claude session runs the hourly check
-        if args.sync and time.time() - synced > 3600:
-            log('syncing the worker machines')
-            try:
-                subprocess.run([sys.executable, 'sync_workers.py'], timeout=1800)
-            except subprocess.TimeoutExpired:
-                log('the worker sync took over 30 min: stopped it, next try in an hour')
-            synced = time.time()
         state = load_state()  # with the workers' progress, as synced by sync_workers.py
+        for key, c in state.items():  # names as the folders are now called (no ?query: UCjaZ_Lko0XB49cCs-bnlz4A)
+            c['name'] = channel_name(c.get('url') or key.removeprefix('refresh:'))
         try:
             sheet = sheet_rows()
         except requests.RequestException as e:
@@ -311,7 +390,7 @@ def main():
                 and not state.get(url, {}).get('host')  # a worker machine's channel
                 and (url in state or args.rows is None or n % args.rows[1] == args.rows[0])
                 and not (url not in state and country.strip().lower() == 'russia')  # Olena's (user, 2026-10-10)
-                and not (args.no_new and url not in state)]
+                and not ((args.no_new or args.refresh_only) and url not in state)]
         started = list(state)  # one channel at a time: the earliest started one first, a new one after them
         todo.sort(key=lambda t: started.index(t[1]) if t[1] in state else len(started))
         todo = [(n, url, url, country, False) for n, url, country in todo] or refresh_todo(state, args)
@@ -321,6 +400,11 @@ def main():
             continue
         n, key, url, sheet_country, new_only = todo[0]  # n is None for a channel done before (refresh_todo)
         what = f'row {n} {url}' if n is not None else f"{'new uploads' if new_only else 'videos'} of {url}"
+        if key not in state and n is not None and (other := done_before(url, sheet, state)):
+            log(f'row {n} {url} is the channel of {other}, done there: skipped (the sheet lists it twice)')
+            state[key] = {'row': n, 'name': channel_name(url), 'status': 'duplicate', 'comment': f'same as {other}'}
+            save_state(state)
+            continue
         if key not in state and n is not None:
             log(f'SHEET: set row {n} ({url}) to Processing{BY}')
         c = state.setdefault(key, {'row': n, 'name': channel_name(url), 'status': 'processing',
