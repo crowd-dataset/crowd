@@ -17,8 +17,9 @@ import run_channels as rc
 
 # ssh alias: the sheet rows and refresh-queue share it takes (run_channels.py --rows, --queue-rows); the laptop
 # takes rows 2/3 and queue 2/4
-WORKERS = {'lin5080': 'queue phase 2 (new uploads of the sheet\'s processed channels)',
-           'mini': 'sheet rows 1/2, no queue', 'wsl5090': 'sheet rows 0/2, then queue phases 1 and 3'}
+# mini ('sheet rows 1/2, no queue') is out until its new account is set up (2026-10-11)
+WORKERS = {'lin5080': 'queue phase 5 (highway videos to redo), then 2 (new uploads of processed channels)',
+           'wsl5090': 'sheet rows 0/2, then queue phase 4 (UCxbv63aE7sg8_HzYz5KFPeA highway videos), 1 and 3'}
 REMOTE = 'crowd-routine'       # the repository on each worker, relative to its home
 
 
@@ -40,8 +41,9 @@ def merge_plan(name, remote_plan):
             if i is None:
                 local.append(p)
                 added += 1
-            elif str(local[i].get('exclude', '')).startswith('could not analyse') and 'entries' in p:
-                local[i] = p  # failed here, done there
+            elif ((str(local[i].get('exclude', '')).startswith('could not analyse') or 'entries' not in local[i])
+                  and 'entries' in p):
+                local[i] = p  # failed or left out here, proposed there (a rule made less strict since)
                 added += 1
         with open(path + '.tmp', 'w') as f:
             json.dump(local, f, indent=1)
@@ -72,6 +74,9 @@ def sync(host):
         added = merge_plan(name, plan)
         mine_plan = os.path.join(rc.ROOT, name, 'plan.json')
         local = json.load(open(mine_plan)) if os.path.exists(mine_plan) else []
+        # the whole channel rejected in review here: the worker stops it too
+        if os.path.exists(os.path.join(rc.ROOT, name, ps.CHANNEL_REJECTED)):
+            ssh(host, f'touch {REMOTE}/_output/proposals/{name}/{ps.CHANNEL_REJECTED}')
         # the reviews here say the channel opens with highlights: the worker starts its videos after them
         if local and ps.montage_channel({q['video']: q for q in local}, os.path.join(rc.ROOT, name)):
             ssh(host, f'touch {REMOTE}/_output/proposals/{name}/{ps.MONTAGE_MARK}')

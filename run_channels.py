@@ -393,6 +393,9 @@ def main():
         state = load_state()  # with the workers' progress, as synced by sync_workers.py
         for key, c in state.items():  # names as the folders are now called (no ?query: UCjaZ_Lko0XB49cCs-bnlz4A)
             c['name'] = channel_name(c.get('url') or key.removeprefix('refresh:'))
+            # "Reject the whole channel" on its review page, also for a channel no machine fetches any more
+            if c.get('status') != 'rejected' and os.path.exists(os.path.join(ROOT, c['name'], 'channel_rejected')):
+                c['status'], c['comment'] = 'rejected', 'the whole channel was rejected in review'
         try:
             sheet = sheet_rows()
         except requests.RequestException as e:
