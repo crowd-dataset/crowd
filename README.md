@@ -911,6 +911,48 @@ Amount of footage (hours) per country in North America. *Note:* the colour scale
 [![Amount of footage per US state](figures/map_us_states_footage.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/map_us_states_footage.html)
 Amount of footage (hours) per US state. *Note:* the colour scale is logarithmic.
 
+[![Footage per US county](figures/map_us_counties_footage.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/map_us_counties_footage.html)
+Footage per US county (log colour scale): localities are assigned to the county they lie in. Hover over a county for its localities.
+
+[![Footage per million people per US county](figures/map_us_counties_footage_per_capita.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/map_us_counties_footage_per_capita.html)
+Hours of footage per million people per US county (population: US Census Bureau estimates, 2024).
+
+[![Share of night footage per US county](figures/map_us_counties_night_share.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/map_us_counties_night_share.html)
+Share of footage recorded at night per US county (counties with at least an hour of footage).
+
+[![Footage per European region](figures/map_eu_regions_footage.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/map_eu_regions_footage.html)
+Footage per European region (Eurostat NUTS 2: EU, EFTA and candidate countries; not the United Kingdom, Ukraine or Russia).
+
+[![Footage per million people per European region](figures/map_eu_regions_footage_per_capita.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/map_eu_regions_footage_per_capita.html)
+Hours of footage per million people per European region (population: Eurostat).
+
+[![Share of night footage per European region](figures/map_eu_regions_night_share.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/map_eu_regions_night_share.html)
+Share of footage recorded at night per European region (regions with at least an hour of footage).
+
+[![Footage in Europe as a terrain](figures/terrain_footage_europe.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/terrain_footage_europe.html)
+Footage in Europe as a terrain: height and colour show the hours of footage, smoothed over about 40 km. The HTML version can be turned and zoomed; hover over a dot for its locality.
+
+[![Footage in North America as a terrain](figures/terrain_footage_north_america.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/terrain_footage_north_america.html)
+Footage in North America as a terrain.
+
+[![Footage in Asia as a terrain](figures/terrain_footage_asia.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/terrain_footage_asia.html)
+Footage in Asia as a terrain.
+
+[![Population and footage in India as terrains](figures/terrain_population_footage_india.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/terrain_population_footage_india.html)
+Population (cities of over 15,000 people, GeoNames) next to footage in India, each terrain scaled to its own highest peak: where the people are and where the footage is.
+
+[![Population and footage in Nigeria as terrains](figures/terrain_population_footage_nigeria.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/terrain_population_footage_nigeria.html)
+Population next to footage in Nigeria: the footage comes from a few places, while the population is spread over many cities.
+
+[![Footage per locality in the United States as spikes](figures/spikes_footage_usa.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/spikes_footage_usa.html)
+One spike per locality in the United States; height and colour show its hours of footage (log scale).
+
+[![Footage per locality in Russia as spikes](figures/spikes_footage_rus.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/spikes_footage_rus.html)
+One spike per locality in Russia.
+
+[![Footage per locality in Japan as spikes](figures/spikes_footage_jpn.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/spikes_footage_jpn.html)
+One spike per locality in Japan.
+
 [![Amount of footage per country in Oceania](figures/map_footage_oceania.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/map_footage_oceania.html)
 Amount of footage (hours) per country in Oceania. *Note:* the colour scale is logarithmic; countries are grouped by the continent of their cities in the dataset.
 
@@ -981,7 +1023,7 @@ Every locality in the dataset as a dot coloured by continent; the dot area is pr
 The same localities on a globe. The HTML version spins until you grab it; drag to turn it.
 
 [![Localities in the dataset on a 3D globe with spikes](figures/globe_localities_footage_spikes.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/globe_localities_footage_spikes.html)
-The localities on a 3D satellite globe (NASA Blue Marble), with a spike for each area of about 200 km (neighbouring localities merged, so spikes do not overlap) whose height shows its hours of footage on a log scale, so areas with little footage are visible too. Each spike is orange for the share of its footage recorded by day and blue for the share at night. The HTML version spins until you grab it; drag to turn it, scroll to zoom.
+The localities on a 3D satellite globe (NASA Blue Marble), with a spike for each locality whose height shows its hours of footage on a log scale, so localities with little footage are visible too. In the HTML version, a button merges neighbouring localities into one spike per area of about 200 km, which is easier to read where localities are dense. Each spike is orange for the share of its footage recorded by day and blue for the share at night. The HTML version spins until you grab it; drag to turn it, scroll to zoom.
 
 [![Footage by continent, country and locality](figures/treemap_footage.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/treemap_footage.html)
 Footage by continent, country and locality, coloured by the share recorded at night. In the HTML version, click a box to zoom in down to the localities.

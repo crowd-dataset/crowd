@@ -25,7 +25,7 @@ from plotly.subplots import make_subplots
 import common
 from utils.analytics.metrics_cache import MetricsCache
 from utils.core.dataset_stats import Dataset_Stats
-from utils.plotting import hover, map_labels
+from utils.plotting import area_figures, hover, map_labels
 from utils.plotting.constants import CONTINENT_COLORS, MAP_TOP_SHARE, colorbar_top
 from utils.plotting.io import IO
 
@@ -714,9 +714,13 @@ def dataset_figures(df_mapping: pl.DataFrame, seg: pl.DataFrame, flags: dict) ->
     # a 3D globe with a spike on each locality, its height proportional to the hours of footage; the HTML spins
     # until it is touched, then can be dragged
     # no EPS for the globes (the 3D one would be embedded in it as a ~10 MB picture): they are for the screen
-    _save(_globe(_globe_cells(dots.join(df_mapping.select("id", "iso3"), on="id").with_columns(
-        pl.concat_str([flag, pl.col("locality")], separator=" ").alias("name")))),
-        "globe_localities_footage_spikes", post_script=SPIN_JS, save_eps=False)
+    # a spike per locality (thin, so dense areas stay readable); in the HTML, a button merges neighbouring
+    # localities into one spike per area of about 200 km
+    areas = _globe_cells(dots.join(df_mapping.select("id", "iso3"), on="id").with_columns(
+        pl.concat_str([flag, pl.col("locality")], separator=" ").alias("name")))
+    _save(_globe([("Each locality", "One spike per locality", dots, 1.2),
+                  ("Areas of ~200 km", "One spike per ~200 km area", areas, 2)]),
+          "globe_localities_footage_spikes", post_script=SPIN_JS, save_eps=False)
 
     # footprints of the channels with the most footage: where each one films (travel channels vs local drivers);
     # channels are numbered by footage; in the HTML each number links to the channel on YouTube
@@ -764,6 +768,9 @@ def dataset_figures(df_mapping: pl.DataFrame, seg: pl.DataFrame, flags: dict) ->
     fig.update_yaxes(title_text="Length of segment (minutes)", col=1)
     _save(_style(fig), "box_segment_length")
 
+    # county and region maps, terrain views and spike maps of the footage
+    area_figures.dataset_area_figures(df_mapping, seg, loc_hover, flags)
+
 
 GEO_STYLE = dict(showland=True, landcolor="#eeeeee", showcountries=True, countrycolor="#cccccc", showocean=True,
                  oceancolor="white", showframe=False, coastlinecolor="#bbbbbb")
@@ -779,7 +786,9 @@ function spin() {  // 6 degrees a second, however long each redraw takes
   Plotly.relayout(gd, {'geo.projection.rotation.lon': lon}).then(function () { requestAnimationFrame(spin); });
 }
 ['mousedown', 'touchstart', 'wheel'].forEach(function (e) {
-  gd.addEventListener(e, function () { spinning = false; }, {passive: true});
+  gd.addEventListener(e, function (ev) {  // grabbing the globe stops it; the buttons above it do not
+    if (!(ev.target.closest && ev.target.closest('.updatemenu-container'))) spinning = false;
+  }, {passive: true});
 });
 spin();
 """
@@ -796,7 +805,9 @@ function spin() {  // 6 degrees a second, however long each redraw takes
     .then(function () { requestAnimationFrame(spin); });
 }
 ['mousedown', 'touchstart', 'wheel'].forEach(function (e) {
-  gd.addEventListener(e, function () { spinning = false; }, {passive: true});
+  gd.addEventListener(e, function (ev) {  // grabbing the globe stops it; the buttons above it do not
+    if (!(ev.target.closest && ev.target.closest('.updatemenu-container'))) spinning = false;
+  }, {passive: true});
 });
 spin();
 """
@@ -853,11 +864,12 @@ def _globe_cells(dots: pl.DataFrame, deg: float = 2.0) -> pl.DataFrame:
         "lat", "lon", "hours", "night_hours", "hover")
 
 
-def _globe(dots: pl.DataFrame, max_height: float = 0.25):
-    """3D globe: the Blue Marble image with country borders and a spike on each locality of `dots` (lat, lon,
-    locality, hours, night_hours). Spike height is on a log scale, so localities with little footage still show: zero
-    at GLOBE_MIN_HOURS, `max_height` globe radii at the largest. Each spike is split by the share of day (below) and
-    night (on top) footage."""
+def _globe(views: list, max_height: float = 0.25):
+    """3D globe: the Blue Marble image with country borders and spikes. `views`: (button label, note, dots, line
+    width) for each set of spikes, the first shown (and in the static image), the others behind buttons in the HTML;
+    dots: lat, lon, hours, night_hours, hover. Spike height is on a log scale, so places with little footage still
+    show: zero at GLOBE_MIN_HOURS, `max_height` globe radii at the largest. Each spike is split by the share of day
+    (below) and night (on top) footage."""
     fig = go.Figure(_earth_mesh())
     bx, by, bz = [], [], []
     for shape in map_labels.country_shapes().values():
@@ -868,29 +880,38 @@ def _globe(dots: pl.DataFrame, max_height: float = 0.25):
             bz += [*z, None]
     fig.add_trace(go.Scatter3d(x=bx, y=by, z=bz, mode="lines", line=dict(color="rgba(255,255,255,0.45)", width=1),
                                hoverinfo="skip", showlegend=False))
-    lo, top = math.log10(GLOBE_MIN_HOURS), dots["hours"].max()
-    h = np.log10(np.maximum(dots["hours"].to_numpy(), GLOBE_MIN_HOURS))
-    r_top = 1.002 + max_height * (h - lo) / (math.log10(top) - lo)
-    night = dots["night_hours"].to_numpy() / dots["hours"].to_numpy()
-    r_mid = 1.002 + (r_top - 1.002) * (1 - night)  # day footage below, night footage on top
-    nan = np.full(dots.height, np.nan)  # breaks between spikes
-    # night in sky blue (not the darker blue of the other figures), so it shows against the dark ocean
-    for name, r0, r1, color in [("Day", 1.002, r_mid, "#E69F00"), ("Night", r_mid, r_top, "#56B4E9")]:
-        p0, p1 = _xyz(dots["lon"], dots["lat"], r0), _xyz(dots["lon"], dots["lat"], r1)
-        x, y, z = (np.column_stack([a, b, nan]).ravel() for a, b in zip(p0, p1))
-        fig.add_trace(go.Scatter3d(x=x, y=y, z=z, mode="lines", name=name, line=dict(color=color, width=2),
-                                   hoverinfo="skip"))
-    # the popup on the spike tips; 3D traces take it as `text` (plotly leaves %{hovertext} empty in 3D)
-    tips = _xyz(dots["lon"], dots["lat"], r_top)
-    fig.add_trace(go.Scatter3d(x=tips[0], y=tips[1], z=tips[2], mode="markers", showlegend=False,
-                               marker=dict(size=3, color=np.where(night > 0, "#56B4E9", "#E69F00")),
-                               text=dots["hover"], hovertemplate=hover.GL_TEMPLATE))
+    lo, top = math.log10(GLOBE_MIN_HOURS), max(d["hours"].max() for _, _, d, _ in views)
+    for v, (_, _, dots, width) in enumerate(views):
+        h = np.log10(np.maximum(dots["hours"].to_numpy(), GLOBE_MIN_HOURS))
+        r_top = 1.002 + max_height * (h - lo) / (math.log10(top) - lo)
+        night = dots["night_hours"].to_numpy() / dots["hours"].to_numpy()
+        r_mid = 1.002 + (r_top - 1.002) * (1 - night)  # day footage below, night footage on top
+        nan = np.full(dots.height, np.nan)  # breaks between spikes
+        # night in sky blue (not the darker blue of the other figures), so it shows against the dark ocean
+        for name, r0, r1, color in [("Day", 1.002, r_mid, "#E69F00"), ("Night", r_mid, r_top, "#56B4E9")]:
+            p0, p1 = _xyz(dots["lon"], dots["lat"], r0), _xyz(dots["lon"], dots["lat"], r1)
+            x, y, z = (np.column_stack([a, b, nan]).ravel() for a, b in zip(p0, p1))
+            fig.add_trace(go.Scatter3d(x=x, y=y, z=z, mode="lines", name=name, legendgroup=name, showlegend=v == 0,
+                                       visible=v == 0, line=dict(color=color, width=width), hoverinfo="skip"))
+        # the popup on the spike tips; 3D traces take it as `text` (plotly leaves %{hovertext} empty in 3D)
+        tips = _xyz(dots["lon"], dots["lat"], r_top)
+        fig.add_trace(go.Scatter3d(x=tips[0], y=tips[1], z=tips[2], mode="markers", showlegend=False, visible=v == 0,
+                                   marker=dict(size=width + 0.5, color=np.where(night > 0, "#56B4E9", "#E69F00")),
+                                   text=dots["hover"], hovertemplate=hover.GL_TEMPLATE))
+    notes = [f"{note}: hours of footage on a log scale (6 minutes to {top:,.0f} h); colours: share of day and night "
+             "footage" for _, note, _, _ in views]
+    if len(views) > 1:  # buttons in the HTML (static images leave them out)
+        buttons = [dict(label=label, method="update",
+                        args=[{"visible": [True, True] + [w == v for w in range(len(views)) for _ in range(3)]},
+                              {"annotations[0].text": notes[v]}])
+                   for v, (label, _, _, _) in enumerate(views)]
+        fig.update_layout(updatemenus=[dict(type="buttons", direction="right", x=0.01, y=0.99, xanchor="left",
+                                            yanchor="top", showactive=True, buttons=buttons)])
     hidden = dict(visible=False, showbackground=False)
     eye = 1.45 * np.array(_xyz(15, 50))  # centred on Europe
     fig.update_layout(scene=dict(xaxis=hidden, yaxis=hidden, zaxis=hidden, aspectmode="data", dragmode="turntable",
                                  camera=dict(eye=dict(x=eye[0], y=eye[1], z=eye[2]), up=dict(x=0, y=0, z=1))))
-    fig.add_annotation(text=f"One spike per ~200 km area: hours of footage on a log scale (6 minutes to "
-                       f"{top:,.0f} h); colours: share of day and night footage",
+    fig.add_annotation(text=notes[0],
                        x=0.01, y=0.02, xref="paper", yref="paper", showarrow=False,
                        font=dict(size=14, color="#666666"))
     return _style(fig, width=1200, height=1000, margin=dict(l=0, r=0, t=0, b=0),
@@ -1010,6 +1031,19 @@ DETECTION_FIGURES = {
     "bubble_road_deaths_vs_pedestrians": "Road traffic deaths per 100,000 people against pedestrians per minute: "
                                          "countries with more or fewer deaths than their number of pedestrians on "
                                          "the street predicts.",
+    "terrain_pedestrians_europe": "Pedestrians per minute in Europe as a terrain: height and colour show the "
+                                  "number of pedestrians per minute, smoothed over about 40 km.",
+    "terrain_pedestrians_north_america": "Pedestrians per minute in North America as a terrain.",
+    "terrain_pedestrians_asia": "Pedestrians per minute in Asia as a terrain.",
+    "terrain_pedestrians_night_europe": "Pedestrians per minute at night in Europe as a terrain: where streets stay "
+                                        "busy after dark.",
+    "terrain_pedestrians_night_north_america": "Pedestrians per minute at night in North America as a terrain.",
+    "terrain_pedestrians_night_asia": "Pedestrians per minute at night in Asia as a terrain.",
+    "map_us_counties_pedestrians": "Pedestrians per minute per US county (counties with at least an hour of "
+                                   "analysed footage).",
+    "map_eu_regions_pedestrians": "Pedestrians per minute per European region (NUTS 2; regions with at least an "
+                                  "hour of analysed footage).",
+    "map_eu_regions_bicycles": "Bicycles per minute per European region (NUTS 2): cycling regions stand out.",
     "scatter_locality_pedestrians_vs_population": "Pedestrians per minute per locality against its population "
                                                   "(localities with at least an hour of analysed footage): busy and "
                                                   "quiet streets for a city's size.",
@@ -1207,13 +1241,13 @@ def detection_figures(df_mapping: pl.DataFrame, det: pl.DataFrame, classes: list
                  "motorcycle share"),
                 ("Bicycles", "Bicycles per minute (log scale)", "bubble_bicycles_gdp", 2, "bicycles"),
                 ("Cars", "Cars per minute (log scale)", "bubble_cars_gdp", 1.5, "cars")]:
-            d = ctry.drop_nulls("gdp_pc").filter(pl.col(col) > 0) if col in ctry.columns else ctry.clear()
-            if d.height > 2:
-                _vs_wealth(d, col, title, name, ratio=ratio, what=what)
+            w = ctry.drop_nulls("gdp_pc").filter(pl.col(col) > 0) if col in ctry.columns else ctry.clear()
+            if w.height > 2:
+                _vs_wealth(w, col, title, name, ratio=ratio, what=what)
     # road deaths against pedestrians on the street: busy streets with few deaths, or quiet streets with many
-    d = ctry.filter(pl.col("traffic_mortality") > 0, pl.col(person) > 0)
-    if d.height > 2:
-        _vs_trend(d, person, "Pedestrians per minute (log scale)", "traffic_mortality",
+    deaths = ctry.filter(pl.col("traffic_mortality") > 0, pl.col(person) > 0)
+    if deaths.height > 2:
+        _vs_trend(deaths, person, "Pedestrians per minute (log scale)", "traffic_mortality",
                   "Road traffic deaths per 100,000 people (log scale)", "bubble_road_deaths_vs_pedestrians", ratio=1.5,
                   what="road deaths", basis="pedestrian numbers")
 
@@ -1239,6 +1273,9 @@ def detection_figures(df_mapping: pl.DataFrame, det: pl.DataFrame, classes: list
                       labelled=((pl.col("population_locality").rank("ordinal", descending=True) <= 10)
                                 | (pl.col("_gap").rank("ordinal", descending=True) <= 8)
                                 | (pl.col("_gap").rank("ordinal") <= 8)))
+
+    # pedestrian and night-life terrains, and road users per US county and European region
+    area_figures.detection_area_figures(df_mapping, d, classes, loc_hover, flags)
 
     # README tables
     two = dict(function=lambda v: f"{v:.2f}", return_dtype=pl.Utf8)  # rates with two decimals in the tables
