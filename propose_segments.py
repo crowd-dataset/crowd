@@ -11,6 +11,7 @@ import ast
 import contextlib
 import fcntl
 import difflib
+import functools
 import json
 import os
 import random
@@ -86,7 +87,7 @@ PARAMS = {
     # camera angle: a moving frame whose right and left sides flow apart by less than angle_spread times the
     # overall motion looks sideways (forward cameras: median 1.1-1.5; a side-facing camera: -0.1)
     'angle_spread': 0.3,
-    'angle_share': 0.6,       # sideways in this share of the moving frames over a minute: cut that stretch
+    'angle_share': 0.6,
     'shake_jitter': 1.0,      # spread of the vertical shift over 10 s (normal: 0.02-0.46; shaking: 1.8)
     # rural driving: YOLO sees fewer than this many cars, people, traffic lights, stop signs and hydrants per frame
     # over a minute (labelled towns: 1.0-7 per frame, a rural drive through the Poconos: 0-0.4); day only
@@ -539,6 +540,13 @@ def propose(sig, p=PARAMS):
         end = int(float(sig['intro_end']))
         keep[:end * FPS] = False
         notes.append(f'intro 0-{end}s (a map, title or logo)')
+    for a, b in np.asarray(sig.get('lots', np.zeros((0, 2)))).reshape(-1, 2):  # see parking_lots
+        keep[int(a * FPS):int(b * FPS)] = False
+        notes.append(f'in a parking lot {int(a) // 60}:{int(a) % 60:02d}-{int(b) // 60}:{int(b) % 60:02d}')
+    for a, b in np.asarray(sig.get('chapter_cuts', np.zeros((0, 2)))).reshape(-1, 2):  # see chapter_cuts
+        keep[int(a * FPS):int(b * FPS)] = False
+        notes.append(f'not the drive by its chapter {int(a) // 60}:{int(a) % 60:02d}-{int(b) // 60}:{int(b) % 60:02d}'
+                     ' (highlights or a preview)')
     if float(sig.get('outro_start', 0)) > 0:  # see clip_outro
         start = int(float(sig['outro_start']))
         keep[start * FPS:] = False
@@ -653,6 +661,16 @@ def propose(sig, p=PARAMS):
         notes.append('possible fades between scenes (ghosts: an edited drive?) at '
                      + ', '.join(f'{int(t) // 60}:{int(t) % 60:02d}' for t in ghosts[:5])
                      + (f' and {len(ghosts) - 5} more' if len(ghosts) > 5 else ''))
+    # a hint (the reviewer's own check, 2026-10-11): in a city drive the car waits at red lights; when it never
+    # stands still for 25 s and hardly at all, the waits were cut out, often with dissolves (ghosts): in the
+    # ghost channel UCPv35e3jeQeCL6CWrS3njkw 7 of 13 videos, of 1,406 approved ones 29
+    if 'urban' in sig and n / FPS >= 600 and np.median(sig['urban']) >= 3:
+        moving_inner = (_rolling_median(sig['motion'], p['smooth_s'] * FPS) > p['moving_flow'])[30 * FPS:-30 * FPS]
+        waits = [(b - a) / FPS for a, b in _runs(~moving_inner)]
+        if 1 - moving_inner.mean() < 0.05 and max(waits, default=0) < 25:
+            notes.append(f'no wait over {max(waits, default=0):.0f}s in this city drive (standing '
+                         f'{1 - moving_inner.mean():.0%} of the time): waits at lights cut out (ghosts)? check an '
+                         'intersection')
     vanished = [t for t in np.asarray(sig.get('ghost', [])).ravel() if SKIP_INTRO_S < t < n / FPS - SKIP_OUTRO_S]
     if vanished:  # a hint only, see ghost_vanishes
         notes.append('possible ghost (a person or car vanished mid-picture: an edit?) at '
@@ -1074,6 +1092,17 @@ def clip_outro(path, duration, work_dir, max_s=120):
     return None if start is None or len(s) - start < 5 else int(sorted(scores)[start])
 
 
+def parking_lots(path, sig, work_dir, p=PARAMS):
+    """[(start s, end s)] of the stretches of 30 s or more where the car moves less than 40% of the time (over a
+    minute) and CLIP sees a parking lot, a garage or a parked car, not a wait in traffic (PARKED_SCENES, 3 frames).
+    Waits at intersections are what the dataset wants, so standing still alone cuts nothing: of 32 mostly
+    standing segments the reviewer approved CLIP put 1 in a lot, of 75 rejected 20 (MKQqzpQbZQ8 at 86:39)."""
+    moving = _rolling_median(sig['motion'], p['smooth_s'] * FPS) > p['moving_flow']
+    slow = _rolling_mean(moving.astype(float), 60 * FPS) < 0.4
+    runs = [(a / FPS, b / FPS) for a, b in _runs(slow) if (b - a) / FPS >= 30]
+    return _clip_stretches(path, runs, work_dir, PARKED_SCENES, 3) if runs else []
+
+
 def parked_edges(path, sig, work_dir):
     """The edge_stops where CLIP sees a parked car (a parking lot, a garage, the kerb of a residential street): the
     middle of its scores on three frames at least 0.9. Most stops at a video's start or end are waits in traffic
@@ -1162,6 +1191,9 @@ def montage_channel(plan, out_dir):
             else:
                 before += 1
     return after >= 3 and after >= 3 * before
+
+
+MONTAGE_MARK = 'opens_with_montage'  # a file in a channel's folder: its reviews say it opens with highlights
 
 
 def trim_montage(p, sig):
@@ -1451,10 +1483,12 @@ def analyse_video(video_id, out_dir, meta=None):
                 sig['object_y'] = np.where(urban[:, 2] >= 0, urban[:, 2] / 1000, np.nan)
         sig['garage'] = np.array([(a, b) for a, b, _ in garage_edges(path, sig, work_dir)], float).reshape(-1, 2)
         sig['parked'] = np.array(parked_edges(path, sig, work_dir), float).reshape(-1, 2)
+        sig['lots'] = np.array(parking_lots(path, sig, work_dir), float).reshape(-1, 2)
         sig['cross'] = cross_traffic(path, sig)
         sig['ghost'] = ghost_vanishes(path)
         sig['intro_end'] = np.array(clip_intro(path, meta.get('duration'), work_dir) or 0, float)
         sig['outro_start'] = np.array(clip_outro(path, meta.get('duration'), work_dir) or 0, float)
+        sig['chapter_cuts'] = np.array(chapter_cuts(meta), float).reshape(-1, 2)
         gps, clock = gps_track(video_id, meta['duration'])
         if gps:
             sig['gps'] = np.array(gps, float)
@@ -1470,7 +1504,7 @@ def analyse_video(video_id, out_dir, meta=None):
     # a title that says night is night unless the picture is plainly daylight: a camera's exposure brightens a
     # lit city at night (I5I9fOnHrPg, "Night Time Driving In The Bronx": sky 110); 71 of 73 such reviewed videos
     # were night throughout
-    if NIGHT_TITLE.search(meta.get('title') or '') and np.median(sig['sky']) < NIGHT_TITLE_MAX_SKY \
+    if NIGHT_TITLE.search(title_text(meta.get('title'))) and np.median(sig['sky']) < NIGHT_TITLE_MAX_SKY \
             and any(not s['night'] for s in segments):
         segments = [dict(s, night=1) for s in segments]
         notes.append('night from the title')
@@ -1492,10 +1526,11 @@ HIGHWAY_TITLE = re.compile(r'(?i:road ?trip|\bhighway\b|\bfreeway\b|\bhwy\b|\bmo
 NOT_DRIVING_TITLE = re.compile(r'\b(?:walk(?:s|ing)?|wa(?:king|ling) tour|walk-?through|inside|stroll(?:ing)?'
                                r'|hik(?:e|ing)|on foot'
                                r'|(?:boat|ferry) ride'
-                               # trains and the like (VL7X5yOpuk0: "Riding Philadelphia's Market-Frankford Line");
+                               # trains and the like (VL7X5yOpuk0: "Riding Philadelphia's Market-Frankford Line";
+                               # 2ZujrrW_EzY: "The Slow Train Through Rural Japan"; no approved title says train);
                                # "Metro" alone is mostly a metro area ("Omaha Metro Tour")
                                r'|subway|underground train|tram|streetcar|trolley|light rail|monorail|cable car'
-                               r'|funicular|(?:train|cab|railway|rail) (?:ride|view|journey)'
+                               r'|funicular|(?:train|cab|railway|rail) (?:ride|view|journey)|trains?|railways?'
                                r'|metro (?:ride|journey|line|train|exp)'
                                r'|(?:on|from|by) (?:the |\w+ )?metro(?! area)|riding\b[^|]*\bline)\b', re.I)
 # national parks and forests have no urban driving (yHEDro64z0Y, Zion; none of 28 such titles was approved)
@@ -1622,6 +1657,45 @@ def fetch_metadata_api(video_ids):
     return out
 
 
+TRANSLATIONS = os.path.join('_output', 'proposals', 'translations.json')  # text -> English, kept per machine
+ENGLISH_HINT = re.compile(r'\b(?:the|in|to|of|and|from|with|at|drive|driving|walk|walking|night|tour|city|road)\b',
+                          re.I)
+
+
+@functools.lru_cache(maxsize=None)
+def english(text):
+    """text in English (Google Translate's free endpoint, no key; user 2026-10-11: BonBonB Phương's Vietnamese
+    titles), '' when it already reads as English or the endpoint does not answer. Kept in TRANSLATIONS."""
+    text = (text or '').strip()
+    if not text or ENGLISH_HINT.search(text):
+        return ''
+    try:
+        with open(TRANSLATIONS) as f:
+            known = json.load(f)
+    except (OSError, ValueError):
+        known = {}
+    if text in known:
+        return known[text]
+    try:
+        r = requests.get('https://translate.googleapis.com/translate_a/single', timeout=15,
+                         params={'client': 'gtx', 'sl': 'auto', 'tl': 'en', 'dt': 't', 'q': text[:1000]})
+        out = ''.join(part[0] for part in r.json()[0] if part and part[0]) if r.ok else ''
+    except (requests.RequestException, ValueError, IndexError, TypeError):
+        return ''
+    known[text] = out = '' if out.strip().lower() == text.lower() else out
+    with contextlib.suppress(OSError):
+        with open(TRANSLATIONS + '.tmp', 'w') as f:
+            json.dump(known, f, ensure_ascii=False)
+        os.replace(TRANSLATIONS + '.tmp', TRANSLATIONS)
+    return out
+
+
+def title_text(title):
+    """A title for the title checks: as written plus its English translation when it is in another language."""
+    title = title or ''
+    return f'{title} | {translated}' if (translated := english(title)) else title
+
+
 def exclusion_reason(meta):
     """Why the protocol rules a video out from its metadata alone, or None."""
     if (meta.get('duration') or 0) < MIN_UPLOAD_S:
@@ -1630,16 +1704,17 @@ def exclusion_reason(meta):
         return 'live or upcoming stream'
     if meta.get('width') and meta.get('height') and meta['height'] > meta['width']:
         return 'portrait (phone) video'
-    hit = EXCLUDE_TITLE.search(meta.get('title') or '')
+    title = title_text(meta.get('title'))
+    hit = EXCLUDE_TITLE.search(title)
     if hit:
         return f"title mentions '{hit.group(0)}'"
-    hit = HIGHWAY_TITLE.search(meta.get('title') or '')
+    hit = HIGHWAY_TITLE.search(title)
     if hit:
         return f"highway driving or a road trip (title mentions '{hit.group(0)}')"
-    hit = NOT_DRIVING_TITLE.search(meta.get('title') or '')
-    if hit and not DRIVING_TITLE.search(meta.get('title') or ''):
+    hit = NOT_DRIVING_TITLE.search(title)
+    if hit and not DRIVING_TITLE.search(title):
         return f"not a drive (title mentions '{hit.group(0)}')"
-    hit = NATURE_TITLE.search(meta.get('title') or '')
+    hit = NATURE_TITLE.search(title)
     if hit:
         return f"a drive through a park or nature area, no urban driving (title mentions '{hit.group(0)}')"
     return None
@@ -1656,7 +1731,28 @@ def title_countries(title):
     title = re.sub(rf"\b[A-Z][\w'’ ]*?\s*,\s*(?:{states}|[A-Z]{{2}})\b", ' ', title or '', flags=re.I)
     title = re.sub(rf'\b(?:{states})\b', ' ', title, flags=re.I)
     found = [c for c in COUNTRIES if re.search(rf'\b{re.escape(c)}\b', title)]
+    # a flag emoji names its country (OoOwyF8-T24: "Warsaw's Most Beautiful Bike Route 4K 🇵🇱" is no Warsaw, NY)
+    flags = [chr(ord(a) - 0x1F1E6 + 65) + chr(ord(b) - 0x1F1E6 + 65)
+             for a, b in re.findall('([\U0001F1E6-\U0001F1FF])([\U0001F1E6-\U0001F1FF])', title)]
+    found += [c for c in COUNTRIES if c not in found and _iso2(c) in flags]
     return found + [c for c in pr if c not in found]
+
+
+@functools.lru_cache(maxsize=None)
+def _iso2(country):
+    return common.get_iso2_country_code(common.correct_country(country))
+
+
+# a title saying how the camera travels beats the channel's usual vehicle (OoOwyF8-T24: "Bike Route" from a channel
+# that mostly drives); "motorbike" is no bike
+VEHICLE_TITLE = [(4, re.compile(r'\b(?:bike (?:route|ride|tour|path|lane)s?|cycling|cycle (?:ride|tour)|bicycle'
+                                r'|by bike|on (?:a|my) bike|e-?bike)\b', re.I)),
+                 (3, re.compile(r'\b(?:motorcycle|motorbike|motor bike|moped)s?\b', re.I))]
+
+
+def title_vehicle(title):
+    """The VEHICLE_TYPES code a title names (a bicycle, a motorcycle), else None."""
+    return next((vt for vt, r in VEHICLE_TITLE if r.search(title or '')), None)
 
 
 WORD_STATE_CODES = {'IN', 'OR', 'ME', 'OK', 'HI', 'DE', 'CO', 'MA', 'AL', 'ID', 'OH', 'LA'}  # LA: Los Angeles
@@ -1746,6 +1842,29 @@ CHAPTER_START = re.compile(r'^\W*(?:(\d{1,2}):)?(\d{1,2}):(\d{2})(?!\d)\W*(.+)$'
 CHAPTER_END = re.compile(r'^\W*(.+?)\W*(?<![\d:])(?:(\d{1,2}):)?(\d{1,2}):(\d{2})\W*$')
 
 
+# chapters that are no part of the drive by their name (JVvw7XtJzf0: "Highlights (15 Min Preview)" 0:39-15:36, then
+# "Drive Begins"); none of the approved footage lies in one, 897 rejected seconds do. "Intro" and "Outro" chapters
+# are often driving (MqE-w-gEbM8: a 14-minute "Intro"), so they stay
+NOT_DRIVE_CHAPTER = re.compile(r'\b(?:highlights?|preview|teaser|trailer|recap|best of)\b', re.I)
+# a walk in a chapter's name: "Walk Begins" walks on until a chapter says drive again (5-9vyLU_tDo, AbaoAmbience's
+# night walks: 12 videos, none approved); "Walking through the Farmers Market" is that chapter (s_iGsy8C4O8)
+WALK_CHAPTER = re.compile(r'\bwalk(?:ing)?\b(?! of fame)', re.I)
+WALK_START = re.compile(r'\b(?:walk (?:begins|starts|start)|main walk|start(?:ing)? (?:the |our )?walk)\b', re.I)
+
+
+def chapter_cuts(meta):
+    """[(start s, end s)] of the chapters NOT_DRIVE_CHAPTER names, and of walks by WALK_CHAPTER."""
+    chapters = video_chapters(meta)
+    ends = [t for t, _ in chapters[1:]] + [meta.get('duration') or 0]
+    cuts = [(t, end) for (t, name), end in zip(chapters, ends) if NOT_DRIVE_CHAPTER.search(name) and end > t]
+    for i, ((t, name), end) in enumerate(zip(chapters, ends)):
+        if WALK_START.search(name):  # until a chapter says drive
+            end = next((u for u, n in chapters[i + 1:] if DRIVING_TITLE.search(n)), meta.get('duration') or end)
+        if WALK_CHAPTER.search(name) and end > t:
+            cuts.append((t, end))
+    return cuts
+
+
 def video_chapters(meta):
     """[(start in s, name)] of a video's chapters: YouTube's own, else the description's timestamped lines
     ("12:30 Santa Monica" or "Santa Monica - 12:30"), when at least two run in increasing order."""
@@ -1765,21 +1884,29 @@ def video_chapters(meta):
 
 # a chapter named after a road ("Venice Blvd", "Rodeo Drive") is not in the place the road is named after
 ROAD = re.compile(r'\b(?:blvd|boulevard|st|street|ave|avenue|rd|road|dr|drive|fwy|freeway|hwy|highway|expy|'
-                  r'expressway|pkwy|parkway|ln|lane|way|terrace|strip|bridge|tunnel|pier|walk of fame)\b', re.I)
+                  r'expressway|pkwy|parkway|ln|lane|way|terrace|strip|bridge|tunnel|pier|walk of fame|'
+                  # and the like of Japanese expressway chapters (zvCKHw9rKPg: "Tsukamoto Exit" is no Kaizuka)
+                  r'junction|exit|interchange|ramp|route|loop|line|'
+                  # Japanese for avenue and road: "Wakamiya Oji" is no town of Oji (-VqR0H2f-JY)
+                  r'oji|ōji|dori|dōri|kaido|kaidō)\b', re.I)
 CHAPTER_PREFIX = re.compile(r'^(?:start(?:ing)? (?:in|at|from)|entering|arriv(?:e|ing|al) (?:in|at)|welcome to|'
                             r'leaving|into|in|to|from|downtown)\s+', re.I)
 
 
-def chapter_localities(chapters, df, near_home=None):
+def chapter_localities(chapters, df, near_home=None, near=None, km=150):
     """[(start, end, locality)] stretches of a video by the localities its chapters name, or [] when none does.
     A chapter naming none (a road, a sight) is still in the locality before it; leading ones in the first named.
-    near_home(name) gives a locality not in the mapping yet for a chapter that is just a place name."""
+    near_home(name) gives a locality not in the mapping yet for a chapter that is just a place name. near=(lat,
+    lon): only localities within km of it (Nqej7zmNUzI, a Yokohama drive: its "Kanazawa" is a ward of Yokohama,
+    not Kanazawa, Ishikawa)."""
     locs = []
     for _, name in chapters:
         if ROAD.search(name):
             locs.append(None)
             continue
         loc = _title_locality(name, df, exact_case=True, word_needs_state=True)
+        if loc and near and (at := _locality_anchor(loc, df)) and _km(near[0], near[1], at[3], at[4]) > km:
+            loc = None
         place = CHAPTER_PREFIX.sub('', name.strip(' .!-'))
         if not loc and near_home and re.fullmatch(r"(?:[A-Z][\w'.-]*\s?){1,4}", place):
             loc = near_home(place.strip())
@@ -1795,6 +1922,9 @@ def chapter_localities(chapters, df, near_home=None):
         else:
             out.append((start, nxt, current))
     return out
+
+
+NAMESAKE_RATIO = 4  # a city this many times bigger than every namesake a title could mean is the one meant
 
 
 def _title_locality(title, df, exact_case=False, word_needs_state=False):
@@ -1813,10 +1943,12 @@ def _title_locality(title, df, exact_case=False, word_needs_state=False):
             # "New Ringgold" is not Ringgold: a "New" before a name makes it another place
             # and "Jerome Ave" is a street, not Jerome
             # likewise "Mt. Lebanon" is not Lebanon, nor "Fort Lee" Lee or "Port Jefferson" Jefferson
-            # and "Hampton Inn" a hotel, not Hampton (4FkZW-vMSE8)
+            # and "Hampton Inn" a hotel, not Hampton (4FkZW-vMSE8), "Morris Park" a park or a neighbourhood, not
+            # Morris (i5kaJ7ePcpQ), and "Upstate New York" the state (VhIUTVhXa2U)
             pattern = (rf'(?<!\w)(?<![Nn]ew\s)(?<!Mt\.\s)(?<!Mt\s)(?<!Mount\s)(?<!Ft\.\s)(?<!Fort\s)(?<!St\.\s)'
-                       rf'(?<!Saint\s)(?<!Port\s){re.escape(name)}(?!\w)(?!\.?\s+(?:{STREETS}|St|Inn)\b)')
-            if word_needs_state and name.lower() in COMMON_WORDS:
+                       rf'(?<!Saint\s)(?<!Port\s)(?<![Uu]pstate\s){re.escape(name)}(?!\w)'
+                       rf'(?!\.?\s+(?:{STREETS}|St|Inn|Park)\b)')
+            if (word_needs_state and name.lower() in COMMON_WORDS) or name.lower() in DEMONYMS:
                 if not isinstance(row['state'], str):
                     continue
                 pattern += rf',\s*{re.escape(row["state"])}\b'
@@ -1845,9 +1977,22 @@ def _title_locality(title, df, exact_case=False, word_needs_state=False):
               if re.search(rf'\b{re.escape(name)}\b', title, re.I) or re.search(rf',\s*{code}\b', title)}
     if states:
         found = {loc for loc in found if loc[2] != 'United States' or not loc[1] or loc[1] in states}
+    if len(found) > 1 and len({loc[0] for loc in found}) == 1:  # namesakes: a big city beats small towns
+        pop = {loc: float(pd.to_numeric(df.loc[(df['locality'] == loc[0]) & (df['country'] == loc[2])
+                                               & ((df['state'] == loc[1]) if loc[1] else df['state'].isna()),
+                                               'population_locality'], errors='coerce').max() or 0)
+               for loc in found}
+        big = max(pop, key=pop.get)
+        # "Never Expected Cleveland Downtown…" is Cleveland, OH (FbIYNiwpBaw), not Cleveland, TN
+        if pop[big] >= TITLE_CITY_POP and all(pop[big] >= NAMESAKE_RATIO * v for k, v in pop.items() if k != big):
+            return list(big)
     return list(found.pop()) if len(found) == 1 else None
 
 
+# nationality words are towns only written with their state: "USA and Canadian Border" is no Canadian, TX
+# (uG7ZUl7t48M)
+DEMONYMS = {'american', 'canadian', 'mexican', 'russian', 'german', 'french', 'italian', 'chinese', 'japanese',
+            'korean', 'indian', 'irish', 'english', 'dutch', 'polish', 'spanish', 'cuban', 'brazilian'}
 # words of titles that are no place ("Beautiful Evening Drive", "4K ASMR"); runs of capitalised words without
 # them are looked up as places ("Al Khan Beach", "Jebel Jais Mountain")
 NOT_PLACE = {'around', 'across', 'through', 'along', 'near', 'inside',
@@ -1860,7 +2005,10 @@ NOT_PLACE = {'around', 'across', 'through', 'along', 'near', 'inside',
              'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december',
              # travel-vlog titles: "Exploring Worthington, Ohio | Historic Village, Beautiful Downtown"
              'exploring', 'explore', 'discover', 'discovering', 'welcome', 'touring', 'cruising', 'inside',
-             'historic', 'charming', 'scenic', 'downtown', 'village', 'communities', 'community', 'one', 'pov'}
+             'historic', 'charming', 'scenic', 'downtown', 'village', 'communities', 'community', 'one', 'pov',
+             # the weather and the like: "Driving In The Rain" is no Washington, DC (3VrSWe479-g)
+             'rain', 'raining', 'storm', 'thunderstorm', 'snow', 'snowfall', 'hail', 'flood', 'flooding', 'flash',
+             'warning', 'issued', 'fireworks', 'never', 'expected', 'changed', 'border'} | DEMONYMS
 PLACE_JOINERS = {'al', 'el', 'de', 'del', 'la', 'le', 'of', 'the', 'bin', 'bu', 'van', 'von', 'da', 'do', 'dos'}
 
 
@@ -2183,7 +2331,9 @@ def place_localities(phrases, df, home=None):
 
     def usable(hit):
         # the reach of home is for places abroad: Elkhart, Indiana is far from New York but in the same country
+        # a US state is no town ("Driving In Florida USA" is no "Florida, FL", izutQEcon0w); New York City is
         return (hit and hit[2] in countries and (not only or hit[2] in only)
+                and not (hit[2] == 'US' and hit[0] and hit[0] == hit[1] and hit[0] != 'New York')
                 and not (home and countries[hit[2]] != home[2] and _km(home[3], home[4], hit[4], hit[5]) > ABROAD_KM)
                 and (len(named) != 1 or hit[1] in named))
     # "from Longwood to West Farms in the Bronx, New York": the best-known place a text names (the Bronx) is the
@@ -2694,6 +2844,14 @@ def split_route(p, df, home=None):
     return True
 
 
+def _locality_anchor(loc, df):
+    """(locality, state, country, lat, lon) of a mapping locality, like a channel's home, else None."""
+    if not loc:
+        return None
+    _, row = add_video.get_existing_locality_row(df, *loc)
+    return None if row is None else (loc[0], loc[1], loc[2], float(row['lat']), float(row['lon']))
+
+
 def town_near(name, home, df=None):
     """[locality, state, country] of the town a place of that name near the channel's home is: itself, or for
     a neighbourhood the city it is part of (Echo Park is Los Angeles). A small town not in the mapping (df) next
@@ -2701,14 +2859,35 @@ def town_near(name, home, df=None):
     hit = _town_near(name, home)
     if not hit:
         return None
-    town, lat, lon = hit
-    if df is not None:
-        rows = df[df['country'] == home[2]]
+    town, lat, lon, osm_state = (*hit, None)[:4]  # results remembered before the state came as (town, lat, lon)
+    rows = df[df['country'] == home[2]] if df is not None else None
+    # the town's own state, as the mapping writes it (-VqR0H2f-JY: Zushi is in Kanagawa, not in Tokyo like home)
+    state = _mapping_state(osm_state, rows, home[2]) or home[1]
+    if rows is not None:
         known = (rows['locality'].map(_name_key).eq(_name_key(town))  # in that state: Pasadena, TX is another
-                 & (rows['state'].isna() | rows['state'].eq(home[1]))).any()
-        if not known and (metro := _metro_city(town, (lat, lon), rows, home[1])):
+                 & (rows['state'].isna() | rows['state'].eq(state))).any()
+        if not known and (metro := _metro_city(town, (lat, lon), rows, state)):
             return metro
-    return [town, home[1], home[2]]
+    return [town, state, home[2]]
+
+
+def _mapping_state(osm_state, rows, country):
+    """An OpenStreetMap state ("Kanagawa Prefecture", "California") as the mapping writes it ("Kanagawa", "CA"),
+    else None."""
+    if not osm_state:
+        return None
+    if country == 'United States':
+        return add_video.US_STATE_CODES.get(osm_state.lower())
+    bare = re.sub(r'\s+(?:Prefecture|Province|State|Region|Governorate|County)$', '', osm_state)
+    states = set(rows['state'].dropna().unique()) if rows is not None else set()
+    known = {_name_key(s): s for s in states}
+    if _name_key(bare) in known:
+        return known[_name_key(bare)]
+    # the mapping may write the code: "New South Wales" is NSW
+    iso2 = common.get_iso2_country_code(common.correct_country(country))
+    code = next((sub.code.split('-')[1] for sub in pycountry.subdivisions.get(country_code=iso2) or []
+                 if _name_key(sub.name) == _name_key(bare)), None)
+    return code if code in states else bare
 
 
 @_remembered
@@ -2724,7 +2903,9 @@ def _town_near(name, home):
         town = name
     else:
         town = address.get('city') or address.get('town') or address.get('village')
-    return (town, r.latitude, r.longitude) if town else None
+    # "Kamakura-shi" is Kamakura: a Japanese city's, ward's or town's suffix is no part of its name
+    town = re.sub(r'-(?:shi|ku|cho|chō|machi|mura|gun)$', '', town or '') or None
+    return (town, r.latitude, r.longitude, address.get('state') or address.get('province')) if town else None
 
 
 def _km(lat1, lon1, lat2, lon2):
@@ -2942,7 +3123,7 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
             return False
         with open(meta_path) as f:
             duration = json.load(f).get('duration')
-        night = int(bool(NIGHT_TITLE.search(p.get('title') or '')))
+        night = int(bool(NIGHT_TITLE.search(title_text(p.get('title')))))
         return e['segments'] == [{'start': 0, 'end': int(duration or -1), 'night': night}]
 
     # whole-video proposals made without downloading get analysed now, unless someone has started on them;
@@ -2987,7 +3168,9 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
     early = None  # (home, localities in reach) for the locality of each video as soon as it is proposed
     failures_in_a_row = 0
     skips_in_a_row = 0
-    montages = montage_channel(plan, out_dir)  # this channel opens with highlights: start after them
+    # this channel opens with highlights: start after them (the reviews are on the reviewing machine, which marks
+    # such a channel for the workers: sync_workers.py)
+    montages = montage_channel(plan, out_dir) or os.path.exists(os.path.join(out_dir, MONTAGE_MARK))
     try:
         # the channel's video list is kept for a day: listing 8,000 videos costs ~170 of the API's 10,000 daily
         # units, and a batch runs every few minutes
@@ -3138,7 +3321,7 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
                 commit([vid])
                 continue
         else:
-            night = bool(NIGHT_TITLE.search(meta['title'] or ''))
+            night = bool(NIGHT_TITLE.search(title_text(meta['title'])))
             segments = [{'start': 0, 'end': int(meta['duration']), 'night': int(night)}]
             notes = ['not analysed: whole video proposed, check where driving starts and ends'
                      + ('; night from the title' if night else '')]
@@ -3150,6 +3333,8 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
         vt, share = vehicle_cache[ch]
         vehicle_note = ('no channel history: vehicle assumed car, check the frames' if vt is None
                         else f'vehicle from channel history ({share:.0%} of its videos)')
+        if (title_vt := title_vehicle(title_text(meta['title']))) is not None:
+            vt, vehicle_note = title_vt, f'vehicle from the title ({VEHICLE_TYPES[title_vt]})'
         if vid in reanalyse:  # keep a vehicle type picked in the review page
             vt, vehicle_note = plan[vid].get('vehicle_type', vt), 'vehicle as in the earlier proposal'
         named = title_countries(meta['title'])  # "…hacia Carolina, Puerto Rico": not San Juan, Texas
@@ -3229,8 +3414,14 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
     for p in new:
         if len(p.get('entries', [])) != 1 or p['video'] not in metas:
             continue
+        # a title naming a city puts the video there: its chapters split it only where they name another mapping
+        # locality outright ("Kobe City Skyline"), not by sights and junctions looked up near home (zvCKHw9rKPg:
+        # "Osaka Bay Sunset Drive" became Tokyo from "Awaza Junction"; JCsEdFxRjtE: Kyoto became Zushi and Nara)
+        titled = p['entries'][0].get('locality')
+        at = _locality_anchor(titled, df)
         stretches = chapter_localities(video_chapters(metas[p['video']]), df[in_reach],
-                                       (lambda name: town_near(name, home, df)) if home else None)
+                                       (lambda name: town_near(name, home, df)) if home and not titled else None,
+                                       near=at[3:5] if at else None)
         if not stretches:
             continue
         e = p['entries'][0]
@@ -3289,6 +3480,9 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
                     continue
                 _, row = add_video.get_existing_locality_row(df, *loc)
                 if row is None or _km(home[3], home[4], float(row['lat']), float(row['lon'])) < 100:
+                    continue
+                # a big city is meant as itself, not a place of its name near home (zvCKHw9rKPg: Osaka)
+                if float(pd.to_numeric(row.get('population_locality'), errors='coerce') or 0) >= TITLE_CITY_POP:
                     continue
                 # a title naming a state means that state: "Milton, Pennsylvania" is not the Milton near New York,
                 # and "… in Arlington, Virginia" is no place near New York at all
@@ -3558,7 +3752,7 @@ tr.seg.active td:first-child { box-shadow: inset 4px 0 #007bff; }
           <button class="small" onclick="playRow(this, 'end')">▶ end</button></td>
       <td>{% if s.applied %}added{% else %}
           <button class="small yes" onclick="decide(this, 'approve', true)">Approve</button>
-          <button class="small no" onclick="decide(this, 'reject')">Reject</button>{% endif %}</td>
+          <button class="small no" onclick="decide(this, 'reject', true)">Reject</button>{% endif %}</td>
       <td>{% if not s.applied %}
           <input class="at" placeholder="m:ss"
                  autocomplete="off" title="time to split at, e.g. where the drive enters another locality">
@@ -3656,12 +3850,14 @@ function playingVideo() {
   try { return new URL(ytPlayer.getVideoUrl()).searchParams.get('v'); } catch (e) { return null; }
 }
 function activeRow() {
-  // the undecided segment of the playing video that the current time is in, or the nearest one; a decided
-  // segment only when the video has no undecided one left
+  // the segment of the playing video that the current time is in, decided or not (the line follows the
+  // playback); between segments the nearest undecided one, a decided one only when none is left
   const video = ytReady && playingVideo();
   if (!video) return null;
   const t = ytPlayer.getCurrentTime();
   const rows = [...document.querySelectorAll(`tr.seg:not(.applied)[data-video="${video}"]`)];
+  const here = rows.find(r => +r.dataset.start <= t && t <= +r.dataset.end);
+  if (here) return here;
   const open = rows.filter(r => !r.classList.contains('approve') && !r.classList.contains('reject'));
   let best = null, bestDistance = Infinity;
   for (const r of open.length ? open : rows) {
@@ -3761,12 +3957,17 @@ async function decide(btn, decision, advance = false) {
   if (advance) goToNextOpen(row);
   return true;
 }
-function goToNextOpen(row) {
-  // next undecided segment: the rest of this video first, then the following videos, then from the top
-  const open = r => !r.classList.contains('approve') && !r.classList.contains('reject');
+function nextOpen(row, otherVideo = false) {
+  // next undecided segment: the rest of this video first (unless otherVideo), then the following videos, then
+  // from the top
+  const open = r => !r.classList.contains('approve') && !r.classList.contains('reject')
+                    && !(otherVideo && r.dataset.video === row.dataset.video);
   const rows = [...document.querySelectorAll('tr.seg:not(.applied)')];
   const i = rows.indexOf(row);
-  const next = rows.slice(i + 1).find(open) || rows.slice(0, Math.max(i, 0)).find(open);
+  return rows.slice(i + 1).find(open) || rows.slice(0, Math.max(i, 0)).find(open);
+}
+function goToNextOpen(row) {
+  const next = nextOpen(row);
   if (!next) return;
   const target = next.closest('.video') === row.closest('.video') ? next : next.closest('.video');
   target.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -4001,7 +4202,9 @@ async function markVideo(btn, what, label) {
   const out = await res.json();
   if (out.rejects_channel) alert(`${out.marked} videos of this channel are marked ${label}: the fetcher rejects ` +
                                  'the channel before its next batch, and the sheet will say Rejected.');
-  reloadKeepingPlace(btn.dataset.video, 0);
+  // the marked video leaves the page: go on with the next video's first undecided segment
+  const next = nextOpen(btn.closest('.video').querySelector('tr.seg') || btn, true);
+  reloadKeepingPlace(next ? next.dataset.video : null, next ? +next.dataset.start : 0);
 }
 const markSpedUp = btn => markVideo(btn, 'sped_up', 'sped up');
 const markGhosts = btn => markVideo(btn, 'ghosts', 'with ghosts');

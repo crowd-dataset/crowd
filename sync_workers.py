@@ -18,7 +18,7 @@ import run_channels as rc
 # ssh alias: the sheet rows and refresh-queue share it takes (run_channels.py --rows, --queue-rows); the laptop
 # takes rows 2/3 and queue 2/4
 WORKERS = {'lin5080': 'queue phase 2 (new uploads of the sheet\'s processed channels)',
-           'mini': 'sheet rows 1/2, no queue', 'wsl5090': 'queue phases 1 and 3'}
+           'mini': 'sheet rows 1/2, no queue', 'wsl5090': 'sheet rows 0/2, then queue phases 1 and 3'}
 REMOTE = 'crowd-routine'       # the repository on each worker, relative to its home
 
 
@@ -70,9 +70,12 @@ def sync(host):
                        check=True, capture_output=True)
         plan = json.loads(ssh(host, f'cat {REMOTE}/_output/proposals/{name}/plan.json 2>/dev/null || echo "[]"'))
         added = merge_plan(name, plan)
-        # videos marked sped up or with ghosts in review here go back to the worker: two reject the channel there
         mine_plan = os.path.join(rc.ROOT, name, 'plan.json')
         local = json.load(open(mine_plan)) if os.path.exists(mine_plan) else []
+        # the reviews here say the channel opens with highlights: the worker starts its videos after them
+        if local and ps.montage_channel({q['video']: q for q in local}, os.path.join(rc.ROOT, name)):
+            ssh(host, f'touch {REMOTE}/_output/proposals/{name}/{ps.MONTAGE_MARK}')
+        # videos marked sped up or with ghosts in review here go back to the worker: two reject the channel there
         for key in ps.REVIEW_MARKS:
             marked = sorted(q['video'] for q in local if q.get(key))
             if marked and not set(marked) <= {q['video'] for q in plan if q.get(key)}:
