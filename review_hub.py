@@ -40,8 +40,11 @@ a.b:hover{background:#f3f6ff;border-color:#68f}
 
 @app.route('/')
 def index():
-    batches, done = [], []
-    for url, c in rc.load_state().items():
+    batches, done, seen = [], [], set()
+    for url, c in sorted(rc.load_state().items(), key=lambda kv: kv[1]['status'] != 'processing'):
+        if c['name'] in seen:  # a sheet row and its 'refresh:' entry share the folder (CharruaNYC twice, 2026-10-12)
+            continue
+        seen.add(c['name'])
         waiting, proposed = rc.review_counts(c['name'])
         if waiting:
             state = 'still being processed' if c['status'] == 'processing' else 'all videos proposed'

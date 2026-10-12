@@ -1033,19 +1033,20 @@ def dark_edges(sig, max_s=240, min_s=8):
                 and np.median(x[:t] - y[:t]) < 20):
             t = min(t + GARAGE_PAD_S, len(x))
             out.append((0, t, edge) if edge == 'start' else (len(x) - t, len(x), edge))
-    # in the middle: parked in a garage and out again (wt1UHqNXQ1E 5:19-6:43): 20 s to 5 min 50 darker than the
-    # video under a ceiling, dropping into it and rising out of it by 30 within 10 s (a dusk does neither)
+    # in the middle: parked in a garage and out again (wt1UHqNXQ1E 5:19-6:43): 20 s to 15 min 50 darker than the
+    # video under a ceiling, dropping into it by 30 within 20 s and out of it by 30 within half a minute (a dusk
+    # does neither); G4lf48BMAXw's 9 minutes in a garage (11:11-20:43) have a lit stretch of 23 s and a slow ramp out
     dark = (sky <= np.median(sky) - 50) & (sky - ground[:len(sky)] < 20)
     runs = []
     for a, b in _runs(dark):  # bridge a lamp or a car's lights for a few seconds
-        if runs and a - runs[-1][1] <= 10:
+        if runs and a - runs[-1][1] <= 30:
             runs[-1] = (runs[-1][0], b)
         else:
             runs.append((a, b))
     for a, b in runs:
-        if (20 <= b - a <= 300 and a >= 60 and b <= len(sky) - 60 and not any(x < b and a < y for x, y, _ in out)
-                and np.median(sky[a - 10:a]) - np.median(sky[a:a + 10]) >= 30
-                and np.median(sky[b:b + 10]) - np.median(sky[b - 10:b]) >= 30):
+        if (20 <= b - a <= 900 and a >= 60 and b <= len(sky) - 60 and not any(x < b and a < y for x, y, _ in out)
+                and np.median(sky[a - 20:a]) - np.median(sky[a:a + 20]) >= 30
+                and np.median(sky[b + 10:b + 30]) - np.median(sky[b - 20:b]) >= 30):
             out.append((max(0, a - GARAGE_PAD_S), min(len(sky), b + GARAGE_PAD_S), 'middle'))
     return out
 
@@ -2150,6 +2151,10 @@ STREETS = '|'.join(w.capitalize() for w in STREET_WORDS)
 def place_phrases(text, limit=4):
     """Runs of capitalised words in a title or description that may name a place, longest first: "Al Khan
     Beach" from "Beautiful Sun Rise at Al Khan Beach, unedited sounds". Hashtags and links are skipped."""
+    # in English when written in another language: every capitalised Vietnamese word is no town ("THÁNG", the
+    # month, was Thắng: dFeQ32cS3WM; "Chung Cư", apartments, was Chung), and "Hà Nội" reads as Hanoi
+    # ponytail: english() translates the first 1000 characters only; enough for titles and a description's top lines
+    text = english(text) or text
     text = english_states(text)
     text = re.sub(r'#\w+|https?://\S+|www\.\S+', ' ', text or '')
     text = re.sub(r'\b(New York|Washington) State\b', r'\1', text)  # no "York State" (Albany, New York State)
@@ -2447,6 +2452,10 @@ def place_localities(phrases, df, home=None):
         home = None  # the text names another country ("…en Adjuntas, Puerto Rico"): it is there, however far
     # and only there: "San Lorenzo, Puerto Rico" is not San Lorenzo, California
     only = {code for code, name in countries.items() if _name_key(name) in {_name_key(p) for p in phrases}}
+    # a country outside the ones searched: the place is there, not a namesake here ("Java, Indonesia" in the
+    # description is no Java in Hong Kong, 9zrNsh4xh9A)
+    if not only and {_name_key(p) for p in phrases} & (country_names - {_name_key(c) for c in countries.values()}):
+        return []
     if only and not named:
         country = countries[next(iter(only))]
         phrases = [p if _name_key(p) in country_names else f'{p}, {country}' for p in phrases]
@@ -3727,6 +3736,15 @@ def apply_segments(video_id, locality, state, country, segments, vehicle_type, u
     new_row = None
     for seg in segments:
         _, row = add_video.get_existing_locality_row(add_video.load_csv(add_video.FILE_PATH), locality, state, country)
+        if row is None and new_row is None:
+            # another name of a locality the mapping has, accents aside ("Hà Nội" is Hanoi, dFeQ32cS3WM)
+            df = add_video.load_csv(add_video.FILE_PATH)
+            key, there = _name_key(locality), df[df['country'] == country]
+            hit = next((r for r in there.itertuples() if key in {_name_key(n) for n in
+                        [r.locality] + add_video._parse_flat_list_cell(r.locality_aka)}), None)
+            if hit is not None:
+                locality, state = hit.locality, None if pd.isna(hit.state) else hit.state
+                _, row = add_video.get_existing_locality_row(df, locality, state, country)
         if row is None:
             if new_row is None:
                 df = add_video.load_csv(add_video.FILE_PATH)
@@ -3805,6 +3823,8 @@ tr.entryhead td { border-top: 0; padding-top: 8px; }
 input.t-start, input.t-end { width: 62px; font-size: 13px; padding: 2px 4px; }
 button.small { padding: 3px 8px; font-size: 13px; cursor: pointer;
                border: 1px solid #bbb; border-radius: 3px; background: #fafafa; }
+button.small.yes { background: #dff3e2; border-color: #7cbf86; color: #1d6b2a; }
+button.small.no { background: #fbe3e3; border-color: #d98a8a; color: #9b2222; }
 .seg.approve td { background: #e8f6ea; }
 .seg.reject td { background: #fbe9e9; color: #888; }
 .seg.approve .yes, .seg.reject .no { font-weight: bold; border-color: #333; }
