@@ -448,10 +448,254 @@ def _spike_map(locs: pl.DataFrame, iso3: str, name: str, country: str):
     dfig._save(dfig._style(fig, width=1600, height=1000, margin=dict(l=0, r=0, t=0, b=0)), name, save_eps=False)
 
 
+# --- smoothed maps --------------------------------------------------------------------------------------------------
+# A value per locality spread over a fine grid of land (as maps of "comfortable weather days"), with country names
+# and callouts at the highest and lowest places. Rates and shares are only shown where there is enough nearby
+# footage; elsewhere the land is grey rather than filled in from distant localities.
+
+FIELD_CELL = {"Europe": 0.2, "North America": 0.3, "Asia": 0.35}
+FIELD_BOXES = {"Europe": (-25, 45, 34, 71.5), "North America": (-128, -60, 14, 58), "Asia": (60, 150, -10, 55)}
+LAND_GREY = "#d9d9d9"
+
+
+def _land_mask(box, cell: float) -> np.ndarray:
+    """Boolean grid (rows: latitude upwards) of the cells on land, from the country outlines."""
+    from PIL import Image, ImageDraw
+    nx, ny = int((box[1] - box[0]) / cell), int((box[3] - box[2]) / cell)
+    img = Image.new("1", (nx, ny), 0)
+    draw = ImageDraw.Draw(img)
+    for shape in map_labels.country_shapes().values():
+        for ring in shape["rings"]:
+            xs = [p[0] for p in ring]
+            if max(xs) - min(xs) > 180:  # crosses the antimeridian (e.g., Russia's far east): unwrap to the east
+                ring = [(x + 360 if x < 0 else x, y) for x, y in ring]
+                xs = [p[0] for p in ring]
+            if max(xs) < box[0] or min(xs) > box[1]:
+                continue
+            draw.polygon([((x - box[0]) / cell, (y - box[2]) / cell) for x, y in ring], fill=1)
+    return np.array(img, dtype=bool)
+
+
+def _distance_grid(lons, lats, pts_lon, pts_lat) -> np.ndarray:
+    """Great-circle distance (km) from each grid cell to the nearest point, in chunks (numpy only)."""
+    gx, gy = np.meshgrid(np.radians(lons), np.radians(lats))
+    cell = np.column_stack([np.cos(gy.ravel()) * np.cos(gx.ravel()), np.cos(gy.ravel()) * np.sin(gx.ravel()),
+                            np.sin(gy.ravel())])
+    px, py = np.radians(np.asarray(pts_lon)), np.radians(np.asarray(pts_lat))
+    pts = np.column_stack([np.cos(py) * np.cos(px), np.cos(py) * np.sin(px), np.sin(py)])
+    best = np.empty(len(cell))
+    for i in range(0, len(cell), 4000):
+        best[i:i + 4000] = (cell[i:i + 4000] @ pts.T).max(axis=1)
+    return (6371 * np.arccos(np.clip(best, -1, 1))).reshape(gx.shape)
+
+
+def _country_names(box) -> tuple:
+    """Names and label points of the larger countries inside the box."""
+    import pycountry
+    names, xs, ys = [], [], []
+    for iso3, shape in map_labels.country_shapes().items():
+        ct = shape.get("ct")
+        if not ct or not (box[0] + 1 < ct[0] < box[1] - 1 and box[2] + 1 < ct[1] < box[3] - 1):
+            continue
+        ring_pts = [p for r in shape["rings"] for p in r]
+        span = max(p[0] for p in ring_pts) - min(p[0] for p in ring_pts)
+        if span < (box[1] - box[0]) / 25:  # too small for a name at this scale
+            continue
+        c = pycountry.countries.get(alpha_3=iso3)
+        if c:
+            names.append(getattr(c, "common_name", None) or c.name)
+            xs.append(ct[0])
+            ys.append(ct[1])
+    return names, xs, ys
+
+
+def _field_map(lons, lats, grid, shown, land, box, title: str, colorscale, name: str, note: str, callouts: list,
+               log: bool = False, fmt: str = ".1f", zrange=None):
+    """Draw a smoothed field: `grid` where `shown`, grey elsewhere on land, white sea; borders, country names and
+    `callouts` (lon, lat, text) with arrows."""
+    from utils.plotting import dataset_figures as dfig
+    z = np.where(shown, np.log10(np.maximum(grid, 1e-9)) if log else grid, np.nan)
+    grey = np.where(land & ~shown, 1.0, np.nan)
+    colorbar = dict(title=dict(text=title, side="top"), orientation="h", x=0.5, xanchor="center", y=1.0,
+                    yanchor="bottom", len=0.5, thickness=14)
+    if log:
+        lo, hi = np.nanmin(z), np.nanmax(z)
+        ticks = [m * 10 ** p for p in range(math.floor(lo), math.ceil(hi) + 1) for m in (1, 3)
+                 if lo <= math.log10(m * 10 ** p) <= hi]
+        colorbar.update(tickvals=np.log10(ticks).tolist(), ticktext=[f"{t:,g}" for t in ticks])
+    customdata = np.where(shown, grid, np.nan)
+    fig = go.Figure([
+        go.Heatmap(x=lons, y=lats, z=grey, colorscale=[[0, LAND_GREY], [1, LAND_GREY]], showscale=False,
+                   hoverinfo="skip"),
+        go.Heatmap(x=lons, y=lats, z=z, colorscale=colorscale, colorbar=colorbar, customdata=customdata,
+                   zmin=zrange[0] if zrange else None, zmax=zrange[1] if zrange else None,
+                   hovertemplate=f"{title}: %{{customdata:{fmt}}}<br>%{{y:.1f}}°, %{{x:.1f}}°<extra></extra>")])
+    bx, by = _borders(box)
+    fig.add_trace(go.Scatter(x=bx, y=by, mode="lines", line=dict(color="#555555", width=0.6), hoverinfo="skip",
+                             showlegend=False))
+    names, xs, ys = _country_names(box)
+    fig.add_trace(go.Scatter(x=xs, y=ys, mode="text", text=names, hoverinfo="skip", showlegend=False,
+                             textfont=dict(size=11, color="#222222")))
+    for lon, lat, text in callouts:  # the box points inwards, so it stays clear of the colour bar and the edges
+        fig.add_annotation(x=lon, y=lat, text=text, showarrow=True, arrowhead=2, arrowwidth=1.2, arrowcolor="#333333",
+                           ax=70 if lon < (box[0] + box[1]) / 2 else -70,
+                           ay=50 if lat > box[2] + 0.7 * (box[3] - box[2]) else -50,
+                           font=dict(size=12, color="#111111"),
+                           bgcolor="rgba(255,255,255,0.85)", bordercolor="#888888", borderwidth=0.5, borderpad=3)
+    if note:
+        fig.add_annotation(text=note, x=0.0, y=-0.02, xref="paper", yref="paper", showarrow=False, xanchor="left",
+                           yanchor="top", font=dict(size=13, color="#666666"))
+    mid = math.cos(math.radians((box[2] + box[3]) / 2))
+    fig.update_xaxes(range=box[:2], visible=False, constrain="domain")
+    fig.update_yaxes(range=box[2:], visible=False, scaleanchor="x", scaleratio=1 / mid, constrain="domain")
+    dfig._save(dfig._style(fig, width=1400, height=1200, plot_bgcolor="white", paper_bgcolor="white",
+                           margin=dict(l=10, r=10, t=110, b=50)), name, save_eps=False)
+
+
+def _extremes(lons, lats, grid, shown, pts: pl.DataFrame, n_high: int, n_low: int, fmt, min_sep: float = 6,
+              words=("Highest", "Lowest")) -> list:
+    """Callouts at the highest and lowest cells that are shown, at least `min_sep` degrees apart, each named after
+    the locality with the most footage within ~100 km."""
+    out, used = [], []
+    order = np.argsort(np.where(shown, grid, np.nan), axis=None)
+    valid = order[~np.isnan(np.where(shown, grid, np.nan).ravel()[order])]
+    for idx_list, n, word in ((valid[::-1], n_high, "high"), (valid, n_low, "low")):
+        found = 0
+        for idx in idx_list:
+            if found >= n:
+                break
+            i, j = np.unravel_index(idx, grid.shape)
+            lon, lat = lons[j], lats[i]
+            if any(abs(lon - u) < min_sep and abs(lat - v) < min_sep / 2 for u, v in used):
+                continue
+            near = pts.filter((pl.col("lon") - lon).abs() < 1.2, (pl.col("lat") - lat).abs() < 0.9)
+            if not near.height:
+                continue
+            place = near.sort("weight", descending=True)["name"][0]
+            used.append((lon, lat))
+            out.append((lon, lat, f"{words[0] if word == 'high' else words[1]} around {place}: {fmt(grid[i, j])}"))
+            found += 1
+    return out
+
+
+def _smoothed(pts: pl.DataFrame, value: str | None, box, cell, sigma_km=50, min_weight=1.0, max_km=100) -> tuple:
+    """(lons, lats, grid, shown): with `value`, the weighted mean of value (weights `weight`), shown within `max_km`
+    of a locality with at least `min_weight`; without, the density of `weight` per 10,000 km² where there is any."""
+    p = _in_box(pts, box)
+    lons, lats, weight = _surface(p["lon"].to_numpy(), p["lat"].to_numpy(), p["weight"].to_numpy(), box, cell,
+                                  sigma_km=sigma_km)
+    if value is None:
+        area = (cell * 111) ** 2 * np.cos(np.radians(lats))[:, None]  # km² per cell
+        density = weight / area * 1e4
+        return lons, lats, density, density > density.max() * 1e-4
+    _, _, num = _surface(p["lon"].to_numpy(), p["lat"].to_numpy(), (p["weight"] * p[value]).to_numpy(), box, cell,
+                         sigma_km=sigma_km)
+    mean = num / np.maximum(weight, 1e-12)
+    solid = p.filter(pl.col("weight") >= min_weight)
+    if not solid.height:
+        return lons, lats, mean, np.zeros_like(mean, dtype=bool)
+    return lons, lats, mean, _distance_grid(lons, lats, solid["lon"], solid["lat"]) <= max_km
+
+
+def _field_maps(locs: pl.DataFrame):
+    """Footage density and distance to footage (Europe, North America, Asia), night share and upload year (Europe)
+    as smoothed maps. locs: lon, lat, name, hours, night_hours, year (footage-weighted mean upload year)."""
+    pts = locs.with_columns(pl.col("hours").alias("weight"))
+    for region, box in FIELD_BOXES.items():
+        cell = FIELD_CELL[region]
+        slug = region.lower().replace(" ", "_")
+        lons, lats, dens, shown = _smoothed(pts, None, box, cell)
+        land = _land_mask(box, cell)
+        shown &= land
+        if shown.any():
+            calls = _extremes(lons, lats, dens, shown, pts, 3, 0, lambda v: f"{v:,.0f} h per 10,000 km²", 8)
+            _field_map(lons, lats, dens, shown, land, box, "Footage (hours per 10,000 km², smoothed over ~50 km)",
+                       "YlOrRd", f"map_density_footage_{slug}", f"{region}: where the footage is", calls, log=True,
+                       fmt=",.1f")
+        with_footage = _in_box(pts.filter(pl.col("hours") >= 1), box)
+        if with_footage.height:
+            dist = _distance_grid(lons, lats, with_footage["lon"], with_footage["lat"])
+            far = np.where(land, dist, -1)
+            calls = []
+            for _ in range(3):  # the furthest places from any footage, one per area
+                i, j = np.unravel_index(np.argmax(far), far.shape)
+                if far[i, j] <= 0:
+                    break
+                calls.append((lons[j], lats[i], f"{far[i, j]:,.0f} km from any footage"))
+                far[max(0, i - int(8 / cell)):i + int(8 / cell), max(0, j - int(12 / cell)):j + int(12 / cell)] = -1
+            _field_map(lons, lats, np.minimum(dist, 500), land, land, box,
+                       "Distance to the nearest locality with at least an hour of footage (km)",
+                       [[0, "#1a9850"], [0.2, "#91cf60"], [0.4, "#fee08b"], [0.7, "#fc8d59"], [1, "#d73027"]],
+                       f"map_distance_to_footage_{slug}", f"{region}: blind spots of the dataset (distances over "
+                       "500 km shown as 500)", calls, fmt=",.0f", zrange=(0, 500))
+    box, cell = FIELD_BOXES["Europe"], FIELD_CELL["Europe"]
+    for value, title, scale, name, fmt, lows, words in [
+            ("night_pct", "Footage at night (%)", "Blues", "map_night_share_smoothed_europe", lambda v: f"{v:.0f}%",
+             0, ("Most night footage", "")),
+            ("year", "Average year of upload", "Viridis", "map_upload_year_europe", lambda v: f"{v:.0f}", 2,
+             ("Newest footage", "Oldest footage"))]:
+        p = pts.drop_nulls(value) if value in pts.columns else pts.clear()
+        if not p.height:
+            continue
+        lons, lats, mean, shown = _smoothed(p, value, box, cell)
+        land = _land_mask(box, cell)
+        shown &= land
+        calls = _extremes(lons, lats, mean, shown, p, 2, lows, fmt, words=words)
+        _field_map(lons, lats, mean, shown, land, box, f"{title} (smoothed over ~50 km, weighted by footage)", scale,
+                   name, "Europe: grey where there is too little footage nearby", calls, fmt=".1f")
+
+
+def _detection_field_maps(d: pl.DataFrame, df_mapping: pl.DataFrame, flags: dict, classes: list):
+    """Pedestrians per minute, walkable street minutes, motorcycle share and bicycles per minute as smoothed maps
+    of Europe (`d`: one row per analysed segment with id, minutes and a count column per class)."""
+    person = classes[0]
+    seg = d.with_columns((pl.col(person) / pl.col("minutes")).alias("_p"),
+                         (pl.col("Cars") / pl.col("minutes")).alias("_c") if "Cars" in classes else pl.lit(0.0)
+                         .alias("_c"))
+    # walkable street minutes: segments with at least 2 pedestrians and at most 10 cars per minute
+    walkable = (pl.col("_p") >= 2) & (pl.col("_c") <= 10)
+    vehicles = [c for c in ("Cars", "Bicycles", "Motorcycles", "Buses", "Trucks") if c in classes]
+    per_loc = (seg.group_by("id").agg(
+        pl.sum("minutes").alias("weight"), (pl.col(person).sum() / pl.sum("minutes")).alias("pedestrians"),
+        (pl.col("minutes").filter(walkable).sum() / pl.sum("minutes") * 100).alias("walkable"),
+        *([(pl.col("Motorcycles").sum() / pl.sum_horizontal(*[pl.col(c).sum() for c in vehicles]) * 100)
+           .alias("motorcycles")] if "Motorcycles" in classes else []),
+        *([(pl.col("Bicycles").sum() / pl.sum("minutes")).alias("bicycles")] if "Bicycles" in classes else []))
+        .join(df_mapping.select("id", "locality", "iso3", "lat", "lon"), on="id").drop_nulls(["lat", "lon"])
+        .with_columns(pl.concat_str([pl.col("iso3").replace_strict(flags, default="🏳️"), pl.col("locality")],
+                                    separator=" ").alias("name")))
+    box, cell = FIELD_BOXES["Europe"], FIELD_CELL["Europe"]
+    for value, title, scale, name, fmt in [
+            ("pedestrians", "Pedestrians per minute", "YlOrRd", "map_pedestrians_smoothed_europe",
+             lambda v: f"{v:.2f} per minute"),
+            ("walkable", "Walkable street minutes (%: ≥2 pedestrians and ≤10 cars per minute)", "YlGn",
+             "map_walkable_minutes_europe", lambda v: f"{v:.0f}%"),
+            ("motorcycles", "Motorcycles among detected vehicles (%)", "Purples", "map_motorcycle_share_europe",
+             lambda v: f"{v:.1f}%"),
+            ("bicycles", "Bicycles per minute", "Greens", "map_bicycles_smoothed_europe",
+             lambda v: f"{v:.2f} per minute")]:
+        if value not in per_loc.columns:
+            continue
+        p = per_loc.drop_nulls(value).filter(pl.col("weight") > 0)
+        if p.height < 3:
+            continue
+        lons, lats, mean, shown = _smoothed(p, value, box, cell, min_weight=60)  # an analysed hour
+        land = _land_mask(box, cell)
+        shown &= land
+        calls = _extremes(lons, lats, mean, shown, p, 2, 2, fmt)
+        _field_map(lons, lats, mean, shown, land, box, f"{title}, smoothed over ~50 km", scale, name,
+                   "Europe: grey where there is too little analysed footage nearby", calls, fmt=".2f")
+
+
 # --- entry points ---------------------------------------------------------------------------------------------------
 
 def _localities(seg: pl.DataFrame, df_mapping: pl.DataFrame, loc_hover: pl.DataFrame, flags: dict) -> pl.DataFrame:
-    return (seg.group_by("id").agg((pl.sum("seconds") / 3600).alias("hours"))
+    year = pl.col("year").filter(pl.col("year").is_between(2005, 2100))
+    weights = pl.col("seconds").filter(pl.col("year").is_between(2005, 2100))
+    return (seg.group_by("id").agg((pl.sum("seconds") / 3600).alias("hours"),
+                                   (pl.col("seconds").filter(pl.col("night")).sum() / pl.sum("seconds") * 100)
+                                   .alias("night_pct"),
+                                   ((year * weights).sum() / weights.sum()).alias("year"))
                .join(df_mapping.select("id", "locality", "iso3", "lat", "lon"), on="id").join(loc_hover, on="id")
                .drop_nulls(["lat", "lon"])
                .with_columns(pl.concat_str([pl.col("iso3").replace_strict(flags, default="🏳️"), pl.col("locality")],
@@ -468,6 +712,7 @@ def dataset_area_figures(df_mapping: pl.DataFrame, seg: pl.DataFrame, loc_hover:
         _population_vs_footage(locs, iso3, iso2, country, f"terrain_population_footage_{country.lower()}")
     for iso3, country in [("USA", "United States"), ("RUS", "Russia"), ("JPN", "Japan")]:
         _spike_map(locs, iso3, f"spikes_footage_{iso3.lower()}", country)
+    _field_maps(locs)
 
 
 def detection_area_figures(df_mapping: pl.DataFrame, d: pl.DataFrame, classes: list, loc_hover: pl.DataFrame,
@@ -488,3 +733,4 @@ def detection_area_figures(df_mapping: pl.DataFrame, d: pl.DataFrame, classes: l
     _terrains(night, "rate", "terrain_pedestrians_night", "Purples", "height and colour show pedestrians per minute "
               "at night, smoothed over ~40 km", rate=True)
     _detection_area_maps(d, df_mapping, flags, classes)
+    _detection_field_maps(d, df_mapping, flags, classes)

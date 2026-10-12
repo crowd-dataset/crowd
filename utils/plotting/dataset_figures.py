@@ -1044,6 +1044,12 @@ DETECTION_FIGURES = {
     "map_eu_regions_pedestrians": "Pedestrians per minute per European region (NUTS 2; regions with at least an "
                                   "hour of analysed footage).",
     "map_eu_regions_bicycles": "Bicycles per minute per European region (NUTS 2): cycling regions stand out.",
+    "map_pedestrians_smoothed_europe": "Pedestrians per minute in Europe, smoothed over about 50 km; grey where there "
+                                       "is less than an analysed hour within 100 km.",
+    "map_walkable_minutes_europe": "Walkable street minutes in Europe: the share of analysed minutes with at least 2 "
+                                   "pedestrians and at most 10 cars per minute, smoothed over about 50 km.",
+    "map_motorcycle_share_europe": "Motorcycles as a share of detected vehicles in Europe, smoothed over about 50 km.",
+    "map_bicycles_smoothed_europe": "Bicycles per minute in Europe, smoothed over about 50 km.",
     "scatter_locality_pedestrians_vs_population": "Pedestrians per minute per locality against its population "
                                                   "(localities with at least an hour of analysed footage): busy and "
                                                   "quiet streets for a city's size.",

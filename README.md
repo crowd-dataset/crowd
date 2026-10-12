@@ -953,6 +953,30 @@ One spike per locality in Russia.
 [![Footage per locality in Japan as spikes](figures/spikes_footage_jpn.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/spikes_footage_jpn.html)
 One spike per locality in Japan.
 
+[![Where the footage is in Europe](figures/map_density_footage_europe.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/map_density_footage_europe.html)
+Where the footage is in Europe: hours of footage per 10,000 km², smoothed over about 50 km (log colour scale); grey: no footage nearby. Callouts mark the densest places.
+
+[![Where the footage is in North America](figures/map_density_footage_north_america.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/map_density_footage_north_america.html)
+Where the footage is in North America.
+
+[![Where the footage is in Asia](figures/map_density_footage_asia.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/map_density_footage_asia.html)
+Where the footage is in Asia.
+
+[![Distance to the nearest footage in Europe](figures/map_distance_to_footage_europe.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/map_distance_to_footage_europe.html)
+Blind spots of the dataset in Europe: distance from every place to the nearest locality with at least an hour of footage. Callouts mark the places furthest from any footage.
+
+[![Distance to the nearest footage in North America](figures/map_distance_to_footage_north_america.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/map_distance_to_footage_north_america.html)
+Blind spots of the dataset in North America.
+
+[![Distance to the nearest footage in Asia](figures/map_distance_to_footage_asia.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/map_distance_to_footage_asia.html)
+Blind spots of the dataset in Asia.
+
+[![Share of night footage in Europe, smoothed](figures/map_night_share_smoothed_europe.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/map_night_share_smoothed_europe.html)
+Share of footage recorded at night in Europe, smoothed over about 50 km and weighted by footage; grey where there is less than an hour of footage within 100 km.
+
+[![Average upload year of the footage in Europe](figures/map_upload_year_europe.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/map_upload_year_europe.html)
+Average year of upload of the footage in Europe (weighted by footage): where the footage is recent and where it is older.
+
 [![Amount of footage per country in Oceania](figures/map_footage_oceania.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/map_footage_oceania.html)
 Amount of footage (hours) per country in Oceania. *Note:* the colour scale is logarithmic; countries are grouped by the continent of their cities in the dataset.
 
