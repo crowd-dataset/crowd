@@ -908,6 +908,12 @@ Amount of footage (hours) per country in Europe. *Note:* the colour scale is log
 [![Amount of footage per country in North America](figures/map_footage_north_america.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/map_footage_north_america.html)
 Amount of footage (hours) per country in North America. *Note:* the colour scale is logarithmic; countries are grouped by the continent of their cities in the dataset.
 
+[![Amount of footage per country in Oceania](figures/map_footage_oceania.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/map_footage_oceania.html)
+Amount of footage (hours) per country in Oceania. *Note:* the colour scale is logarithmic; countries are grouped by the continent of their cities in the dataset.
+
+[![Amount of footage per country in South America](figures/map_footage_south_america.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/map_footage_south_america.html)
+Amount of footage (hours) per country in South America. *Note:* the colour scale is logarithmic; countries are grouped by the continent of their cities in the dataset.
+
 [![Amount of footage per US state](figures/map_us_states_footage.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/map_us_states_footage.html)
 Amount of footage (hours) per US state. *Note:* the colour scale is logarithmic.
 
@@ -976,12 +982,6 @@ Share of footage recorded at night in Europe, smoothed over about 50 km and weig
 
 [![Average upload year of the footage in Europe](figures/map_upload_year_europe.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/map_upload_year_europe.html)
 Average year of upload of the footage in Europe (weighted by footage): where the footage is recent and where it is older.
-
-[![Amount of footage per country in Oceania](figures/map_footage_oceania.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/map_footage_oceania.html)
-Amount of footage (hours) per country in Oceania. *Note:* the colour scale is logarithmic; countries are grouped by the continent of their cities in the dataset.
-
-[![Amount of footage per country in South America](figures/map_footage_south_america.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/map_footage_south_america.html)
-Amount of footage (hours) per country in South America. *Note:* the colour scale is logarithmic; countries are grouped by the continent of their cities in the dataset.
 
 [![Number of videos against the amount of footage per locality, log scales](figures/scatter_all_total_time-video_count.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/scatter_all_total_time-video_count.html)
 Number of videos against the amount of footage per locality (log scales), coloured by continent, with every country and its flag in the legend on the right, in alphabetical order (scroll it in the HTML version; click a country to hide or show it); hover over a point for its details. The 40 localities with the most footage are labelled, the top 12 in larger black text; in the HTML version, zoom in to label every point.
