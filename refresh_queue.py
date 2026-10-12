@@ -62,7 +62,7 @@ def main():
         known = {}
     queue, left_out, seen = [], [], set()
 
-    def add(cid, url, country, why, phase, new_only=True):
+    def add(cid, url, country, why, phase, new_only=True, in_sheet=True):
         if cid in seen:
             return
         seen.add(cid)
@@ -74,12 +74,16 @@ def main():
             left_out.append((url, "Russia only: Olena's"))
             return
         queue.append({'url': url, 'country': country, 'name': rc.channel_name(url), 'why': why, 'phase': phase,
-                      'new_only': new_only})
+                      'new_only': new_only, 'in_sheet': in_sheet})
 
     # the sheet's channels by id; its URLs keep the search a channel was done with (…/search?query=driving)
-    sheet = {}
+    sheet, listed = {}, set()  # listed: every channel the sheet has, whatever its status
     for n, url, status, country in rc.sheet_rows():
         if status not in ('Processed', 'Offline', 'Not finished'):
+            try:
+                listed.add(channel_id(url, known))
+            except RuntimeError:
+                pass
             continue
         try:
             cid = channel_id(url, known)
@@ -91,6 +95,7 @@ def main():
                 left_out.append((url, f'row {n}: no such channel on YouTube now'))
             continue  # Offline and still gone
         sheet.setdefault(cid, (n, url, status, country))
+        listed.add(cid)
     # in this order (user, 2026-10-10): 1. the subscriptions, 2. new uploads of the sheet's processed channels
     # (and of those online again), 3. the not finished ones, all their videos not in the mapping
     for line in open(SUBSCRIPTIONS):
@@ -98,8 +103,9 @@ def main():
         n, url, status, country = sheet.get(cid, (None, f'https://www.youtube.com/{handle}/videos', None, ''))
         if status == 'Not finished':
             continue  # last, with the not finished ones
+        # a subscription the sheet lacks gets a row there once it is worked on (user, 2026-10-12)
         if mapped[cid]:
-            add(cid, url, country, f'subscription: {mapped[cid]} videos in the mapping', 1)
+            add(cid, url, country, f'subscription: {mapped[cid]} videos in the mapping', 1, in_sheet=cid in listed)
             continue
         try:
             drive = drives(cid)
@@ -107,7 +113,7 @@ def main():
             left_out.append((url, f'subscription: not looked up ({e}): run this again'))
             continue
         if drive:
-            add(cid, url, country, 'subscription: uploads drives, none in the mapping yet', 1)
+            add(cid, url, country, 'subscription: uploads drives, none in the mapping yet', 1, in_sheet=cid in listed)
         else:
             left_out.append((url, 'subscription: its latest uploads are no drives'))
     for cid, (n, url, status, country) in sheet.items():

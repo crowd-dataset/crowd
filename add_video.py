@@ -17,6 +17,7 @@ from requests.exceptions import RequestException
 import ast
 import io
 import json
+import math
 import re
 import unicodedata
 from geopy.geocoders import Nominatim
@@ -822,7 +823,8 @@ def new_locality_row(locality, state, country, locality_aka=None, near=None, at=
         'population_locality': int((namesake and get_wikidata_population(locality, lat, lon))
                                    or get_locality_population(locality_data, locality, state)
                                    or (lat and lon and get_wikidata_population(locality, lat, lon))
-                                   or (lat and lon and get_nearby_population(locality, lat, lon)) or 0),
+                                   or (lat and lon and get_nearby_population(locality, lat, lon))
+                                   or (lat and lon and get_worldpop_population(lat, lon)) or 0),
         'population_country': country_population,
         'traffic_mortality': mortality_future.result(),
         'start_time': [],
@@ -1690,6 +1692,24 @@ def get_nearby_population(locality, lat, lon, km=10):
     stem = re.sub(r'^the\s+|s$', '', locality.strip().lower())
     named = {g['name']: int(g.get('population') or 0) for g in places if stem in g['name'].lower()}
     return sum(named.values()) or (int(places[0].get('population') or 0) if places else 0)
+
+
+def get_worldpop_population(lat, lon, km=3):
+    """People living within km of lat/lon by WorldPop's 2020 grid (its free stats service), for a locality no source
+    has a figure for and no GeoNames place is near (Chatoloma, Malawi: 37 km from the nearest). Within 3 km it
+    roughly matches known towns (Mponela 28,731 for 27,681, Nkhata Bay 14,486 for 14,274; for single towns 0.5-3.4
+    times). 0 when the service does not answer."""
+    n = 24
+    ring = [[lon + km / (111.32 * math.cos(math.radians(lat))) * math.cos(2 * math.pi * i / n),
+             lat + km / 110.57 * math.sin(2 * math.pi * i / n)] for i in range(n)]
+    shape = {'type': 'FeatureCollection', 'features': [{'type': 'Feature', 'properties': {},
+                                                        'geometry': {'type': 'Polygon', 'coordinates': [ring + ring[:1]]}}]}
+    try:
+        r = requests.get('https://api.worldpop.org/v1/services/stats', timeout=120,
+                         params={'dataset': 'wpgppop', 'year': 2020, 'geojson': json.dumps(shape), 'runasync': 'false'})
+        return int(round(r.json().get('data', {}).get('total_population') or 0))
+    except (RequestException, ValueError, AttributeError):
+        return 0
 
 
 def get_country_average_height(iso3_code):

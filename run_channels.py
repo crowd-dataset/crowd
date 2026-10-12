@@ -32,6 +32,8 @@ import propose_segments as ps
 
 SHEET_CSV = ('https://docs.google.com/spreadsheets/d/18O6C0Ar-JxLoqsrbuSwKAHLOVVkZd26OdEiaIBPoCww'
              '/export?format=csv&gid=0')
+SHEET_ID = '18O6C0Ar-JxLoqsrbuSwKAHLOVVkZd26OdEiaIBPoCww'
+SHEET_KEY = 'google_sheets_key.json'  # a Google service account's key: only on the reviewing machine, never committed
 ROOT = '_output/proposals'
 STATE = os.path.join(ROOT, 'channels.json')
 TO_REVIEW = os.path.join(ROOT, 'to_review.md')
@@ -156,9 +158,71 @@ def write_sheet_todo(state, sheet):
             for url, c in state.items()
             if c['status'] in want and not c.get('refresh') and ours(url, status)
             and (status.get(url, '') != want[c['status']] or PROCESSED_BY.get(url, '') != WHO)]
+    # a subscription the sheet lacks: a new row (user, 2026-10-12), then kept up to date like the others
+    rows, new = {u: n for n, u, _, _ in sheet}, unlisted()
+    todo += [{'row': rows.get(c['url']), 'url': c['url'], 'status': want[c['status']], 'by': WHO,
+              'comment': c.get('comment') or 'from the subscriptions',
+              'country': c.get('country') or new[c['url']].get('country', '')}
+             for c in state.values() if c.get('refresh') and c.get('url') in new and c['status'] in want
+             and (status.get(c['url']) != want[c['status']] or PROCESSED_BY.get(c['url'], '') != WHO)]
+    if todo and os.path.exists(SHEET_KEY):  # the reviewing machine enters them itself
+        try:
+            todo = write_sheet(todo)
+        except Exception as e:  # noqa: BLE001 (the API down or the key revoked: entered by hand meanwhile)
+            log(f'SHEET: could not write through the Sheets API ({type(e).__name__}: {str(e)[:200]})')
     with open(SHEET_TODO + '.tmp', 'w') as f:
         json.dump(todo, f, indent=1)
     os.replace(SHEET_TODO + '.tmp', SHEET_TODO)
+
+
+def unlisted():
+    """{url: refresh queue entry} of the queue's channels the sheet lacks (refresh_queue.py: subscriptions)."""
+    try:
+        with open(REFRESH_QUEUE) as f:
+            return {q['url']: q for q in json.load(f) if q.get('in_sheet') is False}
+    except (OSError, ValueError):
+        return {}
+
+
+def write_sheet(todo):
+    """Enter the sheet's to-do items (column B status, E Processed by, D the comment when D is empty: the user's
+    own comments stay) through the Sheets API with the service account key SHEET_KEY (user, 2026-10-12; the sheet
+    is shared with the account as editor). A row whose column A is no longer the channel (rows inserted since) is
+    left for the next read. Returns the items not entered."""
+    from google.auth.transport.requests import AuthorizedSession
+    from google.oauth2 import service_account
+    creds = service_account.Credentials.from_service_account_file(
+        SHEET_KEY, scopes=['https://www.googleapis.com/auth/spreadsheets'])
+    api, session = f'https://sheets.googleapis.com/v4/spreadsheets/{SHEET_ID}/values', AuthorizedSession(creds)
+    for t in [t for t in todo if t['row'] is None]:  # a channel the sheet lacks: a row with all it knows
+        session.post(f'{api}/A:E:append', timeout=60, params={'valueInputOption': 'USER_ENTERED',
+                                                              'insertDataOption': 'INSERT_ROWS'},
+                     json={'values': [[t['url'], t['status'], t.get('country', ''), t['comment'], t['by']]]}
+                     ).raise_for_status()
+        log(f"SHEET: added {t['url']} ({t['status']}, {t.get('country', '')}) as a new row through the Sheets API")
+    todo = [t for t in todo if t['row'] is not None]
+    if not todo:
+        return []
+    got = session.get(f'{api}:batchGet', timeout=60, params={
+        'ranges': [f'A{t["row"]}:E{t["row"]}' for t in todo]})
+    got.raise_for_status()
+    data, left = [], []
+    for t, cells in zip(todo, got.json()['valueRanges']):
+        row = (cells.get('values') or [[]])[0] + [''] * 5
+        if row[0].strip().rstrip('/') != t['url'].rstrip('/'):
+            left.append(t)
+            continue
+        data += [{'range': f'B{t["row"]}', 'values': [[t['status']]]}, {'range': f'E{t["row"]}', 'values': [[t['by']]]}]
+        if t['comment'] and not row[3].strip():
+            data.append({'range': f'D{t["row"]}', 'values': [[t['comment']]]})
+    if data:
+        session.post(f'{api}:batchUpdate', timeout=60,
+                     json={'valueInputOption': 'USER_ENTERED', 'data': data}).raise_for_status()
+        log('SHEET: entered through the Sheets API: ' + ', '.join(f"row {t['row']} {t['status']}"
+                                                              for t in todo if t not in left))
+    for t in left:
+        log(f"SHEET: row {t['row']} is no longer {t['url']}: not entered (rows inserted?), looked up again later")
+    return left
 
 
 def check_reviews(state, sheet):
@@ -300,7 +364,7 @@ def push_code_on_change(every_s=60):
     while a long batch runs here (a night of 25-minute videos kept them away from 22:42 to 07:44), and twice a day
     write review_lessons.md. A thread of the reviewing machine's runner (--sync)."""
     import sync_workers  # the laptop's: it names the workers
-    seen, synced, lessons = None, 0, 0
+    seen, synced, lessons, checked = None, 0, 0, 0
     while True:
         if time.time() - lessons > 12 * 3600:  # what the reviews overrule, twice a day (user, 2026-10-11)
             try:
@@ -309,6 +373,12 @@ def push_code_on_change(every_s=60):
             except subprocess.TimeoutExpired:
                 log('review_lessons.py took over an hour: stopped it, next try in 12 hours')
             lessons = time.time()
+        if time.time() - checked > 15 * 60:  # a worker idle or stuck (user, 2026-10-12): shown on the review hub
+            try:
+                sync_workers.check_workers()
+            except Exception as e:  # noqa: BLE001 (a check never stops the sync)
+                log(f'worker check failed ({type(e).__name__}: {str(e)[:120]})')
+            checked = time.time()
         if time.time() - synced > 3600 and not on_hotspot():
             log('syncing the worker machines')
             try:

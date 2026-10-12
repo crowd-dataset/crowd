@@ -10,6 +10,7 @@ goes to each worker, so its locality guesses and its skipping of videos already 
 """
 import json
 import os
+import re
 import subprocess
 
 import propose_segments as ps
@@ -19,7 +20,9 @@ import run_channels as rc
 # takes rows 2/3 and queue 2/4
 # mini ('sheet rows 1/2, no queue') is out until its new account is set up (2026-10-11)
 WORKERS = {'lin5080': 'queue phase 5 (highway videos to redo), then 2 (new uploads of processed channels)',
-           'wsl5090': 'sheet rows 0/2, then queue phase 4 (UCxbv63aE7sg8_HzYz5KFPeA highway videos), 1 and 3'}
+           'wsl5090': 'sheet rows 0/2, then queue phase 4 (UCxbv63aE7sg8_HzYz5KFPeA highway videos), 1 and 3',
+           # account pavlo since 2026-10-12 (shadab before): ~/crowd-routine, started by cron with start_worker.sh
+           'mini': 'sheet rows 1/2 (weirdlifenow, row 861)'}
 REMOTE = 'crowd-routine'       # the repository on each worker, relative to its home
 
 
@@ -49,6 +52,72 @@ def merge_plan(name, remote_plan):
             json.dump(local, f, indent=1)
         os.replace(path + '.tmp', path)
     return added
+
+
+DASHBOARD = 'http://131.155.233.55:8090/status.json'  # the compute dashboard on the mini: 3 h of load per minute
+HEALTH = os.path.join(rc.ROOT, 'worker_health.json')  # the latest check_workers, shown on the review hub
+LOW_GPU, LOW_CPU, LOW_FOR = 5, 15, 30  # % mean load (GPU, else CPU) over this many minutes: look why it is low
+STUCK_MIN = 60  # no new runner.log line for this long while it should be working
+PROBLEM = re.compile(r'sign in|bot check|quota|refused|Traceback|Error|could not|failed', re.I)
+IDLE = re.compile(r'no channel left|waiting for|nothing (?:left|to do)|paused', re.I)
+
+
+def check_workers():
+    """[{host, ok, what}] for each worker whose load on the dashboard stayed low for LOW_FOR minutes (user,
+    2026-10-12): a worker downloading uses no GPU, so low load alone is no fault; its runner.log and processes say
+    what it does. Written to HEALTH; a problem new since the last check is logged."""
+    import requests
+    import time
+    try:
+        machines = {m.get('name'): m for m in requests.get(DASHBOARD, timeout=20).json()}
+    except (requests.RequestException, ValueError) as e:
+        machines, report = {}, [{'host': 'dashboard', 'ok': False, 'what': f'not reached ({e.__class__.__name__})'}]
+    else:
+        report = []
+    for host in WORKERS if machines else []:
+        m = machines.get(host) or {}
+        recent = [x for x in m.get('hist', []) if x[0] >= time.time() - LOW_FOR * 60]
+        gpu = bool(m.get('gpus'))
+        load = [x[2] if gpu else x[1] for x in recent if (x[2] if gpu else x[1]) is not None]
+        mean = sum(load) / len(load) if load else None
+        if mean is not None and mean >= (LOW_GPU if gpu else LOW_CPU):
+            report.append({'host': host, 'ok': True, 'what': f'{"GPU" if gpu else "CPU"} {mean:.0f}%'})
+            continue
+        try:
+            last, runners, downloads, now = ssh(host, f'tail -1 {REMOTE}/_output/proposals/runner.log; '
+                                                      'pgrep -f run_channels.py | wc -l; pgrep -f yt-dlp | wc -l; '
+                                                      'date +%H:%M').strip().rsplit('\n', 3)
+        except (subprocess.CalledProcessError, ValueError) as e:
+            report.append({'host': host, 'ok': False, 'what': f'not reached ({str(e)[-120:]})'})
+            continue
+        low = f'{"GPU" if gpu else "CPU"} {mean or 0:.0f}% for {LOW_FOR} min'
+        hm = re.match(r'(\d\d):(\d\d)', last)
+        nh, nm = (int(x) for x in now.strip().split(':'))
+        age = (nh * 60 + nm - int(hm[1]) * 60 - int(hm[2])) % 1440 if hm else None
+        if int(runners) == 0:
+            what, ok = 'run_channels.py is not running', False
+        elif PROBLEM.search(last):
+            what, ok = f'{low}: {last.strip()[:160]}', False
+        elif IDLE.search(last):
+            what, ok = f'idle: {last.strip()[:160]}', True
+        elif age is not None and age >= STUCK_MIN:
+            what, ok = (f'{low}, no progress for {age} min{" (a download running)" if int(downloads) else ""}: '
+                        f'{last.strip()[:120]}'), False
+        else:
+            what, ok = f'{low}, {"downloading" if int(downloads) else "working"}: {last.strip()[:120]}', True
+        report.append({'host': host, 'ok': ok, 'what': what})
+    try:
+        with open(HEALTH) as f:
+            before = {r['host']: r for r in json.load(f)}
+    except (OSError, ValueError):
+        before = {}
+    for r in report:
+        if not r['ok'] and before.get(r['host'], {}).get('ok', True):
+            rc.log(f"WORKERS: {r['host']}: {r['what']}")
+    with open(HEALTH + '.tmp', 'w') as f:
+        json.dump(report, f, indent=1)
+    os.replace(HEALTH + '.tmp', HEALTH)
+    return report
 
 
 def push_code(host):

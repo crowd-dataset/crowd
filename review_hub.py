@@ -4,17 +4,30 @@ The list is rebuilt on every load from _output/proposals/channels.json, plus the
 so batches appear while run_channels.py adds videos and drop off once everything in them is decided.
 
     /Users/pavlo/opt/anaconda3/bin/python review_hub.py   # then open http://127.0.0.1:8770
+    REVIEW_HOST=0.0.0.0 python review_hub.py               # on the mini: open http://131.155.233.55:8770 anywhere
+                                                           # on the TU/e network (its review pages are served too)
+
+"Push the mapping" commits mapping.csv as it is here onto GitHub's main and pushes it.
 """
+import io
+import json
 import os
+import re
+import shutil
 import socket
 import subprocess
 import sys
 
-from flask import Flask, redirect, render_template_string
+import pandas as pd
 
+from flask import Flask, redirect, render_template_string, request
+
+import add_video
+import propose_segments as ps
 import run_channels as rc
 
 PORT = 8770
+HOST = os.environ.get('REVIEW_HOST', '127.0.0.1')  # 0.0.0.0: reachable from other machines (the review pages too)
 app = Flask(__name__)
 servers = {}  # channel name -> (review process, its port)
 
@@ -26,14 +39,23 @@ a.b{display:flex;justify-content:space-between;padding:12px 16px;margin:8px 0;bo
  border-radius:8px;text-decoration:none;color:inherit}
 a.b:hover{background:#f3f6ff;border-color:#68f}
 .n{font-weight:600}.s{color:#666}.done{color:#999}
+p.ok{color:#888;margin:2px 0;font-size:13px}p.bad{color:#b00020;font-weight:600;margin:4px 0}
+button.g{padding:10px 18px;font-size:15px;border:0;border-radius:4px;background:#007bff;color:#fff;cursor:pointer;margin:8px 8px 0 0}
 </style></head><body>
-<h2>Batches to review</h2>
+<h2>Batches to review <span class="s">({{ batches|sum(attribute="waiting") }} videos)</span></h2>
+{% for w in health %}<p class="{{ 'ok' if w.ok else 'bad' }}">{{ w.host }}: {{ w.what }}</p>{% endfor %}
 {% for b in batches %}
 <a class="b" href="/open/{{ b.name }}" target="_blank"><span><span class="n">{{ b.name }}</span>
  <span class="s">{% if b.row %}· row {{ b.row }} {% endif %}· {{ b.state }}</span></span>
  <span>{{ b.waiting }} of {{ b.proposed }} to review</span></a>
 {% else %}<p>Nothing to review.</p>{% endfor %}
 {% if done %}<p class="done">All decided: {{ done|join(', ') }}</p>{% endif %}
+<form method="post" action="/push_mapping" style="display:inline"
+ onsubmit="return confirm('Commit mapping.csv as it is now and push it to GitHub?')">
+<button class="g">Push the mapping to GitHub</button></form>
+<form method="post" action="/merge_mapping" style="display:inline"
+ onsubmit="return confirm('Add the new videos of the mapping-NAME.csv files on GitHub to mapping.csv, make those files copies of it and push all?')">
+<button class="g">Merge mapping-NAME files and push</button></form>
 <p class="s">Updates every hour (reload for the latest).</p>
 </body></html>"""
 
@@ -56,7 +78,12 @@ def index():
         waiting, proposed = rc.review_counts(name)
         if waiting:
             batches.append(dict(name=name, row=None, state='earlier batch', waiting=waiting, proposed=proposed))
-    return render_template_string(PAGE, batches=batches, done=done)
+    try:  # the workers' last check (sync_workers.check_workers, every 15 min on the reviewing machine)
+        with open(os.path.join(rc.ROOT, 'worker_health.json')) as f:
+            health = json.load(f)
+    except (OSError, ValueError):
+        health = []
+    return render_template_string(PAGE, batches=batches, done=done, health=health)
 
 
 @app.route('/open/<name>')
@@ -66,7 +93,7 @@ def open_batch(name):
     proc, port = servers.get(name, (None, None))
     if proc is None or proc.poll() is not None:
         with socket.socket() as s:
-            s.bind(('127.0.0.1', 0))
+            s.bind((HOST, 0))
             port = s.getsockname()[1]
         plan = os.path.join(rc.ROOT, name, 'plan.json')
         # the review page opens the system browser by itself; here the click already opens it
@@ -75,9 +102,114 @@ def open_batch(name):
         proc = subprocess.Popen([sys.executable, '-c', code])
         servers[name] = proc, port
         return render_template_string(  # give the server a moment to start
-            '<meta http-equiv="refresh" content="3;url=http://127.0.0.1:{{p}}">Starting the review page…', p=port)
-    return redirect(f'http://127.0.0.1:{port}')
+            '<meta http-equiv="refresh" content="3;url=http://{{h}}:{{p}}">Starting the review page…', p=port, h=here())
+    return redirect(f'http://{here()}:{port}')
+
+
+def here():
+    """The hub's address as the browser reached it (127.0.0.1 here, the mini's address from another machine)."""
+    return request.host.rsplit(':', 1)[0]
+
+
+def git(*args, check_tree=False, **kw):
+    """git in the mapping's checkout; check_tree: a path missing from the tree gives '' instead of an error."""
+    r = subprocess.run(['git', *args], capture_output=True, text=True, check=not check_tree,
+                       cwd=os.path.dirname(os.path.abspath(add_video.FILE_PATH)), **kw)
+    return r.stdout.strip() if r.returncode == 0 else ''
+
+
+def commit_to_github(files, message):
+    """Commit these files as they are here onto GitHub's main and push: the commit is built from origin/main with only
+    these files replaced, so this checkout's other files and branch are left as they are. Returns the commit, or None
+    when GitHub has them already. Call with git fetched."""
+    blobs = {f: git('hash-object', '-w', f) for f in files}
+    if all(git('rev-parse', f'origin/main:{f}', check_tree=True) == b for f, b in blobs.items()):
+        return None
+    index = os.path.join(git('rev-parse', '--absolute-git-dir'), 'push-mapping.index')
+    env = {**os.environ, 'GIT_INDEX_FILE': index}
+    git('read-tree', 'origin/main', env=env)
+    for f, b in blobs.items():
+        git('update-index', '--add', '--cacheinfo', f'100644,{b},{f}', env=env)
+    tree = git('write-tree', env=env)
+    os.remove(index)
+    commit = git('commit-tree', tree, '-p', 'origin/main', '-m', message)
+    git('push', '-q', 'origin', f'{commit}:refs/heads/main')
+    return commit
+
+
+MAPPING = os.path.basename(add_video.FILE_PATH)
+FLAT, NESTED = ('videos', 'vehicle_type', 'upload_date', 'channel'), ('time_of_day', 'start_time', 'end_time')
+
+
+def push_mapping():
+    """mapping.csv as it is here, pushed to GitHub. Returns a message."""
+    with ps.plan_lock(add_video.FILE_PATH):  # not halfway through an Apply
+        git('fetch', '-q', 'origin', 'main')
+        commit = commit_to_github([MAPPING], 'Update mapping.csv: reviewed batches')
+    return f'Pushed the mapping to GitHub (commit {commit[:8]}).' if commit else \
+        'Nothing to push: GitHub has this mapping already.'
+
+
+def merge_mapping_files():
+    """The videos of GitHub's mapping-NAME.csv files (Olena's) that mapping.csv lacks, added to it: to the row of
+    the same locality, state and country, else as a new row; a video the mapping has stays as it is here. Then each
+    mapping-NAME.csv becomes a copy of the merged mapping (user, 2026-10-11) and all are pushed in one commit.
+    Returns a message."""
+    with ps.plan_lock(add_video.FILE_PATH):
+        git('fetch', '-q', 'origin', 'main')
+        names = [n for n in git('ls-tree', '--name-only', 'origin/main').split()
+                 if re.fullmatch(r'mapping-[^/]+\.csv', n)]
+        df = add_video.load_csv(add_video.FILE_PATH)
+        have = {v for cell in df['videos'] for v in add_video._parse_flat_list_cell(cell)}
+        added = []
+        for name in names:
+            other = pd.read_csv(io.StringIO(git('show', f'origin/main:{name}')))
+            for _, r in other.iterrows():
+                cells = {c: add_video._parse_flat_list_cell(r[c]) for c in FLAT}
+                cells.update({c: add_video._safe_literal_eval(r[c], []) for c in NESTED})
+                new = [i for i, v in enumerate(cells['videos']) if v not in have]
+                if not new:
+                    continue
+                state = '' if pd.isna(r['state']) else r['state']
+                hit = df.index[(df['locality'] == r['locality']) & (df['country'] == r['country'])
+                               & (df['state'].fillna('') == state)]
+                if len(hit):
+                    i = hit[0]
+                    for c in FLAT:
+                        df.at[i, c] = add_video.compact_flat_list(add_video._parse_flat_list_cell(df.at[i, c])
+                                                                  + [cells[c][k] for k in new])
+                    for c in NESTED:
+                        df.at[i, c] = add_video.compact_nested_list(add_video._safe_literal_eval(df.at[i, c], [])
+                                                                    + [cells[c][k] for k in new])
+                else:
+                    row = r.to_dict()
+                    row.update({c: add_video.compact_flat_list([cells[c][k] for k in new]) for c in FLAT})
+                    row.update({c: add_video.compact_nested_list([cells[c][k] for k in new]) for c in NESTED})
+                    row['id'] = int(pd.to_numeric(df['id'], errors='coerce').max()) + 1
+                    df = pd.concat([df, pd.DataFrame([row])[df.columns]], ignore_index=True)
+                added += [f"{cells['videos'][k]} ({r['locality']}, from {name})" for k in new]
+                have |= {cells['videos'][k] for k in new}
+        if added:
+            add_video.save_csv(df, add_video.FILE_PATH)
+        for name in names:
+            shutil.copyfile(add_video.FILE_PATH, name)
+        what = f'{len(added)} new videos from ' + ', '.join(names) if added else 'no new videos in ' + ', '.join(names)
+        commit = commit_to_github([MAPPING, *names], f'Update mapping.csv: {what}; ' + ', '.join(names)
+                                  + ' to match it')
+    return (f'Merged {what}' + (': ' + ', '.join(added[:20]) + (' …' if len(added) > 20 else '') if added else '')
+            + (f'. Pushed (commit {commit[:8]}).' if commit else '. GitHub had all of it already.'))
+
+
+@app.route('/push_mapping', methods=['POST'])
+@app.route('/merge_mapping', methods=['POST'])
+def push_mapping_route():
+    try:
+        msg = merge_mapping_files() if request.path == '/merge_mapping' else push_mapping()
+    except subprocess.CalledProcessError as e:
+        msg = f'Push failed: {(e.stderr or e.stdout or str(e)).strip()[-500:]}'
+    return render_template_string('<meta http-equiv="refresh" content="8;url=/"><p style="font:15px system-ui">'
+                                  '{{ m }}</p><p><a href="/">Back to the batches</a></p>', m=msg)
 
 
 if __name__ == '__main__':
-    app.run(port=PORT, debug=False)
+    app.run(host=HOST, port=PORT, debug=False)
