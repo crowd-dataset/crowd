@@ -6,8 +6,10 @@ from pytubefix import YouTube
 from tqdm import tqdm
 from datetime import datetime, timedelta
 import os
+import sys
 import csv
 import common
+import split_large_files
 from custom_logger import CustomLogger
 from logmod import logs
 
@@ -56,9 +58,10 @@ def is_missing(value):
 
 def get_video_info(video_id):
     try:
+        # OAuth asks for a sign-in in the terminal, which a scheduled run cannot answer
         yt = YouTube(
             f"https://www.youtube.com/watch?v={video_id}",
-            use_oauth=True,
+            use_oauth=sys.stdin.isatty(),
             allow_oauth_cache=True,
         )
         title = yt.title
@@ -130,6 +133,7 @@ if __name__ == "__main__":
     unique_video_ids = list(video_count.keys())
 
     # load metadata file
+    split_large_files.join(metadata_file)
     if os.path.exists(metadata_file):
         existing_df = pd.read_csv(metadata_file, dtype=str)
         existing_df["id"] = existing_df["id"].astype(int)  # id must stay numeric

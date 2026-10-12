@@ -71,6 +71,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 import make_crowd_jsonl
+import split_large_files
 
 # Progress bars
 try:
@@ -3092,6 +3093,8 @@ def main() -> int:
     mapping_path = _resolve_path_maybe_absolute(data_dir, CONFIG["paths"]["mapping_csv"])
     meta_path = _resolve_path_maybe_absolute(data_dir, CONFIG["paths"]["mapping_metadata_csv"])
     jsonl_path = _resolve_path_maybe_absolute(data_dir, CONFIG["paths"].get("crowd_index_jsonl", "crowd_index.jsonl"))
+    split_large_files.join(meta_path)
+    split_large_files.join(jsonl_path)
     yolo_dir = _resolve_path_maybe_absolute(data_dir, CONFIG["paths"]["yolo_dir"])
     yolo_root = _infer_yolo_root(yolo_dir)
 

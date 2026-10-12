@@ -40,6 +40,8 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
+import split_large_files
+
 # -----------------------------------------------------------------------------
 # Edit these paths when running without positional arguments.
 # -----------------------------------------------------------------------------
@@ -502,6 +504,7 @@ def _clean_metadata_row(row: Dict[str, Any], fieldnames: Iterable[str]) -> Dict[
 
 
 def _build_metadata_index(metadata_csv: Path) -> Dict[str, Dict[str, Any]]:
+    split_large_files.join(metadata_csv)
     if not metadata_csv.exists():
         return {}
 

@@ -46,6 +46,12 @@ mapping_bkp.csv
 mapping_cleaned.csv
 mapping_updated.csv
 
+# Committed by weekly_metadata.sh (git add -f): whole, or as NAME_partN files when over 99 MB
+mapping_metadata.csv
+crowd_index.jsonl
+mapping_metadata.csv.tmp
+crowd_index.jsonl.tmp
+
 # Pickle files
 *.pickle
 
