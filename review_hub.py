@@ -20,7 +20,7 @@ import sys
 
 import pandas as pd
 
-from flask import Flask, redirect, render_template_string, request
+from flask import Flask, jsonify, redirect, render_template_string, request
 
 import add_video
 import propose_segments as ps
@@ -32,6 +32,7 @@ app = Flask(__name__)
 servers = {}  # channel name -> (review process, its port)
 
 PAGE = """<!doctype html><html><head><meta charset="utf-8"><title>Batches to review</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🚙</text></svg>">
 <meta http-equiv="refresh" content="3600">
 <style>
 body{font:15px system-ui,sans-serif;margin:24px;max-width:760px;color:#222}
@@ -40,9 +41,17 @@ a.b{display:flex;justify-content:space-between;padding:12px 16px;margin:8px 0;bo
 a.b:hover{background:#f3f6ff;border-color:#68f}
 .n{font-weight:600}.s{color:#666}.done{color:#999}
 p.ok{color:#888;margin:2px 0;font-size:13px}p.bad{color:#b00020;font-weight:600;margin:4px 0}
-button.g{padding:10px 18px;font-size:15px;border:0;border-radius:4px;background:#007bff;color:#fff;cursor:pointer;margin:8px 8px 0 0}
+.acts{display:flex;gap:8px;margin-top:12px}
+button.g{flex:1;padding:10px 8px;font-size:14px;border:0;border-radius:4px;background:#007bff;color:#fff;cursor:pointer;
+ white-space:nowrap}
+button.g:disabled{background:#9bb;cursor:wait}
+#pop{position:fixed;left:50%;top:20px;transform:translateX(-50%);max-width:640px;padding:14px 40px 14px 18px;
+ border-radius:8px;background:#1e7e34;color:#fff;box-shadow:0 4px 18px rgba(0,0,0,.25);font-size:15px;display:none;z-index:9}
+#pop.bad{background:#b00020}
+#pop button{position:absolute;right:8px;top:8px;border:0;background:none;color:#fff;font-size:18px;cursor:pointer}
 </style></head><body>
 <h2>Batches to review <span class="s">({{ batches|sum(attribute="waiting") }} videos)</span></h2>
+<p class="ok"><a href="#" onclick="location.port=8771;return false">Pipeline status</a>: what each worker does, queues, channels</p>
 {% for w in health %}<p class="{{ 'ok' if w.ok else 'bad' }}">{{ w.host }}: {{ w.what }}</p>{% endfor %}
 {% for b in batches %}
 <a class="b" href="/open/{{ b.name }}" target="_blank"><span><span class="n">{{ b.name }}</span>
@@ -50,13 +59,37 @@ button.g{padding:10px 18px;font-size:15px;border:0;border-radius:4px;background:
  <span>{{ b.waiting }} of {{ b.proposed }} to review</span></a>
 {% else %}<p>Nothing to review.</p>{% endfor %}
 {% if done %}<p class="done">All decided: {{ done|join(', ') }}</p>{% endif %}
-<form method="post" action="/push_mapping" style="display:inline"
- onsubmit="return confirm('Commit mapping.csv as it is now and push it to GitHub?')">
-<button class="g">Push the mapping to GitHub</button></form>
-<form method="post" action="/merge_mapping" style="display:inline"
- onsubmit="return confirm('Add the new videos of the mapping-NAME.csv files on GitHub to mapping.csv, make those files copies of it and push all?')">
-<button class="g">Merge mapping-NAME files and push</button></form>
-<p class="s">Updates every hour (reload for the latest).</p>
+<div class="acts">
+<button class="g" title="commit mapping.csv as it is now and push it to GitHub"
+ onclick="act(this, '/push_mapping', 'Commit mapping.csv as it is now and push it to GitHub?')">Push mapping to GitHub</button>
+<button class="g" title="add the new videos of the mapping-NAME.csv files on GitHub to mapping.csv, make those files copies of it and push all"
+ onclick="act(this, '/merge_mapping', 'Add the new videos of the mapping-NAME.csv files on GitHub to mapping.csv, make those files copies of it and push all?')"
+ >Merge mapping-NAME &amp; push</button>
+<button class="g" title="bring the workers' new proposals here now, instead of waiting for the hourly sync"
+ onclick="act(this, '/fetch_batches')">Fetch new batches</button>
+</div>
+<div id="pop"><span id="popmsg"></span><button onclick="this.parentNode.style.display='none'" title="close">&times;</button></div>
+<script>
+// the buttons work in the background and say how it went in a popup here (user, 2026-10-13)
+async function act(btn, url, question) {
+  if (question && !confirm(question)) return;
+  const label = btn.textContent;
+  btn.disabled = true; btn.textContent = 'Working…';
+  let msg, ok;
+  try {
+    const r = await fetch(url, {method: 'POST'});
+    ({msg, ok} = await r.json());
+  } catch (e) { msg = 'The hub did not answer: ' + e; ok = false; }
+  btn.disabled = false; btn.textContent = label;
+  const pop = document.getElementById('pop');
+  document.getElementById('popmsg').textContent = msg;
+  pop.className = ok ? '' : 'bad'; pop.style.display = 'block';
+  clearTimeout(pop.timer);
+  if (ok) pop.timer = setTimeout(() => { pop.style.display = 'none'; }, 15000);
+}
+</script>
+<p class="s">Updates every hour (reload for the latest). <a href="/lessons">Review lessons</a>: what the twice-daily
+check found in your reviews.</p>
 </body></html>"""
 
 
@@ -200,15 +233,38 @@ def merge_mapping_files():
             + (f'. Pushed (commit {commit[:8]}).' if commit else '. GitHub had all of it already.'))
 
 
+@app.route('/lessons')
+def lessons():
+    """The review-lessons check's findings (review_lessons_check.md, written by the scheduled Claude task on this
+    machine), then the report it reads (review_lessons.md)."""
+    parts = []
+    for name in ('review_lessons_check.md', 'review_lessons.md'):
+        try:
+            with open(os.path.join(rc.ROOT, name)) as f:
+                parts.append(f.read())
+        except OSError:
+            parts.append(f'({name}: not written yet)')
+    return render_template_string('<pre style="font:13px ui-monospace,monospace;white-space:pre-wrap;margin:24px;'
+                                  'max-width:1000px">{{ text }}</pre>', text='\n\n---\n\n'.join(parts))
+
+
+@app.route('/fetch_batches', methods=['POST'])
+def fetch_batches():
+    """Start a sync of the workers' batches (sync_workers.py, as the hourly one does) and come back to the list."""
+    log = open(os.path.join(rc.ROOT, 'fetch_batches.log'), 'a')
+    subprocess.Popen([sys.executable, 'sync_workers.py'], stdout=log, stderr=subprocess.STDOUT,
+                     cwd=os.path.dirname(os.path.abspath(__file__)))
+    return jsonify(ok=True, msg='Fetching new batches from all machines: reload this page in a few minutes to see '
+                                'them.')
+
+
 @app.route('/push_mapping', methods=['POST'])
 @app.route('/merge_mapping', methods=['POST'])
 def push_mapping_route():
     try:
-        msg = merge_mapping_files() if request.path == '/merge_mapping' else push_mapping()
+        return jsonify(ok=True, msg=merge_mapping_files() if request.path == '/merge_mapping' else push_mapping())
     except subprocess.CalledProcessError as e:
-        msg = f'Push failed: {(e.stderr or e.stdout or str(e)).strip()[-500:]}'
-    return render_template_string('<meta http-equiv="refresh" content="8;url=/"><p style="font:15px system-ui">'
-                                  '{{ m }}</p><p><a href="/">Back to the batches</a></p>', m=msg)
+        return jsonify(ok=False, msg=f'Push failed: {(e.stderr or e.stdout or str(e)).strip()[-500:]}')
 
 
 if __name__ == '__main__':

@@ -46,6 +46,7 @@ REFRESH_QUEUE = os.path.join(ROOT, 'refresh_queue.json')
 # the sheet's short country names, as the mapping writes them
 COUNTRY = {'USA': 'United States', 'US': 'United States', 'UK': 'United Kingdom', 'UAE': 'United Arab Emirates',
            'Korea': 'South Korea'}
+SHEET_COUNTRY = {'United States': 'USA', 'United Kingdom': 'UK', 'United Arab Emirates': 'UAE'}  # as the sheet writes
 BLOCKED_WAIT_S = 15 * 60
 SILENT_BATCH_S = 45 * 60  # a batch silent this long is stuck (the longest analysis so far: 7 min)
 IDLE_WAIT_S = 10 * 60
@@ -197,7 +198,8 @@ def write_sheet(todo):
     for t in [t for t in todo if t['row'] is None]:  # a channel the sheet lacks: a row with all it knows
         session.post(f'{api}/A:E:append', timeout=60, params={'valueInputOption': 'USER_ENTERED',
                                                               'insertDataOption': 'INSERT_ROWS'},
-                     json={'values': [[t['url'], t['status'], t.get('country', ''), t['comment'], t['by']]]}
+                     json={'values': [[t['url'], t['status'], SHEET_COUNTRY.get(t.get('country', ''), t.get('country', '')),
+                                       t['comment'], t['by']]]}
                      ).raise_for_status()
         log(f"SHEET: added {t['url']} ({t['status']}, {t.get('country', '')}) as a new row through the Sheets API")
     todo = [t for t in todo if t['row'] is not None]

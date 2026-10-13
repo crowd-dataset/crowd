@@ -31,6 +31,12 @@ def ssh(host, command):
                           capture_output=True, text=True, check=True).stdout
 
 
+def untouched(p):
+    """Whether nobody has worked on a proposal in review: no segment decided or applied, no edit to undo, no mark."""
+    return (not p.get('undo') and not any(p.get(k) for k in ps.REVIEW_MARKS)
+            and not any(s.get('decision') or s.get('applied') for e in p.get('entries', []) for s in e['segments']))
+
+
 def merge_plan(name, remote_plan):
     """Add the worker's videos that this plan lacks (or has only as failed downloads). Returns how many."""
     path = os.path.join(rc.ROOT, name, 'plan.json')
@@ -47,6 +53,11 @@ def merge_plan(name, remote_plan):
             elif ((str(local[i].get('exclude', '')).startswith('could not analyse') or 'entries' not in local[i])
                   and 'entries' in p):
                 local[i] = p  # failed or left out here, proposed there (a rule made less strict since)
+                added += 1
+            elif p != local[i] and 'entries' in p and untouched(local[i]) and untouched(p):
+                # proposed again there (P3PHxtIMZEo: its GPS split came after the first copy); never a left-out copy
+                # over a proposal here (3QeTN5BygQE and others proposed here again were left out by the sync)
+                local[i] = p
                 added += 1
         with open(path + '.tmp', 'w') as f:
             json.dump(local, f, indent=1)
@@ -136,9 +147,12 @@ def sync(host):
     state = rc.load_state()
     for url, c in remote_state.items():
         name = c['name']
-        subprocess.run(['rsync', '-az', '--exclude', 'plan.json', '--exclude', '*.tmp',
-                        f'{host}:{REMOTE}/_output/proposals/{name}/', os.path.join(rc.ROOT, name) + '/'],
-                       check=True, capture_output=True)
+        r = subprocess.run(['rsync', '-az', '--exclude', 'plan.json', '--exclude', '*.tmp',
+                            f'{host}:{REMOTE}/_output/proposals/{name}/', os.path.join(rc.ROOT, name) + '/'],
+                           capture_output=True)
+        # 23/24: a file the worker was writing went away while copied (its batch running): the next sync has it
+        if r.returncode not in (0, 23, 24):
+            raise subprocess.CalledProcessError(r.returncode, r.args, r.stdout, r.stderr)
         plan = json.loads(ssh(host, f'cat {REMOTE}/_output/proposals/{name}/plan.json 2>/dev/null || echo "[]"'))
         added = merge_plan(name, plan)
         mine_plan = os.path.join(rc.ROOT, name, 'plan.json')
@@ -188,7 +202,13 @@ def sync(host):
         ssh(host, f'mv {REMOTE}/{rc.REFRESH_QUEUE}.tmp {REMOTE}/{rc.REFRESH_QUEUE}')
 
 
+SYNC_LOCK = '/tmp/crowd-sync.lock'  # one sync at a time: the hourly one and the review hub's button
+
+
 def main():
+    import fcntl
+    lock = open(SYNC_LOCK, 'w')
+    fcntl.flock(lock, fcntl.LOCK_EX)  # a sync already running: wait for it, then fetch what came since
     for host in WORKERS:
         try:
             sync(host)

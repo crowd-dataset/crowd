@@ -267,6 +267,34 @@ def sheet_scores(sheet_path, scenes, prefix='', bottom=False):
         shutil.rmtree(work_dir, ignore_errors=True)
 
 
+STEP_BOB_WALK, STEP_BOB_HINT = 0.75, 0.6  # step_bob: left out as a walk / a note to check
+
+
+def step_bob(path, duration, windows=6, length=15, fps=10):
+    """Share of the camera's vertical shake at a walker's step rate (1.3-2.6 Hz), the median over `windows`
+    stretches of `length` s read at `fps` (the analysis frames, 2 a second, cannot show steps): 15 walks the
+    reviewer named scored 0.54-0.92 (median 0.83), 13 approved drives 0.28-0.59 (user, 2026-10-13: "such videos have
+    shaking camera from steps", 9F8zSPj77zI). 0 when too little is read."""
+    w, h = 160, 90
+    shares = []
+    for t in np.linspace(0.15, 0.85, windows) * (duration or 0):
+        raw = subprocess.run(['ffmpeg', '-v', 'error', '-ss', f'{t:.1f}', '-t', str(length), '-i', path, '-an', '-vf',
+                              f'fps={fps},scale={w}:{h},format=gray', '-f', 'rawvideo', '-'],
+                             capture_output=True, timeout=300).stdout
+        frames = np.frombuffer(raw, np.uint8).reshape(-1, h, w).astype(np.float32)
+        if len(frames) < 50:
+            continue
+        win = cv2.createHanningWindow((w, h), cv2.CV_32F)
+        dy = np.array([cv2.phaseCorrelate(a, b, win)[0][1] for a, b in zip(frames, frames[1:])])
+        dy = dy - np.convolve(dy, np.ones(9) / 9, 'same')  # no slow drift (turns, hills)
+        power = np.abs(np.fft.rfft(dy * np.hanning(len(dy)))) ** 2
+        hz = np.fft.rfftfreq(len(dy), 1 / fps)
+        total = power[(hz >= 0.3) & (hz <= 4.5)].sum()
+        if total:
+            shares.append(power[(hz >= 1.3) & (hz <= 2.6)].sum() / total)
+    return float(np.median(shares)) if len(shares) >= 3 else 0.0
+
+
 def walking_frames(sheet_path):
     """How many of a contact sheet's frames CLIP sees as taken on foot (a sidewalk, a park path, a shop, a trail)
     rather than from a car; 0 without CLIP. Of 2,380 approved videos one had 5 or more (ifgeBqX6HXI, mostly a
@@ -1352,11 +1380,12 @@ def trim_lead_in(p, lead):
 
 
 def footage_skip(sig):
-    """Where the video skips footage (an edit cut), as m:ss, else None. Waiting at intersections is what gets
-    cut most and what the dataset needs, so such a video is left out whole."""
+    """Where the video skips footage (edit cuts), as "m:ss, m:ss and m:ss", else None: every cut, not only the
+    first (R3hofhG0UYI: 10:53, 13:28, 14:25 and 19:32; user, 2026-10-12), so each can be checked for a missing
+    wait at a light."""
     end = len(sig['motion']) / FPS
-    t = next((t for t in skip_times(sig) if SKIP_INTRO_S < t < end - SKIP_OUTRO_S), None)
-    return None if t is None else f'{int(t) // 60}:{int(t) % 60:02d}'
+    ts = [f'{int(t) // 60}:{int(t) % 60:02d}' for t in skip_times(sig) if SKIP_INTRO_S < t < end - SKIP_OUTRO_S]
+    return None if not ts else ts[0] if len(ts) == 1 else ', '.join(ts[:-1]) + ' and ' + ts[-1]
 
 
 # where the first frames are read for a GPS overlay; without one there, none is read (stream frames misread
@@ -1463,7 +1492,9 @@ def _stream(video_id):
 
 # a caption on an opening montage that says what it is (hv7ZXPUOeZ0: "Video Highlights" over 0-22 s; OCR reads it
 # rough, "Higheg ht", so a part of the word does)
-MONTAGE_LABEL = re.compile(r'high\w*ght|highl|in this video|coming up|preview|teaser|trailer|recap|best moments', re.I)
+# ... or "Scenes from the Drive" over MilesofAmbience's openings (TzRtc0j1sz8 until 0:30)
+MONTAGE_LABEL = re.compile(r'high\w*ght|highl|in this video|coming up|preview|teaser|trailer|recap|best moments|'
+                           r'scenes? from|sneak peek|\bin ?s?th?is\b|this ?vide', re.I)  # OCR's "In tis", "insthis"
 
 
 def montage_label(video_id, end, frames=4):
@@ -1475,6 +1506,138 @@ def montage_label(video_id, end, frames=4):
     except (RuntimeError, subprocess.TimeoutExpired, KeyError, ValueError) as e:
         print(f'  montage caption not read: {e}', flush=True)
         return False
+
+
+CAPTION_STEP_S, CAPTION_MAX_S = 5, 240  # the opening read every this many seconds, at most this far in
+CAPTION_FIRST_S = 30  # no caption read by then: none (PF094oAMKvU's misses its first frames, read at 0:33)
+# the corners where a caption sits, small (_DpauJdKxV0: "In this video..." in italics at the bottom left, which a
+# read of the whole frame misses over a busy street): each read alone, enlarged, its white letters black on white
+CAPTION_CORNERS = ('iw*0.25:ih*0.12:0:ih*0.86', 'iw*0.25:ih*0.12:iw*0.75:ih*0.86', 'iw*0.25:ih*0.12:0:ih*0.02',
+                   'iw*0.25:ih*0.12:iw*0.75:ih*0.02')
+
+
+def _caption_text(stream, t):
+    """_frame_text of the frame at t plus what tesseract reads in each of CAPTION_CORNERS."""
+    url, headers = stream
+    png = subprocess.run(['ffmpeg', '-v', 'error', '-headers', headers, '-ss', str(t), '-i', url, '-frames:v', '1',
+                          '-f', 'image2pipe', '-vcodec', 'png', '-'], capture_output=True, timeout=120).stdout
+    if not png:
+        return ''
+    text = subprocess.run(['tesseract', 'stdin', 'stdout', '--psm', '11'], input=png, capture_output=True,
+                          timeout=120).stdout.decode(errors='ignore')
+    for crop in CAPTION_CORNERS:
+        img = subprocess.run(['ffmpeg', '-v', 'error', '-i', '-', '-vf',
+                              f"crop={crop},scale=iw*4:-2,format=gray,lut=y='if(gt(val\\,200)\\,0\\,255)'",
+                              '-f', 'image2pipe', '-vcodec', 'png', '-'], input=png, capture_output=True,
+                             timeout=60).stdout
+        if img:
+            text += '\n' + subprocess.run(['tesseract', 'stdin', 'stdout', '--psm', '7'], input=img,
+                                           capture_output=True, timeout=60).stdout.decode(errors='ignore')
+    return text
+
+
+# EasyOCR, in an environment of its own (its packages clash with this one's): text over video, which tesseract
+# reads badly ("CAPITAL OF CALIFORNIA / Sacramento" in QcYf2VZqS-Y: tesseract nothing, EasyOCR both at 0:26)
+OCR_PYTHON = next((x for x in (os.path.expanduser('~/ocr-venv/bin/python'),
+                               os.path.expanduser('~/micromamba/envs/ocr/bin/python')) if os.path.exists(x)), None)
+OCR_CODE = """
+import json, sys, easyocr, torch
+reader = easyocr.Reader(['en'], gpu=torch.cuda.is_available(), verbose=False)
+for path in sys.argv[1:]:
+    print(json.dumps([text for _, text, conf in reader.readtext(path) if conf >= 0.4]), flush=True)
+"""
+
+
+def opening_texts(video_id, start=1, upto=61, step=None):
+    """{second: [texts]} EasyOCR reads in the frames of the video's 720p stream every `step` (CAPTION_STEP_S)
+    seconds from `start` to `upto`; None without the OCR environment or the stream."""
+    if not OCR_PYTHON:
+        return None
+    step = step or CAPTION_STEP_S
+    work_dir = tempfile.mkdtemp(prefix='crowd_ocr_')
+    try:
+        url, headers = _stream(video_id)
+        shots = []
+        for t in np.arange(start, upto, step):
+            shot = os.path.join(work_dir, f'{t:.0f}.png')
+            subprocess.run(['ffmpeg', '-v', 'error', '-y', '-headers', headers, '-ss', f'{t:.1f}', '-i', url,
+                            '-frames:v', '1', shot], capture_output=True, timeout=120)
+            if os.path.exists(shot):
+                shots.append((float(t), shot))
+        if not shots:
+            return None
+        r = subprocess.run([OCR_PYTHON, '-c', OCR_CODE, *(x for _, x in shots)], capture_output=True, text=True,
+                           timeout=1800)
+        lines = [json.loads(x) for x in r.stdout.splitlines() if x.startswith('[')]
+        if r.returncode or len(lines) != len(shots):
+            print(f'  EasyOCR failed: {r.stderr.strip()[-300:]}', flush=True)
+            return None
+        return {t: texts for (t, _), texts in zip(shots, lines)}
+    except (RuntimeError, subprocess.TimeoutExpired, KeyError, ValueError) as e:
+        print(f'  opening not read: {e}', flush=True)
+        return None
+    finally:
+        shutil.rmtree(work_dir, ignore_errors=True)
+
+
+def screen_locality(texts, df):
+    """([locality, state, country], second) of the mapping locality a label in the opening names most often
+    (QcYf2VZqS-Y: "Sacramento" at 0:26; _DpauJdKxV0: "LOS ANGELES 4K"), else None."""
+    seen = {}
+    for t in sorted(texts or {}):
+        if (loc := _title_locality(' '.join(texts[t]), df)):
+            seen.setdefault(tuple(loc), []).append(t)
+    if not seen:
+        return None
+    loc, times = max(seen.items(), key=lambda kv: len(kv[1]))
+    return list(loc), times[0]
+
+
+def caption_end(video_id, sig, texts=None):
+    """Seconds where an opening montage captioned as one ("In this video", "Highlights", "Scenes from the Drive":
+    MONTAGE_LABEL) ends, else 0: OCR on a frame every CAPTION_STEP_S from 3 s while the caption shows, then the
+    first strong jump (scene score 0.1) after its last frame (_caption_text; three misses in a row end it). PF094oAMKvU joins its highlights with dissolves, so
+    montage_end finds no cuts, but "In this video" shows until the drive starts at 1:30.5 (user, 2026-10-13). No
+    caption in the first CAPTION_FIRST_S: no montage (six reads per video)."""
+    if texts:  # EasyOCR's reads (opening_texts), read on while the caption still shows at their end
+        hits = [t for t in sorted(texts) if MONTAGE_LABEL.search(' '.join(texts[t]))]
+        if not hits or hits[0] > CAPTION_FIRST_S:
+            return 0
+        last = hits[0]
+        for t in hits[1:]:
+            if t - last > 3 * CAPTION_STEP_S:
+                break
+            last = t
+        if last >= max(texts) - CAPTION_STEP_S and (more := opening_texts(video_id, max(texts) + CAPTION_STEP_S,
+                                                                          CAPTION_MAX_S)):
+            for t in sorted(more):
+                if MONTAGE_LABEL.search(' '.join(more[t])):
+                    last = t
+                elif t - last > 3 * CAPTION_STEP_S:
+                    break
+        ev = np.asarray(sig.get('skips', np.zeros((0, 3)))).reshape(-1, 3)
+        jumps = [t for t, score, _ in ev if last < t <= last + CAPTION_STEP_S + 5 and score >= 0.1]
+        return int(np.ceil(jumps[0])) if jumps else int(last + CAPTION_STEP_S / 2)
+    try:
+        stream = _stream(video_id)
+        # OCR reads the caption on some frames only (PF094oAMKvU: "In tis wu ye" at 0:03, nothing at 0:13,
+        # "In this video..." at 0:33 and 1:25): it may miss two frames in a row
+        last, misses = None, 0
+        for t in np.arange(1, CAPTION_MAX_S, CAPTION_STEP_S):
+            if MONTAGE_LABEL.search(_caption_text(stream, float(t))):
+                last, misses = float(t), 0
+                continue
+            misses += 1
+            if (last is None and t >= CAPTION_FIRST_S) or (last is not None and misses >= 3):
+                break
+    except (RuntimeError, subprocess.TimeoutExpired, KeyError, ValueError) as e:
+        print(f'  opening caption not read: {e}', flush=True)
+        return 0
+    if last is None:
+        return 0
+    ev = np.asarray(sig.get('skips', np.zeros((0, 3)))).reshape(-1, 3)
+    jumps = [t for t, score, _ in ev if last < t <= last + CAPTION_STEP_S + 5 and score >= 0.1]
+    return int(np.ceil(jumps[0])) if jumps else int(last + CAPTION_STEP_S / 2)
 
 
 CLOCK_JUMP_S = 6  # the camera's clock jumping this far ahead of the video for good: footage was cut out
@@ -1602,8 +1765,12 @@ def analyse_video(video_id, out_dir, meta=None):
         sig['intro_end'] = np.array(clip_intro(path, meta.get('duration'), work_dir) or 0, float)
         sig['outro_start'] = np.array(clip_outro(path, meta.get('duration'), work_dir) or 0, float)
         sig['chapter_cuts'] = np.array(chapter_cuts(meta), float).reshape(-1, 2)
+        sig['step_bob'] = np.array(step_bob(path, meta.get('duration')), float)
         end = montage_end(sig)
-        sig['labelled_montage'] = np.array(end if end is not None and montage_label(video_id, end) else 0, float)
+        texts = opening_texts(video_id)  # read once: highlight captions and town labels
+        sig['screen_text'] = np.array(json.dumps({f'{t:.0f}': x for t, x in (texts or {}).items()}))
+        sig['labelled_montage'] = np.array(caption_end(video_id, sig, texts) or (
+            end if end is not None and montage_label(video_id, end) else 0), float)
         gps, clock = gps_track(video_id, meta['duration'])
         if gps:
             sig['gps'] = np.array(gps, float)
@@ -1642,6 +1809,10 @@ HIGHWAY_TITLE = re.compile(r'(?i:road ?trip|\bhighways?\b|\bfreeways?\b|\bhwy\b|
 NOT_DRIVING_TITLE = re.compile(r'\b(?:walk(?:s|ing)?|wa(?:king|ling) tour|walk-?through|inside|stroll(?:ing)?'
                                r'|hik(?:e|ing)|on foot'
                                r'|(?:boat|ferry) ride'
+                               # a passenger on a bus, high up and often sideways (qEhvYWiNsX0: "Sight Seeing In Toronto
+                               # ... On A Bus"; of 9 such titles reviewed or left out, none approved; user, 2026-10-13)
+                               r'|sight ?-?seeing|tour bus|double[ -]?decker|hop[ -]on|open[ -]top|on (?:a|the) (?:city )?bus'
+                               r'|bus (?:tour|ride)'
                                # trains and the like (VL7X5yOpuk0: "Riding Philadelphia's Market-Frankford Line";
                                # 2ZujrrW_EzY: "The Slow Train Through Rural Japan"; no approved title says train);
                                # "Metro" alone is mostly a metro area ("Omaha Metro Tour")
@@ -2007,6 +2178,11 @@ CHAPTER_END = re.compile(r'^\W*(.+?)\W*(?<![\d:])(?:(\d{1,2}):)?(\d{1,2}):(\d{2}
 # "Drive Begins"); none of the approved footage lies in one, 897 rejected seconds do. "Intro" and "Outro" chapters
 # are often driving (MqE-w-gEbM8: a 14-minute "Intro"), so they stay
 NOT_DRIVE_CHAPTER = re.compile(r'\b(?:highlights?|preview|teaser|trailer|recap|best of)\b', re.I)
+# an opening chapter of scenes from the drive ahead (MilesofAmbience's "Scenes from the Drive": 10 of 11 at 0:00 last
+# 13-43 s with 12 approved seconds inside; UCWoo's "Sneak Peek" 0-152 s, none approved); a longer one runs on into
+# the drive (TzRtc0j1sz8: 0-13:57, the scenes only until 0:30), so only one of PREVIEW_CHAPTER_S or less is cut
+PREVIEW_CHAPTER = re.compile(r'\b(?:scenes? from the (?:drive|ride|trip)|sneak peek)\b', re.I)
+PREVIEW_CHAPTER_S = 180
 # a walk in a chapter's name: "Walk Begins" walks on until a chapter says drive again (5-9vyLU_tDo, AbaoAmbience's
 # night walks: 12 videos, none approved); "Walking through the Farmers Market" is that chapter (s_iGsy8C4O8)
 WALK_CHAPTER = re.compile(r'\bwalk(?:ing)?\b(?! of fame)', re.I)
@@ -2014,10 +2190,13 @@ WALK_START = re.compile(r'\b(?:walk (?:begins|starts|start)|main walk|start(?:in
 
 
 def chapter_cuts(meta):
-    """[(start s, end s)] of the chapters NOT_DRIVE_CHAPTER names, and of walks by WALK_CHAPTER."""
+    """[(start s, end s)] of the chapters NOT_DRIVE_CHAPTER names, a short opening PREVIEW_CHAPTER, and of walks by
+    WALK_CHAPTER."""
     chapters = video_chapters(meta)
     ends = [t for t, _ in chapters[1:]] + [meta.get('duration') or 0]
     cuts = [(t, end) for (t, name), end in zip(chapters, ends) if NOT_DRIVE_CHAPTER.search(name) and end > t]
+    cuts += [(t, end) for (t, name), end in zip(chapters, ends)
+             if t == 0 and PREVIEW_CHAPTER.search(name) and 0 < end <= PREVIEW_CHAPTER_S]
     for i, ((t, name), end) in enumerate(zip(chapters, ends)):
         if WALK_START.search(name):  # until a chapter says drive
             end = next((u for u, n in chapters[i + 1:] if DRIVING_TITLE.search(n)), meta.get('duration') or end)
@@ -2171,7 +2350,9 @@ NOT_PLACE = {'around', 'across', 'through', 'along', 'near', 'inside',
              'rain', 'raining', 'storm', 'thunderstorm', 'snow', 'snowfall', 'hail', 'flood', 'flooding', 'flash',
              'warning', 'issued', 'fireworks', 'never', 'expected', 'changed', 'border',
              # "Let's" in a description is no San Diego (CGwuQYmG0JY)
-             'let', 'lets', "let's", 'let’s', 'join', 'watch', 'enjoy', 'come'} | DEMONYMS
+             'let', 'lets', "let's", 'let’s', 'join', 'watch', 'enjoy', 'come',
+             # "| No Music" ends every title of some channels: "Music, California" was San Diego (0iaHhzw0VhQ)
+             'music', 'commentary', 'narration', 'talking'} | DEMONYMS
 PLACE_JOINERS = {'al', 'el', 'de', 'del', 'la', 'le', 'of', 'the', 'bin', 'bu', 'van', 'von', 'da', 'do', 'dos'}
 
 
@@ -2763,9 +2944,11 @@ def _metro_city(town, at, rows, state=None):
 _END = r"\s*(?:,|\||\(|\s-\s|\s–\s|\bin\b|\ben\b|\bvia\b|\bpor\b|$)"
 FROM_TO = (re.compile(r"\bfrom\s+(.+?)\s+to\s+(.+?)" + _END, re.I),
            # without "from": "Driving Lincoln to Hickman, Nebraska" (yQbYiSKgB-I), "Ashland to Waterloo Drive Tour"
-           re.compile(r"\b(?:driv(?:e|ing)|cruis(?:e|ing)|road ?trip)\s+(?!(?:to|back|home|down|up|through|thru|"
+           # ... also "4K POV Drive: Fremont to Downtown Omaha, Nebraska" (iSMg2dH2uuA: a colon after the word)
+           re.compile(r"\b(?:driv(?:e|ing)|cruis(?:e|ing)|road ?trip)\s*[:|–-]?\s+(?!(?:to|back|home|down|up|through|thru|"
                       r"around|in|into|along|across|past|by|over|tour|on|at|the|my|our|a|out|with|all)\b)"
-                      r"([A-Z][\w'’.-]*(?: [A-Z][\w'’.-]*){0,3})\s+to\s+(.+?)" + _END, re.I),
+                      # ... with a note on the start in brackets: "Kansas City (Legends Outlets) to Lawrence, KS"
+                      r"([A-Z][\w'’.-]*(?: [A-Z][\w'’.-]*){0,3})(?:\s*\([^)]*\))?\s+to\s+(.+?)" + _END, re.I),
            re.compile(r"^(?!(?:Welcome|Dusk|Dawn|Day|Night|Sunset|Sunrise|Morning|Evening|Sea)\b)"
                       r"([A-Z][\w'’.-]*(?: [A-Z][\w'’.-]*){0,3})\s+to\s+([A-Z][\w'’.-]*(?: [A-Z][\w'’.-]*){0,3})"
                       r"\s+(?i:drive|driving|road ?trip|cruise)\b"),
@@ -2833,6 +3016,11 @@ def drive_ends(title, df, home=None):
     first = re.sub(r"^.+?\s+(?:in|en)\s+(?:the\s+)?(?=[A-Z])", '', first)
     # "el Puerto de San Juan", "Centro de Adjuntas": a sight or part of a town is looked for as that town
     first, last = (re.sub(r"^(?:el |la )?\S.*?\s+(?:de|del)\s+(?=[A-ZÀ-Þ])", '', x) for x in (first, last))
+    # a note in brackets is no part of the name ("Kansas City (Legends Outlets)": wAseuJ91-S4)
+    first, last = (re.sub(r'\s*\([^)]*\)', '', x).strip() for x in (first, last))
+    # "to Downtown Omaha" is to Omaha: OpenStreetMap has no place of that name (iSMg2dH2uuA)
+    first, last = (re.sub(r'^(?:downtown|uptown|midtown|central|historic|old town)\s+(?=[A-Z])', '', x, flags=re.I)
+                   for x in (first, last))
     # a country the title names holds both ends: "Carolina a … San Juan, Puerto Rico" is not a Carolina in the US
     only = {code for code, name in countries.items() if name in title_countries(title)}
     # "from Newburgh to Brewster, New York": both ends in the states the title names (Maine has both too); with
@@ -2875,6 +3063,17 @@ def drive_ends(title, df, home=None):
         a, b = min(pairs, key=lambda xy: _km(xy[0][4], xy[0][5], xy[1][4], xy[1][5]))
     elif named:  # one end only: it must be in the state named
         a, b = (x if x and x[1] in named else None for x in (a, b))
+    # a major place by its name alone anchors the drive (x_M1WdCQ__8: "Mulholland to Hollywood" is no drive from a
+    # Mulholland by Dublin to a Hollywood by Tracy: Hollywood is Los Angeles, and Mulholland Drive a road there that
+    # OpenStreetMap gives no town for); the other end is looked for near it, else the drive is not split; not for a
+    # famous namesake far from the channel (Paris, France for a Texas channel's Paris)
+    for i, phrase in enumerate((first, last)) if not named else ():
+        chosen, big = (a, b)[i], place(phrase)
+        if (big and big[6] >= MAJOR_PLACE and (not chosen or _km(chosen[4], chosen[5], big[4], big[5]) > 30)
+                and not (home and _km(home[3], home[4], big[4], big[5]) > ABROAD_KM)):
+            other = place((last, first)[i], big[4:6], 60)
+            a, b = (big, other) if i == 0 else (other, big)
+            break
     end = b and _hit_locality(b, df, countries)
     # "…to West Farms in the Bronx", "…hasta el Barrio Portugues en Adjuntas": the drive ends in that place, and a
     # namesake of the end elsewhere (another Barrio Portugués) is not it
@@ -3040,6 +3239,7 @@ def split_route(p, df, home=None):
     # the video is the drive from A: footage left out at its start (a dark or parked opening) is on the way too
     t0 = 0
     stretches = [(t0 + a * (t1 - t0), t0 + b * (t1 - t0), loc) for a, b, loc in shares]
+    stretches = ends_in_towns(stretches, segs, p.get('title'), df, home)
     p['entries'] = split_by_stretches(segs, stretches)
     if not p['entries']:
         p.pop('entries')
@@ -3051,6 +3251,29 @@ def split_route(p, df, home=None):
                                               f'{int(a) // 60}:{int(a) % 60:02d}'
                                               for a, _, loc in stretches)).lstrip('; ')
     return True
+
+
+def ends_in_towns(stretches, segs, title, df, home=None):
+    """The stretches with the proposal's first segment in the drive's start town A and its last in the end town B
+    where the route has them as rural road (wAseuJ91-S4, "Kansas City (Legends Outlets) to Lawrence, KS": the
+    outlets lie beyond the disc _urban gives Kansas City; the first segment, 0:01-6:55 after the rural and highway
+    cuts, is the reviewer's Kansas City, the last, 23:02-35:02, their Lawrence; user, 2026-10-13)."""
+    ends = drive_ends(title, df, home)
+    if not ends or not segs:
+        return stretches
+    (_, start), (_, end) = ends
+    first, last = min(segs, key=lambda x: x['start']), max(segs, key=lambda x: x['end'])
+
+    def loc_at(t):
+        return next((loc for a, b, loc in stretches if a <= t < b), stretches[-1][2])
+    out = list(stretches)
+    if start and loc_at(first['start']) is None:
+        cut = first['end']
+        out = [(0, cut, start)] + [(max(a, cut), b, loc) for a, b, loc in out if b > cut]
+    if end and loc_at(max(last['end'] - 1, 0)) is None and last is not first:
+        cut = last['start']
+        out = [(a, min(b, cut), loc) for a, b, loc in out if a < cut] + [(cut, float('inf'), end)]
+    return out
 
 
 def _locality_anchor(loc, df):
@@ -3124,6 +3347,7 @@ def _km(lat1, lon1, lat2, lon2):
     return float(6371 * 2 * np.arcsin(np.sqrt(a)))
 
 
+FAR_KM = 500  # a known place named in a description this far from the channel's home: its namesake near home?
 ABROAD_KM = 1000  # a title place in another country counts only this close to the channel's home
 
 
@@ -3272,6 +3496,14 @@ def locate_now(p, df, home, sig_path=None, meta=None, boilerplate=frozenset()):
                 e['locality'], e['guessed'] = list(loc), True
                 p['note'] = f"{p['note']}; locality {loc[0]} from where '{phrase}' is".lstrip('; ')
     es = p.get('entries') or []
+    if meta and len(es) == 1 and not es[0].get('locality') and not p.get('route') and sig_path \
+            and 'screen_text' in (sig_files := np.load(sig_path)).files:
+        # a town's name on the screen in the opening (QcYf2VZqS-Y: "Sacramento" at 0:26; user, 2026-10-13)
+        texts = {float(t): x for t, x in json.loads(str(sig_files['screen_text'])).items()}
+        if (screen := screen_locality(texts, df)):
+            es[0]['locality'], es[0]['guessed'] = screen[0], True
+            p['note'] = (f"{p['note']}; locality {screen[0][0]} from a label on the screen at "
+                         f"{int(screen[1]) // 60}:{int(screen[1]) % 60:02d}").lstrip('; ')
     if meta and len(es) == 1 and not es[0].get('locality') and not p.get('route'):
         e = es[0]
         near_home = (lambda name: town_near(name, home, df)) if home else None
@@ -3284,10 +3516,17 @@ def locate_now(p, df, home, sig_path=None, meta=None, boilerplate=frozenset()):
             p['note'] = (f"{p['note']}; localities from the chapters: "
                          + ', '.join(f'{loc[0]} from {a // 60}:{a % 60:02d}' for a, _, loc in stretches)).lstrip('; ')
         elif found := description_locality(meta.get('description'), df, boilerplate):
+            # far from the channel's home, the place of that name near home is meant (x_M1WdCQ__8: "Hollywood" in a
+            # Los Angeles channel's description is no Hollywood, FL)
+            row = add_video.get_existing_locality_row(df, *found)[1]
+            if (home and row is not None and _km(home[3], home[4], float(row['lat']), float(row['lon'])) > FAR_KM
+                    and (near := place_locality([found[0]], df, home)) and near[0] != list(found)):
+                found = near[0]
             e['locality'], e['guessed'] = found, True
             p['note'] = f"{p['note']}; locality {found[0]} from the description".lstrip('; ')
         es = p.get('entries') or []
-    if sig_path and len(es) == 1 and es[0].get('locality') and not p.get('route'):
+    # not after a GPS split that left one town (kddS8sGShKA: rural until 95:30, then Laughlin): the GPS decides
+    if sig_path and len(es) == 1 and es[0].get('locality') and not p.get('route') and not es[0].get('gps'):
         es[0]['segments'] = propose(dict(np.load(sig_path)), ONE_PLACE)[0]
         p['note'] = re.sub(r'; (?:rural|highway) driving \d+-\d+s', '', p['note'])
 
@@ -3510,16 +3749,20 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
                 reason = f'the camera faces the driver (a big face in {n_driver} of {len(frames)} sampled frames)'
             elif (n_walk := walking_frames(os.path.join(out_dir, f'{vid}.jpg'))) >= WALK_SHEET_FRAMES:
                 reason = f'a walk, not a drive ({n_walk} of {len(frames)} sampled frames look taken on foot)'
+            elif float(np.load(sig_path).get('step_bob', 0)) >= STEP_BOB_WALK:
+                reason = (f"a walk, not a drive: the camera bobs at a walker's step rate "
+                          f"({float(np.load(sig_path)['step_bob']):.0%} of its shake)")
             elif dashboard_view(os.path.join(out_dir, f'{vid}.jpg')):
                 reason = 'filmed from inside the car: the dashboard fills the picture, not a dashcam view'
-            elif fast := overlay_speedup(dict(np.load(sig_path))) or cross_speedup(dict(np.load(sig_path))):
+            elif fast := overlay_speedup(dict(np.load(sig_path))):  # the cross traffic is a note: see below
                 reason = fast
             else:
                 reason = footage_problem(dict(np.load(sig_path)))
             # an edit cut is offered with a note to check, not left out (user, 2026-10-11: gaX_-_Nna9k's cuts are
             # legit and miss no intersection); ten in a row still say the channel edits its drives
             if at := footage_skip(dict(np.load(sig_path))):
-                skip_note = f'the video skips footage at {at} (an edit cut): check that no wait at a light is missing'
+                skip_note = (f'the video skips footage at {at} ({"edit cuts" if " and " in at else "an edit cut"}): '
+                             'check that no wait at a light is missing')
             elif at := clock_jump(dict(np.load(sig_path))):
                 skip_note = f'the video skips footage at {at} (the time stamp in the picture jumps): check'
             else:
@@ -3542,6 +3785,12 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
             segments, notes = propose(dict(np.load(sig_path)))
             if skip_note:
                 notes.insert(0, skip_note)
+            if (bob := float(np.load(sig_path).get('step_bob', 0))) >= STEP_BOB_HINT:
+                notes.insert(0, f"the camera bobs like a walker's steps ({bob:.0%} of its shake): a walk? check")
+            # fast cross traffic at a wait is a hint, no proof: a wait beside a fast road looks the same (3QeTN5BygQE:
+            # 100 km/h at 17:02, not sped up; approved waits cross at medians of up to 73 km/h; user, 2026-10-13)
+            if (fast := cross_speedup(dict(np.load(sig_path)))):
+                notes.insert(0, f'possibly {fast}: check, it may be a fast road beside the wait')
             # a highway in the title is analysed, not left out: such drives pass through towns on the way, which
             # the rural and highway checks and a GPS overlay find (user, 2026-10-11: uVHGEdTyAXk, Galt to Tulare)
             if hit := HIGHWAY_TITLE.search(title_text(meta['title'])):
@@ -3732,7 +3981,7 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
     for p in new:
         es, sig_path = p.get('entries', []), os.path.join(out_dir, f"{p['video']}_signals.npz")
         if (len(es) == 1 and es[0].get('locality') and not p.get('route') and os.path.exists(sig_path)
-                and not any(s.get('decision') or s.get('applied') for s in es[0]['segments'])):
+                and not es[0].get('gps') and not any(s.get('decision') or s.get('applied') for s in es[0]['segments'])):
             es[0]['segments'] = propose(dict(np.load(sig_path)), ONE_PLACE)[0]
             p['note'] = re.sub(r'; (?:rural|highway) driving \d+-\d+s', '', p.get('note') or '')
     for p in new:  # chapters whose places turned out the same ("Hollywood", "Los Angeles") are one group
@@ -4091,9 +4340,13 @@ function onYouTubeIframeAPIReady() {
   ytPlayer = new YT.Player('player', { width: 480, height: 270, playerVars: { autoplay: 1, playsinline: 1, rel: 0 },
     events: { onReady: () => { ytReady = true; if (pending) play(...pending); } } });
 }
+// what play() asked for, until the player plays it: YouTube sometimes leaves a video it was switched to unstarted
+// (state -1) at the right time (user, 2026-10-12: "the player gets stuck"; 2 of 3 quick switches in a test)
+let want = null;
 function play(video, t) {
   if (!ytReady) { pending = [video, t]; return; }
   pending = null;
+  want = { video, t, at: Date.now(), tries: 0 };
   ytPlayer.mute();
   // the video already in the player: jump there (reloading it can start it at 0:00 instead)
   if (playingVideo() === video) { ytPlayer.seekTo(Math.max(0, Math.floor(t)), true); ytPlayer.playVideo(); return; }
@@ -4136,6 +4389,23 @@ function keyRow() {
 }
 setInterval(() => {
   if (!ytReady) return;
+  if (want) {  // a switch not playing where asked after 2 s: seek and start it; after 6 s: load it again (3 tries)
+    const state = ytPlayer.getPlayerState(), waited = Date.now() - want.at;
+    const right = playingVideo() === want.video
+      && Math.abs(ytPlayer.getCurrentTime() - want.t) <= 3 + waited / 1000;  // there, or played on from there
+    if (state === YT.PlayerState.PLAYING && right) want = null;
+    else if (want.tries >= 3) want = null;
+    else if (waited > 6000) {
+      ytPlayer.loadVideoById({ videoId: want.video, startSeconds: Math.max(0, Math.floor(want.t)) });
+      want = { ...want, at: Date.now(), tries: want.tries + 1, nudged: false };
+    } else if (waited > 2000 && !want.nudged && state !== YT.PlayerState.BUFFERING) {
+      // a quick later switch can be lost while the one before still loads, and YouTube may leave it unstarted
+      // or paused: once, go where asked and play
+      if (playingVideo() === want.video) { ytPlayer.seekTo(Math.max(0, Math.floor(want.t)), true); ytPlayer.playVideo(); }
+      else ytPlayer.loadVideoById({ videoId: want.video, startSeconds: Math.max(0, Math.floor(want.t)) });
+      want.nudged = true;
+    }
+  }
   document.getElementById('clock').textContent = fmt(ytPlayer.getCurrentTime() || 0);
   // playing a left-out stretch between two segments: the line moves to that gap, in orange
   const t = ytPlayer.getCurrentTime(), video = playingVideo();
@@ -4724,6 +4994,9 @@ def review(plan_path, port=None):
         # approved but held back for want of a locality: shown until it is set, or Apply can never add them
         open_videos |= {p['video'] for p in plan for e in p.get('entries', []) if not e.get('locality')
                         and any(s.get('decision') == 'approve' and not s.get('applied') for s in e['segments'])}
+        # a locality group just added, with no segment yet: the reviewer is adding to it (a video whose segments were
+        # all decided vanished on "+ add a locality": 5f3r-Q3Wtrc, vx4nUURTgHA; user, 2026-10-13)
+        open_videos |= {p['video'] for p in plan for e in p.get('entries', []) if not e['segments']}
         approved_hidden = sum(s.get('decision') == 'approve' and not s.get('applied')
                               for v, ss in segs.items() if v not in open_videos for s in ss)
         descriptions = {v: describe(v) for v in open_videos}
