@@ -32,7 +32,8 @@ app = Flask(__name__)
 servers = {}  # channel name -> (review process, its port)
 
 PAGE = """<!doctype html><html><head><meta charset="utf-8"><title>Batches to review</title>
-<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🚙</text></svg>">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22>
+<text y=%22.9em%22 font-size=%2290%22>🚙</text></svg>">
 <meta http-equiv="refresh" content="3600">
 <style>
 body{font:15px system-ui,sans-serif;margin:24px;max-width:760px;color:#222}
@@ -42,16 +43,19 @@ a.b:hover{background:#f3f6ff;border-color:#68f}
 .n{font-weight:600}.s{color:#666}.done{color:#999}
 p.ok{color:#888;margin:2px 0;font-size:13px}p.bad{color:#b00020;font-weight:600;margin:4px 0}
 .acts{display:flex;gap:8px;margin-top:12px}
-button.g{flex:1;padding:10px 8px;font-size:14px;border:0;border-radius:4px;background:#007bff;color:#fff;cursor:pointer;
+button.g{flex:1;padding:10px 8px;font-size:14px;border:0;border-radius:4px;background:#007bff;
+ color:#fff;cursor:pointer;
  white-space:nowrap}
 button.g:disabled{background:#9bb;cursor:wait}
 #pop{position:fixed;left:50%;top:20px;transform:translateX(-50%);max-width:640px;padding:14px 40px 14px 18px;
- border-radius:8px;background:#1e7e34;color:#fff;box-shadow:0 4px 18px rgba(0,0,0,.25);font-size:15px;display:none;z-index:9}
+ border-radius:8px;background:#1e7e34;color:#fff;box-shadow:0 4px 18px rgba(0,0,0,.25);
+ font-size:15px;display:none;z-index:9}
 #pop.bad{background:#b00020}
 #pop button{position:absolute;right:8px;top:8px;border:0;background:none;color:#fff;font-size:18px;cursor:pointer}
 </style></head><body>
 <h2>Batches to review <span class="s">({{ batches|sum(attribute="waiting") }} videos)</span></h2>
-<p class="ok"><a href="#" onclick="location.port=8771;return false">Pipeline status</a>: what each worker does, queues, channels</p>
+<p class="ok"><a href="#" onclick="location.port=8771;return false">Pipeline status</a>:
+ what each worker does, queues, channels</p>
 {% for w in health %}<p class="{{ 'ok' if w.ok else 'bad' }}">{{ w.host }}: {{ w.what }}</p>{% endfor %}
 {% for b in batches %}
 <a class="b" href="/open/{{ b.name }}" target="_blank"><span><span class="n">{{ b.name }}</span>
@@ -61,14 +65,19 @@ button.g:disabled{background:#9bb;cursor:wait}
 {% if done %}<p class="done">All decided: {{ done|join(', ') }}</p>{% endif %}
 <div class="acts">
 <button class="g" title="commit mapping.csv as it is now and push it to GitHub"
- onclick="act(this, '/push_mapping', 'Commit mapping.csv as it is now and push it to GitHub?')">Push mapping to GitHub</button>
-<button class="g" title="add the new videos of the mapping-NAME.csv files on GitHub to mapping.csv, make those files copies of it and push all"
- onclick="act(this, '/merge_mapping', 'Add the new videos of the mapping-NAME.csv files on GitHub to mapping.csv, make those files copies of it and push all?')"
+ onclick="act(this, '/push_mapping', 'Commit mapping.csv as it is now and push it to GitHub?')"
+>Push mapping to GitHub</button>
+<button class="g"
+ title="add the new videos of the mapping-NAME.csv files on GitHub to mapping.csv,
+ make those files copies of it and push all"
+ onclick="act(this, '/merge_mapping', 'Add the new videos of the mapping-NAME.csv files on GitHub to mapping.csv, ' +
+  'make those files copies of it and push all?')"
  >Merge mapping-NAME &amp; push</button>
 <button class="g" title="bring the workers' new proposals here now, instead of waiting for the hourly sync"
  onclick="act(this, '/fetch_batches')">Fetch new batches</button>
 </div>
-<div id="pop"><span id="popmsg"></span><button onclick="this.parentNode.style.display='none'" title="close">&times;</button></div>
+<div id="pop"><span id="popmsg"></span>
+<button onclick="this.parentNode.style.display='none'" title="close">&times;</button></div>
 <script>
 // the buttons work in the background and say how it went in a popup here (user, 2026-10-13)
 async function act(btn, url, question) {
@@ -135,7 +144,8 @@ def open_batch(name):
         proc = subprocess.Popen([sys.executable, '-c', code])
         servers[name] = proc, port
         return render_template_string(  # give the server a moment to start
-            '<meta http-equiv="refresh" content="3;url=http://{{h}}:{{p}}">Starting the review page…', p=port, h=here())
+            '<meta http-equiv="refresh" content="3;url=http://{{h}}:{{p}}">Starting the review page…',
+            p=port, h=here())
     return redirect(f'http://{here()}:{port}')
 
 

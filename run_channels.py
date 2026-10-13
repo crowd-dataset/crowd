@@ -198,7 +198,8 @@ def write_sheet(todo):
     for t in [t for t in todo if t['row'] is None]:  # a channel the sheet lacks: a row with all it knows
         session.post(f'{api}/A:E:append', timeout=60, params={'valueInputOption': 'USER_ENTERED',
                                                               'insertDataOption': 'INSERT_ROWS'},
-                     json={'values': [[t['url'], t['status'], SHEET_COUNTRY.get(t.get('country', ''), t.get('country', '')),
+                     json={'values': [[t['url'], t['status'],
+                                       SHEET_COUNTRY.get(t.get('country', ''), t.get('country', '')),
                                        t['comment'], t['by']]]}
                      ).raise_for_status()
         log(f"SHEET: added {t['url']} ({t['status']}, {t.get('country', '')}) as a new row through the Sheets API")
@@ -214,14 +215,15 @@ def write_sheet(todo):
         if row[0].strip().rstrip('/') != t['url'].rstrip('/'):
             left.append(t)
             continue
-        data += [{'range': f'B{t["row"]}', 'values': [[t['status']]]}, {'range': f'E{t["row"]}', 'values': [[t['by']]]}]
+        data += [{'range': f'B{t["row"]}', 'values': [[t['status']]]},
+                 {'range': f'E{t["row"]}', 'values': [[t['by']]]}]
         if t['comment'] and not row[3].strip():
             data.append({'range': f'D{t["row"]}', 'values': [[t['comment']]]})
     if data:
         session.post(f'{api}:batchUpdate', timeout=60,
                      json={'valueInputOption': 'USER_ENTERED', 'data': data}).raise_for_status()
-        log('SHEET: entered through the Sheets API: ' + ', '.join(f"row {t['row']} {t['status']}"
-                                                              for t in todo if t not in left))
+        entered = ', '.join(f"row {t['row']} {t['status']}" for t in todo if t not in left)
+        log('SHEET: entered through the Sheets API: ' + entered)
     for t in left:
         log(f"SHEET: row {t['row']} is no longer {t['url']}: not entered (rows inserted?), looked up again later")
     return left

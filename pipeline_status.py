@@ -47,7 +47,9 @@ def parse_log(lines, mtime, now):
             stamps.append(None)
     stamps.reverse()
     last = next((s for s in reversed(stamps) if s is not None), None)
-    when = lambda s: None if s is None or last is None else mtime - (last - s) * 60
+
+    def when(s):
+        return None if s is None or last is None else mtime - (last - s) * 60
     out = dict(state='working', channel=None, row=None, country=None, i=None, n=None, video=None, title=None,
                since=None, batch=None, rate=None, problems=[], log_age=now - mtime)
     progress = []
@@ -66,7 +68,7 @@ def parse_log(lines, mtime, now):
         out['rate'] = (len(recent) - 1) / ((recent[-1] - recent[0]) / 3600)
     last_progress = progress[-1] if progress else None
     out['problems'] = [p for p in out['problems'] if (p['at'] or now) > now - 6 * 3600][-3:]  # the last 6 h only
-    tail = next((l for l in reversed(lines) if l.strip()), '')
+    tail = next((ln for ln in reversed(lines) if ln.strip()), '')
     if 'no channel left' in tail:
         out['state'] = 'idle'
     elif out['log_age'] > STUCK_MIN * 60:
@@ -81,7 +83,8 @@ def parse_log(lines, mtime, now):
 def worker(host):
     log = f'{sw.REMOTE}/_output/proposals/runner.log'
     try:
-        raw = sw.ssh(host, f'tail -n {TAIL} {log}; echo @@; stat -c %Y {log} 2>/dev/null || stat -f %m {log}; date +%s')
+        raw = sw.ssh(host, f'tail -n {TAIL} {log}; echo @@; '
+                           f'stat -c %Y {log} 2>/dev/null || stat -f %m {log}; date +%s')
     except Exception as e:
         return dict(host=host, state='offline', error=str(e)[-200:], role=sw.WORKERS[host])
     body, _, tail = raw.rpartition('@@\n')
@@ -133,7 +136,8 @@ def refresher():
 
 PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1"><title>Pipeline status</title>
-<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🚚</text></svg>">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22>
+<text y=%22.9em%22 font-size=%2290%22>🚚</text></svg>">
 <meta http-equiv="refresh" content="120">
 <style>
 :root{--bg:#f6f7f9;--card:#fff;--fg:#1b1f24;--muted:#667085;--line:#e4e7ec;--track:#eef0f3;--link:#2563eb;
@@ -143,7 +147,8 @@ PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
 *{box-sizing:border-box}body{margin:0;padding:16px;background:var(--bg);color:var(--fg);
  font:14px/1.4 system-ui,-apple-system,"Segoe UI",sans-serif}
 a{color:var(--link);text-decoration:none}a:hover{text-decoration:underline}
-h1{font-size:20px;margin:0 0 4px}h2{font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin:20px 0 8px}
+h1{font-size:20px;margin:0 0 4px}
+h2{font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin:20px 0 8px}
 .muted{color:var(--muted)}.small{font-size:12px}
 .tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,200px),1fr));gap:12px;margin-top:12px}
 .tile,.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 14px}
@@ -151,25 +156,34 @@ h1{font-size:20px;margin:0 0 4px}h2{font-size:12px;text-transform:uppercase;lett
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,400px),1fr));gap:12px}
 .head{display:flex;justify-content:space-between;align-items:baseline;gap:8px}.head h3{margin:0;font-size:16px}
 .st{font-size:12px;font-weight:600;border-radius:6px;padding:1px 8px;background:var(--track)}
-.st.working{color:var(--ok)}.st.idle{color:var(--muted)}.st.blocked,.st.stalled{color:var(--warn)}.st.offline{color:var(--bad)}
-.bar{height:6px;background:var(--track);border-radius:3px;overflow:hidden;margin:6px 0 4px}.bar i{display:block;height:100%;background:var(--bar)}
+.st.working{color:var(--ok)}.st.idle{color:var(--muted)}
+.st.blocked,.st.stalled{color:var(--warn)}.st.offline{color:var(--bad)}
+.bar{height:6px;background:var(--track);border-radius:3px;overflow:hidden;margin:6px 0 4px}
+.bar i{display:block;height:100%;background:var(--bar)}
 .row{margin:3px 0}.ell{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.prob{font:12px ui-monospace,Menlo,monospace;color:var(--warn);margin:3px 0;overflow-wrap:anywhere}.prob.old{color:var(--muted)}
-table{border-collapse:collapse;width:100%;font-size:13px}td,th{padding:4px 8px;border-top:1px solid var(--line);text-align:left}
+.prob{font:12px ui-monospace,Menlo,monospace;color:var(--warn);margin:3px 0;overflow-wrap:anywhere}
+.prob.old{color:var(--muted)}
+table{border-collapse:collapse;width:100%;font-size:13px}
+td,th{padding:4px 8px;border-top:1px solid var(--line);text-align:left}
 th{color:var(--muted);font-weight:500}td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
 </style></head><body>
 <h1>Pipeline status</h1>
-<div class="muted small">snapshot {{ ago(s.at) }} ago (every 2 min) · <a href="#" onclick="location.port=8770;return false">review hub</a>
- · <a href="http://131.155.233.55:8090/">machines</a>{% if s.error %} · <span style="color:var(--bad)">{{ s.error }}</span>{% endif %}</div>
+<div class="muted small">snapshot {{ ago(s.at) }} ago (every 2 min) ·
+ <a href="#" onclick="location.port=8770;return false">review hub</a>
+ · <a href="http://131.155.233.55:8090/">machines</a>
+ {% if s.error %} · <span style="color:var(--bad)">{{ s.error }}</span>{% endif %}</div>
 <div class="tiles">
  <a class="tile" href="#" onclick="location.port=8770;return false"><span class="muted small">Batches to review</span>
-  <b>{{ s.batches|length }}</b><span class="small muted">{{ s.batches|sum(attribute='waiting') }} videos waiting</span></a>
+  <b>{{ s.batches|length }}</b>
+  <span class="small muted">{{ s.batches|sum(attribute='waiting') }} videos waiting</span></a>
  <div class="tile"><span class="muted small">Sheet updates waiting</span><b>{{ s.sheet_todo }}</b>
   <span class="small muted">sheet_todo.json, entered by hand</span></div>
- <div class="tile"><span class="muted small">Last worker sync</span><b>{{ ago(s.last_sync) if s.last_sync else '–' }}</b>
+ <div class="tile"><span class="muted small">Last worker sync</span>
+  <b>{{ ago(s.last_sync) if s.last_sync else '–' }}</b>
   <span class="small muted">ago (hourly)</span></div>
  <div class="tile"><span class="muted small">Refresh queue</span><b>{{ s.queue }}</b>
-  <span class="small muted">{% for p, n in s.queue_phases %}phase {{ p }}: {{ n }}{{ ' · ' if not loop.last }}{% endfor %}</span></div>
+  <span class="small muted">
+  {% for p, n in s.queue_phases %}phase {{ p }}: {{ n }}{{ ' · ' if not loop.last }}{% endfor %}</span></div>
 </div>
 <h2>Workers</h2><div class="grid">
 {% for w in s.workers %}<div class="card">
@@ -177,30 +191,37 @@ th{color:var(--muted);font-weight:500}td.n,th.n{text-align:right;font-variant-nu
  <div class="muted small">{{ w.role }}</div>
  {% if w.state == 'offline' %}<div class="prob">{{ w.error }}</div>{% else %}
  {% if w.channel %}<div class="row ell" style="margin-top:8px"><b>{{ w.name }}</b>
-  <span class="muted">{% if w.row %}· row {{ w.row }} {% endif %}· {{ w.country }}</span> <a class="small" href="{{ w.channel }}" target="_blank">↗</a></div>{% endif %}
+  <span class="muted">{% if w.row %}· row {{ w.row }} {% endif %}· {{ w.country }}</span>
+  <a class="small" href="{{ w.channel }}" target="_blank">↗</a></div>{% endif %}
  {% if w.n %}<div class="bar"><i style="width:{{ (100 * w.i / w.n)|round(1) }}%"></i></div>
  <div class="small muted">video {{ w.i }} of {{ w.n }}{% if w.rate %} · {{ '%.1f'|format(w.rate) }} videos/h · about
   {{ dur((w.n - w.i) / w.rate * 3600) }} for the rest of the channel{% endif %}</div>
- <div class="row ell small" title="{{ w.title }}">now: {{ w.title or w.video }} <span class="muted">(since {{ ago(w.since) }})</span></div>{% endif %}
- {% if w.batch %}<div class="small muted">last batch {{ ago(w.batch.at) }} ago: {{ w.batch.proposed }} proposed, {{ w.batch.excluded }} excluded</div>{% endif %}
+ <div class="row ell small" title="{{ w.title }}">now: {{ w.title or w.video }}
+  <span class="muted">(since {{ ago(w.since) }})</span></div>{% endif %}
+ {% if w.batch %}<div class="small muted">last batch {{ ago(w.batch.at) }} ago:
+  {{ w.batch.proposed }} proposed, {{ w.batch.excluded }} excluded</div>{% endif %}
  <div class="small muted">log written {{ ago(w.clock - w.log_age) }} ago</div>
  {% for p in w.problems %}<div class="prob {{ '' if p.current else 'old' }}">{{ p.text }}</div>{% endfor %}
  {% endif %}</div>{% endfor %}
 </div>
 {% if s.batches %}<h2>Batches waiting for review</h2><div class="card"><table>
 <tr><th>channel</th><th>fetched on</th><th class="n">to review</th><th class="n">proposed</th></tr>
-{% for b in s.batches %}<tr><td>{{ b.name }}</td><td class="muted">{{ b.host }}</td><td class="n">{{ b.waiting }}</td><td class="n">{{ b.proposed }}</td></tr>{% endfor %}
+{% for b in s.batches %}<tr><td>{{ b.name }}</td><td class="muted">{{ b.host }}</td>
+ <td class="n">{{ b.waiting }}</td><td class="n">{{ b.proposed }}</td></tr>{% endfor %}
 </table></div>{% endif %}
 <h2>Channels by state</h2><div class="card"><table>
 <tr><th>state</th>{% for h in s.hosts %}<th class="n">{{ h }}</th>{% endfor %}<th class="n">all</th></tr>
-{% for name, counts in s.statuses %}<tr><td>{{ name }}</td>{% for n in counts %}<td class="n">{{ n or '' }}</td>{% endfor %}
+{% for name, counts in s.statuses %}<tr><td>{{ name }}</td>
+ {% for n in counts %}<td class="n">{{ n or '' }}</td>{% endfor %}
  <td class="n">{{ counts|sum }}</td></tr>{% endfor %}
 </table></div>
 </body></html>"""
 
 
 def dur(sec):
-    return f'{sec / 60:.0f} min' if sec < 5400 else f'{sec / 3600:.0f} h' if sec < 172800 else f'{sec / 86400:.1f} days'
+    if sec < 5400:
+        return f'{sec / 60:.0f} min'
+    return f'{sec / 3600:.0f} h' if sec < 172800 else f'{sec / 86400:.1f} days'
 
 
 @app.route('/')
@@ -223,7 +244,8 @@ def _check_parse_log():
              '00:15   [3/10] analysing ccc Third', '00:20   YouTube asks to sign in: waiting 15 min']
     now = 1_000_000.0
     w = parse_log(lines, mtime=now, now=now)
-    assert (w['channel'], w['row'], w['country'], w['i'], w['n']) == ('https://www.youtube.com/@x/videos', '7', 'Chile', 3, 10)
+    assert (w['channel'], w['row'], w['country'], w['i'], w['n']) == (
+        'https://www.youtube.com/@x/videos', '7', 'Chile', 3, 10)
     assert w['since'] == now - 5 * 60 and abs(w['rate'] - 6.0) < 1e-9, (w['since'], w['rate'])
     assert w['state'] == 'blocked' and w['problems'][0]['current']
     assert parse_log(lines[:-1] + ['00:30 no channel left to process'], now, now)['state'] == 'idle'

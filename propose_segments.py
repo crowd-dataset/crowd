@@ -1532,7 +1532,7 @@ def _caption_text(stream, t):
                              timeout=60).stdout
         if img:
             text += '\n' + subprocess.run(['tesseract', 'stdin', 'stdout', '--psm', '7'], input=img,
-                                           capture_output=True, timeout=60).stdout.decode(errors='ignore')
+                                          capture_output=True, timeout=60).stdout.decode(errors='ignore')
     return text
 
 
@@ -1596,7 +1596,8 @@ def screen_locality(texts, df):
 def caption_end(video_id, sig, texts=None):
     """Seconds where an opening montage captioned as one ("In this video", "Highlights", "Scenes from the Drive":
     MONTAGE_LABEL) ends, else 0: OCR on a frame every CAPTION_STEP_S from 3 s while the caption shows, then the
-    first strong jump (scene score 0.1) after its last frame (_caption_text; three misses in a row end it). PF094oAMKvU joins its highlights with dissolves, so
+    first strong jump (scene score 0.1) after its last frame (_caption_text; three misses in a row end it).
+    PF094oAMKvU joins its highlights with dissolves, so
     montage_end finds no cuts, but "In this video" shows until the drive starts at 1:30.5 (user, 2026-10-13). No
     caption in the first CAPTION_FIRST_S: no montage (six reads per video)."""
     if texts:  # EasyOCR's reads (opening_texts), read on while the caption still shows at their end
@@ -1809,9 +1810,11 @@ HIGHWAY_TITLE = re.compile(r'(?i:road ?trip|\bhighways?\b|\bfreeways?\b|\bhwy\b|
 NOT_DRIVING_TITLE = re.compile(r'\b(?:walk(?:s|ing)?|wa(?:king|ling) tour|walk-?through|inside|stroll(?:ing)?'
                                r'|hik(?:e|ing)|on foot'
                                r'|(?:boat|ferry) ride'
-                               # a passenger on a bus, high up and often sideways (qEhvYWiNsX0: "Sight Seeing In Toronto
+                               # a passenger on a bus, high up and often sideways
+                               # (qEhvYWiNsX0: "Sight Seeing In Toronto
                                # ... On A Bus"; of 9 such titles reviewed or left out, none approved; user, 2026-10-13)
-                               r'|sight ?-?seeing|tour bus|double[ -]?decker|hop[ -]on|open[ -]top|on (?:a|the) (?:city )?bus'
+                               r'|sight ?-?seeing|tour bus|double[ -]?decker|hop[ -]on|open[ -]top'
+                               r'|on (?:a|the) (?:city )?bus'
                                r'|bus (?:tour|ride)'
                                # trains and the like (VL7X5yOpuk0: "Riding Philadelphia's Market-Frankford Line";
                                # 2ZujrrW_EzY: "The Slow Train Through Rural Japan"; no approved title says train);
@@ -2091,7 +2094,8 @@ def guess_locality(title, country, df):
     # "Chicago Dashcam Drive: Marquette Park to Midway, ..." is no Midway, Ohio)
     head = re.split(r'\s*(?::|\||\s[-–—]\s)\s*', title or '', maxsplit=1)
     # not a drive from one town to another at the head ("Lilongwe to Mponela - M1 …"): its route says where
-    if len(head) == 2 and not any(r.search(head[0]) for r in FROM_TO) and (loc := _title_locality(head[0], df)) and (at := add_video.get_existing_locality_row(
+    if len(head) == 2 and not any(r.search(head[0]) for r in FROM_TO) and (loc := _title_locality(head[0], df)) \
+            and (at := add_video.get_existing_locality_row(
             df, *loc)[1]) is not None and float(pd.to_numeric(at.get('population_locality'), errors='coerce')
                                                 or 0) >= TITLE_CITY_POP:
         return loc
@@ -2945,7 +2949,8 @@ _END = r"\s*(?:,|\||\(|\s-\s|\s–\s|\bin\b|\ben\b|\bvia\b|\bpor\b|$)"
 FROM_TO = (re.compile(r"\bfrom\s+(.+?)\s+to\s+(.+?)" + _END, re.I),
            # without "from": "Driving Lincoln to Hickman, Nebraska" (yQbYiSKgB-I), "Ashland to Waterloo Drive Tour"
            # ... also "4K POV Drive: Fremont to Downtown Omaha, Nebraska" (iSMg2dH2uuA: a colon after the word)
-           re.compile(r"\b(?:driv(?:e|ing)|cruis(?:e|ing)|road ?trip)\s*[:|–-]?\s+(?!(?:to|back|home|down|up|through|thru|"
+           re.compile(r"\b(?:driv(?:e|ing)|cruis(?:e|ing)|road ?trip)\s*[:|–-]?\s+"
+                      r"(?!(?:to|back|home|down|up|through|thru|"
                       r"around|in|into|along|across|past|by|over|tour|on|at|the|my|our|a|out|with|all)\b)"
                       # ... with a note on the start in brackets: "Kansas City (Legends Outlets) to Lawrence, KS"
                       r"([A-Z][\w'’.-]*(?: [A-Z][\w'’.-]*){0,3})(?:\s*\([^)]*\))?\s+to\s+(.+?)" + _END, re.I),
@@ -2953,7 +2958,8 @@ FROM_TO = (re.compile(r"\bfrom\s+(.+?)\s+to\s+(.+?)" + _END, re.I),
                       r"([A-Z][\w'’.-]*(?: [A-Z][\w'’.-]*){0,3})\s+to\s+([A-Z][\w'’.-]*(?: [A-Z][\w'’.-]*){0,3})"
                       r"\s+(?i:drive|driving|road ?trip|cruise)\b"),
            # or a title made of the drive and what follows: "Lilongwe to Mponela - M1 Upgrade Status" (iWbS0H_Prdc)
-           re.compile(r"^(?!(?:Welcome|Back|Return|Road|Guide|Dusk|Dawn|Day|Night|Sunset|Sunrise|Morning|Evening|Sea)\b)"
+           re.compile(r"^(?!(?:Welcome|Back|Return|Road|Guide|Dusk|Dawn|Day|Night|"
+                      r"Sunset|Sunrise|Morning|Evening|Sea)\b)"
                       r"([A-Z][\w'’.-]*(?: [A-Z][\w'’.-]*){0,3})\s+to\s+([A-Z][\w'’.-]*(?: [A-Z][\w'’.-]*){0,3})"
                       r"\s*(?:\s[-–—|]\s|\||:|\(|$)"),
            re.compile(r"\b(?:[Dd]esde|de)\s+(?:el |la )?(.+?)\s+(?:hasta|hacia|a|al)\s+(?:el |la )?(.+?)" + _END),
@@ -3981,7 +3987,8 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
     for p in new:
         es, sig_path = p.get('entries', []), os.path.join(out_dir, f"{p['video']}_signals.npz")
         if (len(es) == 1 and es[0].get('locality') and not p.get('route') and os.path.exists(sig_path)
-                and not es[0].get('gps') and not any(s.get('decision') or s.get('applied') for s in es[0]['segments'])):
+                and not es[0].get('gps')
+                and not any(s.get('decision') or s.get('applied') for s in es[0]['segments'])):
             es[0]['segments'] = propose(dict(np.load(sig_path)), ONE_PLACE)[0]
             p['note'] = re.sub(r'; (?:rural|highway) driving \d+-\d+s', '', p.get('note') or '')
     for p in new:  # chapters whose places turned out the same ("Hollywood", "Los Angeles") are one group
@@ -4401,7 +4408,9 @@ setInterval(() => {
     } else if (waited > 2000 && !want.nudged && state !== YT.PlayerState.BUFFERING) {
       // a quick later switch can be lost while the one before still loads, and YouTube may leave it unstarted
       // or paused: once, go where asked and play
-      if (playingVideo() === want.video) { ytPlayer.seekTo(Math.max(0, Math.floor(want.t)), true); ytPlayer.playVideo(); }
+      if (playingVideo() === want.video) {
+        ytPlayer.seekTo(Math.max(0, Math.floor(want.t)), true); ytPlayer.playVideo();
+      }
       else ytPlayer.loadVideoById({ videoId: want.video, startSeconds: Math.max(0, Math.floor(want.t)) });
       want.nudged = true;
     }
