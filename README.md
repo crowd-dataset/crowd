@@ -486,6 +486,8 @@ The code is open-source and free to use. It is aimed for, but not limited to, ac
   `split_large_files.py`, `validation_release.py`, `weekly_metadata.sh`)
 - `tools/`: one-off maintenance scripts for the mapping and the data
 - `dashboards/`: pages and widgets that follow the pipeline (its own README)
+- `logs/`: records kept by the scripts (`traffic_index_log.csv`, appended by `tools/update_traffic_index.py`)
+- `archive/`: old files no code uses any more (`mappingsubmitted.csv`)
 - `tests/`
 
 Run the scripts in `release/` and `tools/` from the top folder as modules, e.g. `python -m tools.update_traffic_index`.

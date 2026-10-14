@@ -8,7 +8,7 @@ are queried, so run it in the morning (Asia and Oceania in daytime) and in the e
 Americas), Central European time. At most --limit requests per run: TomTom's free tier for this API (Traffic
 Flow segment data) allows 20,000 requests a month.
 
-Each reading is appended to traffic_index_log.csv, which records what is done; mapping.csv gets the new values
+Each reading is appended to logs/traffic_index_log.csv, which records what is done; mapping.csv gets the new values
 (empty where TomTom has no road data near the point). Run until it reports that nothing is pending.
 
 Usage: python update_traffic_index.py [--limit 1200] [--dry-run]
@@ -28,7 +28,7 @@ import requests
 import common
 
 URL = "https://api.tomtom.com/traffic/services/4/flowSegmentData/absolute/10/json"
-LOG = "traffic_index_log.csv"
+LOG = "logs/traffic_index_log.csv"
 DONE = {"ok", "no coverage"}  # statuses that need no further query; "night" and errors are queried again
 DAY = (8, 20)  # local solar hours counted as daytime
 
