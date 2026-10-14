@@ -6,15 +6,17 @@ is used until less than "download_reserve_gb" is free on it, then the next.
     python -m tools.download_videos --once     # one pass over what is missing now
     python -m tools.download_videos --dry-run  # say what would be downloaded where, download nothing
 
-Run from the repository's top folder. The mapping is read from origin/main after a git fetch, so new reviews arrive
-without a pull and the checkout others run from is left as it is (mapping.csv here when git fails). Optional settings
-in config: "download_drives" (default: the folders of "videos" but the last), "download_reserve_gb" (default 100),
-"download_ftp" (default true; false where the file server shares the same drives).
+Run from the repository's top folder. The videos come from mapping.csv and the contributors' mapping-NAME.csv
+files (so their videos are fetched before they are merged), read from origin/main after a git fetch: new videos
+arrive within CHECK_S without a pull, and the checkout others run from is left as it is (the files here when git
+fails). Optional settings in config: "download_drives" (default: the folders of "videos" but the last),
+"download_reserve_gb" (default 100), "download_ftp" (default true; false where the file server shares the same drives).
 """
 import argparse
 import csv
 import io
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -42,18 +44,31 @@ def log(msg):
     print(time.strftime('%Y-%m-%d %H:%M:%S'), msg, flush=True)
 
 
+MAPPING_FILE = re.compile(r'mapping(-[^/]+)?\.csv')  # mapping.csv and the contributors' mapping-NAME.csv
+
+
+def mapping_files(names):
+    """The mapping files among a folder's file names: mapping.csv first, then the mapping-NAME.csv files."""
+    return sorted((n for n in names if MAPPING_FILE.fullmatch(n)), key=lambda n: (n != 'mapping.csv', n))
+
+
 def mapping_videos():
-    """The mapping's video ids in order: GitHub's main after a fetch, else mapping.csv here."""
+    """The video ids of mapping.csv and the mapping-NAME.csv files (videos added there before they are merged), in
+    order: GitHub's main after a fetch, else the files here."""
     try:
         subprocess.run(['git', 'fetch', '-q', 'origin', 'main'], check=True, capture_output=True, timeout=300)
-        text = subprocess.run(['git', 'show', 'origin/main:mapping.csv'], check=True, capture_output=True,
-                              text=True).stdout
+        names = subprocess.run(['git', 'ls-tree', '--name-only', 'origin/main'], check=True, capture_output=True,
+                               text=True).stdout.split()
+        texts = [subprocess.run(['git', 'show', f'origin/main:{n}'], check=True, capture_output=True,
+                                text=True).stdout for n in mapping_files(names)]
     except Exception as e:
-        log(f'mapping from GitHub failed ({e}); using mapping.csv here')
-        with open(common.get_configs('mapping'), encoding='utf-8') as f:
-            text = f.read()
-    return list(dict.fromkeys(v.strip() for row in csv.DictReader(io.StringIO(text))
-                              for v in row['videos'].strip().strip('"[]').split(',') if v.strip()))
+        log(f'mapping from GitHub failed ({e}); using the files here')
+        texts = []
+        for n in mapping_files(os.listdir('.')):
+            with open(n, encoding='utf-8') as f:
+                texts.append(f.read())
+    return list(dict.fromkeys(v.strip() for text in texts for row in csv.DictReader(io.StringIO(text))
+                              for v in (row.get('videos') or '').strip().strip('"[]').split(',') if v.strip()))
 
 
 def present(folders):

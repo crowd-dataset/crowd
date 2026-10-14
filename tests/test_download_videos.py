@@ -30,3 +30,9 @@ def test_present(tmp_path):
     (tmp_path / 'x.mp4').write_bytes(b'')
     (tmp_path / 'y.part').write_bytes(b'')
     assert dv.present([str(tmp_path), os.path.join(str(tmp_path), 'missing')]) == {'x'}
+
+
+def test_mapping_files():
+    names = ['README.md', 'mapping-olena.csv', 'mapping.csv', 'mapping_metadata.csv', 'mapping_remaining.csv',
+             'mapping-bob.csv', 'archive', 'mapping.csv.lock']
+    assert dv.mapping_files(names) == ['mapping.csv', 'mapping-bob.csv', 'mapping-olena.csv']
