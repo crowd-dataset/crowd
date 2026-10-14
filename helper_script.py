@@ -81,6 +81,10 @@ class Youtube_Helper:
         self.update_package = common.get_configs("update_package")
         self.need_authentication = common.get_configs("need_authentication")
         self.client = common.get_configs("client")
+        try:  # optional: the browser yt-dlp reads YouTube cookies from (chrome where there is no Brave)
+            self.cookies_browser = common.get_configs("cookies_browser")
+        except KeyError:
+            self.cookies_browser = "brave"
 
     def set_video_title(self, title):
         """
@@ -523,8 +527,8 @@ class Youtube_Helper:
     def download_video_with_resolution(self, vid, resolutions=["720p", "480p", "360p", "144p"], output_path="."):
         """
         Download a YouTube video, the first of resolutions it has (else the highest at most 720p, else the lowest
-        above), with pytubefix, then yt-dlp (cookies from the Brave browser) when that fails. The file goes to
-        output_path/.ftp_tmp first and is moved to output_path/VID.mp4 when complete.
+        above), with pytubefix, then yt-dlp (cookies from the "cookies_browser" setting, else Brave) when that fails.
+        The file goes to output_path/.ftp_tmp first and is moved to output_path/VID.mp4 when complete.
 
         Returns:
             (path, vid, resolution, fps), or None when both fail.
@@ -574,7 +578,7 @@ class Youtube_Helper:
                 self.upgrade_package_if_needed("yt-dlp")
             resolution = "best<=720p"
             ydl_opts = {
-                "cookiesfrombrowser": ("brave",),  # as the CLI's --cookies-from-browser
+                "cookiesfrombrowser": (self.cookies_browser,),  # as the CLI's --cookies-from-browser
                 "remote_components": ["ejs:github"],  # as --remote-components ejs:github
                 "noplaylist": True,
                 "outtmpl": os.path.join(temp_dir, f"{vid}.%(ext)s"),
