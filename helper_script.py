@@ -85,6 +85,11 @@ class Youtube_Helper:
             self.cookies_browser = common.get_configs("cookies_browser")
         except KeyError:
             self.cookies_browser = "brave"
+        try:  # optional: yt-dlp's JavaScript runtime, as its --js-runtimes RUNTIME[:PATH] (default: deno, if any)
+            runtime, _, path = common.get_configs("js_runtime").partition(":")
+            self.js_runtimes = {runtime: {"path": path} if path else {}}
+        except KeyError:
+            self.js_runtimes = None
 
     def set_video_title(self, title):
         """
@@ -587,6 +592,7 @@ class Youtube_Helper:
                 "merge_output_format": "mp4",
                 "final_ext": "mp4",
                 "verbose": False,  # True shows whether the cookies were loaded
+                **({"js_runtimes": self.js_runtimes} if self.js_runtimes else {}),
             }
             logger.info(f"{vid}: download in {resolution} started with yt-dlp.")
             if os.path.exists(temp_path):
