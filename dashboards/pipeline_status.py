@@ -1,7 +1,7 @@
 """Pipeline status for the TU/e network: what each worker is doing (channel, progress, videos per hour, problems), how
 many batches and sheet updates wait, when the workers were last synced, the refresh queue and the channels by state.
 
-    REVIEW_HOST=0.0.0.0 python pipeline_status.py   # http://131.155.233.55:8771 (started by ~/review_host.sh)
+    REVIEW_HOST=0.0.0.0 python dashboards/pipeline_status.py   # port 8771, from the repo's top folder (README)
 
 Every REFRESH_S a background thread reads the end of each worker's runner.log over ssh (sync_workers.WORKERS) and this
 machine's state; the page shows that snapshot, so opening it costs the workers nothing.
@@ -10,14 +10,20 @@ import collections
 import json
 import os
 import re
+import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 
+from pathlib import Path
+
 from flask import Flask, jsonify, render_template_string
 
-import run_channels as rc
-import sync_workers as sw
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # run_channels and sync_workers: the repo's top folder
+import run_channels as rc  # noqa: E402
+import sync_workers as sw  # noqa: E402
+
+import globe_data  # noqa: E402
 
 PORT, REFRESH_S, TAIL = 8771, 120, 600
 HOST = os.environ.get('REVIEW_HOST', '127.0.0.1')
@@ -167,10 +173,10 @@ table{border-collapse:collapse;width:100%;font-size:13px}
 td,th{padding:4px 8px;border-top:1px solid var(--line);text-align:left}
 th{color:var(--muted);font-weight:500}td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
 </style></head><body>
-<h1>Pipeline status</h1>
+<h1>🚚 Pipeline status</h1>
 <div class="muted small">snapshot {{ ago(s.at) }} ago (every 2 min) ·
  <a href="#" onclick="location.port=8770;return false">review hub</a>
- · <a href="http://131.155.233.55:8090/">machines</a>
+ · <a href="#" onclick="location.port=8090;return false">machines</a>
  {% if s.error %} · <span style="color:var(--bad)">{{ s.error }}</span>{% endif %}</div>
 <div class="tiles">
  <a class="tile" href="#" onclick="location.port=8770;return false"><span class="muted small">Batches to review</span>
@@ -235,6 +241,17 @@ def index():
 @app.route('/status.json')
 def status_json():
     return jsonify(snapshot)
+
+
+@app.route('/globe')
+def globe_page():
+    """The globe widget (shown by the workstations widgets' server, which passes /globe.json through too)."""
+    return (Path(__file__).resolve().parent / 'widget_globe.html').read_text(encoding='utf-8')
+
+
+@app.route('/globe.json')
+def globe_json():
+    return jsonify(globe_data.globe())
 
 
 def _check_parse_log():
