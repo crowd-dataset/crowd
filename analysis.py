@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import ast
 import glob
+import gzip
+import io
 import json
 import math
 import os
@@ -2095,7 +2097,24 @@ README_DETECTIONS = {
 }
 
 
-DETECTION_SNAPSHOT = os.path.join("figures", "detection_counts.csv")
+# per-segment counts of the bbox CSVs, committed so that runs without the CSVs (the GitHub Action) make the detection
+# figures and README counts too; written by count_detections.py (see its docstring)
+DETECTION_SNAPSHOT = "detection_counts.csv.gz"
+
+
+def _count_file(args) -> tuple:
+    """Unique tracked objects per class with confidence >= min_conf in one bbox CSV: (path, {yolo id: count}) or
+    (path, None) if unreadable."""
+    path, min_conf, ids = args  # (a thread pool runs it: polars reads without holding the GIL)
+    try:
+        # explicit types: a CSV with a header only (nothing detected) would otherwise be read as strings
+        df = pl.read_csv(path, columns=["yolo-id", "unique-id", "confidence"],
+                         schema_overrides={"yolo-id": pl.Int64, "unique-id": pl.Float64, "confidence": pl.Float64})
+    except Exception:
+        return path, None
+    per_class = (df.filter((pl.col("confidence") >= min_conf) & pl.col("yolo-id").is_in(ids))
+                   .group_by("yolo-id").agg(pl.col("unique-id").drop_nulls().n_unique()))
+    return path, dict(per_class.iter_rows())
 
 
 def _segment_lookup(df_mapping: pl.DataFrame) -> dict:
@@ -2120,7 +2139,8 @@ def load_detection_snapshot(df_mapping: pl.DataFrame) -> tuple[pl.DataFrame, int
     if not os.path.isfile(DETECTION_SNAPSHOT):
         return None
     try:
-        snap = pl.read_csv(DETECTION_SNAPSHOT, schema_overrides={"video": pl.Utf8, "start": pl.Int64})
+        with gzip.open(DETECTION_SNAPSHOT, "rb") as f:
+            snap = pl.read_csv(f.read(), schema_overrides={"video": pl.Utf8, "start": pl.Int64})
     except Exception as e:
         logger.warning(f"Could not read {DETECTION_SNAPSHOT}: {e}")
         return None
@@ -2140,13 +2160,15 @@ def load_detection_snapshot(df_mapping: pl.DataFrame) -> tuple[pl.DataFrame, int
     return df, df.height
 
 
-def count_detections(df_mapping: pl.DataFrame) -> tuple[pl.DataFrame, int] | None:
+def count_detections(df_mapping: pl.DataFrame, workers: int = 1, write_snapshot: bool = False) -> \
+        tuple[pl.DataFrame, int] | None:
     """Count unique tracked objects per segment and YOLO class from the data/*/bbox CSVs.
 
     Returns (DataFrame with one row per segment with detections: `id`, `video`, `start` (as in
     dataset_figures.segments()), one column per README_DETECTIONS entry and `detected_seconds` (processed footage of
     the segment), number of CSVs read), or None if no CSV could be read. A segment found in several CSVs (e.g., in two
-    data folders) is counted once.
+    data folders) is counted once. `workers` threads read the CSVs in parallel; with `write_snapshot`, the counts
+    are saved as DETECTION_SNAPSHOT (count_detections.py does so after a complete count).
     """
     files = [f for d in common.get_configs("data") for f in glob.glob(os.path.join(d, "bbox", "*.csv"))]
     if not files:
@@ -2159,27 +2181,32 @@ def count_detections(df_mapping: pl.DataFrame) -> tuple[pl.DataFrame, int] | Non
     id_to_class = {v: k for k, v in README_DETECTIONS.items()}
     counts: dict = {}
     n_read = 0
-    for f in tqdm(files, desc="Counting detections"):
+    todo, seen = [], set()  # one file per segment (a segment found in several data folders is counted once)
+    for f in files:
         segment = segment_to_id.get(os.path.basename(f)[:-4].rsplit("_", 1)[0])
-        if segment is None or segment[:3] in counts:
-            continue
-        try:
-            # explicit types: a CSV with a header only (nothing detected) would otherwise be read as strings
-            df = pl.read_csv(f, columns=["yolo-id", "unique-id", "confidence"],
-                             schema_overrides={"yolo-id": pl.Int64, "unique-id": pl.Float64, "confidence": pl.Float64})
-        except Exception as e:
-            logger.warning(f"Skipping unreadable detection file {f}: {e}")
+        if segment is not None and segment[:3] not in seen:
+            seen.add(segment[:3])
+            todo.append((f, segment))
+    jobs = [(f, min_conf, list(id_to_class)) for f, _ in todo]
+    if workers > 1:
+        # threads, not processes: polars reads without holding the GIL, and forked processes deadlock in polars'
+        # own thread pool
+        from concurrent.futures import ThreadPoolExecutor
+        pool = ThreadPoolExecutor(workers)
+        results = pool.map(_count_file, jobs)
+    else:
+        pool, results = None, map(_count_file, jobs)
+    for (_, segment), (path, per_class) in tqdm(zip(todo, results), total=len(todo), desc="Counting detections"):
+        if per_class is None:
+            logger.warning(f"Skipping unreadable detection file {path}")
             continue
         n_read += 1
-        per_class = (
-            df.filter((pl.col("confidence") >= min_conf) & pl.col("yolo-id").is_in(list(id_to_class)))
-              .group_by("yolo-id")
-              .agg(pl.col("unique-id").drop_nulls().n_unique())
-        )
         row = dict.fromkeys(README_DETECTIONS, 0) | {"detected_seconds": segment[3]}
-        for yolo_id, n in per_class.iter_rows():
+        for yolo_id, n in per_class.items():
             row[id_to_class[yolo_id]] = n
         counts[segment[:3]] = row
+    if pool is not None:
+        pool.shutdown()
 
     if not n_read:
         return load_detection_snapshot(df_mapping)
@@ -2188,9 +2215,13 @@ def count_detections(df_mapping: pl.DataFrame) -> tuple[pl.DataFrame, int] | Non
         schema={"id": df_mapping.schema["id"], "video": pl.Utf8, "start": pl.Int64,
                 **dict.fromkeys([*README_DETECTIONS, "detected_seconds"], pl.Int64)},
     )
-    # Keep a committed snapshot so that runs without the bbox CSVs (CI) still report the object counts.
-    os.makedirs(os.path.dirname(DETECTION_SNAPSHOT), exist_ok=True)
-    result.select("video", "start", *README_DETECTIONS).sort("video", "start").write_csv(DETECTION_SNAPSHOT)
+    if write_snapshot:  # committed, so that runs without the bbox CSVs (CI) still make the detection figures
+        buf = io.BytesIO()
+        result.select("video", "start", *README_DETECTIONS).sort("video", "start").write_csv(buf)
+        with gzip.open(DETECTION_SNAPSHOT + ".tmp", "wb", compresslevel=9) as f:
+            f.write(buf.getvalue())
+        os.replace(DETECTION_SNAPSHOT + ".tmp", DETECTION_SNAPSHOT)
+        logger.info(f"Wrote {DETECTION_SNAPSHOT} ({result.height:,} segments).")
     return result, n_read
 
 
