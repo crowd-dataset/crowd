@@ -12,7 +12,7 @@ import subprocess
 import time
 from pathlib import Path
 
-REPO = Path(os.environ.get('CROWD_REPO', Path(__file__).resolve().parent.parent))  # the repo this file is in
+REPO = Path(os.environ.get('CROWD_REPO', Path(__file__).resolve().parents[2]))  # the repo this file is in
 CACHE_S = 3600
 RECENT_H = 72  # amber: segments new in the last 3 days (a week took in the merged mapping-NAME files: half the data)
 _cache = {}

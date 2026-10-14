@@ -40,7 +40,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-import split_large_files
+from release import split_large_files
 
 # -----------------------------------------------------------------------------
 # Edit these paths when running without positional arguments.

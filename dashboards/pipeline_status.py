@@ -23,7 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # run_channels 
 import run_channels as rc  # noqa: E402
 import sync_workers as sw  # noqa: E402
 
-import globe_data  # noqa: E402
+from globe import globe_data  # noqa: E402
 
 PORT, REFRESH_S, TAIL = 8771, 120, 600
 HOST = os.environ.get('REVIEW_HOST', '127.0.0.1')
@@ -246,7 +246,7 @@ def status_json():
 @app.route('/globe')
 def globe_page():
     """The globe widget (shown by the workstations widgets' server, which passes /globe.json through too)."""
-    return (Path(__file__).resolve().parent / 'widget_globe.html').read_text(encoding='utf-8')
+    return (Path(__file__).resolve().parent / 'globe' / 'widget_globe.html').read_text(encoding='utf-8')
 
 
 @app.route('/globe.json')

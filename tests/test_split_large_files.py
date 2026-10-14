@@ -1,6 +1,6 @@
 import os
 
-import split_large_files as s
+from release import split_large_files as s
 
 
 def test_round_trip(tmp_path):

@@ -9,7 +9,7 @@ import os
 import sys
 import csv
 import common
-import split_large_files
+from release import split_large_files
 from custom_logger import CustomLogger
 from logmod import logs
 

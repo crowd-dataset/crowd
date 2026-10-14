@@ -2,10 +2,10 @@
 # Weekly metadata update: refresh mapping_metadata.csv (update_info.py) and crowd_index.jsonl
 # (make_crowd_jsonl.py), split either into NAME_partN files when over 99 MB, commit and push.
 # Runs from cron on the mini (Mondays 02:00) in a clone used only by this job:
-#   0 2 * * 1 $HOME/repos/crowd/weekly_metadata.sh >> $HOME/repos/crowd-metadata.log 2>&1
+#   0 2 * * 1 $HOME/repos/crowd/release/weekly_metadata.sh >> $HOME/repos/crowd-metadata.log 2>&1
 set -euo pipefail
 shopt -s nullglob
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.."  # the repo's top folder
 PY=${PY:-$HOME/micromamba/envs/crowd/bin/python}
 MAX_BYTES=${SPLIT_MAX_BYTES:-99000000}  # also read by split_large_files.py
 FILES=(mapping_metadata.csv crowd_index.jsonl)
@@ -20,11 +20,11 @@ git reset -q --hard origin/main  # nothing local to keep: this clone only runs t
 git gc -q --prune=now
 [ -f config ] || cp default.config config
 
-"$PY" update_info.py < /dev/null
-"$PY" make_crowd_jsonl.py
+"$PY" -m release.update_info < /dev/null
+"$PY" -m release.make_crowd_jsonl
 
 for f in "${FILES[@]}"; do
-    "$PY" split_large_files.py split "$f"
+    "$PY" -m release.split_large_files split "$f"
     stem=${f%.*} ext=${f##*.}
     tracked_parts=$(git ls-files -- "${stem}_part*.${ext}")
     [ -z "$tracked_parts" ] || git rm -q --cached -- $tracked_parts  # current ones are added again below

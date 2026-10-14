@@ -1,6 +1,13 @@
 """Check /reject_segments on a copy of a real plan: all open segments of one video rejected in one request,
 applied ones untouched, and a stale request refused. Run from the repo with the crowd env's python."""
-import glob, json, os, shutil, subprocess, sys, time, urllib.request
+import glob
+import json
+import os
+import shutil
+import subprocess
+import sys
+import time
+import urllib.request
 
 src = next(p for p in sorted(glob.glob('_output/proposals/*/plan.json'))
            if any(not s.get('decision') and not s.get('applied')
@@ -25,8 +32,12 @@ try:
             break
         except Exception:
             time.sleep(1)
-    post = lambda body: urllib.request.urlopen(urllib.request.Request(
-        f'http://127.0.0.1:{port}/reject_segments', json.dumps(body).encode(), {'Content-Type': 'application/json'}))
+
+    def post(body):
+        return urllib.request.urlopen(urllib.request.Request(
+            f'http://127.0.0.1:{port}/reject_segments', json.dumps(body).encode(),
+            {'Content-Type': 'application/json'}))
+
     t = time.time()
     assert json.load(post(dict(segments=items)))['ok']
     took = time.time() - t

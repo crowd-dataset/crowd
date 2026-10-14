@@ -9,7 +9,7 @@ network only. The workstations themselves (CPU, GPU, disks of the worker machine
 |---|---|---|---|
 | 🚚 Pipeline status | 8771 | `pipeline_status.py` | What each worker does (channel, progress, videos per hour, problems in its log), batches waiting for review, sheet updates waiting, the last worker sync, the refresh queue, channels by state; `/status.json` |
 | 🚐 Dataset page | 8772 | `dataset_page.py`, `build_dataset_page.sh` | The README's dataset sections and figures, rebuilt nightly from the review mapping (reviews not pushed yet included) |
-| 🚌 Globe widget | (8771) | `widget_globe.html`, `globe_data.py` | A turning globe of all localities: segments added in the last 24 h pulse red, in the last 3 days amber |
+| 🚌 Globe widget | (8771) | `globe/widget_globe.html`, `globe/globe_data.py` | A turning globe of all localities: segments added in the last 24 h pulse red, in the last 3 days amber |
 | Alerts | | `alerts.py` | Posts to a Discord channel when a worker is blocked, stalled or offline, a machine is down or a disk runs low |
 
 The review hub (`review_hub.py`, port 8770) links to the pipeline status page.
@@ -28,7 +28,7 @@ machine's `_output/proposals` state; the page shows that snapshot, so opening it
 quiet for an hour, *idle* when it has no channel left. It also serves the globe widget (`/globe`) and its data
 (`/globe.json`).
 
-## Globe widget (`widget_globe.html`, `globe_data.py`)
+## Globe widget (`globe/widget_globe.html`, `globe/globe_data.py`)
 
 The mapping has no dates per segment, so `globe_data.py` compares the mapping here with GitHub's `main` as it was one
 and three days ago (git history of `mapping.csv`); a segment is a (video, start) pair. The globe is drawn with d3's

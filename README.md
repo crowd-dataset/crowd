@@ -477,6 +477,19 @@ What the dataset contains, how it was collected and its known biases are describ
 
 The code is open-source and free to use. It is aimed for, but not limited to, academic research. We welcome forking of this repository, pull requests, and any contributions in the spirit of open science and open-source code. For inquiries about collaboration, you may contact Md Shadab Alam (md_shadab_alam@outlook.com) or Pavlo Bazilinskyy (pavlo.bazilinskyy@gmail.com).
 
+## Repository layout
+
+- top folder: the analysis (`main.py`, `analysis.py`), its shared modules (`common.py`, `helper_script.py`, `logmod.py`,
+  `custom_logger.py`, `add_video.py`) and the channel pipeline (`run_channels.py`, `propose_segments.py`,
+  `review_hub.py`, ...); `utils/` holds the plotting and analytics code
+- `release/`: the weekly metadata update and the release files (`update_info.py`, `make_crowd_jsonl.py`,
+  `split_large_files.py`, `validation_release.py`, `weekly_metadata.sh`)
+- `tools/`: one-off maintenance scripts for the mapping and the data
+- `dashboards/`: pages and widgets that follow the pipeline (its own README)
+- `tests/`
+
+Run the scripts in `release/` and `tools/` from the top folder as modules, e.g. `python -m tools.update_traffic_index`.
+
 ## Getting started
 
 Tested with **Python 3.12.13** and the [`uv`](https://docs.astral.sh/uv/) package manager.
@@ -741,14 +754,14 @@ Which keys you need depends on what you run:
 - **analysis of the released dataset** (`analysis.py`): none; `carto_api_key` is optional.
 - **adding videos** (`add_video.py`): `geonames_username`, `restcountries_api_key`, `tomtom_api_key` and `youtube_api_key`; `bea_api_key` for US localities.
 - **proposing segments from channels** (`propose_segments.py`): `youtube_api_key`; `geonames_username` and `locationiq_api_key` help.
-- **updating the traffic index** (`update_traffic_index.py`): `tomtom_api_key`.
+- **updating the traffic index** (`tools/update_traffic_index.py`): `tomtom_api_key`.
 - **processing videos** (`main.py`): `ftp_username` and `ftp_password` for the VideoFiles server; the email keys only if `email_send` is on in `config`.
 
 | Key | Used by | What for | Where to get it |
 |---|---|---|---|
 | `geonames_username` | `add_video.py`, `propose_segments.py` | locality population, a fallback for coordinates, and place lookups | free account at [GeoNames](https://www.geonames.org/login); see below |
 | `bea_api_key` | `add_video.py` | GDP of US localities | free key from [BEA](https://apps.bea.gov/API/signup/); see below |
-| `tomtom_api_key` | `add_video.py`, `update_traffic_index.py` | traffic index from TomTom traffic flow | free account at [TomTom](https://developer.tomtom.com/); see below |
+| `tomtom_api_key` | `add_video.py`, `tools/update_traffic_index.py` | traffic index from TomTom traffic flow | free account at [TomTom](https://developer.tomtom.com/); see below |
 | `restcountries_api_key` | `add_video.py` | country population, continent and Gini | free account at [REST Countries](https://restcountries.com/sign-up); see below |
 | `email_smtp`, `email_account`, `email_password` | `main.py` | email when a job finishes (`email_send` in `config`) | your email provider; see below |
 | `ftp_username`, `ftp_password` | `main.py` | downloading videos from the [VideoFiles](https://files.mobility-squad.com/) server | the maintainers (see [Contact](#contact)) |
@@ -794,7 +807,7 @@ The traffic index uses TomTom's Traffic Flow API (segment data). Its free tier a
 2. Open the **Dashboard**: a key is created with the account (**Keys** section). Copy it.
 3. Put it in `secret` as `"tomtom_api_key": "..."`.
 
-`update_traffic_index.py` uses one request per locality and only queries localities where it is local daytime; requests beyond the free tier are refused unless payment details are added to the TomTom account.
+`tools/update_traffic_index.py` uses one request per locality and only queries localities where it is local daytime; requests beyond the free tier are refused unless payment details are added to the TomTom account.
 
 #### Getting a REST Countries API key
 `add_video.py` uses version 5 of the [REST Countries](https://restcountries.com) API, which needs a key. The free plan allows 1,000 requests a month, with no payment details.
@@ -1150,12 +1163,12 @@ The proposal for the Kyiv video used in the `add_video.py` example above: one se
 `mapping_metadata.csv` holds the YouTube metadata of every video in the `mapping` file (title, upload date, channel, views, description, chapters), and `crowd_index.jsonl` is the same dataset as JSON Lines, one object per segment, built from `mapping.csv` and `mapping_metadata.csv` without the free-text fields (titles, descriptions, chapters). Both are refreshed every Monday at 02:00 (Amsterdam time) by `weekly_metadata.sh`, run by cron on a Mac mini at TU/e in a clone used only by this job:
 
 1. it resets the clone to the latest `main` on GitHub;
-2. `python update_info.py` fetches the metadata of videos added since the last run and retries the videos with missing values (offline videos keep being retried and are never removed);
-3. `python make_crowd_jsonl.py` rebuilds `crowd_index.jsonl`;
-4. `python split_large_files.py split` splits a file over 99 MB into `NAME_part1.EXT`, `NAME_part2.EXT`, ... (each under 99 MB; CSV parts repeat the header), as GitHub refuses files over 100 MB;
+2. `python -m release.update_info` fetches the metadata of videos added since the last run and retries the videos with missing values (offline videos keep being retried and are never removed);
+3. `python -m release.make_crowd_jsonl` rebuilds `crowd_index.jsonl`;
+4. `python -m release.split_large_files split` splits a file over 99 MB into `NAME_part1.EXT`, `NAME_part2.EXT`, ... (each under 99 MB; CSV parts repeat the header), as GitHub refuses files over 100 MB;
 5. the two files (or their parts) are committed as "Weekly update of video metadata" and pushed. A file over 99 MB is never pushed: the job stops instead. When someone pushed in the meantime, the commit is replayed on top of theirs.
 
-When the files are split, the whole file is not in the repository. `update_info.py`, `make_crowd_jsonl.py` and `validation_release.py` rebuild it from its parts when needed, or run `python split_large_files.py join mapping_metadata.csv crowd_index.jsonl`. The log of the job is in `~/repos/crowd-metadata.log` on the mini. To run it elsewhere, clone the repository with push access and add `0 2 * * 1 /path/to/clone/weekly_metadata.sh >> /path/to/crowd-metadata.log 2>&1` to `crontab -e` (set `PY` to the Python of the environment if it is not `~/micromamba/envs/crowd/bin/python`).
+When the files are split, the whole file is not in the repository. `release/update_info.py`, `release/make_crowd_jsonl.py` and `release/validation_release.py` rebuild it from its parts when needed, or run `python -m release.split_large_files join mapping_metadata.csv crowd_index.jsonl`. The log of the job is in `~/repos/crowd-metadata.log` on the mini. To run it elsewhere, clone the repository with push access and add `0 2 * * 1 /path/to/clone/weekly_metadata.sh >> /path/to/crowd-metadata.log 2>&1` to `crontab -e` (set `PY` to the Python of the environment if it is not `~/micromamba/envs/crowd/bin/python`).
 
 ## Who added the videos
 Videos are added by several people, each in their own copy of the mapping file: `mapping.csv` is Pavlo's, `mapping-olena.csv` Olena's, `mapping-shadab.csv` and `mapping-epfl.csv` Shadab's and, in general, `mapping-NAME.csv` NAME's. Videos added to `mapping.csv` in commits from a contributor's own account (currently Shadab's and Faye's) are credited to that contributor. Each video is credited to the file it first appeared in. The credits are kept in `video_contributors.csv`: one row per video with the contributor, the time of the commit that added it (UTC) and the mapping file it first appeared in. It was built from the git history with `python -m utils.analytics.contributors`, and `analysis.py` (also in the GitHub Action) adds new videos with the time of the last commit to their mapping file. It is the only record of who added what once the history of the mapping files is gone, so keep it when rewriting the repository's history. A video that appeared in `mapping.csv` and another file at the same time is credited to `mapping.csv`, as the other files are refreshed with copies of it. The table counts the videos in the dataset now.
