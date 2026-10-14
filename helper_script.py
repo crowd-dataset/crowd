@@ -8,7 +8,7 @@ from moviepy.video.io.VideoFileClip import VideoFileClip
 import cv2
 from ultralytics import YOLO  # type: ignore
 from collections import defaultdict
-from typing import Optional, Set
+from typing import Optional
 import shutil
 import numpy as np
 import pandas as pd
@@ -350,409 +350,251 @@ class Youtube_Helper:
 
                 time.sleep(backoff * attempt)
 
+    # The file server's folders, and how long a listing of one is kept: a video missing from the server used to cost a
+    # crawl of up to max_pages pages per folder, now the folder is listed once and looked up
+    FTP_ALIASES = ("tue4", "tue5")
+    FTP_INDEX_S = 3600
+    _ftp_index: dict = {}  # (base URL, folder) -> (time listed, {file name in lower case: URL})
+
+    @staticmethod
+    def _save_response(r, path: str, desc: str) -> int:
+        """Write a streamed response to path with a progress bar; returns the number of bytes written."""
+        total = int(r.headers.get("content-length", 0)) or None
+        written = 0
+        with open(path, "wb") as f, tqdm(total=total, unit="B", unit_scale=True, unit_divisor=1024, desc=desc) as bar:
+            for chunk in r.iter_content(chunk_size=1024 * 1024):
+                if chunk:
+                    f.write(chunk)
+                    written += len(chunk)
+                    bar.update(len(chunk))
+        return written
+
+    def _video_info(self, path: str):
+        """(resolution label, fps) of a video file; ("unknown", 0.0) when they cannot be read."""
+        try:
+            return Youtube_Helper.get_video_resolution_label(path), float(self.get_video_fps(path))  # type: ignore
+        except Exception as e:
+            logger.warning(f"Metadata extraction failed for {path}: {e}")
+            return "unknown", 0.0
+
+    @staticmethod
+    def _free_path(path: str) -> str:
+        """path, or path with " (1)", " (2)", ... before the extension when that file exists already."""
+        stem, suffix = os.path.splitext(path)
+        i = 0
+        while os.path.exists(path):
+            i += 1
+            path = f"{stem} ({i}){suffix}"
+        return path
+
+    def _ftp_files(self, fetch, base: str, alias: str, max_pages: int) -> dict:
+        """{file name in lower case: URL} of one folder of the file server, from its /browse pages (kept
+        FTP_INDEX_S)."""
+        cached = Youtube_Helper._ftp_index.get((base, alias))
+        if cached and time.time() - cached[0] < Youtube_Helper.FTP_INDEX_S:
+            return cached[1]
+        files, stack, seen = {}, [urljoin(base, f"v/{alias}/browse")], set()
+        while stack and len(seen) < max_pages:
+            url = stack.pop()
+            if url in seen:
+                continue
+            seen.add(url)
+            resp = fetch(url)
+            if resp is None:
+                continue
+            for a in BeautifulSoup(resp.text, "html.parser").find_all("a"):
+                href = (a.get("href") or "").strip()  # type: ignore
+                full = urljoin(url, href)
+                if "/files/" in href:
+                    files[pathlib.PurePosixPath(urlparse(full).path).name.lower()] = full
+                    files.setdefault((a.text or "").strip().lower(), full)
+                elif href.startswith("/v/") and "/browse" in href:
+                    stack.append(full)
+        if stack:
+            logger.warning(f"File server listing of {alias} stopped after {max_pages} pages.")
+        Youtube_Helper._ftp_index[(base, alias)] = (time.time(), files)
+        logger.info(f"File server listing of {alias}: {len(files)} entries.")
+        return files
+
     def download_videos_from_ftp(self, filename: str, base_url: Optional[str] = None, out_dir: str = ".",
                                  username: Optional[str] = None, password: Optional[str] = None,
                                  token: Optional[str] = None, timeout: int = 20, debug: bool = True,
                                  max_pages: int = 500) -> Optional[tuple[str, str, str, float]]:
         """
-        Search and download a specific .mp4 file from a multi-directory FastAPI-based
-        HTTP file server (e.g., files.mobility-squad.com). This function attempts direct
-        download from known /files/ paths (tue1/tue2/tue3), and if not found, recursively
-        crawls the /browse pages to locate the video file. Progress is shown with tqdm.
-        Args: filename (str): Target file name (with or without .mp4 extension).
-        base_url (str, optional): Base URL of the file server.
-        Must include protocol, e.g. "https://files.mobility-squad.com/".
-        out_dir (str, optional): Local output directory to save the video.
-        Defaults to current directory ".".
-        username (str, optional): Username for HTTP Basic Auth.
-        password (str, optional): Password for HTTP Basic Auth.
-        token (str, optional): Token string for token-based authentication.
-        Sent as a query parameter ?token=.... timeout (int, optional):
-        Request timeout in seconds. Default is 20. max_pages (int, optional):
-        Safety limit for crawl depth/pages. Default is 500.
-        Returns: Optional[Tuple[str, str, str, float]]: Returns a tuple
-        (local_path, filename, resolution_label, fps) if the download succeeds,
-        or None if the file is not found or download fails.
-        Logging: - logger.info: start, success summaries.
-        - logger.debug: HTTP requests, crawl steps, file matches.
-        - logger.warning: non-fatal issues (metadata failures, skipped pages).
-        - logger.error: fatal errors (network/IO exceptions). Example:
+        Download a video (.mp4) from the multi-folder FastAPI file server (e.g. https://files.mobility-squad.com/).
 
-            result = self.download_videos_from_http_fileserver(
-                filename="3ai7SUaPoHM",
-                base_url="https://files.mobility-squad.com/",
-                out_dir="./downloads",
-                username="mobility",
-                password="your_password"
-            )
-            if result:
-                path, name, res, fps = result
-                print(f"Downloaded {name} ({res}, {fps} fps) to {path}")
-            else:
-                print("File not found or failed.")
+        Each folder of FTP_ALIASES is tried at the file's own /files/ URL first; when that misses, the folder's
+        listing (its /browse pages, crawled once and kept FTP_INDEX_S) says where the file is.
+
+        Args:
+            filename: the file name, with or without .mp4 (a YouTube id).
+            base_url: the server, with protocol.
+            out_dir: where to save it; an existing file of that name is kept and the new one saved as "NAME (1).mp4".
+            username, password: HTTP Basic Auth. token: sent as ?token=... when given.
+            timeout: seconds per request. debug: log each request. max_pages: limit of a folder listing.
+
+        Returns:
+            (local_path, filename, resolution_label, fps), or None when the file is not there or the download fails.
         """
-        # -------------------- Input Preparation --------------------
         if not base_url:
             logger.error("Base URL is missing.")
             return None
-
         base = base_url if base_url.endswith("/") else base_url + "/"
+        name = filename if filename.lower().endswith(".mp4") else f"{filename}.mp4"
+        params = {"token": token} if token else None
+        logger.info(f"Starting download for '{name}'")
 
-        if username == "":
-            username = None
-        if password == "":
-            password = None
-
-        filename_with_ext = filename if filename.lower().endswith(".mp4") else f"{filename}.mp4"
-        filename_lower = filename_with_ext.lower()
-        aliases = ["tue4", "tue5"]
-
-        req_params = {"token": token} if token else None
-
-        logger.info(f"Starting download for '{filename_with_ext}'")
-        logger.debug(
-            f"Base URL: {base} | Auth: {'Basic' if username and password else 'None'} | Token: {'Yes' if token else 'No'}"  # noqa:E501
-        )  # noqa: E501
-
-        # ---------- Session ----------
         with requests.Session() as session:
             if username and password:
                 session.auth = (username, password)
             session.headers.update({"User-Agent": "multi-fileserver-downloader/1.0"})
 
             def fetch(url: str, stream: bool = False) -> Optional[requests.Response]:
-                """GET with logging and safe error handling."""
+                """GET, or None when it fails (a missing file is expected, so it is not a warning)."""
                 try:
-                    r = session.get(url, timeout=timeout, params=req_params, stream=stream)
-                    logger.debug(f"GET {url} -> {r.status_code}")
+                    r = session.get(url, timeout=timeout, params=params, stream=stream)
+                    if debug:
+                        logger.debug(f"GET {url} -> {r.status_code}")
                     if r.status_code == 401:
                         logger.error(f"Authentication failed for {url}")
                     r.raise_for_status()
                     return r
                 except requests.RequestException as e:
-                    logger.warning(f"Request failed [{url}]: {e}")
+                    missing = getattr(getattr(e, "response", None), "status_code", None) == 404
+                    (logger.debug if missing else logger.warning)(f"Request failed [{url}]: {e}")
                     return None
 
-            # ---------- 1. Try direct /files paths ----------
-            for alias in aliases:
-                direct_url = urljoin(base, f"v/{alias}/files/{filename_with_ext}")
-                logger.debug(f"Trying direct URL: {direct_url}")
-
-                r = fetch(direct_url, stream=True)
-                if r is None:
-                    continue
-
-                logger.info(f"Found file via direct URL: {direct_url}")
-                content_len = int(r.headers.get("content-length", 0))
-                logger.debug(f"Content-Length: {content_len or 'unknown'} bytes")
-
-                os.makedirs(out_dir, exist_ok=True)
-                local_path = os.path.join(out_dir, filename_with_ext)
-
-                # Avoid overwriting
-                if os.path.exists(local_path):
-                    stem, suf = os.path.splitext(local_path)
-                    i = 1
-                    while os.path.exists(f"{stem} ({i}){suf}"):
-                        i += 1
-                    local_path = f"{stem} ({i}){suf}"
-                    logger.warning(f"File exists, saving as: {local_path}")
-
-                # ---------- Download ----------
-                try:
-                    total = content_len or None
-                    written = 0
-                    with open(local_path, "wb") as f, tqdm(
-                        total=total,
-                        unit="B",
-                        unit_scale=True,
-                        unit_divisor=1024,
-                        desc=f"Downloading from ftp: {filename_with_ext}",
-                    ) as bar:
-                        for chunk in r.iter_content(chunk_size=1024 * 1024):
-                            if chunk:
-                                f.write(chunk)
-                                written += len(chunk)
-                                if total:
-                                    bar.update(len(chunk))
-                    logger.info(f"Download complete: {local_path} ({written} bytes)")
-                except Exception as e:
-                    logger.error(f"Download failed for {filename_with_ext}: {e}")
-                    return None
-
-                # ---------- Metadata ----------
-                resolution, fps = "unknown", 0.0
-                try:
-                    fps = float(self.get_video_fps(local_path))  # type: ignore
-                    resolution = Youtube_Helper.get_video_resolution_label(local_path)
-                    logger.debug(f"Metadata extracted: fps={fps}, resolution={resolution}")
-                except Exception as e:
-                    logger.warning(f"Metadata extraction failed: {e}")
-
-                logger.info(f"✅ Saved '{filename_with_ext}' (res={resolution}, fps={fps})")
-                return local_path, filename, resolution, fps
-
-            # ---------- 2. Crawl /browse fallback ----------
-            visited: Set[str] = set()
-
-            def is_dir_link(href: str) -> bool:
-                return href.startswith("/v/") and "/browse" in href
-
-            def is_file_link(href: str) -> bool:
-                return "/files/" in href
-
-            def crawl(start_url: str) -> Optional[str]:
-                """Recursively traverse /browse pages."""
-                stack = [start_url]
-                pages_seen = 0
-
-                while stack:
-                    url = stack.pop()
-
-                    if url in visited:
-                        continue
-
-                    visited.add(url)
-                    pages_seen += 1
-                    if pages_seen > max_pages:
-                        logger.warning(f"Crawl aborted after {max_pages} pages.")
-                        return None
-
-                    resp = fetch(url)
-                    if resp is None:
-                        continue
-
-                    try:
-                        soup = BeautifulSoup(resp.text, "html.parser")
-                    except Exception as e:
-                        logger.warning(f"HTML parse failed at {url}: {e}")
-                        continue
-
-                    for a in soup.find_all("a"):
-                        href = (a.get("href") or "").strip()  # type: ignore
-                        if not href:
-                            continue
-
-                        full = urljoin(url, href)
-
-                        if is_file_link(href):
-                            anchor_text = (a.text or "").strip().lower()
-                            tail = pathlib.PurePosixPath(urlparse(full).path).name.lower()
-                            if anchor_text == filename_lower or tail == filename_lower:
-                                logger.info(f"File located via crawl: {full}")
-                                return full
-
-                        if is_dir_link(href):
-                            stack.append(full)
-
-                logger.debug("Crawl finished — no file found.")
+            r = None
+            for alias in self.FTP_ALIASES:
+                r = fetch(urljoin(base, f"v/{alias}/files/{name}"), stream=True)
+                if r is not None:
+                    break
+            if r is None:
+                for alias in self.FTP_ALIASES:
+                    url = self._ftp_files(fetch, base, alias, max_pages).get(name.lower())
+                    if url and (r := fetch(url, stream=True)) is not None:
+                        break
+            if r is None:
+                logger.warning(f"File '{name}' not found on the file server.")
                 return None
 
-            for alias in aliases:
-                start_url = urljoin(base, f"v/{alias}/browse")
-                logger.debug(f"Crawling alias: {alias} -> {start_url}")
+            os.makedirs(out_dir, exist_ok=True)
+            local_path = self._free_path(os.path.join(out_dir, name))
+            try:
+                written = self._save_response(r, local_path, f"Downloading from ftp: {name}")
+            except Exception as e:
+                logger.error(f"Download failed for {name}: {e}")
+                return None
 
-                found = crawl(start_url)
-                if not found:
-                    continue
+        resolution, fps = self._video_info(local_path)
+        logger.info(f"✅ Saved '{name}' ({written} bytes, res={resolution}, fps={fps})")
+        return local_path, filename, resolution, fps
 
-                r = fetch(found, stream=True)
-                if not r:
-                    continue
+    @staticmethod
+    def _stream_height(s) -> int:
+        """A pytubefix stream's height in pixels, -1 when unknown."""
+        h = getattr(s, "height", None)
+        if isinstance(h, int) and h > 0:
+            return h
+        m = re.search(r"(\d{3,4})p", str(getattr(s, "resolution", None) or getattr(s, "res", None) or ""))
+        return int(m.group(1)) if m else -1
 
-                os.makedirs(out_dir, exist_ok=True)
-                local_path = os.path.join(out_dir, filename_with_ext)
+    @staticmethod
+    def _closest_to_720(streams):
+        """(stream, resolution label) of the MP4 streams: the highest at most 720p, else the lowest above it (a
+        progressive one when there is one at that height); (None, None) when there is no MP4 stream."""
+        mp4 = [s for s in streams if "mp4" in (getattr(s, "mime_type", "") or "").lower()]
+        low = [s for s in mp4 if 0 < Youtube_Helper._stream_height(s) <= 720]
+        pool = low or [s for s in mp4 if Youtube_Helper._stream_height(s) > 720]
+        if not pool:
+            return None, None
+        h = (max if low else min)(Youtube_Helper._stream_height(s) for s in pool)
+        at_h = [s for s in pool if Youtube_Helper._stream_height(s) == h]
+        chosen = next((s for s in at_h if getattr(s, "is_progressive", False)), at_h[0])
+        return chosen, getattr(chosen, "resolution", None) or getattr(chosen, "res", None) or f"{h}p"
 
-                try:
-                    total = int(r.headers.get("content-length", 0)) or None
-                    written = 0
-                    with open(local_path, "wb") as f, tqdm(
-                        total=total,
-                        unit="B",
-                        unit_scale=True,
-                        unit_divisor=1024,
-                        desc=f"Downloading {filename_with_ext}",
-                    ) as bar:
-                        for chunk in r.iter_content(chunk_size=1024 * 1024):
-                            if chunk:
-                                f.write(chunk)
-                                written += len(chunk)
-                                if total:
-                                    bar.update(len(chunk))
-                    logger.info(f"Downloaded via crawl: {local_path} ({written} bytes)")
-                except Exception as e:
-                    logger.error(f"Download during crawl failed: {e}")
-                    return None
-
-                resolution, fps = "unknown", 0.0
-                try:
-                    fps = float(self.get_video_fps(local_path))  # type: ignore
-                    resolution = Youtube_Helper.get_video_resolution_label(local_path)
-                    logger.debug(f"Metadata: fps={fps}, resolution={resolution}")
-                except Exception as e:
-                    logger.warning(f"Metadata extraction failed: {e}")
-
-                return local_path, filename, resolution, fps
-
-            logger.warning(f"File '{filename_with_ext}' not found in any alias.")
-            return None
+    def _finish_download(self, temp_path, final_path, vid, resolution):
+        """Move the finished download into place: (final_path, vid, resolution, fps)."""
+        os.replace(temp_path, final_path)
+        fps = self.get_video_fps(final_path)
+        logger.info(f"{vid}: FPS={fps}.")
+        return final_path, vid, resolution, fps
 
     def download_video_with_resolution(self, vid, resolutions=["720p", "480p", "360p", "144p"], output_path="."):
         """
-        Downloads a YouTube video in one of the specified resolutions and returns video details.
-        Uses pytubefix first, then yt-dlp as fallback.
-        Downloads into output_path/.ftp_tmp first, then moves the completed file to output_path.
+        Download a YouTube video, the first of resolutions it has (else the highest at most 720p, else the lowest
+        above), with pytubefix, then yt-dlp (cookies from the Brave browser) when that fails. The file goes to
+        output_path/.ftp_tmp first and is moved to output_path/VID.mp4 when complete.
+
+        Returns:
+            (path, vid, resolution, fps), or None when both fail.
         """
-        selected_resolution = None
-
         temp_dir = os.path.join(output_path, ".ftp_tmp")
-        final_video_file_path = os.path.join(output_path, f"{vid}.mp4")
-        temp_video_file_path = os.path.join(temp_dir, f"{vid}.mp4")
-
-        os.makedirs(output_path, exist_ok=True)
+        final_path = os.path.join(output_path, f"{vid}.mp4")
+        temp_path = os.path.join(temp_dir, f"{vid}.mp4")
         os.makedirs(temp_dir, exist_ok=True)
+        youtube_url = f"https://www.youtube.com/watch?v={vid}"
+        monday = datetime.datetime.today().weekday() == 0
 
         try:
-            if self.update_package and datetime.datetime.today().weekday() == 0:
+            if self.update_package and monday:
                 self.upgrade_package_if_needed("pytubefix")
-
-            youtube_url = f"https://www.youtube.com/watch?v={vid}"
-
             if self.need_authentication:
-                youtube_object = YouTube(
-                    youtube_url,
-                    self.client,
-                    use_oauth=True,
-                    allow_oauth_cache=True,
-                    on_progress_callback=on_progress,
-                )
+                yt = YouTube(youtube_url, self.client, use_oauth=True, allow_oauth_cache=True,
+                             on_progress_callback=on_progress)
             else:
-                youtube_object = YouTube(youtube_url, self.client, on_progress_callback=on_progress)
+                yt = YouTube(youtube_url, self.client, on_progress_callback=on_progress)
 
-            selected_stream = None
-            selected_resolution = None
-
-            # 1) Preferred resolutions (exact match)
-            for resolution in resolutions:
-                video_streams = youtube_object.streams.filter(res=resolution)
-                if video_streams:
-                    selected_resolution = resolution
-                    logger.debug(f"Found video {vid} in {resolution}.")
-                    selected_stream = video_streams.first() if hasattr(video_streams, "first") else video_streams[0]
+            stream, resolution = None, None
+            for res in resolutions:  # the preferred resolutions, exactly
+                found = yt.streams.filter(res=res)
+                if found:
+                    stream, resolution = (found.first() if hasattr(found, "first") else found[0]), res
+                    logger.debug(f"Found video {vid} in {res}.")
                     break
+            if stream is None:
+                stream, resolution = self._closest_to_720(list(yt.streams))
+                if stream is None:
+                    logger.error(f"{vid}: no MP4 stream available at any resolution.")
+                    return None
+                logger.debug(f"{vid}: no preferred resolution; picked {resolution}.")
 
-            # 2) Fallback logic if no preferred match
-            if not selected_stream:
-
-                def _height(s) -> int:
-                    h = getattr(s, "height", None)
-                    if isinstance(h, int) and h > 0:
-                        return h
-                    res_attr = getattr(s, "resolution", None) or getattr(s, "res", None) or ""
-                    m = re.search(r"(\d{3,4})p", str(res_attr))
-                    return int(m.group(1)) if m else -1
-
-                def _is_mp4(s) -> bool:
-                    mime = getattr(s, "mime_type", "") or ""
-                    return "mp4" in mime.lower()
-
-                def _pick_prefer_progressive(streams_at_height):
-                    progressive = [s for s in streams_at_height if getattr(s, "is_progressive", False)]
-                    return progressive[0] if progressive else streams_at_height[0]
-
-                streams = list(youtube_object.streams)
-
-                # 2a) Highest available <= 720p
-                le_720 = [s for s in streams if _is_mp4(s) and 0 < _height(s) <= 720]
-                if le_720:
-                    max_h = max(_height(s) for s in le_720)
-                    at_max_h = [s for s in le_720 if _height(s) == max_h]
-                    chosen = _pick_prefer_progressive(at_max_h)
-                    selected_stream = chosen
-                    selected_resolution = getattr(chosen, "resolution", None) or getattr(chosen, "res", None) or f"{max_h}p"  # noqa:E501
-                    logger.debug(f"{vid}: no preferred match; picked highest available {selected_resolution} (≤720p).")
-                else:
-                    # 2b) Lowest available > 720p
-                    gt_720 = [s for s in streams if _is_mp4(s) and _height(s) > 720]
-                    if not gt_720:
-                        logger.error(f"{vid}: no MP4 stream available at any resolution.")
-                        return None
-
-                    min_h = min(_height(s) for s in gt_720)
-                    at_min_h = [s for s in gt_720 if _height(s) == min_h]
-                    chosen = _pick_prefer_progressive(at_min_h)
-
-                    selected_stream = chosen
-                    selected_resolution = getattr(chosen, "resolution", None) or getattr(chosen, "res", None) or f"{min_h}p"  # noqa:E501
-                    logger.debug(f"{vid}: no ≤720p stream; picked lowest available >720p ({selected_resolution}).")
-
-            logger.info(f"{vid}: download in {selected_resolution} started with pytubefix.")
-
-            if os.path.exists(temp_video_file_path):
-                os.remove(temp_video_file_path)
-
-            selected_stream.download(temp_dir, filename=f"{vid}.mp4")
-            self.video_title = youtube_object.title
-
-            os.replace(temp_video_file_path, final_video_file_path)
-
-            fps = self.get_video_fps(final_video_file_path)
-            logger.info(f"{vid}: FPS={fps}.")
-
-            return final_video_file_path, vid, selected_resolution, fps
+            logger.info(f"{vid}: download in {resolution} started with pytubefix.")
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+            stream.download(temp_dir, filename=f"{vid}.mp4")
+            self.video_title = yt.title
+            return self._finish_download(temp_path, final_path, vid, resolution)
 
         except Exception as e:
             logger.error(f"{vid}: pytubefix download method failed: {e}")
 
-            try:
-                if self.update_package and datetime.datetime.today().weekday() == 0:
-                    self.upgrade_package_if_needed("yt-dlp")
+        try:
+            if self.update_package and monday:
+                self.upgrade_package_if_needed("yt-dlp")
+            resolution = "best<=720p"
+            ydl_opts = {
+                "cookiesfrombrowser": ("brave",),  # as the CLI's --cookies-from-browser
+                "remote_components": ["ejs:github"],  # as --remote-components ejs:github
+                "noplaylist": True,
+                "outtmpl": os.path.join(temp_dir, f"{vid}.%(ext)s"),
+                # broad on purpose: the working CLI picked formats such as 299+251 from m3u8 information
+                "format": "bv*[height<=720]+ba/b[height<=720]/bv*+ba/b",
+                "merge_output_format": "mp4",
+                "final_ext": "mp4",
+                "verbose": False,  # True shows whether the cookies were loaded
+            }
+            logger.info(f"{vid}: download in {resolution} started with yt-dlp.")
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:  # pyright: ignore[reportArgumentType]
+                info = ydl.extract_info(youtube_url, download=True)
+            self.video_title = info.get("title") if isinstance(info, dict) else None
+            return self._finish_download(temp_path, final_path, vid, resolution)
 
-                youtube_url = f"https://www.youtube.com/watch?v={vid}"
-
-                yt_dlp_common_opts = {
-                    # Same as CLI: --cookies-from-browser chrome
-                    "cookiesfrombrowser": ("brave",),
-                    # Same as CLI: --remote-components ejs:github
-                    "remote_components": ["ejs:github"],
-                    "noplaylist": True,
-                }
-
-                # Keep this broad. The working CLI selected formats such as 299+251
-                # after reading m3u8 information, so do not reject HLS formats here.
-                format_spec = "bv*[height<=720]+ba/b[height<=720]/bv*+ba/b"
-                selected_resolution = "best<=720p"
-
-                ydl_opts = {
-                    **yt_dlp_common_opts,
-                    "outtmpl": os.path.join(temp_dir, f"{vid}.%(ext)s"),
-                    "format": format_spec,
-                    "merge_output_format": "mp4",
-                    "final_ext": "mp4",
-                    # Temporarily set this to True if you need to confirm cookies are loaded.
-                    "verbose": False,
-                }
-
-                logger.info(f"{vid}: download in {selected_resolution} started with yt-dlp.")
-
-                if os.path.exists(temp_video_file_path):
-                    os.remove(temp_video_file_path)
-
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:  # pyright: ignore[reportArgumentType]
-                    info = ydl.extract_info(youtube_url, download=True)
-
-                self.video_title = info.get("title") if isinstance(info, dict) else None
-
-                os.replace(temp_video_file_path, final_video_file_path)
-
-                fps = self.get_video_fps(final_video_file_path)
-                logger.info(f"{vid}: FPS={fps}.")
-
-                return final_video_file_path, vid, selected_resolution, fps
-
-            except Exception as ytdlp_error:
-                logger.error(f"{vid}: yt-dlp download method failed: {ytdlp_error}")
-                return None
+        except Exception as ytdlp_error:
+            logger.error(f"{vid}: yt-dlp download method failed: {ytdlp_error}")
+            return None
 
     def get_video_fps(self, video_file_path):
         """
