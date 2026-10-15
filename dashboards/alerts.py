@@ -26,6 +26,7 @@ REPEAT_H = 6
 NEW_BATCHES = False  # post "new batch to review" (off for now, user 2026-10-13: may turn it on later)
 ROOT_MIN_GB, ANY_MIN_GB = 100, 50  # free space below which a disk is reported: root/system disks, any disk
 ROOTS = ('/', 'C:\\')
+DOWNLOAD_H = 2  # the window for the video downloader's alerts (download_problems)
 
 
 def fetch(url):
@@ -57,10 +58,31 @@ def problems():
                 detail = (w.get('problems') or [{}])[-1].get('text') or w.get('error') or (
                     f'no new log line for {w.get("log_age", 0) / 60:.0f} min')
                 out[f'worker:{w["host"]}:{w["state"]}'] = f'worker **{w["host"]}** is {w["state"]}: `{detail[:300]}`'
+        out.update(download_problems(p.get('downloads') or {}))
         batches = {b['name']: b['waiting'] for b in p.get('batches', [])}
     except Exception as e:
         out['page:pipeline'] = f'the pipeline status page does not answer ({e})'
     return out, batches
+
+
+def download_problems(d, now=None):
+    """{key: message} for the video downloader (tools/download_videos.py): nothing downloaded for DOWNLOAD_H hours
+    with videos waiting (it pauses 30 min, then 1 h, 2 h, 4 h when YouTube blocks it: two hours is past the first
+    pauses it gets over by itself), or most of its attempts in that time failing."""
+    now = now or time.time()
+    if d.get('error') or not d.get('queue'):  # lin4080 unreachable is a machine alert; nothing to download is fine
+        return {}
+    since = now - DOWNLOAD_H * 3600
+    ok = sum(r['t'] > since for r in d.get('recent', []))
+    bad = sum(f['t'] > since for f in d.get('failures', []))
+    last = max((r['t'] for r in d.get('recent', [])), default=d.get('started', now))
+    where = f'video downloads on **{d.get("host", "?")}**'
+    if now - last > DOWNLOAD_H * 3600:
+        return {'downloads:stalled': f'{where}: none for {(now - last) / 3600:.1f} h, {d["queue"]} videos waiting, '
+                                     f'{bad} failed in {DOWNLOAD_H} h (`{d.get("state")}`)'}
+    if bad >= 10 and bad > ok:
+        return {'downloads:failing': f'{where}: {bad} failed and {ok} downloaded in {DOWNLOAD_H} h'}
+    return {}
 
 
 def post(text, dry):

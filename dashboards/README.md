@@ -62,7 +62,7 @@ uses its own environment with the workflow's package versions (polars, pyarrow, 
 ## Alerts (`alerts.py`)
 
 Every 10 minutes (cron) it checks the workstations dashboard (port 8090) and the pipeline status page (8771) on this
-machine and posts to Discord: a problem when it starts, again every 6 hours while it lasts, and once when it clears.
+machine and posts to Discord (machines unreachable or low on disk, workers blocked or stalled, and the video downloader: nothing downloaded for 2 h with videos waiting, or over half of at least 10 tries in 2 h failed): a problem when it starts, again every 6 hours while it lasts, and once when it clears.
 The webhook URL is read from `~/.config/crowd-alerts/discord_webhook` (mode 600, never in a repository); links in the
 posts use `CROWD_HOST`. `python3 alerts.py --dry-run` prints what it would post.
 
