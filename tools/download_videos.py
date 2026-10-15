@@ -28,8 +28,9 @@ from helper_script import Youtube_Helper
 
 CHECK_S = 3600            # how often the mapping on GitHub is read again
 RETRY_S = 86400           # a video that failed is tried again after this long
-PAUSE_S = 5               # between two downloads
-BLOCKED_AFTER, BLOCKED_S = 5, 1800  # this many failures in a row (YouTube asking to sign in): wait this long
+PAUSE_S = 30              # between two downloads (shorter got YouTube's bot check more often)
+BLOCKED_AFTER, BLOCKED_S = 5, 1800  # this many failures in a row (YouTube asking to sign in): wait this long,
+BLOCKED_MAX_S = 14400               # twice as long each time it happens again, up to this, until a success
 NEED_GB = 5               # a drive must have this much above its reserve for the next video
 
 
@@ -131,7 +132,7 @@ def main():
     reserve, use_ftp = setting('download_reserve_gb', 100), setting('download_ftp', True)
     log(f'drives in order: {drives} (each until {reserve} GB is left); file server first: {use_ftp}')
     h = None
-    failed, checked, todo, streak = {}, 0.0, [], 0
+    failed, checked, todo, streak, wait = {}, 0.0, [], 0, BLOCKED_S
     while True:
         if time.time() - checked >= CHECK_S or not todo:
             checked, have = time.time(), present(list(folders) + list(drives))
@@ -158,15 +159,15 @@ def main():
         h = h or Youtube_Helper()
         source = fetch(h, vid, folder, use_ftp)
         if source:
-            streak = 0
+            streak, wait = 0, BLOCKED_S
             log(f'{vid}: from {source} to {folder} ({shutil.disk_usage(folder).free / 1e9:.0f} GB free there)')
         else:
             failed[vid], streak = time.time(), streak + 1
             log(f'{vid}: failed ({streak} in a row)')
             if streak >= BLOCKED_AFTER:
-                log(f'{streak} failures in a row (YouTube asking to sign in?): waiting {BLOCKED_S // 60} min')
-                time.sleep(BLOCKED_S)
-                streak = 0
+                log(f'{streak} failures in a row (YouTube asking to sign in?): waiting {wait // 60} min')
+                time.sleep(wait)
+                streak, wait = 0, min(2 * wait, BLOCKED_MAX_S)
         if args.once and not todo:
             return
         time.sleep(PAUSE_S)

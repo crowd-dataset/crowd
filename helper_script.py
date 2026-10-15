@@ -90,6 +90,16 @@ class Youtube_Helper:
             self.js_runtimes = {runtime: {"path": path} if path else {}}
         except KeyError:
             self.js_runtimes = None
+        # optional: "use_pytubefix" false goes straight to yt-dlp (where pytubefix always fails, it only adds requests
+        # to YouTube); "cookies_file" makes yt-dlp read cookies from that Netscape cookies file, not a browser
+        try:
+            self.use_pytubefix = bool(common.get_configs("use_pytubefix"))
+        except KeyError:
+            self.use_pytubefix = True
+        try:
+            self.cookies_file = common.get_configs("cookies_file") or None
+        except KeyError:
+            self.cookies_file = None
 
     def set_video_title(self, title):
         """
@@ -546,6 +556,8 @@ class Youtube_Helper:
         monday = datetime.datetime.today().weekday() == 0
 
         try:
+            if not self.use_pytubefix:
+                raise RuntimeError("pytubefix is off (use_pytubefix)")
             if self.update_package and monday:
                 self.upgrade_package_if_needed("pytubefix")
             if self.need_authentication:
@@ -583,7 +595,8 @@ class Youtube_Helper:
                 self.upgrade_package_if_needed("yt-dlp")
             resolution = "best<=720p"
             ydl_opts = {
-                "cookiesfrombrowser": (self.cookies_browser,),  # as the CLI's --cookies-from-browser
+                **({"cookiefile": self.cookies_file} if self.cookies_file
+                   else {"cookiesfrombrowser": (self.cookies_browser,)}),  # as --cookies / --cookies-from-browser
                 "remote_components": ["ejs:github"],  # as --remote-components ejs:github
                 "noplaylist": True,
                 "outtmpl": os.path.join(temp_dir, f"{vid}.%(ext)s"),
