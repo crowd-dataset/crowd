@@ -11,7 +11,8 @@ files (so their videos are fetched before they are merged), read from origin/mai
 arrive within CHECK_S without a pull, and the checkout others run from is left as it is (the files here when git
 fails). Optional settings in config: "download_drives" (default: the folders of "videos" but the last),
 "download_reserve_gb" (default 100), "download_ftp" (default true; false where the file server shares the same drives).
-What it is doing goes to _output/download_status.json, which the pipeline status page shows (dashboards/).
+What it is doing goes to _output/download_status.json (with the videos still to download) and every download to
+_output/downloaded_videos.csv; the pipeline status page shows both (dashboards/).
 """
 import argparse
 import csv
@@ -36,6 +37,7 @@ BLOCKED_MAX_S = 14400               # twice as long each time it happens again, 
 NEED_GB = 5               # a drive must have this much above its reserve for the next video
 STATUS = os.path.join('_output', 'download_status.json')  # what it is doing, for dashboards/pipeline_status.py
 RECENT = 50               # downloads and failures kept in STATUS
+DONE = os.path.join('_output', 'downloaded_videos.csv')  # every download: time, video, title, MB, source, drive
 
 
 def setting(name, default):
@@ -150,7 +152,7 @@ def main():
     h = None
     failed, checked, todo, streak, wait = {}, 0.0, [], 0, BLOCKED_S
     status = dict(started=time.time(), state='starting', queue=0, downloaded=0, failed=0, current=None, drive=None,
-                  until=None, reserve_gb=reserve, recent=[], failures=[])
+                  until=None, reserve_gb=reserve, recent=[], failures=[], todo=[])
     try:  # the downloads and failures logged before a restart stay
         with open(STATUS) as f:
             before = json.load(f)
@@ -163,6 +165,7 @@ def main():
             todo = [v for v in mapping_videos() if v not in have and time.time() - failed.get(v, 0) > RETRY_S]
             log(f'{len(todo)} videos to download')
             if not args.dry_run:
+                status['todo'] = todo  # the same list: the status file always has what is left
                 report(status, drives, queue=len(todo), state='downloading' if todo else 'idle', until=None)
             if args.dry_run:
                 for v in todo[:20]:
@@ -194,6 +197,13 @@ def main():
             size = os.path.getsize(os.path.join(folder, f'{vid}.mp4'))
             status['recent'] = [dict(t=time.time(), vid=vid, title=h.video_title, source=source, drive=folder,
                                      mb=round(size / 1e6))] + status['recent'][:RECENT - 1]
+            new = not os.path.exists(DONE)
+            with open(DONE, 'a', newline='', encoding='utf-8') as f:
+                w = csv.writer(f)
+                if new:
+                    w.writerow(['time', 'video', 'title', 'mb', 'source', 'drive'])
+                w.writerow([time.strftime('%Y-%m-%d %H:%M:%S'), vid, h.video_title or '', round(size / 1e6), source,
+                            folder])
             report(status, drives, downloaded=status['downloaded'] + 1, current=None, queue=len(todo))
         else:
             failed[vid], streak = time.time(), streak + 1

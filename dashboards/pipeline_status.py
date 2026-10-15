@@ -7,6 +7,8 @@ Every REFRESH_S a background thread reads the end of each worker's runner.log ov
 machine's state; the page shows that snapshot, so opening it costs the workers nothing.
 """
 import collections
+import csv
+import io
 import json
 import os
 import re
@@ -235,7 +237,8 @@ th{color:var(--muted);font-weight:500}td.n,th.n{text-align:right;font-variant-nu
  <div class="head"><h3>tools/download_videos.py</h3><span class="st {{ 'working' if d.state == 'downloading' else
   'idle' if d.state == 'idle' else 'blocked' }}">{{ d.state }}</span></div>
  {% if d.until %}<div class="small muted">until {{ hm(d.until) }}</div>{% endif %}
- <div class="row" style="margin-top:8px"><b>{{ d.queue }}</b> videos to download{% if d.rate %} ·
+ <div class="row" style="margin-top:8px"><a href="downloads/todo"><b>{{ d.queue }}</b> videos to download</a>
+  · <a href="downloads/done">downloaded</a>{% if d.rate %} ·
   {{ '%.0f'|format(d.rate) }} videos/h (last 3 h) · about {{ dur(d.eta) }} left{% endif %}</div>
  {% if d.current %}<div class="row ell small">now:
   <a href="https://youtu.be/{{ d.current }}" target="_blank">{{ d.current }}</a></div>{% endif %}
@@ -285,6 +288,51 @@ def index():
     return render_template_string(PAGE, s=snapshot, dur=dur,
                                   hm=lambda t: time.strftime('%d %b %H:%M', time.localtime(t)),
                                   ago=lambda t: dur(time.time() - t) if t else '?')
+
+
+LIST_PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><title>{{ title }}</title>
+<style>
+:root{--bg:#f6f7f9;--fg:#1b1f24;--muted:#667085;--line:#e4e7ec;--link:#2563eb}
+@media (prefers-color-scheme:dark){:root{--bg:#0f1115;--fg:#e6e8ec;--muted:#8b93a1;--line:#272c36;--link:#60a5fa}}
+body{margin:0;padding:16px;background:var(--bg);color:var(--fg);font:14px/1.4 system-ui,-apple-system,sans-serif}
+a{color:var(--link);text-decoration:none}a:hover{text-decoration:underline}h1{font-size:20px;margin:0 0 4px}
+.muted{color:var(--muted)}table{border-collapse:collapse;margin-top:12px;font-size:13px}
+td,th{padding:3px 10px 3px 0;border-top:1px solid var(--line);text-align:left;white-space:nowrap}
+th{color:var(--muted);font-weight:500}td.t{white-space:normal;max-width:520px}td.n{text-align:right}
+</style></head><body><h1>🚚 {{ title }}</h1>
+<div class="muted"><a href="..">pipeline status</a> · {{ rows|length }} videos
+{% if note %} · {{ note }}{% endif %}</div>
+<table><tr>{% for c in cols %}<th>{{ c }}</th>{% endfor %}</tr>
+{% for r in rows %}<tr>{% for c in cols %}{% if c == 'video' %}<td><a href="https://youtu.be/{{ r[c] }}"
+ target="_blank">{{ r[c] }}</a></td>{% else %}<td class="{{ 't' if c == 'title' else 'n' if c == 'GB' else ''
+ }}">{{ r[c] }}</td>{% endif %}{% endfor %}</tr>{% endfor %}</table></body></html>"""
+
+
+@app.route('/downloads/todo')
+def downloads_todo():
+    """The videos still to download, in the order the downloader takes them (as of the last snapshot)."""
+    d = snapshot.get('downloads') or {}
+    rows = [{'#': i, 'video': v} for i, v in enumerate(d.get('todo', []), 1)]
+    return render_template_string(LIST_PAGE, title='Videos to download', cols=['#', 'video'], rows=rows,
+                                  note=d.get('error') or 'in the order they are taken; new videos join every hour')
+
+
+@app.route('/downloads/done')
+def downloads_done():
+    """Every video the downloader has fetched, newest first (read from its machine when opened)."""
+    host, path = DOWNLOADER
+    try:
+        text = sw.ssh(host, 'cat ' + path.replace('download_status.json', 'downloaded_videos.csv'))
+        rows = list(csv.DictReader(io.StringIO(text)))[::-1]
+        note = None
+    except Exception as e:
+        rows, note = [], str(e)[-200:]
+    for r in rows:
+        r['GB'] = f"{int(r['mb'] or 0) / 1000:.1f}"
+        r['drive'] = r['drive'].split('/')[3] if r['drive'].startswith('/media/') else r['drive']
+    return render_template_string(LIST_PAGE, title='Videos downloaded', rows=rows, note=note,
+                                  cols=['time', 'video', 'title', 'GB', 'source', 'drive'])
 
 
 @app.route('/status.json')
