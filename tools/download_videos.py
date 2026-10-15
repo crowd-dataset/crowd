@@ -151,6 +151,12 @@ def main():
     failed, checked, todo, streak, wait = {}, 0.0, [], 0, BLOCKED_S
     status = dict(started=time.time(), state='starting', queue=0, downloaded=0, failed=0, current=None, drive=None,
                   until=None, reserve_gb=reserve, recent=[], failures=[])
+    try:  # the downloads and failures logged before a restart stay
+        with open(STATUS) as f:
+            before = json.load(f)
+        status.update(recent=before.get("recent", [])[:RECENT], failures=before.get("failures", [])[:RECENT])
+    except (OSError, ValueError):
+        pass
     while True:
         if time.time() - checked >= CHECK_S or not todo:
             checked, have = time.time(), present(list(folders) + list(drives))
