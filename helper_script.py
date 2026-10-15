@@ -616,8 +616,18 @@ class Youtube_Helper:
             logger.info(f"{vid}: download in {resolution} started with yt-dlp.")
             if os.path.exists(temp_path):
                 os.remove(temp_path)
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:  # pyright: ignore[reportArgumentType]
-                info = ydl.extract_info(youtube_url, download=True)
+            try:
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:  # pyright: ignore[reportArgumentType]
+                    info = ydl.extract_info(youtube_url, download=True)
+            except yt_dlp.utils.DownloadError as e:
+                # a signed-in session YouTube has turned against answers "Video unavailable" for public videos that
+                # download fine without it (lin4080's Chrome login, 2026-10-15): once more without the cookies
+                if "Video unavailable" not in str(e):
+                    raise
+                logger.warning(f"{vid}: unavailable with the cookies; trying again without them.")
+                ydl_opts = {k: v for k, v in ydl_opts.items() if k not in ("cookiefile", "cookiesfrombrowser")}
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:  # pyright: ignore[reportArgumentType]
+                    info = ydl.extract_info(youtube_url, download=True)
             self.video_title = info.get("title") if isinstance(info, dict) else None
             return self._finish_download(temp_path, final_path, vid, resolution)
 
