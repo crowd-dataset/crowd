@@ -10,12 +10,16 @@ Run from the repository's top folder. The videos come from mapping.csv and the c
 files (so their videos are fetched before they are merged), read from origin/main after a git fetch: new videos
 arrive within CHECK_S without a pull, and the checkout others run from is left as it is (the files here when git
 fails). Optional settings in config: "download_drives" (default: the folders of "videos" but the last),
-"download_reserve_gb" (default 100), "download_ftp" (default true; false where the file server shares the same drives).
+"download_reserve_gb" (default 100), "download_ftp" (default true; false where the file server shares the same drives),
+"download_per_hour" (default 30: more got the login flagged). yt-dlp is upgraded once a day (a new version restarts
+the downloader).
 What it is doing goes to _output/download_status.json (with the videos still to download) and every download to
 _output/downloaded_videos.csv; the pipeline status page shows both (dashboards/).
 """
 import argparse
 import csv
+import importlib
+import importlib.metadata
 import io
 import json
 import os
@@ -32,12 +36,16 @@ from helper_script import Youtube_Helper
 CHECK_S = 3600            # how often the mapping on GitHub is read again
 RETRY_S = 86400           # a video that failed is tried again after this long
 PAUSE_S = 30              # between two downloads (shorter got YouTube's bot check more often)
-BLOCKED_AFTER, BLOCKED_S = 5, 1800  # this many failures in a row (YouTube asking to sign in): wait this long,
+BLOCKED_AFTER, BLOCKED_S = 5, 1800  # this many blocked downloads in a row: wait this long,
 BLOCKED_MAX_S = 14400               # twice as long each time it happens again, up to this, until a success
+# YouTube refusing this machine (bot check, forbidden, too many requests), unlike a video that is gone or private:
+# only these count towards a pause (five deleted videos in a row paused it for nothing)
+BLOCKED = re.compile(r'Sign in to confirm|HTTP Error 403|HTTP Error 429|Too Many Requests')
 NEED_GB = 5               # a drive must have this much above its reserve for the next video
 STATUS = os.path.join('_output', 'download_status.json')  # what it is doing, for dashboards/pipeline_status.py
 RECENT = 50               # downloads and failures kept in STATUS
 DONE = os.path.join('_output', 'downloaded_videos.csv')  # every download: time, video, title, MB, source, drive
+FAILED = os.path.join('_output', 'download_failed.json')  # when each failed video last failed, kept over restarts
 
 
 def setting(name, default):
@@ -133,6 +141,17 @@ def fetch(h, vid, folder, use_ftp):
     return 'youtube' if h.download_video_with_resolution(vid, output_path=folder) else None
 
 
+def upgrade_ytdlp(h):
+    """yt-dlp at its newest, checked once a day (YouTube's changes break older versions): a new version restarts this
+    process, which has the old one loaded."""
+    before = importlib.metadata.version('yt-dlp')
+    h.upgrade_package_if_needed('yt-dlp')
+    importlib.invalidate_caches()
+    if (after := importlib.metadata.version('yt-dlp')) != before:
+        log(f'yt-dlp {before} -> {after}: restarting')
+        os.execv(sys.executable, [sys.executable, '-m', 'tools.download_videos', *sys.argv[1:]])
+
+
 def secret(name):
     try:
         return common.get_secrets(name) or None
@@ -148,9 +167,15 @@ def main():
     folders = common.get_configs('videos')
     drives = setting('download_drives', folders[:-1])
     reserve, use_ftp = setting('download_reserve_gb', 100), setting('download_ftp', True)
+    per_hour, done_at = setting('download_per_hour', 30), []
     log(f'drives in order: {drives} (each until {reserve} GB is left); file server first: {use_ftp}')
     h = None
-    failed, checked, todo, streak, wait = {}, 0.0, [], 0, BLOCKED_S
+    checked, todo, streak, wait = 0.0, [], 0, BLOCKED_S
+    try:
+        with open(FAILED) as f:
+            failed = {v: t for v, t in json.load(f).items() if time.time() - t < RETRY_S}
+    except (OSError, ValueError):
+        failed = {}
     status = dict(started=time.time(), state='starting', queue=0, downloaded=0, failed=0, current=None, drive=None,
                   until=None, reserve_gb=reserve, recent=[], failures=[], todo=[])
     try:  # the downloads and failures logged before a restart stay
@@ -187,12 +212,20 @@ def main():
             todo.insert(0, vid)
             time.sleep(CHECK_S)
             continue
+        done_at = [t for t in done_at if time.time() - t < 3600]
+        if len(done_at) >= per_hour:
+            log(f'{per_hour} downloads in the last hour: waiting {(done_at[0] + 3600 - time.time()) / 60:.0f} min')
+            report(status, drives, state=f'{per_hour} an hour at most', current=None, until=done_at[0] + 3600)
+            time.sleep(max(0, done_at[0] + 3600 - time.time()))
         h = h or Youtube_Helper()
+        if not args.dry_run:
+            upgrade_ytdlp(h)
         report(status, drives, state='downloading', current=vid, drive=folder, queue=len(todo) + 1, until=None)
-        h.video_title = None
+        h.video_title, h.download_error = None, None
         source = fetch(h, vid, folder, use_ftp)
         if source:
             streak, wait = 0, BLOCKED_S
+            done_at.append(time.time())
             log(f'{vid}: from {source} to {folder} ({usage(folder).free / 1e9:.0f} GB free there)')
             size = os.path.getsize(os.path.join(folder, f'{vid}.mp4'))
             status['recent'] = [dict(t=time.time(), vid=vid, title=h.video_title, source=source, drive=folder,
@@ -206,13 +239,20 @@ def main():
                             folder])
             report(status, drives, downloaded=status['downloaded'] + 1, current=None, queue=len(todo))
         else:
-            failed[vid], streak = time.time(), streak + 1
-            log(f'{vid}: failed ({streak} in a row)')
+            failed[vid] = time.time()
+            with open(FAILED + '.tmp', 'w') as f:
+                json.dump(failed, f)
+            os.replace(FAILED + '.tmp', FAILED)
+            if BLOCKED.search(h.download_error or ''):
+                streak += 1
+                log(f'{vid}: failed, blocked ({streak} in a row)')
+            else:
+                log(f'{vid}: failed ({(h.download_error or "no reason given").splitlines()[0][:120]})')
             status['failures'] = [dict(t=time.time(), vid=vid)] + status['failures'][:RECENT - 1]
             report(status, drives, failed=status['failed'] + 1, current=None, queue=len(todo))
             if streak >= BLOCKED_AFTER:
-                log(f'{streak} failures in a row (YouTube asking to sign in?): waiting {wait // 60} min')
-                report(status, drives, state=f'paused after {streak} failures in a row', until=time.time() + wait)
+                log(f'{streak} downloads blocked in a row: waiting {wait // 60} min')
+                report(status, drives, state=f'paused after {streak} blocked in a row', until=time.time() + wait)
                 time.sleep(wait)
                 streak, wait = 0, min(2 * wait, BLOCKED_MAX_S)
         if args.once and not todo:

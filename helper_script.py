@@ -81,17 +81,17 @@ class Youtube_Helper:
         self.update_package = common.get_configs("update_package")
         self.need_authentication = common.get_configs("need_authentication")
         self.client = common.get_configs("client")
-        try:  # optional: the browser yt-dlp reads YouTube cookies from, BROWSER[+KEYRING] (default brave)
-            self.cookies_browser = common.get_configs("cookies_browser")
+        try:  # optional: the browser yt-dlp reads YouTube cookies from, BROWSER[+KEYRING] (default brave, unless
+            self.cookies_browser = common.get_configs("cookies_browser")  # a "cookies_file" is set)
         except KeyError:
-            self.cookies_browser = "brave"
+            self.cookies_browser = None
         try:  # optional: yt-dlp's JavaScript runtime, as its --js-runtimes RUNTIME[:PATH] (default: deno, if any)
             runtime, _, path = common.get_configs("js_runtime").partition(":")
             self.js_runtimes = {runtime: {"path": path} if path else {}}
         except KeyError:
             self.js_runtimes = None
         # optional: "use_pytubefix" false goes straight to yt-dlp (where pytubefix always fails, it only adds requests
-        # to YouTube); "cookies_file" makes yt-dlp read cookies from that Netscape cookies file, not a browser
+        # to YouTube); "cookies_file", a Netscape cookies file (another login), is tried before the browser's
         try:
             self.use_pytubefix = bool(common.get_configs("use_pytubefix"))
         except KeyError:
@@ -209,6 +209,8 @@ class Youtube_Helper:
             # Ensures the operation applies to the environment of this running Python.
             "--python",
             sys.executable,
+            # yt-dlp's nightly builds: YouTube changes break its stable release for weeks (yt-dlp's own advice)
+            *(["--prerelease=allow"] if package_name == "yt-dlp" else []),
         ]
 
         try:
@@ -532,10 +534,11 @@ class Youtube_Helper:
         chosen = next((s for s in at_h if getattr(s, "is_progressive", False)), at_h[0])
         return chosen, getattr(chosen, "resolution", None) or getattr(chosen, "res", None) or f"{h}p"
 
-    def _browser_cookies(self):
-        """yt-dlp's cookiesfrombrowser for "cookies_browser", written as its --cookies-from-browser BROWSER[+KEYRING]
-        (chrome+gnomekeyring where a background job would not find the desktop keyring by itself)."""
-        browser, _, keyring = self.cookies_browser.partition("+")
+    @staticmethod
+    def _browser_cookies(setting):
+        """yt-dlp's cookiesfrombrowser for a "cookies_browser" setting, written as its --cookies-from-browser
+        BROWSER[+KEYRING] (chrome+gnomekeyring where a background job would not find the desktop keyring by itself)."""
+        browser, _, keyring = setting.partition("+")
         return (browser, None, keyring.upper() or None, None)
 
     def _finish_download(self, temp_path, final_path, vid, resolution):
@@ -548,7 +551,8 @@ class Youtube_Helper:
     def download_video_with_resolution(self, vid, resolutions=["720p", "480p", "360p", "144p"], output_path="."):
         """
         Download a YouTube video, the first of resolutions it has (else the highest at most 720p, else the lowest
-        above), with pytubefix, then yt-dlp (cookies from the "cookies_browser" setting, else Brave) when that fails.
+        above), with pytubefix, then yt-dlp when that fails: with the "cookies_file" login, then the "cookies_browser"
+        one (else Brave), then none.
         The file goes to output_path/.ftp_tmp first and is moved to output_path/VID.mp4 when complete.
 
         Returns:
@@ -601,8 +605,6 @@ class Youtube_Helper:
                 self.upgrade_package_if_needed("yt-dlp")
             resolution = "best<=720p"
             ydl_opts = {
-                **({"cookiefile": self.cookies_file} if self.cookies_file
-                   else {"cookiesfrombrowser": self._browser_cookies()}),  # as --cookies / --cookies-from-browser
                 "remote_components": ["ejs:github"],  # as --remote-components ejs:github
                 "noplaylist": True,
                 "outtmpl": os.path.join(temp_dir, f"{vid}.%(ext)s"),
@@ -616,23 +618,29 @@ class Youtube_Helper:
             logger.info(f"{vid}: download in {resolution} started with yt-dlp.")
             if os.path.exists(temp_path):
                 os.remove(temp_path)
-            try:
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:  # pyright: ignore[reportArgumentType]
-                    info = ydl.extract_info(youtube_url, download=True)
-            except yt_dlp.utils.DownloadError as e:
-                # a signed-in session YouTube has turned against answers "Video unavailable" for public videos that
-                # download fine without it (lin4080's Chrome login, 2026-10-15): once more without the cookies
-                if "Video unavailable" not in str(e):
-                    raise
-                logger.warning(f"{vid}: unavailable with the cookies; trying again without them.")
-                ydl_opts = {k: v for k, v in ydl_opts.items() if k not in ("cookiefile", "cookiesfrombrowser")}
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:  # pyright: ignore[reportArgumentType]
-                    info = ydl.extract_info(youtube_url, download=True)
+            # the logins in turn, as --cookies / --cookies-from-browser, then none: a login YouTube has turned against
+            # answers "Video unavailable" for public videos (lin4080's Chrome, 2026-10-15) and no login meets the
+            # bot check, so when one fails the next has a go
+            browser = self.cookies_browser or (None if self.cookies_file else "brave")
+            logins = ([("the cookies file", {"cookiefile": self.cookies_file})] if self.cookies_file else []) \
+                + ([(browser, {"cookiesfrombrowser": self._browser_cookies(browser)})] if browser else []) \
+                + [("no login", {})]
+            for i, (name, login) in enumerate(logins):
+                try:
+                    with yt_dlp.YoutubeDL({**ydl_opts, **login}) as ydl:  # pyright: ignore[reportArgumentType]
+                        info = ydl.extract_info(youtube_url, download=True)
+                    break
+                except yt_dlp.utils.DownloadError as e:
+                    if i == len(logins) - 1:
+                        raise
+                    logger.warning(f"{vid}: failed with {name} ({e}); trying {logins[i + 1][0]}.")
+            self.download_error = None
             self.video_title = info.get("title") if isinstance(info, dict) else None
             return self._finish_download(temp_path, final_path, vid, resolution)
 
         except Exception as ytdlp_error:
             logger.error(f"{vid}: yt-dlp download method failed: {ytdlp_error}")
+            self.download_error = str(ytdlp_error)  # why, for the downloader (tools/download_videos.py)
             return None
 
     def get_video_fps(self, video_file_path):

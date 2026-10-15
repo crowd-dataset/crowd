@@ -47,3 +47,10 @@ def test_report_writes_whole_status(tmp_path, monkeypatch):
         written = json.load(f)
     assert written['state'] == 'downloading' and written['queue'] == 7 and written['updated'] > 0
     assert written['drives'][0]['path'] == str(tmp_path) and written['drives'][0]['total_gb'] > 0
+
+
+def test_blocked_counts_only_youtube_refusing():
+    assert dv.BLOCKED.search("ERROR: [youtube] abc: Sign in to confirm you’re not a bot. Use --cookies")
+    assert dv.BLOCKED.search("ERROR: unable to download video data: HTTP Error 403: Forbidden")
+    assert not dv.BLOCKED.search("ERROR: [youtube] abc: Video unavailable")  # gone: no reason to pause
+    assert not dv.BLOCKED.search("ERROR: [youtube] abc: Private video. Sign in if you've been granted access")
