@@ -36,3 +36,14 @@ def test_mapping_files():
     names = ['README.md', 'mapping-olena.csv', 'mapping.csv', 'mapping_metadata.csv', 'mapping_remaining.csv',
              'mapping-bob.csv', 'archive', 'mapping.csv.lock']
     assert dv.mapping_files(names) == ['mapping.csv', 'mapping-bob.csv', 'mapping-olena.csv']
+
+
+def test_report_writes_whole_status(tmp_path, monkeypatch):
+    monkeypatch.setattr(dv, 'STATUS', str(tmp_path / '_output' / 'download_status.json'))
+    status = dict(state='starting', recent=[])
+    dv.report(status, [str(tmp_path)], state='downloading', queue=7)
+    import json
+    with open(dv.STATUS) as f:
+        written = json.load(f)
+    assert written['state'] == 'downloading' and written['queue'] == 7 and written['updated'] > 0
+    assert written['drives'][0]['path'] == str(tmp_path) and written['drives'][0]['total_gb'] > 0

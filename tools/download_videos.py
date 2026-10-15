@@ -11,10 +11,12 @@ files (so their videos are fetched before they are merged), read from origin/mai
 arrive within CHECK_S without a pull, and the checkout others run from is left as it is (the files here when git
 fails). Optional settings in config: "download_drives" (default: the folders of "videos" but the last),
 "download_reserve_gb" (default 100), "download_ftp" (default true; false where the file server shares the same drives).
+What it is doing goes to _output/download_status.json, which the pipeline status page shows (dashboards/).
 """
 import argparse
 import csv
 import io
+import json
 import os
 import re
 import shutil
@@ -32,6 +34,8 @@ PAUSE_S = 30              # between two downloads (shorter got YouTube's bot che
 BLOCKED_AFTER, BLOCKED_S = 5, 1800  # this many failures in a row (YouTube asking to sign in): wait this long,
 BLOCKED_MAX_S = 14400               # twice as long each time it happens again, up to this, until a success
 NEED_GB = 5               # a drive must have this much above its reserve for the next video
+STATUS = os.path.join('_output', 'download_status.json')  # what it is doing, for dashboards/pipeline_status.py
+RECENT = 50               # downloads and failures kept in STATUS
 
 
 def setting(name, default):
@@ -87,15 +91,27 @@ def mounted(folder):
     return not (len(parts) > 3 and parts[1] == 'media') or os.path.ismount(os.sep.join(parts[:4]))
 
 
+def usage(folder):
+    """shutil.disk_usage of the drive a folder is on (the folder need not exist yet)."""
+    while not os.path.isdir(folder):
+        folder = os.path.dirname(folder)
+    return shutil.disk_usage(folder)
+
+
 def target(drives, reserve_gb):
     """The first drive with room for the next video above its reserve, or None."""
-    for d in drives:
-        root = d
-        while not os.path.isdir(root):
-            root = os.path.dirname(root)
-        if mounted(d) and shutil.disk_usage(root).free > (reserve_gb + NEED_GB) * 1e9:
-            return d
-    return None
+    return next((d for d in drives if mounted(d) and usage(d).free > (reserve_gb + NEED_GB) * 1e9), None)
+
+
+def report(status, drives, **changes):
+    """Update the status and write it to STATUS (whole, so a reader never sees half a file)."""
+    status.update(changes, updated=time.time(),
+                  drives=[dict(path=d, mounted=mounted(d), free_gb=round(usage(d).free / 1e9),
+                               total_gb=round(usage(d).total / 1e9)) for d in drives])
+    os.makedirs(os.path.dirname(STATUS), exist_ok=True)
+    with open(STATUS + '.tmp', 'w') as f:
+        json.dump(status, f)
+    os.replace(STATUS + '.tmp', STATUS)
 
 
 def fetch(h, vid, folder, use_ftp):
@@ -133,11 +149,15 @@ def main():
     log(f'drives in order: {drives} (each until {reserve} GB is left); file server first: {use_ftp}')
     h = None
     failed, checked, todo, streak, wait = {}, 0.0, [], 0, BLOCKED_S
+    status = dict(started=time.time(), state='starting', queue=0, downloaded=0, failed=0, current=None, drive=None,
+                  until=None, reserve_gb=reserve, recent=[], failures=[])
     while True:
         if time.time() - checked >= CHECK_S or not todo:
             checked, have = time.time(), present(list(folders) + list(drives))
             todo = [v for v in mapping_videos() if v not in have and time.time() - failed.get(v, 0) > RETRY_S]
             log(f'{len(todo)} videos to download')
+            if not args.dry_run:
+                report(status, drives, queue=len(todo), state='downloading' if todo else 'idle', until=None)
             if args.dry_run:
                 for v in todo[:20]:
                     log(f'would download {v} to {target(drives, reserve)}')
@@ -145,6 +165,7 @@ def main():
         if not todo:
             if args.once:
                 return
+            report(status, drives, state='idle', current=None, until=time.time() + CHECK_S)
             time.sleep(CHECK_S)
             continue
         vid = todo.pop(0)
@@ -153,19 +174,29 @@ def main():
         folder = target(drives, reserve)
         if folder is None:
             log(f'no drive has more than {reserve + NEED_GB} GB free: waiting an hour')
+            report(status, drives, state='no room on any drive', current=None, until=time.time() + CHECK_S)
             todo.insert(0, vid)
             time.sleep(CHECK_S)
             continue
         h = h or Youtube_Helper()
+        report(status, drives, state='downloading', current=vid, drive=folder, queue=len(todo) + 1, until=None)
+        h.video_title = None
         source = fetch(h, vid, folder, use_ftp)
         if source:
             streak, wait = 0, BLOCKED_S
-            log(f'{vid}: from {source} to {folder} ({shutil.disk_usage(folder).free / 1e9:.0f} GB free there)')
+            log(f'{vid}: from {source} to {folder} ({usage(folder).free / 1e9:.0f} GB free there)')
+            size = os.path.getsize(os.path.join(folder, f'{vid}.mp4'))
+            status['recent'] = [dict(t=time.time(), vid=vid, title=h.video_title, source=source, drive=folder,
+                                     mb=round(size / 1e6))] + status['recent'][:RECENT - 1]
+            report(status, drives, downloaded=status['downloaded'] + 1, current=None, queue=len(todo))
         else:
             failed[vid], streak = time.time(), streak + 1
             log(f'{vid}: failed ({streak} in a row)')
+            status['failures'] = [dict(t=time.time(), vid=vid)] + status['failures'][:RECENT - 1]
+            report(status, drives, failed=status['failed'] + 1, current=None, queue=len(todo))
             if streak >= BLOCKED_AFTER:
                 log(f'{streak} failures in a row (YouTube asking to sign in?): waiting {wait // 60} min')
+                report(status, drives, state=f'paused after {streak} failures in a row', until=time.time() + wait)
                 time.sleep(wait)
                 streak, wait = 0, min(2 * wait, BLOCKED_MAX_S)
         if args.once and not todo:

@@ -26,6 +26,8 @@ import sync_workers as sw  # noqa: E402
 from globe import globe_data  # noqa: E402
 
 PORT, REFRESH_S, TAIL = 8771, 120, 600
+# the video downloader (tools/download_videos.py): its machine and the status file it writes there
+DOWNLOADER = ('lin4080', '~/Documents/GitHub/pedestrians-in-youtube/_output/download_status.json')
 HOST = os.environ.get('REVIEW_HOST', '127.0.0.1')
 STUCK_MIN = sw.STUCK_MIN
 app = Flask(__name__)
@@ -98,11 +100,28 @@ def worker(host):
     return dict(parse_log(body.splitlines(), mtime, now), host=host, role=sw.WORKERS[host], clock=now)
 
 
+def downloads():
+    """The downloader's status, with videos per hour over the last 3 h and the time left at that pace."""
+    host, path = DOWNLOADER
+    try:
+        d = json.loads(sw.ssh(host, f'cat {path}'))
+    except Exception as e:
+        return dict(host=host, error=str(e)[-200:])
+    now = time.time()
+    hours = min(3.0, (now - d['started']) / 3600)
+    done = sum(r['t'] > now - hours * 3600 for r in d.get('recent', []))
+    d['rate'] = done / hours if hours > 0.25 else None
+    d['eta'] = d['queue'] / d['rate'] * 3600 if d['rate'] else None
+    return dict(d, host=host, failed_24h=sum(f['t'] > now - 86400 for f in d.get('failures', [])))
+
+
 def collect():
     state = rc.load_state()
     by_url = {(c.get('url') or k.split('refresh:', 1)[-1]): c for k, c in state.items()}
-    with ThreadPoolExecutor(len(sw.WORKERS)) as ex:
+    with ThreadPoolExecutor(len(sw.WORKERS) + 1) as ex:
+        dl = ex.submit(downloads)
         workers = list(ex.map(worker, sw.WORKERS))
+        dl = dl.result()
     for w in workers:
         url = w.get('channel') or ''
         c = by_url.get(url)  # a channel not in the state yet: the last part of its URL (@name or channel id)
@@ -124,7 +143,7 @@ def collect():
     order = ['processing', 'to review', 'reviewed', 'marked', 'rejected', 'duplicate', 'error']
     names = sorted({s for _, s in statuses}, key=lambda s: order.index(s) if s in order else 99)
     return dict(
-        at=time.time(), workers=workers, batches=sorted(batches, key=lambda b: -b['waiting']),
+        at=time.time(), workers=workers, downloads=dl, batches=sorted(batches, key=lambda b: -b['waiting']),
         sheet_todo=len(todo), queue=len(queue),
         queue_phases=sorted(collections.Counter(q.get('phase') for q in queue).items(), key=lambda x: str(x[0])),
         last_sync=os.path.getmtime(sw.HEALTH) if os.path.exists(sw.HEALTH) else None,
@@ -210,6 +229,35 @@ th{color:var(--muted);font-weight:500}td.n,th.n{text-align:right;font-variant-nu
  {% for p in w.problems %}<div class="prob {{ '' if p.current else 'old' }}">{{ p.text }}</div>{% endfor %}
  {% endif %}</div>{% endfor %}
 </div>
+{% set d = s.downloads %}<h2>Video downloads ({{ d.host }})</h2>
+{% if d.error %}<div class="card"><div class="prob">status not readable: {{ d.error }}</div></div>{% else %}
+<div class="grid"><div class="card">
+ <div class="head"><h3>tools/download_videos.py</h3><span class="st {{ 'working' if d.state == 'downloading' else
+  'idle' if d.state == 'idle' else 'blocked' }}">{{ d.state }}</span></div>
+ {% if d.until %}<div class="small muted">until {{ hm(d.until) }}</div>{% endif %}
+ <div class="row" style="margin-top:8px"><b>{{ d.queue }}</b> videos to download{% if d.rate %} ·
+  {{ '%.0f'|format(d.rate) }} videos/h (last 3 h) · about {{ dur(d.eta) }} left{% endif %}</div>
+ {% if d.current %}<div class="row ell small">now:
+  <a href="https://youtu.be/{{ d.current }}" target="_blank">{{ d.current }}</a></div>{% endif %}
+ <div class="small muted">{{ d.downloaded }} downloaded and {{ d.failed }} failed since it started
+  {{ ago(d.started) }} ago
+  ({{ d.failed_24h }} failed in 24 h) · status written {{ ago(d.updated) }} ago</div>
+ {% for r in d.drives %}<div class="small" style="margin-top:6px">
+  {{ r.path.split('/')[3] if r.path.startswith('/media/')
+  else r.path }}{% if r.path == d.drive %} <b>· filling</b>{% endif %}{% if not r.mounted %}
+  <span class="prob">not mounted</span>{% endif %} <span class="muted">{{ r.free_gb }} GB free of {{ r.total_gb }}
+  (down to {{ d.reserve_gb }})</span></div>
+ <div class="bar"><i style="width:{{ (100 - 100 * r.free_gb / r.total_gb)|round(1) if r.total_gb else 0
+  }}%"></i></div>
+ {% endfor %}
+</div></div>
+{% if d.recent %}<div class="card" style="margin-top:12px"><table>
+<tr><th>downloaded</th><th>video</th><th>title</th><th class="n">size</th><th>drive</th></tr>
+{% for r in d.recent[:30] %}<tr><td class="muted">{{ hm(r.t) }}</td>
+ <td><a href="https://youtu.be/{{ r.vid }}" target="_blank">{{ r.vid }}</a></td>
+ <td class="ell" style="max-width:420px">{{ r.title or '' }}</td><td class="n">{{ '%.1f'|format(r.mb / 1000) }} GB</td>
+ <td class="muted">{{ r.drive.split('/')[3] if r.drive.startswith('/media/') else r.drive }}</td></tr>{% endfor %}
+</table></div>{% endif %}{% endif %}
 {% if s.batches %}<h2>Batches waiting for review</h2><div class="card"><table>
 <tr><th>channel</th><th>fetched on</th><th class="n">to review</th><th class="n">proposed</th></tr>
 {% for b in s.batches %}<tr><td>{{ b.name }}</td><td class="muted">{{ b.host }}</td>
@@ -235,6 +283,7 @@ def index():
     if not snapshot.get('at'):
         return '<meta http-equiv="refresh" content="5">Collecting the first snapshot…'
     return render_template_string(PAGE, s=snapshot, dur=dur,
+                                  hm=lambda t: time.strftime('%d %b %H:%M', time.localtime(t)),
                                   ago=lambda t: dur(time.time() - t) if t else '?')
 
 
