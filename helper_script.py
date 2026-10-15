@@ -81,7 +81,7 @@ class Youtube_Helper:
         self.update_package = common.get_configs("update_package")
         self.need_authentication = common.get_configs("need_authentication")
         self.client = common.get_configs("client")
-        try:  # optional: the browser yt-dlp reads YouTube cookies from (chrome where there is no Brave)
+        try:  # optional: the browser yt-dlp reads YouTube cookies from, BROWSER[+KEYRING] (default brave)
             self.cookies_browser = common.get_configs("cookies_browser")
         except KeyError:
             self.cookies_browser = "brave"
@@ -532,6 +532,12 @@ class Youtube_Helper:
         chosen = next((s for s in at_h if getattr(s, "is_progressive", False)), at_h[0])
         return chosen, getattr(chosen, "resolution", None) or getattr(chosen, "res", None) or f"{h}p"
 
+    def _browser_cookies(self):
+        """yt-dlp's cookiesfrombrowser for "cookies_browser", written as its --cookies-from-browser BROWSER[+KEYRING]
+        (chrome+gnomekeyring where a background job would not find the desktop keyring by itself)."""
+        browser, _, keyring = self.cookies_browser.partition("+")
+        return (browser, None, keyring.upper() or None, None)
+
     def _finish_download(self, temp_path, final_path, vid, resolution):
         """Move the finished download into place: (final_path, vid, resolution, fps)."""
         os.replace(temp_path, final_path)
@@ -596,7 +602,7 @@ class Youtube_Helper:
             resolution = "best<=720p"
             ydl_opts = {
                 **({"cookiefile": self.cookies_file} if self.cookies_file
-                   else {"cookiesfrombrowser": (self.cookies_browser,)}),  # as --cookies / --cookies-from-browser
+                   else {"cookiesfrombrowser": self._browser_cookies()}),  # as --cookies / --cookies-from-browser
                 "remote_components": ["ejs:github"],  # as --remote-components ejs:github
                 "noplaylist": True,
                 "outtmpl": os.path.join(temp_dir, f"{vid}.%(ext)s"),
