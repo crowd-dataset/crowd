@@ -978,8 +978,10 @@ def _dumbbell(df: pl.DataFrame, label: str, values: dict, x_title: str, name: st
                                  marker=dict(color=color, size=11),
                                  **_hover_args(df, f"{legend}: %{{x{fmt}}}")))
     fig.update_xaxes(type="log" if log else "linear", title_text=x_title, showgrid=True, gridcolor="#e5e5e5")
-    fig.update_yaxes(categoryorder="array", categoryarray=df[label].to_list(), title_text="", dtick=1)
-    _save(_style(fig, height=max(500, 24 * df.height + 150), margin=dict(l=10, r=20, t=20, b=70),
+    # range fixed to the rows: autorange leaves several empty rows above and below
+    fig.update_yaxes(categoryorder="array", categoryarray=df[label].to_list(), title_text="", dtick=1,
+                     range=[-0.6, df.height - 0.4])
+    _save(_style(fig, height=max(500, 24 * df.height + 110), margin=dict(l=10, r=20, t=40, b=60),
                  legend=dict(orientation="h", x=0.5, xanchor="center", y=1.0, yanchor="bottom")), name)
 
 
@@ -1199,7 +1201,7 @@ def detection_figures(df_mapping: pl.DataFrame, det: pl.DataFrame, classes: list
         fig.update_yaxes(categoryorder="array", categoryarray=ci["name"].to_list(), dtick=1,
                          range=[-0.6, ci.height - 0.4])
         _save(_style(fig, height=max(500, 22 * ci.height + 90), margin=dict(l=10, r=20, t=10, b=60),
-                     legend=dict(x=0.99, xanchor="right", y=0.2, yanchor="bottom")), "dot_pedestrians_per_minute")
+                     legend=dict(x=0.99, xanchor="right", y=0.005, yanchor="bottom")), "dot_pedestrians_per_minute")
 
     # how much footage a stable estimate of a locality needs: the width of its 95% interval (bootstrap over its
     # segments) against its analysed hours
