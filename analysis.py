@@ -2100,6 +2100,7 @@ README_DETECTIONS = {
 # per-segment counts of the bbox CSVs, committed so that runs without the CSVs (the GitHub Action) make the detection
 # figures and README counts too; written by count_detections.py (see its docstring)
 DETECTION_SNAPSHOT = "detection_counts.csv.gz"
+DETECTION_CACHE = os.path.join("_output", "detection_cache.json.gz")  # per-file counts, not committed
 
 
 def _count_file(args) -> tuple:
@@ -2187,7 +2188,22 @@ def count_detections(df_mapping: pl.DataFrame, workers: int = 1, write_snapshot:
         if segment is not None and segment[:3] not in seen:
             seen.add(segment[:3])
             todo.append((f, segment))
-    jobs = [(f, min_conf, list(id_to_class)) for f, _ in todo]
+    # per-file counts of earlier runs, keyed by file name, size and modification time: a weekly run reads only new or
+    # changed CSVs
+    cache: dict = {}
+    if os.path.exists(DETECTION_CACHE):
+        with gzip.open(DETECTION_CACHE, "rt") as f:
+            stored = json.load(f)
+        if stored.get("min_conf") == min_conf:
+            cache = stored["files"]
+
+    def key(path):
+        st = os.stat(path)
+        return f"{os.path.basename(path)}|{st.st_size}|{int(st.st_mtime)}"
+
+    keys = [key(f) for f, _ in todo]
+    jobs = [(f, min_conf, list(id_to_class)) for (f, _), k in zip(todo, keys) if k not in cache]
+    logger.info(f"{len(todo) - len(jobs):,} of {len(todo):,} detection files counted before; reading {len(jobs):,}.")
     if workers > 1:
         # threads, not processes: polars reads without holding the GIL, and forked processes deadlock in polars'
         # own thread pool
@@ -2196,10 +2212,16 @@ def count_detections(df_mapping: pl.DataFrame, workers: int = 1, write_snapshot:
         results = pool.map(_count_file, jobs)
     else:
         pool, results = None, map(_count_file, jobs)
-    for (_, segment), (path, per_class) in tqdm(zip(todo, results), total=len(todo), desc="Counting detections"):
-        if per_class is None:
-            logger.warning(f"Skipping unreadable detection file {path}")
-            continue
+    results = iter(results)
+    for (f, segment), k in tqdm(zip(todo, keys), total=len(todo), desc="Counting detections"):
+        if k in cache:
+            per_class = {int(i): n for i, n in cache[k].items()}
+        else:
+            path, per_class = next(results)
+            if per_class is None:
+                logger.warning(f"Skipping unreadable detection file {path}")
+                continue
+            cache[k] = per_class
         n_read += 1
         row = dict.fromkeys(README_DETECTIONS, 0) | {"detected_seconds": segment[3]}
         for yolo_id, n in per_class.items():
@@ -2207,6 +2229,11 @@ def count_detections(df_mapping: pl.DataFrame, workers: int = 1, write_snapshot:
         counts[segment[:3]] = row
     if pool is not None:
         pool.shutdown()
+    if jobs:
+        os.makedirs(os.path.dirname(DETECTION_CACHE), exist_ok=True)
+        with gzip.open(DETECTION_CACHE + ".tmp", "wt") as f:
+            json.dump({"min_conf": min_conf, "files": cache}, f)
+        os.replace(DETECTION_CACHE + ".tmp", DETECTION_CACHE)
 
     if not n_read:
         return load_detection_snapshot(df_mapping)
@@ -2218,7 +2245,7 @@ def count_detections(df_mapping: pl.DataFrame, workers: int = 1, write_snapshot:
     if write_snapshot:  # committed, so that runs without the bbox CSVs (CI) still make the detection figures
         buf = io.BytesIO()
         result.select("video", "start", *README_DETECTIONS).sort("video", "start").write_csv(buf)
-        with gzip.open(DETECTION_SNAPSHOT + ".tmp", "wb", compresslevel=9) as f:
+        with gzip.GzipFile(DETECTION_SNAPSHOT + ".tmp", "wb", compresslevel=9, mtime=0) as f:  # same counts, same file
             f.write(buf.getvalue())
         os.replace(DETECTION_SNAPSHOT + ".tmp", DETECTION_SNAPSHOT)
         logger.info(f"Wrote {DETECTION_SNAPSHOT} ({result.height:,} segments).")
