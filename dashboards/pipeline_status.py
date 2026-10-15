@@ -193,6 +193,10 @@ h2{font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--mute
 table{border-collapse:collapse;width:100%;font-size:13px}
 td,th{padding:4px 8px;border-top:1px solid var(--line);text-align:left}
 th{color:var(--muted);font-weight:500}td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
+.dl{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.6fr);gap:12px}
+.dl .scroll{position:relative;padding:0;min-height:200px}.dl .scroll>div{position:absolute;inset:0;overflow:auto}
+.dl .scroll th{position:sticky;top:0;background:var(--card)}
+@media (max-width:900px){.dl{grid-template-columns:1fr}.dl .scroll{height:400px}}
 </style></head><body>
 <h1>🚚 Pipeline status</h1>
 <div class="muted small">snapshot {{ ago(s.at) }} ago (every 2 min) ·
@@ -233,7 +237,7 @@ th{color:var(--muted);font-weight:500}td.n,th.n{text-align:right;font-variant-nu
 </div>
 {% set d = s.downloads %}<h2>Video downloads ({{ d.host }})</h2>
 {% if d.error %}<div class="card"><div class="prob">status not readable: {{ d.error }}</div></div>{% else %}
-<div class="grid"><div class="card">
+<div class="dl"><div class="card">
  <div class="head"><h3>tools/download_videos.py</h3><span class="st {{ 'working' if d.state == 'downloading' else
   'idle' if d.state == 'idle' else 'blocked' }}">{{ d.state }}</span></div>
  {% if d.until %}<div class="small muted">until {{ hm(d.until) }}</div>{% endif %}
@@ -253,14 +257,14 @@ th{color:var(--muted);font-weight:500}td.n,th.n{text-align:right;font-variant-nu
  <div class="bar"><i style="width:{{ (100 - 100 * r.free_gb / r.total_gb)|round(1) if r.total_gb else 0
   }}%"></i></div>
  {% endfor %}
-</div></div>
-{% if d.recent %}<div class="card" style="margin-top:12px"><table>
+</div>
+{% if d.recent %}<div class="card scroll"><div><table>
 <tr><th>downloaded</th><th>video</th><th>title</th><th class="n">size</th><th>drive</th></tr>
-{% for r in d.recent[:30] %}<tr><td class="muted">{{ hm(r.t) }}</td>
+{% for r in d.recent %}<tr><td class="muted">{{ hm(r.t) }}</td>
  <td><a href="https://youtu.be/{{ r.vid }}" target="_blank">{{ r.vid }}</a></td>
  <td class="ell" style="max-width:420px">{{ r.title or '' }}</td><td class="n">{{ '%.1f'|format(r.mb / 1000) }} GB</td>
  <td class="muted">{{ r.drive.split('/')[3] if r.drive.startswith('/media/') else r.drive }}</td></tr>{% endfor %}
-</table></div>{% endif %}{% endif %}
+</table></div></div>{% endif %}</div>{% endif %}
 {% if s.batches %}<h2>Batches waiting for review</h2><div class="card"><table>
 <tr><th>channel</th><th>fetched on</th><th class="n">to review</th><th class="n">proposed</th></tr>
 {% for b in s.batches %}<tr><td>{{ b.name }}</td><td class="muted">{{ b.host }}</td>
