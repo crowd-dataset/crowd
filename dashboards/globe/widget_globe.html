@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Localities</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🚌</text></svg>">
+<style>
+:root { --bg:#f6f7f9; --fg:#1b1f24; --muted:#667085; --line:#e4e7ec; --link:#2563eb;
+  --sea:#dfeaf6; --land:#f8fafc; --border:#cbd5e1; --grat:rgba(15,23,42,.06); --old:#2563eb; --recent:#d97706; --day:#e11d48 }
+@media (prefers-color-scheme: dark) { :root { --bg:#111318; --fg:#e6e8ec; --muted:#8b93a1; --line:#242833; --link:#60a5fa;
+  --sea:#0d1a2b; --land:#1f2a3a; --border:#2f3e55; --grat:rgba(255,255,255,.05); --old:#5b8def; --recent:#fbbf24; --day:#fb3b63 } }
+* { box-sizing:border-box } html, body { margin:0; background:var(--bg); overflow:hidden }
+body { padding:7px 10px 6px; color:var(--fg); font:12px/1.3 system-ui,-apple-system,sans-serif }
+.h { display:flex; justify-content:space-between; font-size:10.5px; letter-spacing:.06em; text-transform:uppercase; color:var(--muted); margin-bottom:4px }
+.h a { color:var(--muted); text-decoration:none } .h a:hover { color:var(--link) }
+.h button { border:0; background:none; color:var(--muted); cursor:pointer; font:inherit; padding:0 6px 0 0 } .h button:hover { color:var(--link) }
+canvas { display:block; margin:0 auto; cursor:grab } canvas:active { cursor:grabbing }
+.leg { display:flex; flex-wrap:wrap; gap:2px 10px; margin-top:4px; font-size:11px; color:var(--muted); font-variant-numeric:tabular-nums }
+.leg b { display:inline-block; width:7px; height:7px; border-radius:50%; margin-right:4px; vertical-align:0 }
+#tip { position:fixed; pointer-events:none; display:none; background:var(--bg); border:1px solid var(--line); border-radius:6px;
+  padding:4px 7px; font-size:11.5px; box-shadow:0 2px 10px rgba(0,0,0,.25); max-width:240px }
+#tip .n { font-weight:600 } #tip .r { color:var(--recent) } #tip .d { color:var(--day) }
+</style></head><body>
+<div class="h"><a href="__DATASET__" target="_blank">🚌 Localities ↗</a><span><button id="pp" title="Pause or resume turning (remembered)">⏸ pause</button><span id="stamp">loading…</span></span></div>
+<canvas id="g"></canvas>
+<div class="leg" id="leg"></div>
+<div id="tip"></div>
+<script src="https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/topojson-client@3.1.0/dist/topojson-client.min.js"></script>
+<script>
+const LAPTOP = __REFRESH__ > 60;          // the laptop: fewer frames and hourly data (battery)
+const FPS = LAPTOP ? 8 : 10, SPEED = 5;   // frames per second, degrees per second (the mini's worker shares its CPU)
+const cv = document.getElementById('g'), ctx = cv.getContext('2d'), tip = document.getElementById('tip');
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const fmt = n => n.toLocaleString();
+let size, proj, path, land, borders, tiers = [[], [], []], data, rot = [-10, -22], hover = false, held = 0, lastT = 0, shown = [];
+const grat = d3.geoGraticule10();
+
+function setup() {
+  size = Math.min(document.body.clientWidth - 20, 420);
+  const dpr = devicePixelRatio || 1;
+  cv.width = cv.height = Math.round(size * dpr); cv.style.width = cv.style.height = size + 'px';
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  proj = d3.geoOrthographic().scale(size / 2 - 2).translate([size / 2, size / 2]).clipAngle(90).precision(1.5);
+  path = d3.geoPath(proj, ctx);
+}
+
+function draw(t) {
+  proj.rotate(rot);
+  ctx.clearRect(0, 0, size, size);
+  ctx.beginPath(); path({type: 'Sphere'}); ctx.fillStyle = css('--sea'); ctx.fill();
+  ctx.beginPath(); path(grat); ctx.strokeStyle = css('--grat'); ctx.lineWidth = 0.6; ctx.stroke();
+  if (land) {
+    ctx.beginPath(); path(land); ctx.fillStyle = css('--land'); ctx.fill();
+    ctx.beginPath(); path(borders); ctx.strokeStyle = css('--border'); ctx.lineWidth = 0.5; ctx.stroke();
+  }
+  // the points by hand (orthographic, centre at -rot): a few multiplications each instead of d3's projection
+  const R = size / 2 - 2, c0 = size / 2, lon0 = -rot[0] * Math.PI / 180, lat0 = -rot[1] * Math.PI / 180;
+  const s0 = Math.sin(lat0), k0 = Math.cos(lat0), pulse = (t / 1600) % 1;
+  shown = [];
+  const place = p => {
+    const dl = p.lon - lon0, cd = Math.cos(dl);
+    if (s0 * p.s + k0 * p.k * cd < 0.02) return null;  // on the far side
+    return [c0 + R * p.k * Math.sin(dl), c0 - R * (k0 * p.s - s0 * p.k * cd)];
+  };
+  tiers.forEach((list, tier) => {  // older first (small squares), then the last days, then today on top
+    ctx.beginPath();
+    for (const p of list) {
+      const xy = place(p);
+      if (!xy) continue;
+      const [x, y] = xy;
+      if (tier) { const r = 2.6 + tier * 0.5; ctx.moveTo(x + r, y); ctx.arc(x, y, r, 0, 2 * Math.PI); }
+      else ctx.rect(x - p.r, y - p.r, 2 * p.r, 2 * p.r);
+      shown.push([x, y, p]);
+    }
+    ctx.globalAlpha = tier ? 1 : 0.6;
+    ctx.fillStyle = css(['--old', '--recent', '--day'][tier]); ctx.fill();
+    if (tier) { ctx.lineWidth = 0.8; ctx.strokeStyle = css('--bg'); ctx.stroke(); }
+    ctx.globalAlpha = 1;
+  });
+  ctx.beginPath();  // today's places pulse
+  for (const p of tiers[2]) {
+    const xy = place(p);
+    if (!xy) continue;
+    const r = 3.1 + 9 * pulse;
+    ctx.moveTo(xy[0] + r, xy[1]); ctx.arc(xy[0], xy[1], r, 0, 2 * Math.PI);
+  }
+  ctx.globalAlpha = 0.7 * (1 - pulse); ctx.strokeStyle = css('--day'); ctx.lineWidth = 1.2; ctx.stroke(); ctx.globalAlpha = 1;
+}
+
+// it turns only while someone can see it: this user's session on the screen, unlocked, display on (/active)
+let active = true, running = false, paused = false;  // paused: by the button, kept in this Chrome profile
+try { paused = localStorage.getItem('globe-paused') === '1'; } catch (e) {}
+function frame(t) {
+  if (!active || document.hidden || paused) { running = false; return; }  // the loop stops; start() resumes it
+  requestAnimationFrame(frame);
+  if (t - lastT < 1000 / FPS) return;
+  if (!hover && t > held) rot[0] += SPEED * Math.min(t - lastT, 250) / 1000;
+  lastT = t;
+  draw(t);
+}
+function start() {
+  if (running || !active || document.hidden || paused) return;
+  running = true; lastT = performance.now(); requestAnimationFrame(frame);
+}
+async function check() {
+  try { active = (await (await fetch('active', {cache: 'no-store'})).json()).active; } catch (e) { active = true; }
+  start();
+}
+
+async function load() {
+  try {
+    data = await (await fetch('globe.json', {cache: 'no-store'})).json();
+    if (data.error) throw new Error(data.error);
+  } catch (e) { document.getElementById('stamp').textContent = 'unreachable (TU/e only)'; return; }
+  tiers = [[], [], []];
+  for (const [lat, lon, h, rec, day, name] of data.points)
+    tiers[day ? 2 : rec ? 1 : 0].push({lon: lon * Math.PI / 180, s: Math.sin(lat * Math.PI / 180),
+      k: Math.cos(lat * Math.PI / 180), r: 0.6 + Math.min(1.9, Math.sqrt(h) / 10), h, rec, day, name});
+  const days = Math.round(data.recent_h / 24);
+  document.getElementById('leg').innerHTML =
+    `<span><b style="background:var(--day)"></b>today: ${fmt(data.day_places)} places, +${fmt(data.day)} segments</span>` +
+    `<span><b style="background:var(--recent)"></b>${days} days: ${fmt(data.recent_places)} places, +${fmt(data.recent)}</span>` +
+    `<span><b style="background:var(--old);opacity:.6"></b>${fmt(data.localities)} localities · ${fmt(data.hours)} h</span>`;
+  draw(performance.now());  // at once, even while hidden
+  document.getElementById('stamp').textContent = new Date(data.built * 1000).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
+  fit();
+}
+
+let height = 0;
+function fit() {
+  height = document.body.scrollHeight + (outerHeight - innerHeight);
+  if (Math.abs(outerHeight - height) > 1) resizeTo(outerWidth, height);
+}
+async function dock() {  // just below the machines widget
+  try {
+    const p = await (await fetch('layout?name=machines', {cache: 'no-store'})).json();
+    const x = p.h ? p.x : screenX, y = p.h ? p.y + p.h : screenY;
+    if (screenX !== x || screenY !== y) moveTo(x, y);
+  } catch (e) {}
+}
+
+cv.addEventListener('mousemove', e => {
+  const b = cv.getBoundingClientRect(), mx = e.clientX - b.left, my = e.clientY - b.top;
+  let best = null, bd = 64;
+  for (const [x, y, p] of shown) { const d = (x - mx) ** 2 + (y - my) ** 2; if (d <= bd) { bd = d; best = p; } }  // ties: the newer (drawn later)
+  hover = true;
+  if (!best) { tip.style.display = 'none'; return; }
+  const days = Math.round(data.recent_h / 24);
+  tip.innerHTML = `<div class="n">${best.name}</div>${fmt(best.h)} h of footage` +
+    (best.rec ? `<div class="r">+${fmt(best.rec)} segments in ${days} days</div>` : '') +
+    (best.day ? `<div class="d">+${fmt(best.day)} today</div>` : '');
+  tip.style.display = 'block';
+  tip.style.left = Math.min(e.clientX + 12, innerWidth - tip.offsetWidth - 4) + 'px';
+  tip.style.top = Math.min(e.clientY + 12, innerHeight - tip.offsetHeight - 4) + 'px';
+});
+cv.addEventListener('mouseleave', () => { hover = false; tip.style.display = 'none'; });
+d3.select(cv).call(d3.drag().on('drag', e => {
+  rot[0] += e.dx * 0.4; rot[1] = Math.max(-80, Math.min(80, rot[1] - e.dy * 0.4));
+  held = performance.now() + 4000; draw(performance.now());
+}));
+
+setup();
+fetch('https://cdn.jsdelivr.net/npm/world-atlas@2.0.2/countries-110m.json').then(r => r.json()).then(w => {
+  land = topojson.feature(w, w.objects.land);
+  borders = topojson.mesh(w, w.objects.countries, (a, b) => a !== b);
+  draw(performance.now());
+}).catch(() => {});
+load(); setInterval(load, Math.max(600, __REFRESH__) * 1000);
+const pp = document.getElementById('pp');
+const label = () => { pp.textContent = paused ? '▶ turn' : '⏸ pause'; };
+pp.onclick = () => {
+  paused = !paused;
+  try { localStorage.setItem('globe-paused', paused ? '1' : '0'); } catch (e) {}
+  label();
+  if (paused) draw(performance.now()); else start();
+};
+label();
+check(); setInterval(check, LAPTOP ? 15000 : 3000);
+document.addEventListener('visibilitychange', check);
+dock(); setInterval(dock, LAPTOP ? 60000 : 5000);
+addEventListener('focus', () => LAPTOP && load());
+</script></body></html>

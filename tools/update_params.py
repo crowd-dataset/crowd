@@ -240,6 +240,7 @@ iso2_age = (
     .set_index("iso2")["median_age"]
 )
 
+
 def iso3_to_iso2(iso3):
     if iso3 == "XKX":  # Kosovo is not in ISO 3166
         return "XK"

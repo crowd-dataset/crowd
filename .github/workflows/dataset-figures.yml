@@ -1,18 +1,20 @@
 ---
 ############################
-# Refresh README statistics and dataset figures when the mapping changes.
+# Refresh README statistics and dataset figures once a week, on Sunday night,
+# when mapping.csv changed since the last refresh (user, 2026-10-13: not after
+# every push of the mapping). The mapping-NAME.csv files play no part: they
+# neither start a run nor go into it.
 # Runs analysis.py without the YOLO bbox CSVs (no data folders). The object
-# counts come from the committed figures/detection_counts.csv, which a local
-# run of analysis.py with the data folders refreshes.
+# counts and detection figures come from the committed detection_counts.csv.gz,
+# which count_detections.py writes where the bbox CSVs are; a new version of it
+# also means a run.
 ############################
 name: Dataset figures
 
 on:
-  push:
-    branches: [main]
-    # mapping-NAME.csv too: videos are credited to whoever added them (video_contributors.csv) before they are
-    # merged into mapping.csv
-    paths: [mapping.csv, mapping-*.csv]
+  schedule:
+    # Sunday 21:00 UTC: 23:00 in the Netherlands in summer, 22:00 in winter
+    - cron: "0 21 * * 0"
   workflow_dispatch:
 
 permissions:
@@ -23,13 +25,54 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  figures:
-    name: Update README and figures
+  changed:
+    name: Mapping changed since the last refresh?
     runs-on: ubuntu-latest
-
+    outputs:
+      run: ${{ steps.check.outputs.run }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # The bot's last refresh commit; mapping.csv or detection count commits
+      # after it mean a run.
+      - name: Check
+        id: check
+        run: |
+          last=$(git log -1 --format=%H \
+            --grep='^Update README statistics and dataset figures$')
+          if [ -z "$last" ] || \
+              [ -n "$(git log --format=%H "$last"..HEAD -- mapping.csv \
+                detection_counts.csv.gz)" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No change to mapping.csv or the detection counts since $last."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  figures:
+    name: Update README and figures
+    needs: changed
+    # a run started by hand always refreshes
+    if: >-
+      needs.changed.outputs.run == 'true' ||
+      github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Out of the analysis (and so of video_contributors.csv): videos are
+      # credited from mapping.csv alone; put back before committing.
+      - name: Leave out the mapping-NAME files
+        run: |
+          mkdir -p /tmp/mapping-names
+          for f in mapping-*.csv; do
+            [ -e "$f" ] && mv "$f" /tmp/mapping-names/
+          done
+          true
 
       - name: Install uv
         uses: astral-sh/setup-uv@v6
@@ -59,6 +102,7 @@ jobs:
       # Commits made with GITHUB_TOKEN do not trigger further workflow runs.
       - name: Commit updated README and figures
         run: |
+          mv /tmp/mapping-names/* . 2>/dev/null || true
           git config user.name "github-actions[bot]"
           git config user.email \
             "41898283+github-actions[bot]@users.noreply.github.com"

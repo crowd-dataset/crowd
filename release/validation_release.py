@@ -70,8 +70,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
-import make_crowd_jsonl
-import split_large_files
+from release import make_crowd_jsonl, split_large_files
 
 # Progress bars
 try:
@@ -125,7 +124,7 @@ YOLO_START_MATCH_TOLERANCE_S: float = 0.75
 CONFIG: Dict[str, Any] = {
     "paths": {
         # Root folder that contains the mapping files and (optionally) _output/
-        "data_dir": Path(__file__).resolve().parent,
+        "data_dir": Path(__file__).resolve().parent.parent,  # the repo's top folder
 
         # REQUIRED
         "mapping_csv": "mapping.csv",
