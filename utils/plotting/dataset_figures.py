@@ -257,14 +257,13 @@ GDP_PER_CAPITA = "NY.GDP.PCAP.PP.CD"  # World Bank: GDP per person at purchasing
 WEALTH_COLOURS = {"above": "#C8504A", "near": "#BDBDB0", "below": "#6C79C9"}  # as in The Economist's chart
 
 
-def gdp_per_capita(max_age_days: int = 30) -> pl.DataFrame | None:
-    """GDP per person at PPP ($'000) in each country's latest year, from the World Bank (cached in .wb_cache, like
-    update_params.py, and refreshed monthly); None when it cannot be downloaded."""
-    path = os.path.join(".wb_cache", GDP_PER_CAPITA + ".json")
+def _cached_json(name: str, url: str, params: dict, max_age_days: int):
+    """JSON downloaded from `url`, cached in .wb_cache (like update_params.py) and refreshed after `max_age_days`;
+    the old copy when the download fails, None when there is none."""
+    path = os.path.join(".wb_cache", name + ".json")
     if not os.path.exists(path) or time.time() - os.path.getmtime(path) > max_age_days * 86400:
         try:
-            r = requests.get(f"https://api.worldbank.org/v2/country/all/indicator/{GDP_PER_CAPITA}", timeout=120,
-                             params={"format": "json", "mrnev": 1, "per_page": 1000})
+            r = requests.get(url, params=params, timeout=120)
             r.raise_for_status()
             os.makedirs(".wb_cache", exist_ok=True)
             with open(path, "w") as f:
@@ -273,9 +272,34 @@ def gdp_per_capita(max_age_days: int = 30) -> pl.DataFrame | None:
             if not os.path.exists(path):
                 return None
     with open(path) as f:
-        rows = json.load(f)[1]
-    return pl.DataFrame([{"iso3": r["countryiso3code"], "gdp_pc": r["value"] / 1000} for r in rows
+        return json.load(f)
+
+
+def gdp_per_capita(max_age_days: int = 30) -> pl.DataFrame | None:
+    """GDP per person at PPP ($'000) in each country's latest year, from the World Bank; None when it cannot be
+    downloaded."""
+    data = _cached_json(GDP_PER_CAPITA, f"https://api.worldbank.org/v2/country/all/indicator/{GDP_PER_CAPITA}",
+                        {"format": "json", "mrnev": 1, "per_page": 1000}, max_age_days)
+    if data is None:
+        return None
+    return pl.DataFrame([{"iso3": r["countryiso3code"], "gdp_pc": r["value"] / 1000} for r in data[1]
                          if r.get("value") and r.get("countryiso3code")])
+
+
+WHO_ROAD_USER_DEATHS = "RS_246"  # WHO: distribution of road traffic deaths by type of road user (%), 2016
+
+
+def pedestrian_death_share(max_age_days: int = 180) -> pl.DataFrame | None:
+    """Share of each country's road traffic deaths that are pedestrians (%), latest year, from the WHO's Global Health
+    Observatory; None when it cannot be downloaded."""
+    data = _cached_json(WHO_ROAD_USER_DEATHS, f"https://ghoapi.azureedge.net/api/{WHO_ROAD_USER_DEATHS}",
+                        {"$filter": "Dim1 eq 'ROADUSERTYPE_RS-DDC-PEDESTRIANS'"}, max_age_days)
+    if data is None:
+        return None
+    rows = [r for r in data["value"] if r.get("NumericValue") is not None and r.get("SpatialDimType") == "COUNTRY"]
+    return (pl.DataFrame([{"iso3": r["SpatialDim"], "year": r["TimeDim"], "pedestrian_share": r["NumericValue"]}
+                          for r in rows])
+              .sort("year").group_by("iso3").agg(pl.last("pedestrian_share")))
 
 
 def _vs_trend(df: pl.DataFrame, x_col: str, x_title: str, value: str, title: str, name: str, ratio: float,
@@ -320,14 +344,15 @@ def _labelled_scatter(df: pl.DataFrame, x_col: str, y_col: str, label: str, labe
                       y_title: str, name: str, size=(1600, 900), emphasis: pl.Expr = pl.lit(True), note: str = "",
                       log_x: bool = True, log_y: bool = True, zoom_labels: int = ZOOM_LABELS,
                       country_legend: str | None = None, groups: tuple | None = None, bubble: str | None = None,
-                      trend: tuple | None = None):
+                      trend: tuple | None = None, decorate=None):
     """Log-log scatter (linear axes if not `log_x` / `log_y`) coloured by continent; with `country_legend` (a column
     with each row's flag and country), the legend lists the countries instead, beside the plot. Rows where `labelled`
     is true get a label placed without overlaps (next to the point, or with a leader line when there is no room); in
     the HTML, zooming in labels every point in view once at most `zoom_labels` points are in it.
     Labels of rows where `emphasis` is false are smaller and grey, so the eye goes to the emphasised ones first.
     `groups` (column, {value: colour} in legend order) colours by that column instead of continents; `bubble` is a
-    column with each point's diameter (px); `trend` is (x values, y values) of a line drawn under the points."""
+    column with each point's diameter (px); `trend` is (x values, y values) of a line drawn under the points;
+    `decorate(fig)` adds anything else (e.g., reference lines)."""
     margin = dict(l=90, r=320 if country_legend else 30, t=30, b=80, autoexpand=False)
     fx, fy = (math.log10 if log else float for log in (log_x, log_y))  # data -> axis units (labels are placed in
     ix, iy = ((lambda v: 10 ** v) if log else float for log in (log_x, log_y))  # axis units) and back
@@ -424,6 +449,8 @@ def _labelled_scatter(df: pl.DataFrame, x_col: str, y_col: str, label: str, labe
     if note:  # e.g., the correlation, in the bottom-right corner
         fig.add_annotation(text=note, x=0.99, y=0.02, xref="paper", yref="paper", xanchor="right",
                            showarrow=False, font=dict(size=16), bgcolor="rgba(255,255,255,0.8)")
+    if decorate is not None:
+        decorate(fig)
     if html_fig is not None:
         html_fig.update_layout(xaxis=fig.layout.xaxis, yaxis=fig.layout.yaxis)
         html_fig = _style(html_fig, margin=margin, legend=legend)
@@ -1001,6 +1028,17 @@ DETECTION_FIGURES = {
     "dot_pedestrians_per_minute": "Pedestrians per minute of footage per country, with a 95% bootstrap interval over "
                                   "its localities (countries with at least 10 analysed hours in at least 3 "
                                   "localities).",
+    "scatter_interval_width_hours": "How much footage a stable estimate of a locality needs: the width of its 95% "
+                                    "bootstrap interval of pedestrians per minute over its segments (as a share of "
+                                    "the rate) against its analysed hours (localities with at least 5 segments; "
+                                    "segments of one drive are alike, so the true intervals are somewhat wider).",
+    "scatter_walkable_car_dominated": "Pedestrians against cars per minute per locality (at least an analysed hour), "
+                                      "split at the medians into walkable, busy, car-dominated and quiet streets.",
+    "bar_pedestrians_city_size": "Pedestrians per minute by population of the locality, per continent, with a 95% "
+                                 "bootstrap interval over localities (groups with at least 3 localities and an "
+                                 "analysed hour).",
+    "waffle_road_user_mix": "Road-user mix of the 30 localities with the most analysed footage, each as 100 squares "
+                            "(ordered by the share of pedestrians).",
     "heatmap_road_users_per_minute": "Detected road users per minute of footage, per class, in the 40 countries with "
                                      "the most analysed footage (log colour scale).",
     "box_pedestrians_per_minute_continent": "Pedestrians per minute of footage per locality, by continent.",
@@ -1031,6 +1069,10 @@ DETECTION_FIGURES = {
     "bubble_road_deaths_vs_pedestrians": "Road traffic deaths per 100,000 people against pedestrians per minute: "
                                          "countries with more or fewer deaths than their number of pedestrians on "
                                          "the street predicts.",
+    "bubble_pedestrian_deaths_vs_pedestrians": "Pedestrian road deaths per 100,000 people (road deaths times "
+                                               "the WHO's pedestrian share of them, 2016) against pedestrians per "
+                                               "minute: where walking is more or less deadly than the number of "
+                                               "pedestrians on the street predicts.",
     "terrain_pedestrians_europe": "Pedestrians per minute in Europe as a terrain: height and colour show the "
                                   "number of pedestrians per minute, smoothed over about 40 km.",
     "terrain_pedestrians_north_america": "Pedestrians per minute in North America as a terrain.",
@@ -1055,6 +1097,16 @@ DETECTION_FIGURES = {
                                                   "quiet streets for a city's size.",
     "scatter_pedestrians_population": "Pedestrians per minute of footage per locality against its population.",
 }
+# the HTML fills the window: squares sized to the cells of a 10 x 10 grid, on load and after every resize
+FIT_SQUARES_JS = """
+var gd = document.getElementById('{plot_id}');
+function fitSquares() {
+    var x = gd._fullLayout.xaxis, y = gd._fullLayout.yaxis;
+    Plotly.restyle(gd, {'marker.size': 0.85 * Math.min(x._length, y._length) / 10.2});
+}
+fitSquares();
+window.addEventListener('resize', function () { setTimeout(fitSquares, 200); });
+"""
 TWO_WHEELERS, VEHICLES = ("Bicycles", "Motorcycles"), ("Cars", "Bicycles", "Motorcycles", "Buses", "Trucks")
 
 
@@ -1110,19 +1162,26 @@ def detection_figures(df_mapping: pl.DataFrame, det: pl.DataFrame, classes: list
 
     # pedestrians per minute per country with a 95% bootstrap interval over its localities; countries with at least
     # MIN_HOURS of analysed footage in at least 3 localities
-    per_loc = d.group_by("iso3", "id").agg(pl.col(person).sum(), pl.sum("minutes"))
     rng = np.random.default_rng(0)
-    rows = []
-    for (iso3,), g in per_loc.group_by("iso3"):
-        if g.height < 3 or g["minutes"].sum() < MIN_HOURS * 60:
-            continue
-        p, m = g[person].to_numpy(), g["minutes"].to_numpy()
-        i = rng.integers(0, g.height, (1000, g.height))
-        lo, hi = np.percentile(p[i].sum(1) / m[i].sum(1), [2.5, 97.5])
-        rows.append(dict(iso3=iso3, rate=p.sum() / m.sum(), lo=lo, hi=hi))
-    ci = (pl.DataFrame(rows, schema={"iso3": pl.Utf8, "rate": pl.Float64, "lo": pl.Float64, "hi": pl.Float64})
-            .join(country.select("iso3", "name", "continent", "hover", "hours", "localities"), on="iso3")
-            .sort("rate"))
+
+    def boot(df: pl.DataFrame, *by) -> pl.DataFrame:
+        """Pedestrians per minute per group of `by` with a 95% bootstrap interval over its localities (`rate`, `lo`,
+        `hi`; groups with at least 3 localities)."""
+        rows = []
+        per_loc = df.group_by(*by, "id").agg(pl.col(person).sum(), pl.sum("minutes"))
+        for key, g in per_loc.group_by(*by, maintain_order=True):  # in order: the same intervals on every run
+            if g.height < 3:
+                continue
+            p, m = g[person].to_numpy(), g["minutes"].to_numpy()
+            i = rng.integers(0, g.height, (1000, g.height))
+            lo, hi = np.percentile(p[i].sum(1) / m[i].sum(1), [2.5, 97.5])
+            rows.append(dict(zip(by, key)) | dict(rate=p.sum() / m.sum(), lo=lo, hi=hi))
+        return pl.DataFrame(rows, schema={**{b: df.schema[b] for b in by}, "rate": pl.Float64, "lo": pl.Float64,
+                                          "hi": pl.Float64})
+
+    intervals = boot(d.sort("iso3", "id"), "iso3").join(
+        country.select("iso3", "name", "continent", "hover", "hours", "localities"), on="iso3")
+    ci = intervals.filter(pl.col("hours") >= MIN_HOURS).sort("rate")
     if ci.height:
         fig = go.Figure()
         for continent in CONTINENT_ORDER:
@@ -1141,6 +1200,117 @@ def detection_figures(df_mapping: pl.DataFrame, det: pl.DataFrame, classes: list
                          range=[-0.6, ci.height - 0.4])
         _save(_style(fig, height=max(500, 22 * ci.height + 90), margin=dict(l=10, r=20, t=10, b=60),
                      legend=dict(x=0.99, xanchor="right", y=0.2, yanchor="bottom")), "dot_pedestrians_per_minute")
+
+    # how much footage a stable estimate of a locality needs: the width of its 95% interval (bootstrap over its
+    # segments) against its analysed hours
+    widths = []
+    for (lid,), g in d.select("id", person, "minutes").sort("id").group_by("id", maintain_order=True):
+        p, m = g[person].to_numpy(), g["minutes"].to_numpy()
+        if g.height < 5 or p.sum() == 0:
+            continue
+        i = rng.integers(0, g.height, (500, g.height))
+        lo, hi = np.percentile(p[i].sum(1) / m[i].sum(1), [2.5, 97.5])
+        widths.append(dict(id=lid, width=(hi - lo) / (p.sum() / m.sum()) * 100))
+    w = (pl.DataFrame(widths, schema={"id": d.schema["id"], "width": pl.Float64}).filter(pl.col("width") > 0)
+           .join(locality, on="id")
+           .with_columns(pl.concat_str([flag, pl.col("locality")], separator=" ").alias("name")))
+    if w.height > 2:
+        x, y = np.log10(w["hours"].to_numpy()), np.log10(w["width"].to_numpy())
+        slope, intercept = np.polyfit(x, y, 1)
+        xs = np.linspace(x.min(), x.max(), 50)
+        need = (f"; about {10 ** ((math.log10(50) - intercept) / slope):,.0f} hours for ±25%" if slope < 0 else "")
+        _labelled_scatter(w, "hours", "width", "name",
+                          pl.col("hours").rank("ordinal", descending=True) <= 15,
+                          "Analysed footage (hours, log scale)",
+                          "Width of the 95% interval (% of the rate, log scale)",
+                          "scatter_interval_width_hours", trend=(10 ** xs, 10 ** (slope * xs + intercept)),
+                          note=f"dotted line: width ~ hours^{slope:.2f}{need} · n = {w.height:,} localities")
+
+    # walkable or car-dominated: pedestrians and cars per minute per locality, split at the medians
+    quad = (locality.filter(pl.col("hours") >= 1, pl.col(person) > 0, pl.col("Cars") > 0)
+            .with_columns(pl.concat_str([flag, pl.col("locality")], separator=" ").alias("name"))
+            if "Cars" in classes else locality.clear())
+    if quad.height > 3:
+        mx, my = quad["Cars"].median(), quad[person].median()
+        corners = {"Walkable: many pedestrians, few cars": "#009E73", "Busy: many pedestrians and cars": "#E69F00",
+                   "Car-dominated: few pedestrians, many cars": "#D55E00",
+                   "Quiet: few pedestrians and cars": "#56B4E9"}
+        walk, busy, car, quiet = corners
+        many_p, many_c = pl.col(person) >= my, pl.col("Cars") >= mx
+        quad = quad.with_columns(pl.when(many_p & ~many_c).then(pl.lit(walk)).when(many_p).then(pl.lit(busy))
+                                   .when(many_c).then(pl.lit(car)).otherwise(pl.lit(quiet)).alias("_q"),
+                                 (pl.col(person) / pl.col("Cars")).alias("_ratio"))
+
+        def medians(fig):
+            for k, v in (("x", mx), ("y", my)):
+                fig.add_shape(type="line", xref="x" if k == "x" else "paper", yref="paper" if k == "x" else "y",
+                              x0=v if k == "x" else 0, x1=v if k == "x" else 1, y0=0 if k == "x" else v,
+                              y1=1 if k == "x" else v, line=dict(color="#999999", width=1, dash="dash"), layer="below")
+
+        _labelled_scatter(quad, "Cars", person, "name",
+                          (pl.col("hours").rank("ordinal", descending=True) <= 15)
+                          | (pl.col("_ratio").rank("ordinal", descending=True) <= 6)
+                          | (pl.col("_ratio").rank("ordinal") <= 6),
+                          "Cars per minute (log scale)", "Pedestrians per minute (log scale)",
+                          "scatter_walkable_car_dominated", groups=("_q", corners), decorate=medians,
+                          note=f"dashed lines: medians ({mx:.1f} cars, {my:.1f} pedestrians per minute) · "
+                               f"n = {quad.height:,} localities with at least an hour")
+
+    # small towns and big cities: pedestrians per minute by population of the locality, per continent
+    bands = ["Under 100,000", "100,000–1 million", "1–5 million", "Over 5 million"]
+    sized = (d.join(df_mapping.select("id", "population_locality"), on="id")
+              .filter(pl.col("population_locality") > 0)
+              .with_columns(pl.col("population_locality").cut([1e5, 1e6, 5e6], labels=bands, left_closed=True)
+                            .cast(pl.Utf8).alias("band")))
+    by_size = (boot(sized.sort("continent", "band", "id"), "continent", "band")
+               .join(rates(sized, "continent", "band").select("continent", "band", "hours", "localities"),
+                     on=["continent", "band"])
+               .filter(pl.col("hours") >= 1)
+               .with_columns((pl.col("hi") - pl.col("rate")).alias("plus"), (pl.col("rate") - pl.col("lo"))
+                             .alias("minus")))
+    if by_size.height:
+        fig = px.bar(by_size.to_pandas(), x="continent", y="rate", color="band", barmode="group",
+                     error_y="plus", error_y_minus="minus",
+                     category_orders={"continent": CONTINENT_ORDER, "band": bands},
+                     color_discrete_sequence=["#c6dbef", "#6baed6", "#2171b5", "#08306b"],
+                     hover_data={"hours": ":,.0f", "localities": True, "lo": ":.2f", "hi": ":.2f",
+                                 "plus": False, "minus": False},
+                     labels={"rate": "Pedestrians per minute (95% interval over localities)", "continent": "",
+                             "band": "Population of locality"})
+        fig.update_traces(error_y=dict(color="#555555", thickness=1.2))
+        _save(_style(fig, legend=dict(x=0.99, xanchor="right", y=0.99)), "bar_pedestrians_city_size")
+
+    # road-user mix of the localities with the most analysed footage, each as 100 squares
+    top_loc = (locality.sort("hours", descending=True).head(30)
+                       .with_columns((pl.col(person) / pl.sum_horizontal(classes)).alias("_p")).sort("_p",
+                                                                                                     descending=True))
+    if top_loc.height:
+        colours = dict(zip(classes, ["#E69F00", "#0072B2", "#009E73", "#D55E00", "#CC79A7", "#56B4E9"]))
+        cols = 5
+        rows_n = math.ceil(top_loc.height / cols)
+        titles = [f"{flags.get(r['iso3'], '')} {r['locality']}" for r in top_loc.iter_rows(named=True)]
+        row_h, gap = 350, 55  # px per row and between rows: cells about as tall as wide
+        fig = make_subplots(rows=rows_n, cols=cols, subplot_titles=titles, horizontal_spacing=0.02,
+                            vertical_spacing=gap / (row_h * rows_n))
+        for n, r in enumerate(top_loc.iter_rows(named=True)):
+            v = np.array([r[c] for c in classes])
+            share = v / v.sum() * 100
+            squares = np.floor(share).astype(int)  # largest remainders get the leftover squares: 100 in all
+            squares[np.argsort(squares - share)[:100 - squares.sum()]] += 1
+            cell = np.repeat(np.arange(len(classes)), squares)
+            for k, c in enumerate(classes):
+                idx = np.flatnonzero(cell == k)
+                fig.add_trace(go.Scatter(x=idx % 10, y=9 - idx // 10, mode="markers", name=c, legendgroup=c,
+                                         showlegend=n == 0, marker=dict(symbol="square", size=25, color=colours[c]),
+                                         hovertemplate=f"{titles[n]}<br>{c}: {share[k]:.1f}% ({r[c]:.2f} per "
+                                                       "minute)<extra></extra>"),
+                              row=n // cols + 1, col=n % cols + 1)
+        fig.update_xaxes(visible=False, range=[-0.6, 9.6], fixedrange=True)
+        fig.update_yaxes(visible=False, range=[-0.6, 9.6], fixedrange=True)
+        fig.update_annotations(font=dict(size=15))
+        _save(_style(fig, width=1600, height=row_h * rows_n + 110, margin=dict(l=10, r=10, t=100, b=10),
+                     legend=dict(orientation="h", x=0.5, xanchor="center", y=0.995, yanchor="top", yref="container",
+                                 font=dict(size=16))), "waffle_road_user_mix", post_script=FIT_SQUARES_JS)
 
     # every class in the countries with the most analysed footage, on one log colour scale
     top = country.sort("hours", descending=True).head(40).sort("hours")
@@ -1258,6 +1428,19 @@ def detection_figures(df_mapping: pl.DataFrame, det: pl.DataFrame, classes: list
         _vs_trend(deaths, person, "Pedestrians per minute (log scale)", "traffic_mortality",
                   "Road traffic deaths per 100,000 people (log scale)", "bubble_road_deaths_vs_pedestrians", ratio=1.5,
                   what="road deaths", basis="pedestrian numbers")
+    # pedestrian deaths alone (road deaths x the WHO's pedestrian share of them): how dangerous the street is for the
+    # pedestrians on it
+    share = pedestrian_death_share()
+    if share is not None:
+        ped_deaths = (ctry.join(share, on="iso3")
+                          .with_columns((pl.col("traffic_mortality") * pl.col("pedestrian_share") / 100)
+                                        .alias("pedestrian_deaths"))
+                          .filter(pl.col("pedestrian_deaths") > 0, pl.col(person) > 0))
+        if ped_deaths.height > 2:
+            _vs_trend(ped_deaths, person, "Pedestrians per minute (log scale)", "pedestrian_deaths",
+                      "Pedestrian road deaths per 100,000 people (log scale)",
+                      "bubble_pedestrian_deaths_vs_pedestrians", ratio=1.5, what="pedestrian deaths",
+                      basis="pedestrian numbers")
 
     # pedestrians per minute per locality against its population: whether more pedestrians just means a larger city
     loc = locality.filter(pl.col("population_locality") > 0, pl.col(person) > 0)

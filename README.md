@@ -1175,6 +1175,18 @@ Pedestrians per minute of footage per country (unique tracked persons).
 [![Pedestrians per minute of footage per country, with a 95% bootstrap interval over its localities (countries with at least 10 analysed hours in at least 3 localities).](figures/dot_pedestrians_per_minute.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/dot_pedestrians_per_minute.html)
 Pedestrians per minute of footage per country, with a 95% bootstrap interval over its localities (countries with at least 10 analysed hours in at least 3 localities).
 
+[![How much footage a stable estimate of a locality needs: the width of its 95% bootstrap interval of pedestrians per minute over its segments (as a share of the rate) against its analysed hours (localities with at least 5 segments; segments of one drive are alike, so the true intervals are somewhat wider).](figures/scatter_interval_width_hours.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/scatter_interval_width_hours.html)
+How much footage a stable estimate of a locality needs: the width of its 95% bootstrap interval of pedestrians per minute over its segments (as a share of the rate) against its analysed hours (localities with at least 5 segments; segments of one drive are alike, so the true intervals are somewhat wider).
+
+[![Pedestrians against cars per minute per locality (at least an analysed hour), split at the medians into walkable, busy, car-dominated and quiet streets.](figures/scatter_walkable_car_dominated.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/scatter_walkable_car_dominated.html)
+Pedestrians against cars per minute per locality (at least an analysed hour), split at the medians into walkable, busy, car-dominated and quiet streets.
+
+[![Pedestrians per minute by population of the locality, per continent, with a 95% bootstrap interval over localities (groups with at least 3 localities and an analysed hour).](figures/bar_pedestrians_city_size.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/bar_pedestrians_city_size.html)
+Pedestrians per minute by population of the locality, per continent, with a 95% bootstrap interval over localities (groups with at least 3 localities and an analysed hour).
+
+[![Road-user mix of the 30 localities with the most analysed footage, each as 100 squares (ordered by the share of pedestrians).](figures/waffle_road_user_mix.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/waffle_road_user_mix.html)
+Road-user mix of the 30 localities with the most analysed footage, each as 100 squares (ordered by the share of pedestrians).
+
 [![Detected road users per minute of footage, per class, in the 40 countries with the most analysed footage (log colour scale).](figures/heatmap_road_users_per_minute.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/heatmap_road_users_per_minute.html)
 Detected road users per minute of footage, per class, in the 40 countries with the most analysed footage (log colour scale).
 
@@ -1222,6 +1234,9 @@ Cars per minute against GDP per person: motorisation on the street, relative to 
 
 [![Road traffic deaths per 100,000 people against pedestrians per minute: countries with more or fewer deaths than their number of pedestrians on the street predicts.](figures/bubble_road_deaths_vs_pedestrians.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/bubble_road_deaths_vs_pedestrians.html)
 Road traffic deaths per 100,000 people against pedestrians per minute: countries with more or fewer deaths than their number of pedestrians on the street predicts.
+
+[![Pedestrian road deaths per 100,000 people (road deaths times the WHO's pedestrian share of them, 2016) against pedestrians per minute: where walking is more or less deadly than the number of pedestrians on the street predicts.](figures/bubble_pedestrian_deaths_vs_pedestrians.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/bubble_pedestrian_deaths_vs_pedestrians.html)
+Pedestrian road deaths per 100,000 people (road deaths times the WHO's pedestrian share of them, 2016) against pedestrians per minute: where walking is more or less deadly than the number of pedestrians on the street predicts.
 
 [![Pedestrians per minute in Europe as a terrain: height and colour show the number of pedestrians per minute, smoothed over about 40 km.](figures/terrain_pedestrians_europe.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/terrain_pedestrians_europe.html)
 Pedestrians per minute in Europe as a terrain: height and colour show the number of pedestrians per minute, smoothed over about 40 km.
