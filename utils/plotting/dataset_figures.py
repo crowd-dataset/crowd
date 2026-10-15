@@ -1136,9 +1136,11 @@ def detection_figures(df_mapping: pl.DataFrame, det: pl.DataFrame, classes: list
                                                       "%{customdata[0]:.2f}–%{customdata[1]:.2f})")))
         fig.update_xaxes(title_text="Pedestrians per minute (95% bootstrap interval over localities)",
                          showgrid=True, gridcolor="#e5e5e5", rangemode="tozero")
-        fig.update_yaxes(categoryorder="array", categoryarray=ci["name"].to_list(), dtick=1)
-        _save(_style(fig, height=max(500, 22 * ci.height + 150), margin=dict(l=10, r=20, t=20, b=70),
-                     legend=dict(x=0.99, xanchor="right", y=0.01, yanchor="bottom")), "dot_pedestrians_per_minute")
+        # range fixed to the countries: autorange leaves several empty rows above and below
+        fig.update_yaxes(categoryorder="array", categoryarray=ci["name"].to_list(), dtick=1,
+                         range=[-0.6, ci.height - 0.4])
+        _save(_style(fig, height=max(500, 22 * ci.height + 90), margin=dict(l=10, r=20, t=10, b=60),
+                     legend=dict(x=0.99, xanchor="right", y=0.2, yanchor="bottom")), "dot_pedestrians_per_minute")
 
     # every class in the countries with the most analysed footage, on one log colour scale
     top = country.sort("hours", descending=True).head(40).sort("hours")
