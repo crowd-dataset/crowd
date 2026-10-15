@@ -1290,8 +1290,9 @@ def detection_figures(df_mapping: pl.DataFrame, det: pl.DataFrame, classes: list
                               .group_by("continent").agg(pl.sum("hours")),
                          pl.DataFrame({"continent": ["All"], "hours": [total["hours"].sum()]})])
     t_continent = (by_continent.join(footage.rename({"hours": "total"}), on="continent")
-                   .with_columns(pl.col("continent").replace({c: i for i, c in enumerate(CONTINENT_ORDER + ["All"])},
-                                                             return_dtype=pl.Int64).alias("_o"))
+                   .with_columns(pl.col("continent").replace_strict(
+                       {c: i for i, c in enumerate(CONTINENT_ORDER + ["All"])}, default=None,
+                       return_dtype=pl.Int64).alias("_o"))
                    .sort("_o")
                    .select(pl.col("continent").alias("Continent"), pl.col("hours").round(1).alias("Analysed (h)"),
                            (pl.col("hours") / pl.col("total") * 100).round(1).alias("Of footage (%)"),
