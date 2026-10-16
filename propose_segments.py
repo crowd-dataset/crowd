@@ -82,6 +82,9 @@ PARAMS = {
     # the 7 train on Roosevelt Ave): night falls once and does not lift again within a drive
     'night_inside_day_s': 3 * 3600,
     'night_edge_s': 300,
+    # dark that CLIP's NIGHT_SCENES read at least this much as night is no bridge: on approved segments, night
+    # called day 12378 s without, 7073 s with 0.5, day called night 0 s either way (user, 2026-10-16)
+    'bridge_clip_night': 0.5,
     'stitch_jumps': False,    # strong frame jumps count as stitches too (see propose)
     'night_majority': False,  # a mostly dark video: lit streets before bridges (see propose)
     # possibly dusk (a hint in the note, never a label): saturation above this or lit orange lamps above this % of
@@ -1111,8 +1114,17 @@ def propose(sig, p=PARAMS):
         edits = np.r_[edits, ev[(ev[:, 2] >= SKIP_RATIO) & (ev[:, 1] >= SKIP_SCORE), 0] * FPS]
     edits = [e for e in edits if jump(e) >= STITCH_SKY_JUMP]
 
+    seen = np.asarray(sig.get('night_scene', np.zeros((0, 2)))).reshape(-1, 2)
+
+    def clip_night(a, b):  # CLIP sure the dark a-b (frames) is night
+        inside = seen[(seen[:, 0] * FPS >= a) & (seen[:, 0] * FPS < b), 1]
+        return p.get('bridge_clip_night') is not None and len(inside) >= 4 \
+            and np.median(inside) >= p['bridge_clip_night']
+
     def bridges():
         for a, b in _runs(night):
+            if clip_night(a, b):  # no bridge: an hour of night inside a day drive (GAjYNAIn5hs; user, 2026-10-16)
+                continue
             stitched = any(abs(e - x) <= window for e in edits for x in (a, b))
             inside = a > 0 and b < n and (b - a) / FPS <= p['night_inside_day_s']
             # a short dark start or end with daylight on the other side is the El or a bridge too (Marble Hill under
