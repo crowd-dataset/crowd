@@ -4599,6 +4599,14 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
             print(f'Stopped early: {len(marked)} videos marked {what} in review ({", ".join(marked[:5])}): this '
                   f'channel {habit}, so it is rejected; mark it "Rejected" in the channels sheet')
             return plan_path
+    # most of its analysed videos bob at a walker's step rate: the channel films walks (Triple_A, 84 of 96; user,
+    # 2026-10-16: 47 of them walks). Of the channels with 5 or more analysed, the next is at 60% of 10
+    proposed = [p for p in plan.values() if p.get('entries') and p.get('analysed')]
+    walks = [p for p in proposed if WALK_HINT in (p.get('note') or '')]
+    if len(proposed) >= WALK_CHANNEL_MIN and len(walks) >= WALK_CHANNEL_SHARE * len(proposed):
+        print(f"Stopped early: {len(walks)} of {len(proposed)} analysed videos bob like a walker's steps: this "
+              'channel films walks, so it is rejected; mark it "Rejected" in the channels sheet')
+        return plan_path
 
     def undecided(p):
         return not any(s.get('decision') or s.get('applied') for e in p.get('entries', []) for s in e['segments'])
@@ -5149,6 +5157,8 @@ REVIEW_PAGE = 50  # videos with something left to decide shown at once in the re
 MAX_MERGE_GAP_S = 2  # wider gaps are excluded footage (stops, freeway), not suggested splits
 CHANNEL_DONE = 'Every video of this channel is proposed or in the mapping.'
 CHANNEL_REJECTED = 'channel_rejected'  # a file in a channel's folder: the reviewer rejected the whole channel
+WALK_HINT = "the camera bobs like a walker's steps"  # the start of propose's walk hint in a note
+WALK_CHANNEL_MIN, WALK_CHANNEL_SHARE = 20, 0.7  # analysed videos, the share with WALK_HINT: a channel of walks
 MARKED_REJECT = 2  # videos marked sped up (or with ghosts) in review that reject their channel (user, 2026-10-10)
 # plan key -> (what the review button marks, the channel's habit it shows)
 REVIEW_MARKS = {'sped_up': ('sped up', 'speeds up its drives'),
