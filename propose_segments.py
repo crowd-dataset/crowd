@@ -929,7 +929,8 @@ def propose(sig, p=PARAMS):
         keep[a:b] = False
         notes.append(f"stationary {a / FPS:.0f}-{b / FPS:.0f}s{' (edge)' if at_edge else ''}")
     for i in np.flatnonzero(cut):
-        notes.append(f'cut at {i / FPS:.0f}s')
+        notes.append(f'cut at {i / FPS:.0f}s' + (' (the light dims before it and is back within 10 s: an overpass?)'
+                                                 if overpass_like(sky, i) else ''))
     if 'face' in sig:  # signals saved before this check have no face trace
         # a camera on the driver keeps seeing him, but turning his head hides the face for a while, so judge
         # the share of frames with a big face over a longer window rather than frame by frame
@@ -1525,6 +1526,18 @@ def under_bridge(sig, a, b):
 BRIDGE_DARK, BRIDGE_LIGHT, BRIDGE_BACK_S = 0.3, 0.8, 5
 
 
+def overpass_like(sky, i):
+    """Whether the light at a picture cut (frame i) looks like a long overpass: dimming already in the 3 s before
+    (under 0.8 of the 7 s before that) and back to 0.85 of it within 10 s, holding for 3 s (ch47LHcVB8U 14:40: sky
+    155, 119 just before, about 100 for 9 s, 145; user, 2026-10-16). A hint, not a reason to drop the cut: of the
+    326 picture cuts shown in reviewed stretches, 9 false and 12 real ones are such."""
+    ref = np.median(sky[max(0, i - 10 * FPS):max(1, i - 3 * FPS)])
+    if not ref or sky[max(0, i - 3 * FPS):max(1, i - 1)].min() >= 0.8 * ref:
+        return False
+    return any(sky[k] >= 0.85 * ref and np.median(sky[k:k + 3 * FPS]) >= 0.85 * ref
+               for k in range(i + 2 * FPS, min(len(sky) - 3 * FPS, i + 10 * FPS + 1)))
+
+
 def skip_times(sig):
     """Seconds at which the video skips footage (edit cuts), from the skip candidates that are strong and alone."""
     ev = np.asarray(sig.get('skips', np.zeros((0, 3)))).reshape(-1, 3)
@@ -1891,7 +1904,7 @@ def gap_reason(note, a, b, night_change=False):
             # (rgnCR9pb1aM: "camera turned to the side (the video switches angles)"; user, 2026-10-15)
             out.append(re.sub(r' \([^)]*\)$', '', m.group(1)))
         elif (m := re.match(r'cut at (\d+)s', item)) and a - 3 <= int(m.group(1)) <= b + 3:
-            out.append('a cut in the picture')
+            out.append('a cut in the picture, or an overpass?' if 'an overpass?' in item else 'a cut in the picture')
         elif item.startswith('the video skips footage at') and any(
                 a - 3 <= int(x) * 60 + int(y) <= b + 3 for x, y in re.findall(r'(\d+):(\d\d)', item.split(' (')[0])):
             out.append('an edit cut')
