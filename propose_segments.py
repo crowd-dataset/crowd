@@ -9,7 +9,9 @@ Nothing here writes to the mapping file.
 import argparse
 import ast
 import contextlib
+import datetime
 import fcntl
+import glob
 import difflib
 import functools
 import json
@@ -33,7 +35,7 @@ import numpy as np
 import pandas as pd
 import requests
 from geopy.exc import (GeocoderAuthenticationFailure, GeocoderInsufficientPrivileges, GeocoderQuotaExceeded,
-                       GeocoderRateLimited, GeopyError)
+                       GeocoderRateLimited, GeocoderServiceError, GeopyError)
 from geopy.geocoders import Nominatim
 
 import add_video
@@ -55,6 +57,8 @@ PARAMS = {
     'cut_ncc': 0.3,           # a frame this uncorrelated with the previous one is a hard cut...
     'cut_neighbour_ncc': 0.6,  # ...when the frames either side of it are this coherent
     'bridge_dip': 0.5,        # a cut whose sky darkens below this share of its surroundings is a bridge
+    'glare_spike': 1.25,       # a cut whose sky flashes this much brighter that briefly is glare
+    'short_dip': 0.8, 'short_dip_s': 1.5,  # ... or under this for at most this long (see propose)
     'cut_confirm_ratio': 15,  # a cut stands only with a full-frame-rate jump this strong within a second
     # a map shown before the drive (brittrips: 4mGZZ9BGunA, aERXkCaV9BA, xkOEm0jFTcE) is far more colourful than
     # road footage: a first colour sample above intro_saturation and intro_saturation_ratio times the video's
@@ -70,6 +74,7 @@ PARAMS = {
     # 49 night ones day) against 6.7% for "sky under 100 or street under 65" (50 and 37): bright HDR or hazy daylight
     # under a slightly dim sky is no night (Va9g8hoDg0g, Blue Mountains: sky 86-100, street 77-111)
     'night_sky': 85.0,
+    'day_inside_night_s': 1800,  # a bright spell this short between night stretches stays night (lit streets)
     'night_ground': 90.0,
     'yolo_day_sky': 100.0,    # the rural and highway checks (YOLO counts) only where the sky is this bright
     'night_window_s': 60,     # night/day must hold this long to count as a transition
@@ -77,6 +82,8 @@ PARAMS = {
     # the 7 train on Roosevelt Ave): night falls once and does not lift again within a drive
     'night_inside_day_s': 3 * 3600,
     'night_edge_s': 300,
+    'stitch_jumps': False,    # strong frame jumps count as stitches too (see propose)
+    'night_majority': False,  # a mostly dark video: lit streets before bridges (see propose)
     # possibly dusk (a hint in the note, never a label): saturation above this or lit orange lamps above this % of
     # the picture; on 8 bright segments labelled night and 20 day ones (CharruaNYC) it flags 5 and no day one
     'dusk_saturation': 125,
@@ -90,6 +97,7 @@ PARAMS = {
     # overall motion looks sideways (forward cameras: median 1.1-1.5; a side-facing camera: -0.1)
     'angle_spread': 0.3,
     'angle_share': 0.6,
+    'angle_relative': None,   # ... and under this times the video's own median (see _sideways)
     'shake_jitter': 1.0,      # spread of the vertical shift over 10 s (normal: 0.02-0.46; shaking: 1.8)
     # rural driving: YOLO sees fewer than this many cars, people, traffic lights, stop signs and hydrants per frame
     # over a minute (labelled towns: 1.0-7 per frame, a rural drive through the Poconos: 0-0.4); day only
@@ -268,6 +276,143 @@ def sheet_scores(sheet_path, scenes, prefix='', bottom=False):
 
 
 STEP_BOB_WALK, STEP_BOB_HINT = 0.75, 0.6  # step_bob: left out as a walk / a note to check
+
+
+BOB_EVERY_S = 45  # step_bob_track: one 15-s reading this often through the video
+# a town's streets by sight (user, 2026-10-13: y0VgKTLKsp4's quiet Washington neighbourhood cut as highway): on 44
+# stretches the highway and rural checks cut, CLIP's middle score on 3 frames was 0.95 or more for 10 of the 21 the
+# reviewer approved anyway and 2 of the 23 they left cut
+TOWN_SCENES = (['a residential street with houses', 'a quiet suburban street lined with houses and trees',
+                'a street in a town with shops and buildings', 'a highway with several lanes', 'a freeway',
+                'a country road through fields', 'a road through a forest', 'a mountain road',
+                'a road through the desert'], 3)
+TOWN_EVERY_S, TOWN_SCORE = 30, 0.95
+
+
+def town_scene_track(path, duration, work_dir):
+    """[(second, CLIP score of TOWN_SCENES)] every TOWN_EVERY_S through the video ([] without CLIP)."""
+    times = [float(t) for t in np.arange(TOWN_EVERY_S / 2, duration or 0, TOWN_EVERY_S)]
+    scores = _clip_scores(path, times, work_dir, TOWN_SCENES) if times else {}
+    return sorted(scores.items())
+
+
+# night by sight (user, 2026-10-13: eq-5HRmOiN4's first 14 min under the El by day, as dark as night): on frames of
+# the dark approved segments (4 each), CLIP's middle score for the first three was 0.12 or more on all 56 the
+# reviewer marked night and 0.01 or less on 13 of the 16 they marked day; the orange-lamp measure was 0 on 100 of
+# 232 night ones, no help
+NIGHT_SCENES = (['a city street at night with the street lights on', 'a dark road at night lit by headlights',
+                 'a road at night', 'a street in daylight under an elevated railway', 'a city street on a sunny day',
+                 'a road on an overcast day', 'a road at dusk', 'a road tunnel', 'the inside of a parking garage'], 3)
+NIGHT_EVERY_S, NIGHT_SCENE_DAY = 30, 0.1
+# drone and aerial footage (tam7IqTDBTU, EoWg9w8DpsM; user, 2026-10-15): CLIP on AERIAL_FRAMES frames spread over the
+# video; a video is drone footage when AERIAL_SHARE of them or more look aerial. On 69 drone-titled videos and 152
+# approved drives (8 frames each): 64 drone videos caught (the misses: drone product reviews), no approved drive
+# with even 2 of 8 frames aerial
+AERIAL_SCENES = (['an aerial view from a drone', "a bird's-eye view of a city", 'a drone shot of the coast',
+                  'a road seen through a car windshield', 'a city street seen from a driving car',
+                  'a highway seen from a car', 'a residential street seen from a car', 'a person walking on a sidewalk',
+                  'the inside of a car', 'a person talking to the camera', 'a parking lot'], 3, 'a photo of ')
+AERIAL_FRAMES, AERIAL_SHARE = 8, 0.5
+
+
+def aerial_track(path, duration, work_dir):
+    """[(second, CLIP score of AERIAL_SCENES)] of AERIAL_FRAMES frames from 5% to 95% of the video."""
+    if not duration:
+        return []
+    times = [float(duration * q) for q in np.linspace(0.05, 0.95, AERIAL_FRAMES)]
+    return sorted(_clip_scores(path, times, work_dir, AERIAL_SCENES).items())
+
+
+# night both ways, over the whole video: dusk with the street lights on counts as night, as the reviews label it
+# (lmALZy7EF-g 27:47-37:47; user, 2026-10-16). On 374 approved segments (104 the brightness rules got wrong, 270
+# right) taking CLIP's label where it is sure (0.2/0.8) fixed 54 and broke 3; CLIP alone was right on 334
+NIGHT_CLIP = (['a city street at night with the street lights on', 'a dark road at night lit by headlights',
+               'a road at night', 'a road at dusk with the street lights on',
+               'a street in daylight under an elevated railway', 'a city street on a sunny day',
+               'a road on an overcast day', 'a road tunnel', 'the inside of a parking garage',
+               'a road at sunset in daylight'], 4)
+NIGHT_CLIP_SURE = 0.2  # a piece's middle reading this or less is day, 1 minus it or more night
+
+
+def night_clip_track(path, duration, work_dir):
+    """[(second, CLIP night score of NIGHT_CLIP)] every NIGHT_EVERY_S over the whole video."""
+    if not duration:
+        return []
+    times = [float(t) for t in np.arange(NIGHT_EVERY_S / 2, duration, NIGHT_EVERY_S)]
+    return sorted(_clip_scores(path, times, work_dir, NIGHT_CLIP).items())
+
+
+# lit lamps as small bright spots on a darker surround (sFaIgPDlHa4; user, 2026-10-16): per frame (320 px wide) the
+# connected bright pixels (value 230+, the 15 px around at most 110) of 2-150 px. Alone noisy (glints by day), but
+# where CLIP is unsure SPOTS_NIGHT or more mean night: on the night test 49 of 81 wrong segments fixed with CLIP and
+# them, 43 with CLIP alone, 3 of 197 right ones broken either way
+SPOTS_NIGHT = 6
+
+
+def light_spots(png):
+    """The number of small bright spots in a frame (PNG bytes)."""
+    img = cv2.imdecode(np.frombuffer(png, np.uint8), cv2.IMREAD_GRAYSCALE)
+    if img is None:
+        return None
+    g = cv2.resize(img, (320, 180)).astype(np.float32)
+    mask = ((g >= 230) & (cv2.blur(g, (15, 15)) <= 110)).astype(np.uint8)
+    _, _, stats, _ = cv2.connectedComponentsWithStats(mask, 8)
+    return int(((stats[1:, cv2.CC_STAT_AREA] >= 2) & (stats[1:, cv2.CC_STAT_AREA] <= 150)).sum())
+
+
+def light_spots_track(path, duration):
+    """[(second, light_spots)] every NIGHT_EVERY_S over the whole video, as night_clip_track."""
+    out = []
+    for t in np.arange(NIGHT_EVERY_S / 2, duration or 0, NIGHT_EVERY_S):
+        png = subprocess.run(['ffmpeg', '-v', 'error', '-ss', f'{t:.1f}', '-i', path, '-frames:v', '1', '-f',
+                              'image2pipe', '-vcodec', 'png', '-'], capture_output=True, timeout=120).stdout
+        if png and (n := light_spots(png)) is not None:
+            out.append((float(t), n))
+    return out
+
+
+def night_scene_track(path, sig, work_dir):
+    """[(second, CLIP score of NIGHT_SCENES)] every NIGHT_EVERY_S where the picture is as dark as night."""
+    dark = sig['sky'] < PARAMS['night_sky']
+    if 'ground' in sig:
+        dark = dark & (sig['ground'][:len(dark)] < PARAMS['night_ground'])
+    times = [float(t) for t in np.arange(NIGHT_EVERY_S / 2, len(dark) / FPS, NIGHT_EVERY_S) if dark[int(t * FPS)]]
+    return sorted(_clip_scores(path, times, work_dir, NIGHT_SCENES).items()) if times else []
+
+
+def step_bob_track(path, duration, every=BOB_EVERY_S, length=15, fps=10):
+    """[(start s, share)] of step_bob's measure on a 15-s reading every `every` seconds: a walk inside a drive
+    (jhXgQ-mMrnw 9:01-9:52, the one segment its highway drive kept: 0.56-0.81 against 0.33 driving at 5:00; user,
+    2026-10-13). A reading of 15 s is noisy, so a hint for the segments, not a cut."""
+    w, h = 160, 90
+    out = []
+    for t in np.arange(0, max(0, (duration or 0) - length), every):
+        raw = subprocess.run(['ffmpeg', '-v', 'error', '-ss', f'{t:.1f}', '-t', str(length), '-i', path, '-an', '-vf',
+                              f'fps={fps},scale={w}:{h},format=gray', '-f', 'rawvideo', '-'],
+                             capture_output=True, timeout=300).stdout
+        frames = np.frombuffer(raw, np.uint8).reshape(-1, h, w).astype(np.float32)
+        if len(frames) < 50:
+            continue
+        win = cv2.createHanningWindow((w, h), cv2.CV_32F)
+        dy = np.array([cv2.phaseCorrelate(a, b, win)[0][1] for a, b in zip(frames, frames[1:])])
+        dy = dy - np.convolve(dy, np.ones(9) / 9, 'same')
+        power = np.abs(np.fft.rfft(dy * np.hanning(len(dy)))) ** 2
+        hz = np.fft.rfftfreq(len(dy), 1 / fps)
+        total = power[(hz >= 0.3) & (hz <= 4.5)].sum()
+        if total:
+            out.append((float(t), float(power[(hz >= 1.3) & (hz <= 2.6)].sum() / total)))
+    return out
+
+
+def walk_hints(segments, track):
+    """[(start s, end s)] of the segments whose step_bob_track readings look like walking: one of
+    STEP_BOB_WALK or more, or their middle STEP_BOB_HINT or more."""
+    out = []
+    for seg in segments:
+        inside = [x for t, x in track if seg['start'] <= t + 7.5 <= seg['end']]
+        if inside and (max(inside) >= STEP_BOB_WALK or np.median(inside) >= STEP_BOB_HINT):
+            out.append((seg['start'], seg['end']))
+    return out
 
 
 def step_bob(path, duration, windows=6, length=15, fps=10):
@@ -493,16 +638,26 @@ def _jitter(sig):
     return np.sqrt(np.maximum(_rolling_mean(y * y, n) - _rolling_mean(y, n) ** 2, 0))
 
 
-def _sideways(sig, p):
-    """Moving frames, and moving frames whose flow does not spread out from the middle (camera aimed sideways)."""
+def _sideways(sig, p, relative=False):
+    """Moving frames, and moving frames whose flow does not spread out from the middle (camera aimed sideways).
+    relative: also well under the video's own spread while moving (angle_relative times its median): a forward
+    camera that spreads little all along (9coEBrZmkWc, CuseVegas: median 0.61, forward cameras 1.1-1.5) is cut only
+    where it turns (user, 2026-10-16)."""
     moving = sig['motion'] > 2 * p['moving_flow']
-    return moving, moving & (sig['spread'] / (sig['motion'] + 0.05) < p['angle_spread'])
+    ratio = sig['spread'] / (sig['motion'] + 0.05)
+    limit = p['angle_spread']
+    if relative and p.get('angle_relative') and moving.sum() >= 60 * FPS:
+        limit = min(limit, p['angle_relative'] * float(np.median(ratio[moving])))
+    return moving, moving & (ratio < limit)
 
 
 def footage_problem(sig, p=PARAMS):
     """Why a whole video is unusable from its camera, or None (signals saved before these checks: None)."""
     if 'shift_y' in sig and np.median(_jitter(sig)) > p['shake_jitter']:
         return 'the camera shakes too much'
+    aerial = np.asarray(sig.get('aerial', np.zeros((0, 2)))).reshape(-1, 2)
+    if len(aerial) >= AERIAL_FRAMES // 2 and (up := (aerial[:, 1] >= 0.5).sum()) >= AERIAL_SHARE * len(aerial):
+        return f'drone footage (an aerial view in {up} of {len(aerial)} frames)'
     if 'spread' in sig:
         moving, sideways = _sideways(sig, p)
         if moving.sum() >= 60 * FPS and sideways.sum() / moving.sum() > VIDEO_SIDEWAYS_SHARE:
@@ -575,6 +730,76 @@ def camera_tilt(sig, n, p=PARAMS):
         return med > p['tilt_up'], med < p['tilt_down']
 
 
+SIDEWAYS_DARK = 0.5  # a sideways stretch this much in the dark is only a hint (see propose)
+
+
+REPEAT_MIN_S = 300  # a stretch at least this long matching footage earlier in the video is a repeat
+
+
+def repeated_footage(sig):
+    """[(start s, end s, lag s)] of footage that repeats earlier footage of the video (UCLgFDrgDENPf7a59tsj8d_A's
+    hour-long videos are often the same 30 min twice: YJAsLoJ_pBM, 30 more; user, 2026-10-16): per second, sky,
+    road and motion within 1.5, 1.5 and 0.3 of the same measures `lag` seconds earlier, for REPEAT_MIN_S or more
+    while the car moves. The first lag with such a run is taken."""
+    n = len(sig['sky']) // FPS
+    if n < 2 * REPEAT_MIN_S or 'ground' not in sig:
+        return []
+    sec = lambda x: np.asarray(x[:n * FPS], float).reshape(n, FPS).mean(1)  # noqa: E731
+    sky, gr, mo = sec(sig['sky']), sec(sig['ground'][:len(sig['sky'])]), sec(sig['motion'])
+    for lag in range(REPEAT_MIN_S, n - REPEAT_MIN_S + 1):
+        same = (np.abs(sky[lag:] - sky[:-lag]) < 1.5) & (np.abs(gr[lag:] - gr[:-lag]) < 1.5) \
+            & (np.abs(mo[lag:] - mo[:-lag]) < 0.3)
+        if same.sum() < REPEAT_MIN_S:
+            continue
+        out = [(lag + a, lag + b, lag) for a, b in _runs(same)
+               if b - a >= REPEAT_MIN_S and (mo[lag + a:lag + b] > 0.5).mean() > 0.5]
+        if out:
+            return out
+    return []
+
+
+def rear_camera_from(sig, p=PARAMS):
+    """Seconds from which the rest of the video is the rear camera, else None: the moving frames' flow converges
+    there to the end (median spread ratio under REAR_SPREAD) after spreading out before it (over FRONT_SPREAD).
+    UCLgFDrgDENPf7a59tsj8d_A switches at 5:00 (l-sh484PHAw, mtmfpTVCFWA, n8nPtJAEtmI, lYvXd8eky6E, kMxiZs3hPqw;
+    user, 2026-10-16); of 4,328 approved segments of 2 min or more one has a median under 0 (forward: 1.1-1.5)."""
+    if 'spread' not in sig:
+        return None
+    moving = sig['motion'] > 2 * p['moving_flow']
+    r = np.where(moving, sig['spread'] / (sig['motion'] + 0.05), np.nan)
+    ok = np.isfinite(r)
+    if ok.sum() < 120 * FPS:
+        return None
+    # the switch: the time that best parts frames spreading out before it from frames converging after it, on the
+    # spread's 10-s median: a turn's converging moment before the switch pulled it a minute early (dGn9jpFKb2M 4:13,
+    # IIKIf6nEJQQ 4:12 for 4:59; user, 2026-10-16)
+    half = 5 * FPS
+    sm = np.array([np.nanmedian(w) if np.isfinite(w := r[max(0, i - half):i + half]).any() else np.nan
+                   for i in range(len(r))])
+    okm = np.isfinite(sm)
+    ahead = np.cumsum(okm & (sm > 0))                     # forward frames up to each frame
+    behind = np.cumsum((okm & (sm < 0))[::-1])[::-1]      # converging frames from each frame on
+    score = ahead[:-1] + behind[1:]
+    # a wait around the switch (no moving frames: dGn9jpFKb2M stands 4:15-5:00, l-sh484PHAw after 5:00) leaves a
+    # stretch of equal bests: the switch is the strongest frame jump in it (the picture changes at once), else
+    # its first moment
+    best = np.flatnonzero(score == score.max()) + 1
+    ev = np.asarray(sig.get('skips', np.zeros((0, 3)))).reshape(-1, 3)
+    near = ev[(ev[:, 0] * FPS >= best[0] - FPS) & (ev[:, 0] * FPS <= best[-1] + FPS)]
+    t = int(round(near[np.argmax(near[:, 2]), 0] * FPS)) if len(near) else int(best[0])
+    head, tail = r[:t][ok[:t]], r[t:][ok[t:]]
+    # four minutes of front camera first, and a rear part of a fifth of the video or more: a converging end of a
+    # drive (AaHFLxo7h4A, the last 7 of 65 min at -0.34) is no camera switch, nor one converging stretch among
+    # others (0vfUg5xioIE after 34:00: -1.5, then 0.3 and 0.1): 70% of the rest converges
+    if t >= 240 * FPS and len(r) - t >= len(r) / 5 and len(tail) >= 60 * FPS and np.median(tail) < REAR_SPREAD \
+            and (tail < 0).mean() >= 0.7 and np.median(head) > FRONT_SPREAD:
+        return t / FPS
+    return None
+
+
+REAR_SPREAD, FRONT_SPREAD = -0.2, 0.5
+
+
 def propose(sig, p=PARAMS):
     """Return proposed segments [{start, end, night}] in seconds, plus the reasons for each cut."""
     n = len(sig['motion'])
@@ -599,6 +824,24 @@ def propose(sig, p=PARAMS):
             continue
         if sky[max(0, i - 8):i + 9].min() < p['bridge_dip'] * min(before.mean(), after.mean()):
             cut[i] = False
+            continue
+        ref = np.median(sky[max(0, i - 10 * FPS):max(1, i - FPS)])
+        # ... and sun glare: a brief bright spike with the light as before after it (px5Fob6umxw 44:24, _maBKxVgQI4,
+        # XZcQC5inyBc; user, 2026-10-16). Of 699 cuts shown in reviewed stretches: 26 false and 7 real are such
+        high = sky[max(0, i - 8):i + 9].max() >= p['glare_spike'] * max(before.mean(), after.mean())
+        if (i + 10 * FPS <= len(sky) and high
+                and 0 < (sky[max(0, i - 2 * FPS):i + 4 * FPS] > 1.15 * ref).sum() / FPS <= p['short_dip_s']
+                and abs(np.median(sky[i + 3 * FPS:i + 10 * FPS]) - ref) <= 0.15 * ref):
+            cut[i] = False
+            continue
+        # ... and a shallower dip that lasts no longer than a bridge takes to pass (a second or so; long overpasses
+        # and the El are the night rules' business), with the light back after it (user, 2026-10-16). Of 828 cuts
+        # shown in reviewed stretches (539 false, 289 real): 176 false and 47 real are such
+        low = sky[max(0, i - 8):i + 9].min() < p['short_dip'] * min(before.mean(), after.mean())
+        if (i + 10 * FPS <= len(sky) and low
+                and 0 < (sky[max(0, i - 2 * FPS):i + 4 * FPS] < 0.8 * ref).sum() / FPS <= p['short_dip_s']
+                and np.median(sky[i + 3 * FPS:i + 10 * FPS]) >= 0.8 * ref):
+            cut[i] = False
     # half a second apart, frames under an elevated railway, in a corner or past flickering light differ like a
     # cut; at the full frame rate a real cut is a jump between two frames (see skip_events). Videos analysed
     # with it keep only the cuts such a jump confirms within a second.
@@ -609,8 +852,22 @@ def propose(sig, p=PARAMS):
             if not (np.abs(jumps - i / FPS) <= 1).any():
                 cut[i] = False
 
+    stamps = stamp_cuts(sig)
+    for t in stamps:  # footage of another drive: a cut whatever the picture says
+        if 0 < int(t * FPS) < n:
+            cut[int(t * FPS)] = True
     keep = ~blank
     notes = []
+    for a, b, lag in repeated_footage(sig):  # the same footage again: once is enough
+        keep[a * FPS:b * FPS] = False
+        notes.append(f'{a // 60}:{a % 60:02d}-{b // 60}:{b % 60:02d} repeats the footage from '
+                     f'{(a - lag) // 60}:{(a - lag) % 60:02d}')
+    if (rear := rear_camera_from(sig, p)) is not None:  # the rest of the video is the rear camera
+        keep[int(rear * FPS):] = False
+        notes.append(f'rear camera from {int(rear) // 60}:{int(rear) % 60:02d}')
+    if stamps:
+        notes.append('the time stamp in the picture jumps at '
+                     + ', '.join(f'{int(t) // 60}:{int(t) % 60:02d}' for t in stamps) + ': footage of another drive')
     for a, b in np.asarray(sig.get('garage', np.zeros((0, 2)))).reshape(-1, 2):  # see garage_edges
         keep[int(a * FPS):int(b * FPS)] = False
         notes.append(f'in a garage {int(a) // 60}:{int(a) % 60:02d}-{int(b) // 60}:{int(b) % 60:02d}')
@@ -668,14 +925,22 @@ def propose(sig, p=PARAMS):
     if 'face' in sig:  # signals saved before this check have no face trace
         # a camera on the driver keeps seeing him, but turning his head hides the face for a while, so judge
         # the share of frames with a big face over a longer window rather than frame by frame
-        driver = _rolling_mean((sig['face'] > 0).astype(float), p['driver_window_s'] * FPS) > p['driver_share']
-        for a, b in _runs(driver):
-            if (b - a) / FPS >= p['driver_min_s']:
-                keep[a:b] = False
-                notes.append(f'camera on the driver {a / FPS:.0f}-{b / FPS:.0f}s')
+        share = _rolling_mean((sig['face'] > 0).astype(float), p['driver_window_s'] * FPS)
+        for a, b in _runs(share > p['driver_share']):
+            if (b - a) / FPS < p['driver_min_s']:
+                continue
+            # a few close faces (passers-by) are no camera on the driver: a hint under DRIVER_CUT_SHARE (user,
+            # 2026-10-14: 248nL9hGz8s split at 10:52-11:44 for 13%; 8 of the 12 cuts approved across were under 0.2)
+            if share[a:b].max() < DRIVER_CUT_SHARE:
+                t0, t1 = int(a / FPS), int(b / FPS)
+                notes.append(f'faces in {share[a:b].max():.0%} of the frames at {t0 // 60}:{t0 % 60:02d}-'
+                             f'{t1 // 60}:{t1 % 60:02d}: camera on the driver? check')
+                continue
+            keep[a:b] = False
+            notes.append(f'camera on the driver {a / FPS:.0f}-{b / FPS:.0f}s')
     problems, side_runs = [], None
     if 'spread' in sig:
-        moving, sideways = _sideways(sig, p)
+        moving, sideways = _sideways(sig, p, relative=True)
         moving_share = _rolling_mean(moving.astype(float), 60 * FPS)
         share = _rolling_mean(sideways.astype(float), 60 * FPS) / np.maximum(moving_share, 1e-6)
         # judged only over minutes with enough driving; a stop says nothing about where the camera points
@@ -716,6 +981,14 @@ def propose(sig, p=PARAMS):
     if 'object_y' in sig:
         up, down = camera_tilt(sig, n, p)
         problems += [('camera tilted up', up), ('camera tilted down', down)]
+    if len(town := np.asarray(sig.get('town_scene', np.zeros((0, 2)))).reshape(-1, 2)):
+        # where CLIP sees a town's streets (houses, shops), no highway or rural cut (TOWN_SCENES): the middle of three
+        # readings in a row, so one odd frame decides nothing
+        score = np.array([np.median(town[max(0, i - 1):i + 2, 1]) for i in range(len(town))])
+        at = np.clip(np.searchsorted(town[:, 0], np.arange(n) / FPS), 0, len(town) - 1)
+        in_town = score[at] >= TOWN_SCORE
+        problems = [(label, bad & ~in_town if label in ('highway driving', 'rural driving') else bad)
+                    for label, bad in problems]
     for label, bad in problems:
         min_s = p['quiet_min_s'] if label in ('highway driving', 'rural driving') else \
             25 if label.startswith('camera turned to the side') else p['problem_min_s']
@@ -736,12 +1009,29 @@ def propose(sig, p=PARAMS):
                 if len(ids):
                     at = np.flatnonzero(np.isin(side_runs, ids))
                     a, b = min(a, at[0]), max(b, at[-1] + 1)
+                # in the dark the flow has little to follow but lamps and headlights: a hint, not a cut (night
+                # drives on quiet roads taken for a side camera: 8O0zlwHapmM, 8ZhmysYj30c, gqPB9b90p54,
+                # j_2KkJuONF4, IHz_IuQb0DE; user, 2026-10-16)
+                dark = sig['sky'][a:b] < p['night_sky']
+                if 'ground' in sig:
+                    dark = dark & (sig['ground'][a:b] < p['night_ground'])
+                if dark.mean() >= SIDEWAYS_DARK:
+                    notes.append(f'{label}? {a / FPS:.0f}-{b / FPS:.0f}s in the dark: check, cut it if so')
+                    continue
             keep[a:b] = False
             notes.append(f'{label} {a / FPS:.0f}-{b / FPS:.0f}s')
+    for a, b, r in clock_speedups(sig):
+        keep[int(a * FPS):int(b * FPS)] = False
+        notes.append(f'sped up {a:.0f}-{b:.0f}s: the time stamp in the picture runs {r:.1f}x faster than the video')
+    if 'std' in sig:
+        for a, b in photo_inserts(sig):
+            keep[a:b] = False
+            notes.append(f'photos inserted {a / FPS:.0f}-{b / FPS:.0f}s')
 
     fades = np.asarray(sig.get('fades', np.zeros((0, 4))))
     fades = fades.reshape(len(fades), -1) if fades.size else np.zeros((0, 4))  # 4 or 5 columns: start, end first
-    ghosts = [a for a, b, *_ in fades if b - a >= FADE_MIN_S and SKIP_INTRO_S < a < n / FPS - SKIP_OUTRO_S]
+    ghosts = [a for a, b, *_ in fades if b - a >= FADE_MIN_S and SKIP_INTRO_S < a < n / FPS - SKIP_OUTRO_S
+              and not under_bridge(sig, a, b)]
     if ghosts:  # a hint only: tunnels and slow night traffic look alike (see fade_events)
         notes.append('possible fades between scenes (ghosts: an edited drive?) at '
                      + ', '.join(f'{int(t) // 60}:{int(t) % 60:02d}' for t in ghosts[:5])
@@ -769,6 +1059,13 @@ def propose(sig, p=PARAMS):
         at = int(np.argmax(_rolling_mean((stopped & (sig['ncc'] < 0.9)).astype(float), 20 * FPS)) / FPS)  # densest
         notes.append(f'possibly sped up while stopped ({churn:.0%} of the time stopped the picture changes fast, most '
                      f'around {at // 60}:{at % 60:02d}): check, and reject the video if so')
+    # a hint: a long drive through a city that hardly ever waits at a light had its waits cut out (user, 2026-10-13:
+    # pkek7okGpS0, 78 min of Los Angeles with 2 stops of 20 s or more). Videos of 20+ min reviewed in full: under
+    # WAITS_PER_HOUR stops of WAIT_S or more per hour on 64 of 696 approved (9%), 91 of 276 rejected (33%)
+    waits = sum((b - a) / FPS >= WAIT_S for a, b in _runs(stopped))
+    if n / FPS >= 1200 and waits < WAITS_PER_HOUR * n / FPS / 3600:
+        notes.append(f'few waits at lights ({waits} stops of {WAIT_S} s or more in {n / FPS / 60:.0f} min): the waits '
+                     'may be cut out of an edited drive, drag through it and check')
     window = p['night_window_s'] * FPS
     dark = sig['sky'] < p['night_sky']
     if 'ground' in sig:  # signals saved before the street brightness have the sky only
@@ -779,14 +1076,73 @@ def propose(sig, p=PARAMS):
     # a switch at an edit cut is footage stitched together (a night drive after a day drive): it stays night; under a
     # bridge or the El the dark comes and goes without one
     edits = np.r_[np.flatnonzero(cut), np.array(skip_times(sig)) * FPS]
-    for a, b in _runs(night):
-        stitched = any(abs(e - x) <= window for e in edits for x in (a, b))
-        inside = a > 0 and b < n and (b - a) / FPS <= p['night_inside_day_s']
-        # a short dark start or end with daylight on the other side is the El or a bridge too (Marble Hill under the
-        # 1 train, Roosevelt Ave under the 7); night falls over many minutes
-        edge = (a == 0) != (b == n) and (b - a) / FPS <= p['night_edge_s']
-        if (inside or edge) and not stitched:
-            night[a:b] = False
+    # only a cut where the light jumps: night footage after day changes the sky at the cut; a cut while under a
+    # bridge does not (user, 2026-10-14: XDBi8ukETEA 11:56-14:47 night for the cut at 14:20, sky ~80 both sides)
+
+    def jump(e, w=10 * FPS):
+        e = min(max(int(e), 1), len(sig['sky']) - 1)
+        return abs(np.median(sig['sky'][max(0, e - w):e]) - np.median(sig['sky'][e:e + w]))
+    if p.get('stitch_jumps'):  # ... and strong frame jumps, alone or not: vRSvuv5bXV4's night clip ends at 5:00 with
+        # a jump 382 times its neighbours, followed by another at 5:02, so skip_times leaves it out (user, 2026-10-16)
+        ev = np.asarray(sig.get('skips', np.zeros((0, 3)))).reshape(-1, 3)
+        edits = np.r_[edits, ev[(ev[:, 2] >= SKIP_RATIO) & (ev[:, 1] >= SKIP_SCORE), 0] * FPS]
+    edits = [e for e in edits if jump(e) >= STITCH_SKY_JUMP]
+
+    def bridges():
+        for a, b in _runs(night):
+            stitched = any(abs(e - x) <= window for e in edits for x in (a, b))
+            inside = a > 0 and b < n and (b - a) / FPS <= p['night_inside_day_s']
+            # a short dark start or end with daylight on the other side is the El or a bridge too (Marble Hill under
+            # the 1 train, Roosevelt Ave under the 7); night falls over many minutes
+            edge = (a == 0) != (b == n) and (b - a) / FPS <= p['night_edge_s']
+            if (inside or edge) and not stitched:
+                night[a:b] = False
+
+    # ... and a short bright spell inside a night drive is lit streets, not day: day does not come and go within
+    # minutes (eRaTzkbbC34: Manhattan's brightest blocks at 22:48-28:14, sky 88-102, between night on both sides)
+    def lit_streets():
+        for a, b in _runs(~night):
+            stitched = any(abs(e - x) <= window for e in edits for x in (a, b))
+            if a > 0 and b < n and (b - a) / FPS <= p['day_inside_night_s'] and not stitched:
+                night[a:b] = True
+    # in a mostly dark video the lamps make the bright spells, so lit streets come first: downtown at night
+    # alternates between dark and lamp-lit minutes, and the bridges rule turned each dark minute into day
+    # (yifqWxs2bIk, Indianapolis at night: 64% of its frames dark, all of it proposed as day; user, 2026-10-15)
+    for rule in ((lit_streets, bridges) if p['night_majority'] and dark.mean() > 0.5 else (bridges, lit_streets)):
+        rule()
+    # ... and dark that CLIP sees as daylight is day, however long (NIGHT_SCENES: under the El, eq-5HRmOiN4)
+    if len(seen := np.asarray(sig.get('night_scene', np.zeros((0, 2)))).reshape(-1, 2)):
+        for a, b in _runs(night):
+            inside = seen[(seen[:, 0] * FPS >= a) & (seen[:, 0] * FPS < b), 1]
+            if len(inside) >= 2 and np.median(inside) < NIGHT_SCENE_DAY:
+                night[a:b] = False
+    # ... and CLIP's label holds against the brightness rules for each piece of footage it is sure of: the pieces
+    # lie between the rules' day/night changes and strong frame jumps (an edit cut to other footage), and the
+    # middle of a piece's readings (NIGHT_CLIP, every NIGHT_EVERY_S) decides when NIGHT_CLIP_SURE or more sure,
+    # as in the test on approved segments (lmALZy7EF-g: 27:47-37:47, dusk with lamps, between two cuts)
+    clip = np.asarray(sig.get('night_clip', np.zeros((0, 2)))).reshape(-1, 2)
+    if len(clip):
+        ev = np.asarray(sig.get('skips', np.zeros((0, 3)))).reshape(-1, 3)
+        jumps = ev[(ev[:, 2] >= SKIP_RATIO) & (ev[:, 1] >= SKIP_SCORE), 0] * FPS
+        bounds = sorted({0, n, *np.flatnonzero(np.diff(night.astype(int))) + 1, *jumps.astype(int)})
+        spots = np.asarray(sig.get('spots', np.zeros((0, 2)))).reshape(-1, 2)
+        pieces = []
+        for a, b in zip(bounds, bounds[1:]):
+            inside = clip[(clip[:, 0] * FPS >= a) & (clip[:, 0] * FPS < b), 1]
+            m = np.median(inside) if len(inside) >= 2 else 0.5
+            lit = spots[(spots[:, 0] * FPS >= a) & (spots[:, 0] * FPS < b), 1]
+            lamps = len(lit) >= 2 and np.median(lit) >= SPOTS_NIGHT  # unsure CLIP, lit lamps: night
+            pieces.append((a, b, True if m >= 1 - NIGHT_CLIP_SURE else False if m <= NIGHT_CLIP_SURE
+                           else True if lamps and len(inside) >= 2 else None))
+        # unsure pieces between two sure ones of the same label take it (lmALZy7EF-g 29:50-32:47: dusk CLIP
+        # reads 0.2-0.5 between night on both sides)
+        known = [k for k, (_, _, x) in enumerate(pieces) if x is not None]
+        for k, j in zip(known, known[1:]):  # ... also a run of unsure pieces
+            if pieces[k][2] == pieces[j][2]:
+                pieces[k + 1:j] = [(a, b, pieces[k][2]) for a, b, _ in pieces[k + 1:j]]
+        for a, b, x in pieces:
+            if x is not None:
+                night[a:b] = x
 
     segments = []
     for a, b in _runs(keep):
@@ -1035,12 +1391,23 @@ def fade_events(path, k=3, ratio=0.42, change=0.5):
     if len(g) <= 2 * k:
         return np.zeros((0, 4))
     g = (g - g.mean(axis=(1, 2), keepdims=True)) / (g.std(axis=(1, 2), keepdims=True) + 1)
-    before, mid, after = g[:-2 * k], g[k:-k], g[2 * k:]
-    d = np.abs(before - after).mean(axis=(1, 2))
-    r = np.abs(mid - (before + after) / 2).mean(axis=(1, 2)) / np.maximum(d, 1e-3)
-    out = [((a + k) / 10, (b + k) / 10, r[a:b].min(), d[a:b].max())
-           for a, b in _runs((r < ratio) & (d > change)) if b - a >= FADE_MIN_S * 10]
-    return np.array(out, float).reshape(-1, 4)
+    out = []
+    # and frames 0.2 s apart too: a half-second dissolve averages out over 0.3 s (user, 2026-10-14: lKtZ5xqatFo at
+    # 6:40, 0.44 against 0.35); on 40 approved videos (15.9 h) that adds 13 fades to the 98 found, 0.8 an hour
+    for kk in sorted({k, 2}):
+        before, mid, after = g[:-2 * kk], g[kk:-kk], g[2 * kk:]
+        d = np.abs(before - after).mean(axis=(1, 2))
+        r = np.abs(mid - (before + after) / 2).mean(axis=(1, 2)) / np.maximum(d, 1e-3)
+        out += [((a + kk) / 10, (b + kk) / 10, r[a:b].min(), d[a:b].max())
+                for a, b in _runs((r < ratio) & (d > change)) if b - a >= FADE_MIN_S * 10]
+    merged = []  # one fade found at both spacings is one fade
+    for x in sorted(out):
+        if merged and x[0] <= merged[-1][1] + 0.5:
+            m = merged[-1]
+            merged[-1] = (m[0], max(m[1], x[1]), min(m[2], x[2]), max(m[3], x[3]))
+        else:
+            merged.append(x)
+    return np.array(merged, float).reshape(-1, 4)
 
 
 # an edit cut that skips footage: a frame changing SKIP_RATIO times more than the frames around it and by at
@@ -1052,12 +1419,108 @@ SKIP_STREAK = 10       # this many analysed videos of a channel in a row with sk
 FADE_MIN_S = 0.4       # a fade between scenes lasts at least this; shorter dips are flicker
 
 
+# a jump that brightness and contrast evened out take away is the camera adjusting to the light, not a cut (user,
+# 2026-10-13: XEtj22qw_sU out of an underpass at 35:22, BXizY_nii94 at 4:53 at night): the frame change at the
+# jump against the median of the 2 s around it, each frame normalised, was 3.7-4.1 there and 1.2-3.3 on 4 of 17
+# random cuts of approved videos (3 under bridges, the dashcam clock running on), 11.8-68 on the other 13 (8U8iqg_C27M
+# 16:53: the cars at the light vanish) and 19-80 on R3hofhG0UYI's
+SKIP_NORM_RATIO = 8
+SKIP_STOP_S, SKIP_STOP_MOTION, SKIP_SAME_NCC = 2, 0.2, 0.9  # a car pulling away is no cut (pulls_away)
+# sky change across an edit cut that makes it a splice of night and day: on the approved segments 5 gives +363 s
+# right and none worse (XDBi8ukETEA, -TY9uuHDcP8, 7oAdCb9eINM); 30 lost 9eI2niyrIwo, -2,718 s
+STITCH_SKY_JUMP = 5
+DRIVER_CUT_SHARE = 0.2  # face frames in a minute from which a camera on the driver is cut, not only noted
+WAIT_S, WAITS_PER_HOUR = 20, 3  # few waits at lights: see propose
+
+
+def skip_norm(path, sig):
+    """[(time s, normalised change ratio)] of the strong skip candidates (see SKIP_NORM_RATIO)."""
+    out = []
+    for t, score, ratio in np.asarray(sig.get('skips', np.zeros((0, 3)))).reshape(-1, 3):
+        if ratio < SKIP_RATIO or score < SKIP_SCORE:
+            continue
+        raw = subprocess.run(['ffmpeg', '-v', 'error', '-ss', f'{max(0, t - 1):.3f}', '-i', path, '-t', '2', '-an',
+                              '-vf', 'scale=160:90,format=gray', '-f', 'rawvideo', '-'],
+                             capture_output=True, timeout=120).stdout
+        g = np.frombuffer(raw, np.uint8)[:len(raw) // 14400 * 14400].reshape(-1, 90, 160).astype(np.float32)
+        if len(g) < 5:
+            continue
+        g = (g - g.mean(axis=(1, 2), keepdims=True)) / (g.std(axis=(1, 2), keepdims=True) + 1)
+        d = np.abs(np.diff(g, axis=0)).mean(axis=(1, 2))
+        out.append((float(t), float(d.max() / max(np.median(d), 1e-3))))
+    return out
+
+
+def photo_inserts(sig, max_s=15, share=0.5):
+    """[(start, end)] analysis frames of photos shown between pieces of the drive (user, 2026-10-13:
+    fxdZiHoT8ns's statue at 47:47, WQyCLXKVF4U's shop at 12:18): between two hard jumps at most max_s apart,
+    mostly frozen frames, of two or more different stills, unlike the street before. A wait with cars passing in
+    front (_e8uM-XAhH4) or between edit cuts (6iepzXRnnI4) shows one picture, that street. In approved footage
+    40 s in 5 segments (WQyCLXKVF4U's real photos among them), in rejected 66 s in 12."""
+    ncc, motion, sky, std = (np.asarray(sig[k]) for k in ('ncc', 'motion', 'sky', 'std'))
+    frozen = (ncc >= 0.999) & (motion <= 0.02)
+    jumps = np.flatnonzero(ncc < 0.6)
+    out = []
+    for i, a in enumerate(jumps):
+        for b in jumps[i + 1:]:
+            if (b - a) / FPS > max_s:
+                break
+            if b - a < 4 or frozen[a + 1:b].mean() < share:
+                continue
+            inside, before = np.flatnonzero(frozen[a + 1:b]) + a + 1, slice(max(0, a - 4), a)
+            looks = [(np.median(sky[a + 1 + x:a + 1 + y]), np.median(std[a + 1 + x:a + 1 + y]))
+                     for x, y in _runs(frozen[a + 1:b])]
+            pictures = 1 + sum(abs(p[0] - q[0]) > 8 or abs(p[1] - q[1]) > 5 for p, q in zip(looks, looks[1:]))
+            if pictures >= 2 and (abs(np.median(sky[inside]) - np.median(sky[before])) > 15
+                                  or abs(np.median(std[inside]) - np.median(std[before])) > 5):
+                out.append((int(a), int(b) + 1))
+    merged = []
+    for a, b in sorted(out):
+        if merged and a <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(b, merged[-1][1]))
+        else:
+            merged.append((a, b))
+    return merged
+
+
+def pulls_away(sig, t):
+    """Whether a skip candidate at t is the car pulling away from a standstill: still before it (motion under
+    SKIP_STOP_MOTION over SKIP_STOP_S) and the same scene across it (frame correlation SKIP_SAME_NCC or more).
+    Against stillness the first moving frames jump like a cut (QnPFc7WrsQk 1:45; user, 2026-10-15). Of 439 cuts in
+    reviewed stretches, 55 are such: 54 inside an approved segment (false), 1 where the reviewer cut."""
+    i = int(t * FPS)
+    if i < 1 or i + 2 > min(len(sig['motion']), len(sig['ncc'])):
+        return False
+    return (np.median(sig['motion'][max(0, i - SKIP_STOP_S * FPS):i]) < SKIP_STOP_MOTION
+            and np.min(sig['ncc'][i - 1:i + 2]) >= SKIP_SAME_NCC)
+
+
+def under_bridge(sig, a, b):
+    """Whether the light around a-b (s) is a pass under a bridge: the sky nearly black within it (under BRIDGE_DARK of
+    the 10 s before) and back within BRIDGE_BACK_S (BRIDGE_LIGHT of it or more; the camera's exposure often
+    overshoots). A fade between scenes does not drop to black and come back in seconds (trvKU3hzes8 4:27, 9:34,
+    10:57, 14:04; CokQn5byUS8 4:05-4:06: sky 167, 3, 234; user, 2026-10-16)."""
+    sky = sig['sky']
+    i, j = int(a * FPS), int(b * FPS)
+    before = sky[max(0, i - 10 * FPS):max(0, i - FPS)]
+    if not len(before) or j + BRIDGE_BACK_S * FPS > len(sky):
+        return False
+    ref = np.median(before)
+    low = sky[max(0, i - FPS):j + FPS].min()
+    back = np.median(sky[j + FPS:j + BRIDGE_BACK_S * FPS]) if BRIDGE_BACK_S > 1 else sky[j + FPS]
+    return bool(low < BRIDGE_DARK * ref and back >= BRIDGE_LIGHT * ref)
+
+
+BRIDGE_DARK, BRIDGE_LIGHT, BRIDGE_BACK_S = 0.3, 0.8, 5
+
+
 def skip_times(sig):
     """Seconds at which the video skips footage (edit cuts), from the skip candidates that are strong and alone."""
     ev = np.asarray(sig.get('skips', np.zeros((0, 3)))).reshape(-1, 3)
+    light = [t for t, r in np.asarray(sig.get('skip_norm', np.zeros((0, 2)))).reshape(-1, 2) if r < SKIP_NORM_RATIO]
     out = []
     for t, score, ratio in ev:
-        if ratio < SKIP_RATIO or score < SKIP_SCORE:
+        if ratio < SKIP_RATIO or score < SKIP_SCORE or any(abs(t - x) < 0.01 for x in light) or pulls_away(sig, t):
             continue
         gap = np.abs(ev[:, 0] - t)
         if not ((gap > 0.5) & (gap <= SKIP_ALONE_S)).any():  # frames right at a cut can both jump
@@ -1379,12 +1842,60 @@ def trim_lead_in(p, lead):
                  '(90% of its videos in the mapping)').lstrip('; ')
 
 
+# the note's items that may mean rejecting the whole video, shown red on the review page (user, 2026-10-16)
+REJECT_HINT = re.compile(r'reject|sped up|slowed|few waits|the title mentions|camera on the driver\?|edited drive|'
+                         r'vanished mid-picture|skips footage|time stamp in the picture jumps|walking or a handheld|'
+                         r'drone|set the locality|in the dark: check', re.I)
+
+
+def note_html(note):
+    """The proposal's note as HTML, its REJECT_HINT items in red."""
+    from markupsafe import Markup, escape
+    return Markup('; ').join(Markup('<span class="warn">%s</span>') % x if warns(x) else escape(x)
+                             for x in (note or '').split('; '))
+
+
+def warns(item):
+    """Whether a note item is a REJECT_HINT: fades only from FADES_RED of them (reviewed videos with 1-2 fades: 24%
+    rejected, 6 or more: 39%, none: 15%; 2026-10-16)."""
+    if item.startswith('possible fades'):
+        more = re.search(r'and (\d+) more', item)
+        return len(re.findall(r'\d+:\d\d', item)) + (int(more.group(1)) if more else 0) >= FADES_RED
+    return bool(REJECT_HINT.search(item))
+
+
+FADES_RED = 6
+
+
+def gap_reason(note, a, b, night_change=False):
+    """Why two segments of a video are apart, in a few words, from the proposal's note (user, 2026-10-14): the cuts
+    whose stretch meets the gap a-b (s), a cut in the picture or an edit cut at it, a switch between day and night."""
+    out = []
+    for item in (note or '').split('; '):
+        if (item.startswith('possibly') and not item.startswith('possibly dusk')) or '(kept' in item or 'kept:' in item:
+            continue  # a hint that left the footage in; dusk stays: a split at it outlives a changed day/night
+            # (3ivZS04LX78: the reason was gone once both sides were set to night; user, 2026-10-16)
+        if (m := re.match(r'(.+?) (\d+)-(\d+)s\b', item)) and int(m.group(2)) <= b + 2 and int(m.group(3)) >= a - 2:
+            # without its explanation in brackets: a long reason widened the column and squeezed the buttons
+            # (rgnCR9pb1aM: "camera turned to the side (the video switches angles)"; user, 2026-10-15)
+            out.append(re.sub(r' \([^)]*\)$', '', m.group(1)))
+        elif (m := re.match(r'cut at (\d+)s', item)) and a - 3 <= int(m.group(1)) <= b + 3:
+            out.append('a cut in the picture')
+        elif item.startswith('the video skips footage at') and any(
+                a - 3 <= int(x) * 60 + int(y) <= b + 3 for x, y in re.findall(r'(\d+):(\d\d)', item.split(' (')[0])):
+            out.append('an edit cut')
+    if night_change:
+        out.append('day / night')
+    return ', '.join(dict.fromkeys(out))
+
+
 def footage_skip(sig):
     """Where the video skips footage (edit cuts), as "m:ss, m:ss and m:ss", else None: every cut, not only the
     first (R3hofhG0UYI: 10:53, 13:28, 14:25 and 19:32; user, 2026-10-12), so each can be checked for a missing
     wait at a light."""
     end = len(sig['motion']) / FPS
     ts = [f'{int(t) // 60}:{int(t) % 60:02d}' for t in skip_times(sig) if SKIP_INTRO_S < t < end - SKIP_OUTRO_S]
+    ts = list(dict.fromkeys(ts))  # frames of one cut fall in the same second (xhW4Hz6Uazo: 7:52 three times)
     return None if not ts else ts[0] if len(ts) == 1 else ', '.join(ts[:-1]) + ' and ' + ts[-1]
 
 
@@ -1438,6 +1949,17 @@ def _frame_text(stream, t):
                                    'tessedit_char_whitelist=0123456789.,-:/NSEW '], input=strip,
                                   capture_output=True, timeout=120).stdout.decode(errors='ignore')
             text += '\n' + line
+    # a phone app's time and date in a corner, two lines in letters and digits ("12:58 PM" over "Feb 6, 2025" at
+    # the bottom left of CuseVegas's drives, REnfw4fpZ5A): read without the digit whitelist
+    for crop in ('iw*0.35:ih*0.17:0:ih*0.82',):
+        strip = subprocess.run(['ffmpeg', '-v', 'error', '-i', '-', '-vf',
+                                f"crop={crop},scale=-2:200,format=gray,lut=y='if(gt(val\\,190)\\,0\\,255)'",
+                                '-f', 'image2pipe', '-vcodec', 'png', '-'], input=png, capture_output=True,
+                               timeout=60).stdout
+        if strip:
+            read = subprocess.run(['tesseract', 'stdin', 'stdout', '--psm', '6'], input=strip, capture_output=True,
+                                  timeout=120)
+            text += '\n' + read.stdout.decode(errors='ignore')
     return text
 
 
@@ -1450,17 +1972,59 @@ def parse_clock(text):
     return int(m.group(1)) * 3600 + int(m.group(2)) * 60 + int(m.group(3)) if m else None
 
 
+STAMP_TIME = re.compile(r'(?<!\d)(1[0-2]|0?[1-9])[:.]([0-5]\d)\s*([AP])\.?\s*M\b', re.I)
+STAMP_DATE = re.compile(r'\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+(\d{1,2}),?\s+(20\d\d)\b',
+                        re.I)
+MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec']
+
+
+def parse_stamp(text):
+    """Seconds since 2000 of a time and date stamp to the minute in a frame's text ("12:58 PM" and "Feb 6, 2025"),
+    else None."""
+    tm, dm = STAMP_TIME.search(text or ''), STAMP_DATE.search(text or '')
+    if not tm or not dm:
+        return None
+    hour = int(tm.group(1)) % 12 + (12 if tm.group(3).upper() == 'P' else 0)
+    try:
+        day = datetime.date(int(dm.group(3)), MONTHS.index(dm.group(1).lower()[:3]) + 1, int(dm.group(2)))
+    except ValueError:  # a misread day (Feb 31)
+        return None
+    return (day - datetime.date(2000, 1, 1)).days * 86400 + hour * 3600 + int(tm.group(2)) * 60
+
+
+STAMP_JUMP_S = 150  # a time and date stamp (to the minute) off the video's own time by this much more: a cut
+
+
+def stamp_cuts(sig):
+    """Seconds of the video where its time and date stamp jumps (the footage of another drive follows): its offset
+    from the video's time changes by STAMP_JUMP_S or more and the next reading keeps the new offset (a misread
+    does not). The cut is the strongest frame jump between the two readings, else their middle (REnfw4fpZ5A, a
+    "MEGACUT" of CuseVegas's drives; user, 2026-10-16)."""
+    st = np.asarray(sig.get('stamp', np.zeros((0, 2)))).reshape(-1, 2)
+    off = st[:, 1] - st[:, 0]
+    ev = np.asarray(sig.get('skips', np.zeros((0, 3)))).reshape(-1, 3)
+    cuts = []
+    for i in range(len(st) - 2):
+        steady = i == 0 or abs(off[i] - off[i - 1]) < STAMP_JUMP_S  # not the way back from a misread
+        if steady and abs(off[i + 1] - off[i]) >= STAMP_JUMP_S and abs(off[i + 2] - off[i + 1]) < STAMP_JUMP_S:
+            t0, t1 = st[i, 0], st[i + 1, 0]
+            inside = ev[(ev[:, 0] > t0) & (ev[:, 0] < t1)]
+            cuts.append(float(inside[np.argmax(inside[:, 2]), 0]) if len(inside) else float((t0 + t1) / 2))
+    return cuts
+
+
 def gps_track(video_id, duration):
     """([(t, lat, lon)] read from a GPS overlay in the picture or None, [(t, clock seconds)] read from a time stamp
-    in it), both empty when the first frames show neither. Frames come from the 720p stream (the 240p copy is too
+    in it, [(t, seconds since 2000)] from a time and date stamp to the minute: parse_stamp), all empty when the
+    first frames show none. Frames come from the 720p stream (the 240p copy is too
     small to read), so only a few are fetched."""
     if not shutil.which('tesseract') or not duration:
-        return None, []
+        return None, [], []
     try:
         stream = _stream(video_id)
         texts = [(t, _frame_text(stream, t)) for t in GPS_PROBE_S if t < duration]
-        if not any(parse_gps(x) or parse_clock(x) for _, x in texts):
-            return None, []
+        if not any(parse_gps(x) or parse_clock(x) or parse_stamp(x) for _, x in texts):
+            return None, [], []
         # at most ~200 frames: a 3-hour road trip read every 30 s printed nothing for 45 min and was stopped as
         # stuck (1D9hw6ob380); a line every 50 frames shows it is going
         every = max(GPS_EVERY_S, int(duration / 200))
@@ -1471,16 +2035,17 @@ def gps_track(video_id, duration):
                 print(f'  reading the overlay: {k} of {len(times)} frames', flush=True)
     except (RuntimeError, subprocess.TimeoutExpired, KeyError, ValueError) as e:
         print(f'  GPS overlay not read: {e}', flush=True)
-        return None, []
+        return None, [], []
     texts.sort()
     clock = [(t, c) for t, x in texts if (c := parse_clock(x)) is not None]
+    stamp = [(t, c) for t, x in texts if (c := parse_stamp(x)) is not None]
     track = [(t, *xy) for t, x in texts if (xy := parse_gps(x))]
     # a misread digit puts a point far off: keep the points a car could have driven to from the point most others
     # agree with (not the first one: JyHYb3g7wxs began with 29.26695 for 49.26695)
     reach = lambda a, b: _km(a[1], a[2], b[1], b[2]) <= 1 + abs(b[0] - a[0]) / 3600 * MAX_KMH  # noqa: E731
     anchor = max(track, key=lambda a: sum(reach(a, b) for b in track), default=None)
     kept = [x for x in track if reach(anchor, x)] if anchor else []
-    return (kept if len(kept) >= 2 else None), clock
+    return (kept if len(kept) >= 2 else None), clock, stamp
 
 
 def _stream(video_id):
@@ -1687,20 +2252,47 @@ def cross_speedup(sig):
 
 
 def clock_jump(sig):
-    """Where the time stamp in the picture jumps (an edit that cut footage out), as m:ss, else None: the clock
-    runs ahead of the clock so far by more than CLOCK_JUMP_S, the next two readings agree and it never falls
-    back. A cut only ever moves the clock forward for good (4FkZW-vMSE8: 16 s at 1:33, 8 s at 5:15); a misread
-    digit comes back (vancouverdrive: -10 s, then +10 s, in 24 approved videos), and some cameras' readings wobble
-    by up to 6 s."""
+    """Where the time stamp in the picture jumps (edits that cut footage out), as "m:ss-m:ss, … and m:ss-m:ss",
+    else None: the clock runs ahead of the clock so far by more than CLOCK_JUMP_S, the next two readings agree
+    and it never falls back. A cut only ever moves the clock forward for good (4FkZW-vMSE8: 16 s at 1:33, 8 s at
+    5:15); a misread digit comes back (vancouverdrive: -10 s, then +10 s, in 24 approved videos), and some
+    cameras' readings wobble by up to 6 s. A single reading further from both neighbours than they are from each
+    other is a misread and left out first (user, 2026-10-13: B0XUv86Y2Uc's crossfade at 2:42 skips a minute, and
+    one reading 4 min behind at 13:00 hid that jump and two more), and every jump is given, not only the first.
+    On 413 approved videos with a clock: 8 with a jump (5 before), on 31 rejected 19 (17)."""
     clock = np.asarray(sig.get('clock', np.zeros((0, 2)))).reshape(-1, 2)
     off = [(t, (c - t) % 86400) for t, c in clock]
     ahead = lambda a, b: (b - a + 43200) % 86400 - 43200  # noqa: E731 (past midnight)
-    for i, ((t0, _), (t1, b), (_, c), (_, d)) in enumerate(zip(off, off[1:], off[2:], off[3:])):
-        a = off[0][1] + np.median([ahead(off[0][1], x) for _, x in off[:i + 1]])  # the clock so far, misreads aside
-        if (ahead(a, b) > CLOCK_JUMP_S and abs(ahead(b, c)) <= 3 and abs(ahead(b, d)) <= 3
+    gap = lambda i, j: abs(ahead(off[i][1], off[j][1]))  # noqa: E731
+    misread = {k for k in range(1, len(off) - 1) if min(gap(k, k - 1), gap(k, k + 1)) > 3
+               and gap(k - 1, k + 1) < min(gap(k, k - 1), gap(k, k + 1))}
+    if len(off) > 1 and ahead(off[-2][1], off[-1][1]) < -3:  # the last reading behind: the clock never falls back
+        misread.add(len(off) - 1)
+    off = [x for k, x in enumerate(off) if k not in misread]
+    jumps, start = [], 0
+    for i in range(len(off) - 2):  # the next two readings agree (one more near the end: lRagw9VbrO0 at 138:02)
+        (t0, _), (t1, b), (_, c) = off[i:i + 3]
+        a = off[start][1] + np.median([ahead(off[start][1], x) for _, x in off[start:i + 1]])  # the clock so far
+        if (ahead(a, b) > CLOCK_JUMP_S and abs(ahead(b, c)) <= 3
                 and all(ahead(a, x) > 3 for _, x in off[i + 1:])):
-            return f'{int(t0) // 60}:{int(t0) % 60:02d}-{int(t1) // 60}:{int(t1) % 60:02d}'
-    return None
+            jumps.append(f'{int(t0) // 60}:{int(t0) % 60:02d}-{int(t1) // 60}:{int(t1) % 60:02d}')
+            start = i + 1
+    return ', '.join(jumps[:-1]) + ' and ' + jumps[-1] if len(jumps) > 1 else jumps[0] if jumps else None
+
+
+def clock_speedups(sig, rate=1.3, steps=3):
+    """[(start s, end s, rate)] where the time stamp in the picture runs `rate` to 20 times faster than the video
+    for `steps` readings in a row: sped-up footage (user, 2026-10-13: the clock as a source, LoxLj1kTIXo). Each step
+    by itself: a jump (a cut) is one step, not several (kddS8sGShKA: +174 s at 107:03, at video speed around it).
+    In 356 reviewed approved segments with a clock none, in 110 rejected 2 (-PfvI-MAr1c 1.4x, V24DyViW-bs 3.8x)."""
+    c = np.asarray(sig.get('clock', np.zeros((0, 2)))).reshape(-1, 2)
+    if len(c) < steps + 1:
+        return []
+    dt = np.maximum(np.diff(c[:, 0]), 1e-6)
+    dc = (np.diff(c[:, 1]) + 43200) % 86400 - 43200
+    fast = (dc / dt >= rate) & (dc / dt <= 20)
+    return [(float(c[a, 0]), float(c[b, 0]), float(np.median(dc[a:b] / dt[a:b])))
+            for a, b in _runs(fast) if b - a >= steps]
 
 
 def split_gps(p, df, out_dir):
@@ -1742,6 +2334,17 @@ def split_gps(p, df, out_dir):
     return True
 
 
+def night_from_title(segments, notes, sig, title):
+    """(segments, notes) all at night when the title says night, unless the picture is plainly daylight: a camera's
+    exposure brightens a lit city at night (I5I9fOnHrPg, "Night Time Driving In The Bronx": sky 110); 71 of 73 such
+    reviewed videos were night throughout. Also for videos proposed again from their saved signals, which skipped
+    it (4nHdCtFmTuM, "Nashville After Dark": its lit streets day; user, 2026-10-16)."""
+    if NIGHT_TITLE.search(title_text(title)) and not DAY_TO_NIGHT_TITLE.search(title_text(title)) \
+            and np.median(sig['sky']) < NIGHT_TITLE_MAX_SKY and any(not x['night'] for x in segments):
+        return [dict(x, night=1) for x in segments], notes + ['night from the title']
+    return segments, notes
+
+
 def analyse_video(video_id, out_dir, meta=None):
     """Download a low resolution copy, propose segments, write a contact sheet; the copy is deleted."""
     meta = meta or fetch_metadata(video_id)
@@ -1750,6 +2353,7 @@ def analyse_video(video_id, out_dir, meta=None):
     try:
         sig = signals(path)
         sig['skips'] = skip_events(path)
+        sig['skip_norm'] = np.array(skip_norm(path, sig), float).reshape(-1, 2)
         sig['fades'] = fade_events(path)
         sig['saturation'], sig['lamps'] = dusk_colours(path)
         urban = urban_objects(path)
@@ -1766,31 +2370,33 @@ def analyse_video(video_id, out_dir, meta=None):
         sig['intro_end'] = np.array(clip_intro(path, meta.get('duration'), work_dir) or 0, float)
         sig['outro_start'] = np.array(clip_outro(path, meta.get('duration'), work_dir) or 0, float)
         sig['chapter_cuts'] = np.array(chapter_cuts(meta), float).reshape(-1, 2)
-        sig['step_bob'] = np.array(step_bob(path, meta.get('duration')), float)
+        sig['town_scene'] = np.array(town_scene_track(path, meta.get('duration'), work_dir), float).reshape(-1, 2)
+        sig['night_scene'] = np.array(night_scene_track(path, sig, work_dir), float).reshape(-1, 2)
+        sig['night_clip'] = np.array(night_clip_track(path, meta.get('duration'), work_dir), float).reshape(-1, 2)
+        sig['spots'] = np.array(light_spots_track(path, meta.get('duration')), float).reshape(-1, 2)
+        sig['aerial'] = np.array(aerial_track(path, meta.get('duration'), work_dir), float).reshape(-1, 2)
+        track = step_bob_track(path, meta.get('duration'))  # the whole video's measure is its middle
+        sig['bob_track'] = np.array(track, float).reshape(-1, 2)
+        sig['step_bob'] = np.array(np.median([x for _, x in track]) if len(track) >= 3 else 0, float)
         end = montage_end(sig)
         texts = opening_texts(video_id)  # read once: highlight captions and town labels
         sig['screen_text'] = np.array(json.dumps({f'{t:.0f}': x for t, x in (texts or {}).items()}))
         sig['labelled_montage'] = np.array(caption_end(video_id, sig, texts) or (
             end if end is not None and montage_label(video_id, end) else 0), float)
-        gps, clock = gps_track(video_id, meta['duration'])
+        gps, clock, stamp = gps_track(video_id, meta['duration'])
         if gps:
             sig['gps'] = np.array(gps, float)
             print(f'  GPS overlay: {len(gps)} positions', flush=True)
         if clock:
             sig['clock'] = np.array(clock, float)
+        if stamp:
+            sig['stamp'] = np.array(stamp, float)
         contact_sheet(path, meta['duration'] or len(sig['motion']) / FPS,
                       os.path.join(out_dir, f'{video_id}.jpg'))
     finally:
         os.remove(path)
         os.rmdir(work_dir)
-    segments, notes = propose(sig)
-    # a title that says night is night unless the picture is plainly daylight: a camera's exposure brightens a
-    # lit city at night (I5I9fOnHrPg, "Night Time Driving In The Bronx": sky 110); 71 of 73 such reviewed videos
-    # were night throughout
-    if NIGHT_TITLE.search(title_text(meta.get('title'))) and np.median(sig['sky']) < NIGHT_TITLE_MAX_SKY \
-            and any(not s['night'] for s in segments):
-        segments = [dict(s, night=1) for s in segments]
-        notes.append('night from the title')
+    segments, notes = night_from_title(*propose(sig), sig, meta.get('title'))
     np.savez_compressed(os.path.join(out_dir, f'{video_id}_signals.npz'), **sig)
     return {'meta': meta, 'segments': segments, 'notes': notes}
 
@@ -1810,6 +2416,11 @@ HIGHWAY_TITLE = re.compile(r'(?i:road ?trip|\bhighways?\b|\bfreeways?\b|\bhwy\b|
 NOT_DRIVING_TITLE = re.compile(r'\b(?:walk(?:s|ing)?|wa(?:king|ling) tour|walk-?through|inside|stroll(?:ing)?'
                                r'|hik(?:e|ing)|on foot'
                                r'|(?:boat|ferry) ride'
+                               # boats (mcaow4mKo54: "Cruising on a Yatch in Dubai"; user, 2026-10-16); not ferries
+                               # (Little Ferry, Dobbs Ferry are towns, and a drive onto a BC ferry was approved) nor a
+                               # bare "boat" ("Studley boat park")
+                               r'|yachts?|yatch|sail(?:ing|boat)|catamaran|speedboat|kayak\w*|canoe\w*|gondolas?'
+                               r'|water taxi|cruise ship|(?:on|from) (?:a|the) boat|boat (?:trip|tour)'
                                # a passenger on a bus, high up and often sideways
                                # (qEhvYWiNsX0: "Sight Seeing In Toronto
                                # ... On A Bus"; of 9 such titles reviewed or left out, none approved; user, 2026-10-13)
@@ -1822,7 +2433,10 @@ NOT_DRIVING_TITLE = re.compile(r'\b(?:walk(?:s|ing)?|wa(?:king|ling) tour|walk-?
                                r'|subway|underground train|tram|streetcar|trolley|light rail|monorail|cable car'
                                r'|funicular|(?:train|cab|railway|rail) (?:ride|view|journey)|trains?|railways?'
                                r'|metro (?:ride|journey|line|train|exp)'
-                               r'|(?:on|from|by) (?:the |\w+ )?metro(?! area)|riding\b[^|]*\bline)\b', re.I)
+                               r'|(?:on|from|by) (?:the |\w+ )?metro(?! area)|riding\b[^|]*\bline'
+                               # drones and flights (tam7IqTDBTU: "Downtown Long Beach from above"; of 71 such
+                               # titles none approved; user, 2026-10-15)
+                               r"|drones?|aerials?|from above|bird'?s?[- ]eye|fly(?:ing)? over|fpv)\b", re.I)
 # national parks and forests have no urban driving (yHEDro64z0Y, Zion; none of 28 such titles was approved)
 NATURE_TITLE = re.compile(r'\b(?:national|state|provincial|regional) (?:park|forest|monument|seashore|recreation area'
                           r'|preserve)s?\b|\bnational parks?\b|\bwilderness\b|\bscenic byway\b', re.I)
@@ -1846,9 +2460,41 @@ def usual_locality(plan, share=0.5, min_videos=5):
 
 def channel_folder(url):
     """The channel's folder name under _output/proposals: its handle or id, without the path or a query
-    (UCjaZ_Lko0XB49cCs-bnlz4A?source_ve_path=... from a link copied off an embed)."""
+    (UCjaZ_Lko0XB49cCs-bnlz4A?source_ve_path=... from a link copied off an embed). A channel that already has a
+    folder under another name keeps it, whichever way the link names it (user, 2026-10-13: ChillDrive09, done by
+    its handle on 2026-10-03, came back from the subscriptions as /channel/UCWoo_I-Q2X9HmTwmkMTtGOg and was
+    proposed again from scratch)."""
     name = re.sub(r'^.*youtube\.com/(?:channel/|c/|user/)?@?', '', url.strip())
-    return re.sub(r'\W+', '_', re.split(r'[/?#]', name)[0])
+    name = re.sub(r'\W+', '_', re.split(r'[/?#]', name)[0])
+    if os.path.isdir(os.path.join(HERE, '_output', 'proposals', name)):
+        return name
+    cid = re.search(r'/channel/(UC[\w-]+)', url)
+    if not cid:
+        try:
+            with open(os.path.join(HERE, '_output', 'subscriptions', 'channel_ids.json')) as f:
+                cid = json.load(f).get(url.strip())  # sheet URL -> channel id (refresh_queue.py)
+        except (OSError, ValueError):
+            cid = None
+    else:
+        cid = cid.group(1)
+    return _channel_folders().get(cid, name) if cid else name
+
+
+@functools.cache
+def _channel_folders():
+    """{channel id: folder name} of the channel folders, from a metadata file of each."""
+    root, out = os.path.join(HERE, '_output', 'proposals'), {}
+    for name in sorted(os.listdir(root)) if os.path.isdir(root) else []:
+        for meta in sorted(glob.glob(os.path.join(root, name, '*_meta.json')))[:3]:
+            try:
+                with open(meta) as f:
+                    cid = json.load(f).get('channel_id')
+            except (OSError, ValueError):
+                continue
+            if cid:
+                out.setdefault(cid, name)
+                break
+    return out
 
 
 def list_channel(url):
@@ -1862,6 +2508,9 @@ def list_channel(url):
 
 YT_API = 'https://www.googleapis.com/youtube/v3/'
 NIGHT_TITLE = re.compile(r'\bnight\b|\bnocturn|\bat dusk\b|\bafter dark\b', re.I)
+# ... not a drive from day into night (GfIK2UBw51A: "Sunset Time Drive … Golden Hour to Night"; 2026-10-16)
+DAY_TO_NIGHT_TITLE = re.compile(r'\bsunset\b|\bgolden hour\b|\binto (?:the )?night\b|\bto night\b'
+                                r'|\bday (?:in)?to night\b', re.I)
 NIGHT_TITLE_MAX_SKY = 140  # median sky brightness of a video plainly in daylight (night titles reviewed: 7-73)
 
 
@@ -2016,6 +2665,9 @@ def title_countries(title):
     pr = ['Puerto Rico'] if re.search(r'\bP\.\s?R\.|,\s*PR\b', title or '') else []
     # a country's name before a US state is a town of that name: "Lebanon, Pennsylvania", "Peru, Indiana"
     title = re.sub(rf"\b[A-Z][\w'’ ]*?\s*,\s*(?:{states}|[A-Z]{{2}})\b", ' ', title or '', flags=re.I)
+    # ... and without the comma before a state's code: "Panama City Beach FL" (9F47RLjPHdM; user, 2026-10-13)
+    codes = '|'.join(sorted(set(add_video.US_STATE_CODES.values())))
+    title = re.sub(rf"\b(?:[A-Z][\w'’.]*\s+){{1,4}}(?:{codes})\b", ' ', title)
     title = re.sub(rf'\b(?:{states})\b', ' ', title, flags=re.I)
     found = [c for c in COUNTRIES if re.search(rf'\b{re.escape(c)}\b', title)]
     # a flag emoji names its country (OoOwyF8-T24: "Warsaw's Most Beautiful Bike Route 4K 🇵🇱" is no Warsaw, NY)
@@ -2079,7 +2731,32 @@ def title_places(title, df, home):
         state_of = lambda ph: names.get(add_video.US_STATE_CODES.get(ph.lower()))  # noqa: E731
         phrases = [f'{ph}, {state_of(nxt)}' if state_of(nxt) else ph
                    for ph, nxt in zip(phrases, phrases[1:] + ['']) if not state_of(ph)]
-    return place_localities(phrases, df[(df['country'] != 'United States') | df['state'].isin(states)], None)
+    found = place_localities(phrases, df[(df['country'] != 'United States') | df['state'].isin(states)], None)
+    return found or misspelt_places(phrases, df, states)
+
+
+def misspelt_places(phrases, df, states):
+    """[(locality, phrase)] of the phrases that name no place as written but are a misspelling of one mapping
+    locality of the one US state the title names: same first letter, spelled at least MISSPELT_RATIO alike
+    (IPgD51yxkWM: "Driving thru Bethlahem,Pennsylvania" is Bethlehem, PA; user, 2026-10-15)."""
+    if len(states) != 1:
+        return []
+    rows = df[(df['country'] == 'United States') & df['state'].isin(states)]
+    names = list(dict.fromkeys(rows['locality']))
+    out = []
+    for ph in phrases:
+        town = ph.split(',')[0].strip()
+        if not town or town.lower() in add_video.US_STATE_CODES:
+            continue
+        close = [n for n in difflib.get_close_matches(town, names, n=2, cutoff=MISSPELT_RATIO)
+                 if n[:1].lower() == town[:1].lower()]
+        if len(close) == 1 or (close and difflib.SequenceMatcher(None, town, close[0]).ratio() == 1.0):
+            r = rows[rows['locality'] == close[0]].iloc[0]
+            out.append(([r['locality'], r['state'], r['country']], ph))
+    return out
+
+
+MISSPELT_RATIO = 0.85
 
 
 def guess_locality(title, country, df):
@@ -2184,9 +2861,12 @@ CHAPTER_END = re.compile(r'^\W*(.+?)\W*(?<![\d:])(?:(\d{1,2}):)?(\d{1,2}):(\d{2}
 NOT_DRIVE_CHAPTER = re.compile(r'\b(?:highlights?|preview|teaser|trailer|recap|best of)\b', re.I)
 # an opening chapter of scenes from the drive ahead (MilesofAmbience's "Scenes from the Drive": 10 of 11 at 0:00 last
 # 13-43 s with 12 approved seconds inside; UCWoo's "Sneak Peek" 0-152 s, none approved); a longer one runs on into
-# the drive (TzRtc0j1sz8: 0-13:57, the scenes only until 0:30), so only one of PREVIEW_CHAPTER_S or less is cut
-PREVIEW_CHAPTER = re.compile(r'\b(?:scenes? from the (?:drive|ride|trip)|sneak peek)\b', re.I)
-PREVIEW_CHAPTER_S = 180
+# the drive (TzRtc0j1sz8: 0-13:57, the scenes only until 0:30), so only one of PREVIEW_CHAPTER_S or less is cut.
+# UCWoo's "In This Video" / "In Today's Video" / "Coming Up" (user, 2026-10-13: XJeW6Nna3bA): 42 openings of
+# 101-418 s, the caption on every frame of IiP1qRK5-4Y's until the drive starts after it (3:10)
+PREVIEW_CHAPTER = re.compile(r"\b(?:scenes? from the (?:drive|ride|trip)|sneak peek|in (?:today'?s|this) "
+                             r"(?:video|drive|episode)|coming up)\b", re.I)
+PREVIEW_CHAPTER_S = 420
 # a walk in a chapter's name: "Walk Begins" walks on until a chapter says drive again (5-9vyLU_tDo, AbaoAmbience's
 # night walks: 12 videos, none approved); "Walking through the Farmers Market" is that chapter (s_iGsy8C4O8)
 WALK_CHAPTER = re.compile(r'\bwalk(?:ing)?\b(?! of fame)', re.I)
@@ -2211,7 +2891,8 @@ def chapter_cuts(meta):
 
 def video_chapters(meta):
     """[(start in s, name)] of a video's chapters: YouTube's own, else the description's timestamped lines
-    ("12:30 Santa Monica" or "Santa Monica - 12:30"), when at least two run in increasing order."""
+    ("12:30 Santa Monica" or "Santa Monica - 12:30"), when at least two run in increasing order; a line out of
+    order is a typo and left out (XJeW6Nna3bA: "01:07 Zuma Beach" between 51:53 and 1:21:53)."""
     chapters = [(int(start or 0), name) for name, start in meta.get('chapters') or [] if name]
     if not chapters:
         for line in (meta.get('description') or '').splitlines():
@@ -2221,28 +2902,34 @@ def video_chapters(meta):
                 name, h, mins, secs = m.groups()
             else:
                 continue
-            chapters.append((int(h or 0) * 3600 + int(mins) * 60 + int(secs), name.strip()))
+            t = int(h or 0) * 3600 + int(mins) * 60 + int(secs)
+            if not chapters or t > chapters[-1][0]:
+                chapters.append((t, name.strip()))
     starts = [t for t, _ in chapters]
     return chapters if len(chapters) >= 2 and starts == sorted(set(starts)) else []
 
 
 # a chapter named after a road ("Venice Blvd", "Rodeo Drive") is not in the place the road is named after
 ROAD = re.compile(r'\b(?:blvd|boulevard|st|street|ave|avenue|rd|road|dr|drive|fwy|freeway|hwy|highway|expy|'
-                  r'expressway|pkwy|parkway|ln|lane|way|terrace|strip|bridge|tunnel|pier|walk of fame|'
+                  r'expressway|pkwy|parkway|ln|lane|way|terrace|strip|bridge|tunnel|pier|walk of fame|pl|place|'
+                  # a city's Broadway is a street: "38:58 Broadway" in Downtown Los Angeles is no Broadway, VA
+                  # (UCWoo_I_Q2X9HmTwmkMTtGOg: 12 one-city drives held back as multi-city; 2026-10-16)
+                  r'broadway|'
                   # and the like of Japanese expressway chapters (zvCKHw9rKPg: "Tsukamoto Exit" is no Kaizuka)
                   r'junction|exit|interchange|ramp|route|loop|line|'
                   # Japanese for avenue and road: "Wakamiya Oji" is no town of Oji (-VqR0H2f-JY)
                   r'oji|ōji|dori|dōri|kaido|kaidō)\b', re.I)
 CHAPTER_PREFIX = re.compile(r'^(?:start(?:ing)? (?:in|at|from)|entering|arriv(?:e|ing|al) (?:in|at)|welcome to|'
+                            r'(?:driving|heading|going|cruising) (?:to|into|through|in|around)|'
                             r'leaving|into|in|to|from|downtown)\s+', re.I)
 
 
-def chapter_localities(chapters, df, near_home=None, near=None, km=150):
+def chapter_localities(chapters, df, near_home=None, near=None, km=150, first=None):
     """[(start, end, locality)] stretches of a video by the localities its chapters name, or [] when none does.
     A chapter naming none (a road, a sight) is still in the locality before it; leading ones in the first named.
     near_home(name) gives a locality not in the mapping yet for a chapter that is just a place name. near=(lat,
     lon): only localities within km of it (Nqej7zmNUzI, a Yokohama drive: its "Kanazawa" is a ward of Yokohama,
-    not Kanazawa, Ishikawa)."""
+    not Kanazawa, Ishikawa). first: the locality of the chapters before the first named one (the title's)."""
     locs = []
     for _, name in chapters:
         if ROAD.search(name):
@@ -2251,14 +2938,24 @@ def chapter_localities(chapters, df, near_home=None, near=None, km=150):
         loc = _title_locality(name, df, exact_case=True, word_needs_state=True)
         if loc and near and (at := _locality_anchor(loc, df)) and _km(near[0], near[1], at[3], at[4]) > km:
             loc = None
+        if loc and part_of_name(name, loc, df):
+            loc = None
         place = CHAPTER_PREFIX.sub('', name.strip(' .!-'))
+        # the place written another way: "Driving to Mountaintop" is Mountain Top, PA (user, 2026-10-14: MNpSJ-gIduQ)
+        squash = lambda x: re.sub(r'[\W_]+', '', _name_key(str(x)))  # noqa: E731 (spaces and hyphens aside)
+        if not loc and len(key := squash(place)) > 3 and \
+                len(same := df[[squash(x) == key for x in df['locality']]]) == 1:
+            r = same.iloc[0]
+            loc = [r['locality'], r['state'] if isinstance(r['state'], str) else None, r['country']]
+            if near and (at := _locality_anchor(loc, df)) and _km(near[0], near[1], at[3], at[4]) > km:
+                loc = None
         if not loc and near_home and re.fullmatch(r"(?:[A-Z][\w'.-]*\s?){1,4}", place):
             loc = near_home(place.strip())
         locs.append(loc)
     named = [loc for loc in locs if loc]
     if not named:
         return []
-    out, current = [], named[0]
+    out, current = [], first or named[0]
     for (start, _), loc, nxt in zip(chapters, locs, [t for t, _ in chapters[1:]] + [float('inf')]):
         current = loc or current
         if out and out[-1][2] == current:
@@ -2266,6 +2963,50 @@ def chapter_localities(chapters, df, near_home=None, near=None, km=150):
         else:
             out.append((start, nxt, current))
     return out
+
+
+NAME_LEAD = {'downtown', 'uptown', 'midtown', 'central', 'greater', 'old', 'historic', 'city', 'north', 'south',
+             'east', 'west', 'welcome', 'entering', 'leaving', 'driving', 'drive', 'arriving', 'back'}
+
+
+def part_of_name(name, loc, df):
+    """Whether the locality named in a chapter follows another capitalised word, so that it is part of a longer
+    name, a street or a neighbourhood (PvQnDdF145Q's batch: "Paseo Del Mar" and "Vista Del Mar" in Los Angeles and
+    "Corona Del Mar" in Newport Beach are no Del Mar); "Downtown Pasadena" or "City of Malibu" are the place."""
+    row = add_video.get_existing_locality_row(df, *loc)[1]
+    names = [loc[0]] + (add_video._parse_flat_list_cell(row['locality_aka']) if row is not None else [])
+    for n in names:
+        if (m := re.search(rf'(?<!\w){re.escape(str(n))}(?!\w)', name, re.I)):
+            before = re.findall(r'[\w\'.-]+', name[:m.start()])
+            return bool(before) and before[-1][:1].isupper() and before[-1].lower() not in NAME_LEAD
+    return False
+
+
+# a title driving to a place ("Road Trip on SC 11 to Landrum, SC") or leaving it is there only at its end or start
+# (user, 2026-10-13: 7Zx1IvuHiPY was offered as Landrum all through its 58 min, mostly highway)
+TOWARDS = re.compile(r"\b(?:to|into|towards?|arriv\w* (?:in|at)|heading (?:to|for))\s+(?:downtown\s+)?$", re.I)
+LEAVING = re.compile(r"\b(?:leaving|departing)\s+(?:downtown\s+)?$", re.I)
+ROLE_GAP_S = 120  # footage left out between two stretches this long: a drive between towns
+
+
+def title_role(title, loc):
+    """'end' when the title drives to the locality, 'start' when it leaves it, else None."""
+    m = re.search(rf'(?<!\w){re.escape(loc[0])}(?!\w)', title or '', re.I)
+    if not m:
+        return None
+    before = title[:m.start()]
+    return 'end' if TOWARDS.search(before) else 'start' if LEAVING.search(before) else None
+
+
+def by_role(segments, loc, role):
+    """Locality groups: loc for the segments after the last gap of ROLE_GAP_S (role 'end') or before the first
+    ('start'), the rest in a group whose locality the reviewer sets."""
+    segs = sorted(segments, key=lambda s: s['start'])
+    gaps = [i for i in range(1, len(segs)) if segs[i]['start'] - segs[i - 1]['end'] >= ROLE_GAP_S]
+    cut = (gaps[-1] if gaps else 0) if role == 'end' else (gaps[0] if gaps else len(segs))
+    there, rest = (segs[cut:], segs[:cut]) if role == 'end' else (segs[:cut], segs[cut:])
+    return [{'locality': list(loc), 'guessed': True, 'segments': there}] + \
+        ([{'locality': None, 'guessed': False, 'segments': rest}] if rest else [])
 
 
 NAMESAKE_RATIO = 4  # a city this many times bigger than every namesake a title could mean is the one meant
@@ -2366,7 +3107,7 @@ PLACE_JOINERS = {'al', 'el', 'de', 'del', 'la', 'le', 'of', 'the', 'bin', 'bu', 
 DRIVE_AREA = re.compile(r"(?:\bfrom\b.+\bto\b|\b(?:[Dd]esde|de)\b.+\b(?:hasta|hacia|a|al)\b"
                         r"|^.+\b(?:hasta|hacia|al?)\b).+"
                         r"\b(?:in|en) (?:the )?([A-Z][\w'’.-]*(?: [A-Z][\w'’.-]*){0,3})"
-                        r"(?:,\s*[A-Z][\w .'-]*)?\s*(?:\bin \d{4}\b.*|[|(].*)?$")
+                        r"(?:,\s*([A-Z][\w .'-]*))?\s*(?:\bin \d{4}\b.*|[|(].*)?$")
 
 
 # US states as Spanish titles write them ("Allentow, Pensilvania"), read as the English name
@@ -2494,6 +3235,9 @@ def _nominatim(method, *args, **kwargs):
         except (GeocoderRateLimited, GeocoderQuotaExceeded, GeocoderAuthenticationFailure,
                 GeocoderInsufficientPrivileges):
             pass
+        except GeocoderServiceError as e:  # 404: LocationIQ found nothing, Nominatim may (OJm2GB-6-1E's
+            if '404' not in str(e):         # "Henry Hudson Highway, New York" with all the mapping's countries)
+                raise
     for wait in (60, 120, 240, None):
         with open(NOMINATIM_SLOT, 'a+') as slot:
             fcntl.flock(slot, fcntl.LOCK_EX)
@@ -2567,6 +3311,9 @@ LANDMARK_TYPES = {'stadium', 'arena', 'casino', 'university', 'college', 'museum
                   'conference_centre', 'events_venue', 'zoo', 'theme_park'}
 
 
+ROAD_KIND = re.compile(r'\b(?:highway|hwy|parkway|pkwy|expressway|expy|freeway|fwy|turnpike|tpke)\b', re.I)
+
+
 @_remembered
 def _osm_place(phrase, country_codes, near=None, reach_km=None):
     """(town, region, country code, region code, lat, lon) of an OpenStreetMap feature called phrase in those
@@ -2586,9 +3333,17 @@ def _osm_place(phrase, country_codes, near=None, reach_km=None):
         # a feature of that name that is a place (a town, district, beach, park, mountain) or a main road:
         # shops, offices and side streets named alike are everywhere ("Colombo" jewellers, a "Grand Avenue")
         name = _name_key(_osm_name(r.raw))
-        return (_osm_type(r.raw) not in ('country', 'state') and name and (name in wanted or wanted in name)
-                and (r.raw.get('class') in ('place', 'boundary', 'tourism', 'natural', 'leisure', 'landuse')
-                     or r.raw.get('class') == 'highway' and r.raw.get('type') in ('motorway', 'trunk', 'primary')
+        cls = r.raw.get('class') or r.raw.get('category')  # Nominatim's jsonv2 says "category"
+        main_road = cls == 'highway' and r.raw.get('type') in ('motorway', 'trunk', 'primary')
+        # a main road by its name whatever kind of way a title calls it (user, 2026-10-14: OJm2GB-6-1E's "Henry
+        # Hudson Highway, New York" is the Henry Hudson Parkway in New York, not York)
+        # (LocationIQ gives a road no class: its address names the road, and the title called it a highway)
+        is_road = main_road or not cls and r.raw.get('address', {}).get('road') == _osm_name(r.raw) \
+            and bool(ROAD_KIND.search(phrase))
+        road = is_road and (core := _name_key(ROAD_KIND.sub(' ', _osm_name(r.raw)))) \
+            and core in _name_key(ROAD_KIND.sub(' ', phrase))
+        return (_osm_type(r.raw) not in ('country', 'state') and name and (name in wanted or wanted in name or road)
+                and (cls in ('place', 'boundary', 'tourism', 'natural', 'leisure', 'landuse') or main_road or road
                      # a landmark that names its city: T-Mobile Arena is a "building", a stadium (gkGtNPzzeJ8)
                      or r.raw.get('type') in LANDMARK_TYPES))
     found = [r for r in found if fits(r)]
@@ -2663,6 +3418,7 @@ def _geonames_town(phrase, state):
             'town' if int(g.get('population') or 0) >= SMALL_POP else 'village')
 
 
+OWN_NAME_PLACE = 0.4  # ... and of a town found by its name alone at the other end of such a drive
 MAJOR_PLACE = 0.65  # OpenStreetMap importance of a city known by its name alone: Atlanta 0.75, Brooklyn 0.74
 
 
@@ -2680,6 +3436,10 @@ def place_localities(phrases, df, home=None):
     # a state of the countries searched is the state ("Atlanta, Georgia"), else "GEORGIA" in a title is the country
     country_names = {_name_key(c) for c in COUNTRIES} - set(states)
     named = {states[_name_key(p)] for p in phrases if _name_key(p) in states}
+    if named:  # looked up in the countries of the states named only: LocationIQ finds "Henry Hudson Highway, New
+        # York" (the parkway, OJm2GB-6-1E) in the US, and nothing when asked in every country of the mapping
+        codes = tuple(sorted({code for code in codes for sub in pycountry.subdivisions.get(country_code=code) or []
+                              if sub.name in named})) or codes
 
     def usable(hit):
         # the reach of home is for places abroad: Elkhart, Indiana is far from New York but in the same country
@@ -2803,6 +3563,10 @@ def _major_town(lat, lon, town, kind=None):
     if own:  # a town of its own counts for a bigger one only when they touch (Hughestown and Pittston, 1.4 km),
         # not across fields (Coopersburg and Hellertown, 8.6 km)
         bigger = [p for p in bigger if _km(own[2], own[3], p[2], p[3]) <= _town_km(own[1]) + _town_km(p[1])]
+    elif not township:  # a village GeoNames does not list touches too, as a town of no size: Schaghticoke is not
+        # Mechanicville, 8.2 km off (H2vhezkUmFE; user, 2026-10-15). On 1,032 reviewed drive titles 11 ends change,
+        # each to the town the title names (New Ringgold, not Orwigsburg; Franktown, not The Pinery)
+        bigger = [p for p in bigger if _km(lat, lon, p[2], p[3]) <= _town_km(0) + _town_km(p[1])]
     if township and not bigger:  # a township around a small borough counts for it: Bridgewater Township is Montrose
         bigger = [p for p in places if _km(lat, lon, p[2], p[3]) <= MAJOR_TOWN_KM]
     if not small or not bigger:
@@ -2840,6 +3604,8 @@ def _hit_locality(hit, df, countries, at=None, named=False):
     at = hit[4:6] if len(hit) > 5 else at
     if town and UNINCORPORATED.match(town):
         town = _electoral_area_town(at)
+    if town:  # OpenStreetMap's "Sugar Notch Borough" is the mapping's Sugar Notch (no locality ends in Borough)
+        town = re.sub(r' Borough$', '', town)
     if town and named:
         town = re.sub(r' Township$', '', town)
     elif town and at:
@@ -2951,17 +3717,31 @@ FROM_TO = (re.compile(r"\bfrom\s+(.+?)\s+to\s+(.+?)" + _END, re.I),
            # ... also "4K POV Drive: Fremont to Downtown Omaha, Nebraska" (iSMg2dH2uuA: a colon after the word)
            re.compile(r"\b(?:driv(?:e|ing)|cruis(?:e|ing)|road ?trip)\s*[:|–-]?\s+"
                       r"(?!(?:to|back|home|down|up|through|thru|"
-                      r"around|in|into|along|across|past|by|over|tour|on|at|the|my|our|a|out|with|all)\b)"
+                      r"around|in|into|along|across|past|by|over|tour|on|at|the|my|our|a|out|with|all|"
+                      r"welcome|return|dusk|dawn|day|night|sunset|sunrise|morning|evening)\b)"
                       # ... with a note on the start in brackets: "Kansas City (Legends Outlets) to Lawrence, KS"
                       r"([A-Z][\w'’.-]*(?: [A-Z][\w'’.-]*){0,3})(?:\s*\([^)]*\))?\s+to\s+(.+?)" + _END, re.I),
            re.compile(r"^(?!(?:Welcome|Dusk|Dawn|Day|Night|Sunset|Sunrise|Morning|Evening|Sea)\b)"
-                      r"([A-Z][\w'’.-]*(?: [A-Z][\w'’.-]*){0,3})\s+to\s+([A-Z][\w'’.-]*(?: [A-Z][\w'’.-]*){0,3})"
+                      r"([A-Z][\w'’.-]*(?: [A-Z][\w'’.-]*){0,3})\s+[Tt]o\s+([A-Z][\w'’.-]*(?: [A-Z][\w'’.-]*){0,3})"
                       r"\s+(?i:drive|driving|road ?trip|cruise)\b"),
            # or a title made of the drive and what follows: "Lilongwe to Mponela - M1 Upgrade Status" (iWbS0H_Prdc)
+           # ... "To" too: "Lake George To New York City ( Full Video)" (6cAuDtDOx3Q; user, 2026-10-16)
            re.compile(r"^(?!(?:Welcome|Back|Return|Road|Guide|Dusk|Dawn|Day|Night|"
                       r"Sunset|Sunrise|Morning|Evening|Sea)\b)"
-                      r"([A-Z][\w'’.-]*(?: [A-Z][\w'’.-]*){0,3})\s+to\s+([A-Z][\w'’.-]*(?: [A-Z][\w'’.-]*){0,3})"
+                      r"([A-Z][\w'’.-]*(?: [A-Z][\w'’.-]*){0,3})\s+[Tt]o\s+([A-Z][\w'’.-]*(?: [A-Z][\w'’.-]*){0,3})"
                       r"\s*(?:\s[-–—|]\s|\||:|\(|$)"),
+           # ... or such a piece after a dash, bar or colon: "Driving Germany 4K - Werder to Berlin" (XfTNDV_nagE)
+           re.compile(r"(?:\s[-–—|]\s|\|\s*|:\s+)(?!(?:Welcome|Back|Return|Road|Guide|Dusk|Dawn|Day|Night|"
+                      r"Sunset|Sunrise|Morning|Evening|Sea)\b)"
+                      r"([A-Z][\w'’.-]*(?: [A-Z][\w'’.-]*){0,3})\s+[Tt]o\s+([A-Z][\w'’.-]*(?: [A-Z][\w'’.-]*){0,3})"
+                      r"\s*(?:\s[-–—|]\s|\||:|\(|$)"),
+           # an arrow between two places ("Ingleburn → Surry Hills | Sydney POV", AroundSydney), or a dash right after
+           # a drive word ("Drive Wąchock – Starachowice", 3Xg0vN2LqKo; user, 2026-10-16); a dash elsewhere
+           # separates a title's parts ("TeslaXDrive — What This Channel Is")
+           re.compile(r"(?:^|\|\s*|:\s+)([A-ZÀ-Þ][\w'’.-]*(?: [A-ZÀ-Þ][\w'’.-]*){0,3})\s*(?:→|->|⇒)\s*"
+                      r"([A-ZÀ-Þ][\w'’.-]*(?: [A-ZÀ-Þ][\w'’.-]*){0,3})"),
+           re.compile(r"\b(?:[Dd]rive|[Dd]riving|[Rr]oute)\s+([A-ZÀ-Þ][\w'’.-]*(?: [A-ZÀ-Þ][\w'’.-]*){0,3})\s+[–—]\s+"
+                      r"([A-ZÀ-Þ][\w'’.-]*(?: [A-ZÀ-Þ][\w'’.-]*){0,3})"),
            re.compile(r"\b(?:[Dd]esde|de)\s+(?:el |la )?(.+?)\s+(?:hasta|hacia|a|al)\s+(?:el |la )?(.+?)" + _END),
            re.compile(r"^(?:el |la )?(.+?)\s+(?:hasta|hacia|a|al)\s+(?:el |la )?(.+?)" + _END))
 MAJOR_TOWN_KM = 10    # a small place counts for the nearest bigger one this close
@@ -3004,6 +3784,19 @@ def _route(start, end):
     return samples, path
 
 
+GENERIC_ENDS = {'downtown', 'uptown', 'midtown', 'airport', 'theairport', 'home', 'thebeach', 'beach', 'citycenter',
+                'citycentre', 'thecity', 'city', 'center', 'centre', 'town', 'work', 'school', 'hotel', 'thehotel'}
+
+
+def _without_longer(text, name, states):
+    """text without the US states whose names hold name as a word: the York of "New York City" is no region of
+    York (ikS5Ru3CV8s: "Toronto, York" was looked up)."""
+    for longer in states:
+        if longer != name and re.search(rf'\b{re.escape(name)}\b', longer):
+            text = re.sub(rf'\b{re.escape(longer)}\b', ' ', text)
+    return text
+
+
 def drive_ends(title, df, home=None):
     """(OpenStreetMap hit, locality) of where a drive "from A to B" starts and of where it ends (either may be
     None when not found), or None when the title names no such drive."""
@@ -3022,8 +3815,16 @@ def drive_ends(title, df, home=None):
     first = re.sub(r"^.+?\s+(?:in|en)\s+(?:the\s+)?(?=[A-Z])", '', first)
     # "el Puerto de San Juan", "Centro de Adjuntas": a sight or part of a town is looked for as that town
     first, last = (re.sub(r"^(?:el |la )?\S.*?\s+(?:de|del)\s+(?=[A-ZÀ-Þ])", '', x) for x in (first, last))
-    # a note in brackets is no part of the name ("Kansas City (Legends Outlets)": wAseuJ91-S4)
-    first, last = (re.sub(r'\s*\([^)]*\)', '', x).strip() for x in (first, last))
+    # a note in brackets is no part of the name ("Kansas City (Legends Outlets)": wAseuJ91-S4), nor "!" ("To Toronto!")
+    first, last = (re.sub(r'\s*\([^)]*\)', '', x).strip().rstrip('!?. ') for x in (first, last))
+    # nor the picture's quality: "Hollywood to Ventura 4K" ends in Ventura (lKtZ5xqatFo)
+    first, last = (re.sub(r'(?:\s+(?:[2-8]K|HDR|UHD|\d+\s?fps|\d{3,4}p))+$', '', x, flags=re.I) for x in (first, last))
+    # a US state's code after a town, without a comma, is its state: "Mobile AL to Panama City Beach FL" (9F47RLjPHdM);
+    # not "LA", which is Los Angeles ("Downtown LA to Koreatown")
+    names = {sub.code[3:]: sub.name for sub in pycountry.subdivisions.get(country_code='US') or []}
+    own = [names[c.group(1)] if (c := re.search(r'\s+([A-Z]{2})$', x)) and c.group(1) in names and c.group(1) != 'LA'
+           else None for x in (first, last)]
+    first, last = (re.sub(r'\s+[A-Z]{2}$', f', {o}', x) if o else x for x, o in zip((first, last), own))
     # "to Downtown Omaha" is to Omaha: OpenStreetMap has no place of that name (iSMg2dH2uuA)
     first, last = (re.sub(r'^(?:downtown|uptown|midtown|central|historic|old town)\s+(?=[A-Z])', '', x, flags=re.I)
                    for x in (first, last))
@@ -3035,22 +3836,40 @@ def drive_ends(title, df, home=None):
     named = {sub.name for code in (only or codes) for sub in pycountry.subdivisions.get(country_code=code) or []
              if sub.name not in COUNTRIES  # Puerto Rico is a US subdivision but a country of the mapping
              and re.search(rf'\b{re.escape(sub.name)}\b', title)
+             # as a qualifier of a place: after a comma or in an end's own words, not a road's name elsewhere in
+             # the title ("Hollywood to Ventura 4K | Highland & Cahuenga Route" is in no Highland, Scotland)
+             and (re.search(rf',\s*{re.escape(sub.name)}\b', title)
+                  # after a town's name in an end, not heading it: "New York City To Toronto" names no state, its
+                  # Toronto is no Toronto, New York (ikS5Ru3CV8s; user, 2026-10-16); nor do Kansas City, Washington DC
+                  or any(re.search(rf'\S\s+{re.escape(sub.name)}\b', _without_longer(x, sub.name, names.values()))
+                         for x in (first, last)))
              # a region that is one of the ends names no state: Lilongwe is a city and a district, and
              # "Lilongwe to Mponela" is no Mponela in that district (iWbS0H_Prdc: Mponela is in Dowa)
              and _name_key(sub.name) not in {_name_key(first), _name_key(last)}}
     if 'US' in (only or codes):  # by its code too: "Venice Beach to Malibu Beach, Los Angeles, CA" (k6V_9uIXVm4)
         named |= {sub.name for sub in pycountry.subdivisions.get(country_code='US') or []
                   if sub.code.split('-')[1] in title_states(title) and sub.name not in COUNTRIES}
+    # an end's own state is its alone: "New York City To Washington DC" is no New York City in DC
+    named -= {o for o in own if o}
+    # a state heading an end is a city's name ("New York City To Toronto", "from New York to …"), unless the title
+    # also writes it after a comma (ikS5Ru3CV8s: Toronto was looked for in New York State)
+    named -= {n for n in named if any(re.match(rf'{re.escape(n)}\b', x) for x in (first, last))
+              and not re.search(rf',\s*{re.escape(n)}\b', title)}
+    if any(own):  # a US drive: no other country's region ("Bay Lake FL" names no Bay region of Somalia)
+        named &= set(names.values())
     if len(named) == 1:
         state = next(iter(named))
-        first, last = (x if state in x else f'{x}, {state}' for x in (first, last))
+        first, last = (x if state in x or o else f'{x}, {state}' for x, o in zip((first, last), own))
     # a named state says where, however far from home: no box around home (San Jose is 48 degrees from New York)
-    near = (home[3], home[4]) if home and not named else None
+    near = (home[3], home[4]) if home and not named and not any(own) else None
     if only and not named:  # looked up in it, as with a state ("Carolina, Puerto Rico")
         country = countries[next(iter(only))]
         first, last = (x if country in x else f'{x}, {country}' for x in (first, last))
 
     def place(phrase, near=None, reach=None):
+        # an end that names no place ("Airport to Downtown": St George, UT, not a Downtown near the channel)
+        if _name_key(re.sub(r',.*', '', phrase)) in GENERIC_ENDS:
+            return None
         hit = _osm_place(phrase, codes, near, reach)
         return hit if hit and (not only or hit[2] in only) else None
     a = place(first, near)
@@ -3063,12 +3882,15 @@ def drive_ends(title, df, home=None):
     # meant ("from Plains to Hughestown": Plains Township next to Hughestown, not a Plains in New Jersey)
     pairs = [(x, y) for x in (a, b and place(first, b[4:6], 60))
              for y in (b, a and place(last, a[4:6], 60)) if x and y]
-    if named:
-        pairs = [(x, y) for x, y in pairs if x[1] in named and y[1] in named]
+
+    def in_state(hit, o):  # in the end's own state, else in one the title names
+        return hit[1] == o if o else not named or hit[1] in named
+    if named or any(own):
+        pairs = [(x, y) for x, y in pairs if in_state(x, own[0]) and in_state(y, own[1])]
     if pairs:
         a, b = min(pairs, key=lambda xy: _km(xy[0][4], xy[0][5], xy[1][4], xy[1][5]))
-    elif named:  # one end only: it must be in the state named
-        a, b = (x if x and x[1] in named else None for x in (a, b))
+    elif named or any(own):  # one end only: it must be in the state named
+        a, b = (x if x and in_state(x, o) else None for x, o in zip((a, b), own))
     # a major place by its name alone anchors the drive (x_M1WdCQ__8: "Mulholland to Hollywood" is no drive from a
     # Mulholland by Dublin to a Hollywood by Tracy: Hollywood is Los Angeles, and Mulholland Drive a road there that
     # OpenStreetMap gives no town for); the other end is looked for near it, else the drive is not split; not for a
@@ -3078,6 +3900,12 @@ def drive_ends(title, df, home=None):
         if (big and big[6] >= MAJOR_PLACE and (not chosen or _km(chosen[4], chosen[5], big[4], big[5]) > 30)
                 and not (home and _km(home[3], home[4], big[4], big[5]) > ABROAD_KM)):
             other = place((last, first)[i], big[4:6], 60)
+            # the other end a famous city by its own name too: a long drive between the two ("New York City To
+            # Toronto", ikS5Ru3CV8s and 61x8XVlObEo; user, 2026-10-16)
+            # ... or a town of its own by its name alone ("Lake George To New York City", 6cAuDtDOx3Q: importance
+            # 0.44; a street or hamlet of a far namesake is far less)
+            if not other and (alone := place((last, first)[i])) and alone[6] >= OWN_NAME_PLACE:
+                other = alone
             a, b = (big, other) if i == 0 else (other, big)
             break
     end = b and _hit_locality(b, df, countries)
@@ -3085,8 +3913,14 @@ def drive_ends(title, df, home=None):
     # namesake of the end elsewhere (another Barrio Portugués) is not it
     if area := re.match(r"\s*(?:in|en)\s+(?:the\s+)?([A-Z][\w'’.-]*(?: [A-Z][\w'’.-]*){0,3})", title[m.end(2):]):
         # near the drive: "in Nassau" is the county by Queens, not the village of Nassau near Albany
-        c = _osm_place(area.group(1) + (f', {next(iter(named))}' if len(named) == 1 else ''), codes,
-                       a[4:6] if a else b[4:6] if b else (home[3], home[4]) if home else None, 60)
+        q = area.group(1) + (f', {next(iter(named))}' if len(named) == 1 else '')
+        c = _osm_place(q, codes, a[4:6] if a else b[4:6] if b else (home[3], home[4]) if home else None, 60)
+        # not near the ends but a major place by its name: the ends were namesakes elsewhere ("Sugar Hill to
+        # Washington Heights in Manhattan, New York" found both upstate, by Crown Point and Middletown, 2026-10-16)
+        if not c and (far := _osm_place(q, codes)) and far[6] >= MAJOR_PLACE:
+            c = far
+            if a and _km(a[4], a[5], c[4], c[5]) > 60:
+                a = None
         if c and (in_c := _hit_locality(c, df, countries)) and end != in_c:
             b, end = c, in_c
     return (a, a and _hit_locality(a, df, countries)), (b, end)
@@ -3102,17 +3936,58 @@ def area_city(title, df, home=None, near=None):
     countries.pop(None, None)
     codes = tuple(sorted(countries))
     state = [n.title() for n in add_video.US_STATE_CODES if re.search(rf'\b{re.escape(n)}\b', title, re.I)]
-    q = area.group(1) + (f', {state[0]}' if len(state) == 1 else '')
+    # with the region the title writes after it when no US state: "en Carolina,Puerto Rico" looked up alone, with
+    # neither end found to search near, was a Carolina in Italy (kzMBsiZY_cQ; 2026-10-15)
+    region = (area.group(2) or '').strip()
+    q = area.group(1) + (f', {state[0]}' if len(state) == 1 else f', {region}' if region else '')
     near = near or ((home[3], home[4]) if home else None)
     hit = _osm_place(q, codes, near, 60) or _osm_place('the ' + q, codes, near, 60)
+    if not hit and near and (far := _osm_place(q, codes)) and far[6] >= MAJOR_PLACE:
+        hit = far  # the ends were namesakes far from it (see drive_ends: "… in Manhattan, New York")
     if hit and hit[0] and not re.search(r'\bCounty$', hit[0]):
         city = _hit_locality(hit, df, countries)
+        # a start of that name inside C is part of it: "from Jamaica to Kew Gardens in Queens, New York" starts in
+        # Queens' Jamaica, not the Jamaica Avenue of Wantagh (user, 2026-10-14: KJvEOnBJUHs had no locality)
+        m = next((m for r in FROM_TO if (m := r.search(english_states(title)))), None)
+        if m and (inside := _osm_place(m.group(1).strip(), codes, hit[4:6], 20)) \
+                and _hit_locality(inside, df, countries) == city:
+            return city
         # the start is a town of its own next to C ("from Alexandria to the Pentagon in Arlington"): not all in C;
         # a far start is a namesake of a place in C (Longwood upstate for the one in the Bronx)
         a, start = (drive_ends(title, df, home) or ((None, None),))[0]
         if a and start and start != city and _km(a[4], a[5], hit[4], hit[5]) <= METRO_KM:
             return None
         return city
+    return None
+
+
+def multi_city(meta, df, home=None):
+    """Why a video, by its title or chapters, drives through more than one locality, else None: a drive from one
+    town to another, to or away from a town, or chapters naming two or more localities (user, 2026-10-13: single
+    cities first, these after everything else)."""
+    title = meta.get('title') or ''
+    if between_towns(title, df, home):
+        return 'a drive from one town to another'
+    # ... also with one end not found: held back is only later, not left out (wfq-d9YMXgI "Mzuzu to Nkhatabay",
+    # LQzb0YUdzJs "Karonga to Chiweta"; user, 2026-10-16); not when the missing end names no place ("to Downtown")
+    ends = drive_ends(title, df, home)
+    m = next((m for r in FROM_TO if (m := r.search(english_states(title)))), None)
+    # ... or two places of their own a small one of which counts for its neighbour in the mapping ("Drive Wąchock
+    # – Starachowice", 3Xg0vN2LqKo: both Starachowice; user, 2026-10-16)
+    (a, _), (b, _) = ends if ends else ((None, None), (None, None))
+    if a and b and a[0] and b[0] and _name_key(a[0]) != _name_key(b[0]) and _km(a[4], a[5], b[4], b[5]) > 3 \
+            and not area_city(title, df, home):
+        return 'a drive from one town to another'
+    if ends and m and sum(bool(loc) for _, loc in ends) == 1 and not area_city(title, df, home) \
+            and not any(_name_key(re.sub(r',.*', '', x.strip())) in GENERIC_ENDS for x in m.groups()):
+        return 'a drive from one town to another (one end not found)'
+    if (loc := _title_locality(title, df)) and (role := title_role(title, loc)):
+        return f"a drive {'to' if role == 'end' else 'away from'} {loc[0]}"
+    # with the title's: "Pacific Coast in Los Angeles" whose chapters reach Malibu (5Du7Q0t-8Ns)
+    named = {tuple(x) for _, _, x in chapter_localities(video_chapters(meta), df)}
+    named |= {tuple(loc)} if loc else set()
+    if len(named) >= 2:
+        return f'its chapters name {len(named)} localities ({", ".join(sorted(n[0] for n in named))})'
     return None
 
 
@@ -3219,9 +4094,10 @@ def split_by_stretches(segments, stretches):
     return [{'locality': list(loc), 'guessed': True, 'segments': segs} for loc, segs in groups.items()]
 
 
-def split_route(p, df, home=None):
+def split_route(p, df, home=None, sig_path=None):
     """Split an untouched one-group proposal of a drive "from A to B" into the localities along its route, the
-    driving time spread over them as on the route. Returns whether it was split."""
+    driving time spread over them as on the route. Returns whether it was split. sig_path: the video's signals; without
+    the object counts or town scenes that tell town driving from the highway, only A and B get segments."""
     if len(p.get('entries', [])) != 1:
         return False
     segs = p['entries'][0]['segments']
@@ -3247,6 +4123,18 @@ def split_route(p, df, home=None):
     stretches = [(t0 + a * (t1 - t0), t0 + b * (t1 - t0), loc) for a, b, loc in shares]
     stretches = ends_in_towns(stretches, segs, p.get('title'), df, home)
     p['entries'] = split_by_stretches(segs, stretches)
+    # a town on the way is offered only where the picture can show it is town driving: without object counts or
+    # town scenes no highway is cut, and its share of the route is highway as often as not (user, 2026-10-14:
+    # Ie79UuTDKOw's Mountain Top, 26:21-28:06 on the highway)
+    files = np.load(sig_path).files if sig_path and os.path.exists(sig_path) else None
+    named = [tuple(loc) for _, _, loc in stretches if loc]
+    if files is not None and 'urban' not in files and 'town_scene' not in files and len(named) > 2:
+        ends = {named[0], named[-1]}
+        left = sorted({e['locality'][0] for e in p['entries'] if tuple(e['locality']) not in ends})
+        p['entries'] = [e for e in p['entries'] if tuple(e['locality']) in ends]
+        if left:
+            p['note'] = (f"{p.get('note') or ''}; towns on the way left out ({', '.join(left)}): no signal tells "
+                         'their streets from the highway').lstrip('; ')
     if not p['entries']:
         p.pop('entries')
         p['exclude'] = 'rural driving: the footage is between towns'
@@ -3355,6 +4243,22 @@ def _km(lat1, lon1, lat2, lon2):
 
 FAR_KM = 500  # a known place named in a description this far from the channel's home: its namesake near home?
 ABROAD_KM = 1000  # a title place in another country counts only this close to the channel's home
+
+
+def near_context(row, p, e, df, km=60):
+    """Whether the place of mapping row is within km of the title's locality or of the video's other entries:
+    then it is the one meant, no namesake near the channel's home (user, 2026-10-13: fUlJsPo_04c's La Jolla
+    chapter among Del Mar and Encinitas ones of a "San Diego Coast" drive is no La Jolla near Los Angeles)."""
+    around = [x['locality'] for x in p.get('entries', []) if x is not e and x.get('locality')]
+    if (named := _title_locality(p.get('title') or '', df)):
+        around.append(named)
+    for loc in around:
+        other = add_video.get_existing_locality_row(df, *loc)[1]
+        if other is None or other['id'] == row['id']:  # the place itself says nothing about which one it is
+            continue
+        if _km(float(row['lat']), float(row['lon']), float(other['lat']), float(other['lon'])) <= km:
+            return True
+    return False
 
 
 def _place_near(name, iso2, lat, lon, km=60):
@@ -3476,9 +4380,10 @@ def locate_now(p, df, home, sig_path=None, meta=None, boilerplate=frozenset()):
             return
     # a drive between two towns goes by its route, also when the title's guess named one of them (iWbS0H_Prdc:
     # "Lilongwe to Mponela - …" was all Lilongwe)
-    elif (e.get('guessed') and any(r.search(p.get('title') or '') for r in FROM_TO) and split_route(p, df, home)):
+    elif (e.get('guessed') and any(r.search(p.get('title') or '') for r in FROM_TO)
+          and split_route(p, df, home, sig_path)):
         pass
-    elif not e.get('locality') and not split_route(p, df, home):
+    elif not e.get('locality') and not split_route(p, df, home, sig_path):
         title = p.get('title') or ''
         if (same := one_end_city(title, df, home)):  # "… to Queens Village Queens": part of the end names it
             e['locality'], e['guessed'] = same, True
@@ -3506,7 +4411,12 @@ def locate_now(p, df, home, sig_path=None, meta=None, boilerplate=frozenset()):
             and 'screen_text' in (sig_files := np.load(sig_path)).files:
         # a town's name on the screen in the opening (QcYf2VZqS-Y: "Sacramento" at 0:26; user, 2026-10-13)
         texts = {float(t): x for t, x in json.loads(str(sig_files['screen_text'])).items()}
-        if (screen := screen_locality(texts, df)):
+        # within the states and countries the title names: "Hatcher Pass, Alaska" is no Earth, TX from a map's
+        # "Earth" at 0:01 (dqgfuV2HLeE; user, 2026-10-16)
+        named_states, named_countries = title_states(meta.get('title') or ''), title_countries(meta.get('title') or '')
+        where = df if not (named_states or named_countries) else df[
+            df['state'].isin(named_states) | df['country'].isin(named_countries)]
+        if (screen := screen_locality(texts, where)):
             es[0]['locality'], es[0]['guessed'] = screen[0], True
             p['note'] = (f"{p['note']}; locality {screen[0][0]} from a label on the screen at "
                          f"{int(screen[1]) // 60}:{int(screen[1]) % 60:02d}").lstrip('; ')
@@ -3537,15 +4447,69 @@ def locate_now(p, df, home, sig_path=None, meta=None, boilerplate=frozenset()):
         p['note'] = re.sub(r'; (?:rural|highway) driving \d+-\d+s', '', p['note'])
 
 
-def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True, single_city=False, new_only=False,
-                    only=None):
+# a suggested town the reviewer replaces with a bigger city nearby, as a rule for later suggestions (user, 2026-10-13:
+# "Long Beach is considered part of LA"): {"town|state|country": {"to": [locality, state, country], "times": n,
+# "videos": [...], "stated": bool}}; a rule once the reviewer said so or made the same change MERGE_TIMES times
+# (one change can be the video's own: Kobe for Osaka where the title said Osaka)
+MERGES = os.path.join('_output', 'proposals', 'locality_merges.json')
+MERGE_TIMES, MERGE_KM = 2, 60
+
+
+def _merge_key(loc):
+    return '|'.join(str(x or '') for x in loc)
+
+
+def load_merges():
+    try:
+        with open(MERGES) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+def record_merge(old, new, video):
+    """Note that the reviewer replaced the suggested locality old with new, when new is a bigger city within
+    MERGE_KM of it (both in the mapping)."""
+    df = add_video.load_csv(add_video.FILE_PATH)
+    a, b = (add_video.get_existing_locality_row(df, *loc)[1] for loc in (old, new))
+    if b is None:
+        return
+    # a suggested town not yet in the mapping (87XLoavxxSI's Long Beach) has nothing to compare: noted as it is
+    if a is not None:
+        far = _km(float(a['lat']), float(a['lon']), float(b['lat']), float(b['lon'])) > MERGE_KM
+        smaller = float(pd.to_numeric(b['population_locality'], errors='coerce') or 0) \
+            <= float(pd.to_numeric(a['population_locality'], errors='coerce') or 0)
+        if far or smaller:
+            return
+    merges = load_merges()
+    m = merges.setdefault(_merge_key(old), {'to': list(new), 'times': 0, 'videos': [], 'stated': False})
+    if m['to'] != list(new):  # another city this time: start over with it
+        m.update(to=list(new), times=0, videos=[])
+    if video not in m['videos']:
+        m['times'] += 1
+        m['videos'].append(video)
+    with open(MERGES + '.tmp', 'w') as f:
+        json.dump(merges, f, indent=1, ensure_ascii=False)
+    os.replace(MERGES + '.tmp', MERGES)
+
+
+def merged_locality(loc, merges=None):
+    """The bigger city the reviewer counts loc in (load_merges), else None."""
+    m = (merges if merges is not None else load_merges()).get(_merge_key(loc))
+    return m['to'] if m and (m.get('stated') or m['times'] >= MERGE_TIMES) else None
+
+
+def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True, single_city=True, new_only=False,
+                    only=None, deferred=False):
     """Propose segments for every new video of a channel and write plan.json for the review page.
 
     Re-running resumes: videos already in the plan keep their entry and decisions, finished analyses are
     reused, and a run stopped by YouTube's sign-in check continues where it stopped. With limit, a run stops
     after that many new proposals, so the next run is the next batch. Without download, nothing is
     downloaded: each video is proposed whole from its metadata, and a later run with download analyses
-    those not decided yet. only: just these video ids (to propose again ones taken out of the plan).
+    those not decided yet. only: just these video ids (to propose again ones taken out of the plan). single_city:
+    a video through several localities (multi_city) is held back in the plan ("deferred"); deferred: propose those
+    now, and nothing else.
     """
     os.makedirs(out_dir, exist_ok=True)
     plan_path = os.path.join(out_dir, 'plan.json')
@@ -3559,6 +4523,10 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
                 else:
                     plan[p['video']] = p
 
+    if deferred:  # the multi-city drives held back (single_city), now that everything else is done
+        only, single_city = {v for v, p in plan.items() if p.get('deferred')}, False
+        for v in only:
+            plan.pop(v)
     if os.path.exists(os.path.join(out_dir, CHANNEL_REJECTED)):  # "Reject the whole channel" on the review page
         print('Stopped early: the whole channel was rejected in review, so it is rejected; mark it "Rejected" in the '
               'channels sheet')
@@ -3605,7 +4573,8 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
             for v in videos:
                 cur = disk.get(v)
                 ours = cur is not None and json.dumps(cur, sort_keys=True) == committed.get(v)
-                if cur is None or ours or as_proposed(cur) or str(cur.get('exclude', '')).startswith('could not'):
+                if cur is None or ours or as_proposed(cur) or str(cur.get('exclude', '')).startswith('could not') \
+                        or (deferred and cur.get('deferred')):
                     disk[v] = plan[v]
                     committed[v] = json.dumps(plan[v], sort_keys=True)
             tmp = plan_path + '.tmp'
@@ -3644,7 +4613,9 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
                 cached = json.load(f)
         except (OSError, ValueError):
             cached = {}
-        if cached.get('date') == today and cached.get('url') == url:
+        if only is not None:  # chosen videos need no listing: a search URL's results or a channel YouTube will not list
+            ids = sorted(only)  # may lack them (AbaoAmbience, CaliforniaGoldenState: 32 left out for good, 2026-10-14)
+        elif cached.get('date') == today and cached.get('url') == url:
             ids = cached['ids']
         else:
             try:
@@ -3713,8 +4684,13 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
                 if single_home is None:
                     single_home = channel_home(meta.get('channel_id'), df, plan, country) or False
                 named = title_countries(meta['title'])
-                if between_towns(meta['title'], df[df['country'].isin([country] + named)], single_home or None):
-                    reason = 'a drive from one town to another (this channel: only drives within one city)'
+                if (why := multi_city(meta, df[df['country'].isin([country] + named)], single_home or None)):
+                    # held back, not left out: proposed once everything else is done (--deferred)
+                    plan[vid] = {'video': vid, 'title': meta['title'], 'deferred': 'multi_city',
+                                 'exclude': f'held back for later: {why} (drives within one city first)'}
+                    touched.append(vid)
+                    commit([vid])
+                    continue
             if reason:
                 plan[vid] = {'video': vid, 'title': meta['title'], 'exclude': reason}
                 touched.append(vid)
@@ -3766,16 +4742,18 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
                 reason = footage_problem(dict(np.load(sig_path)))
             # an edit cut is offered with a note to check, not left out (user, 2026-10-11: gaX_-_Nna9k's cuts are
             # legit and miss no intersection); ten in a row still say the channel edits its drives
+            notes_skip = []
             if at := footage_skip(dict(np.load(sig_path))):
-                skip_note = (f'the video skips footage at {at} ({"edit cuts" if " and " in at else "an edit cut"}): '
-                             'check that no wait at a light is missing')
-            elif at := clock_jump(dict(np.load(sig_path))):
-                skip_note = f'the video skips footage at {at} (the time stamp in the picture jumps): check'
-            else:
-                skip_note = None
+                notes_skip.append(f'the video skips footage at {at} '
+                                  f'({"edit cuts" if " and " in at else "an edit cut"}): '
+                                  'check that no wait at a light is missing')
+            # the camera's clock tells cuts the picture does not (a crossfade: B0XUv86Y2Uc at 2:42), so both
+            if at := clock_jump(dict(np.load(sig_path))):
+                notes_skip.append(f'the video skips footage at {at} (the time stamp in the picture jumps): check')
+            skip_note = '; '.join(notes_skip) or None
             if 'skips' in np.load(sig_path):  # only videos analysed for skips count towards the streak
                 skips_in_a_row = skips_in_a_row + 1 if skip_note and not reason else 0
-            if skips_in_a_row >= SKIP_STREAK:
+            if skips_in_a_row >= SKIP_STREAK and only is None:  # videos proposed again do not judge the channel
                 plan[vid] = {'video': vid, 'title': meta['title'], 'exclude': skip_note}
                 touched.append(vid)
                 commit([vid])
@@ -3788,11 +4766,14 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
             commit([vid])
             continue
         if analysed:
-            segments, notes = propose(dict(np.load(sig_path)))
+            segments, notes = night_from_title(*propose(sig := dict(np.load(sig_path))), sig, meta.get('title'))
             if skip_note:
                 notes.insert(0, skip_note)
             if (bob := float(np.load(sig_path).get('step_bob', 0))) >= STEP_BOB_HINT:
                 notes.insert(0, f"the camera bobs like a walker's steps ({bob:.0%} of its shake): a walk? check")
+            elif (hints := walk_hints(segments, np.load(sig_path).get('bob_track', np.zeros((0, 2))).tolist())):
+                notes.insert(0, "the camera bobs like a walker's steps at " + ', '.join(
+                    f'{a // 60}:{a % 60:02d}-{b // 60}:{b % 60:02d}' for a, b in hints) + ': a walk? check')
             # fast cross traffic at a wait is a hint, no proof: a wait beside a fast road looks the same (3QeTN5BygQE:
             # 100 km/h at 17:02, not sped up; approved waits cross at medians of up to 73 km/h; user, 2026-10-13)
             if (fast := cross_speedup(dict(np.load(sig_path)))):
@@ -3906,10 +4887,17 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
         # locality outright ("Kobe City Skyline"), not by sights and junctions looked up near home (zvCKHw9rKPg:
         # "Osaka Bay Sunset Drive" became Tokyo from "Awaza Junction"; JCsEdFxRjtE: Kyoto became Zushi and Nara)
         titled = p['entries'][0].get('locality')
-        at = _locality_anchor(titled, df)
-        stretches = chapter_localities(video_chapters(metas[p['video']]), df[in_reach],
+        # chapters before the first that names a place are in the title's (5Du7Q0t-8Ns: Los Angeles until "Malibu"
+        # at 16:09; user, 2026-10-13), and those of a drive "from A to B" in A, its chapters naming the towns on
+        # the way however far (PvQnDdF145Q: San Francisco to Los Angeles, 11 h by Santa Cruz and Morro Bay)
+        ends = drive_ends(p['title'], df[in_reach], home)
+        start = ends[0][1] if ends else None
+        reach, at = in_reach, None if ends else _locality_anchor(titled, df)
+        if ends and start and start[1]:  # in the states of its ends: no Venice, FL on a drive along the coast of LA
+            reach = in_reach & df['state'].isin({start[1]} | ({ends[1][1][1]} if ends[1][1] else set()))
+        stretches = chapter_localities(video_chapters(metas[p['video']]), df[reach],
                                        (lambda name: town_near(name, home, df)) if home and not titled else None,
-                                       near=at[3:5] if at else None)
+                                       near=at[3:5] if at else None, first=start or titled)
         if not stretches:
             continue
         e = p['entries'][0]
@@ -3936,6 +4924,11 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
                 in_title.setdefault(tuple(loc), phrase)
             if len(in_title) > 1 and (city := metro_of_all(list(in_title), df)):
                 in_title = {tuple(city): in_title[tuple(city)]}
+            # the channel's usual locality named in the title, also as part of a road's name, goes first: "Which
+            # Nashville Road Should We Take?" is Nashville, not the "Roads" of a district in Ireland or the "Lead"
+            # of Lead, SD (UCLgFDrgDENPf7a59tsj8d_A; user, 2026-10-16)
+            if (usual := usual_locality(plan)) and re.search(rf'\b{re.escape(usual[0])}\b', p['title'] or '', re.I):
+                in_title = {tuple(usual): usual[0]}
             area = DRIVE_AREA.search(p['title'])
             if len(in_title) > 1 and area:
                 # "Driving from Longwood to West Farms in the Bronx, New York": the drive is in the Bronx
@@ -3949,19 +4942,36 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
                 continue
             found = next(iter(in_title.items()), None)
             found = found or place_locality(place_phrases(description, limit=3), df[in_reach], home)
+            # a freeway drive whose only place is a region or a sight, or none: no town to give it, unless its GPS
+            # overlay says (HXJ9w8h4CwA, "Southern California freeway drive" was Los Angeles; user, 2026-10-16)
+            sig_path = os.path.join(out_dir, f"{p['video']}_signals.npz")
+            if (HIGHWAY_TITLE.search(p['title'] or '') and not (found and _name_key(found[0][0]) in _name_key(found[1]))
+                    and not (os.path.exists(sig_path) and 'gps' in np.load(sig_path).files)):
+                p.pop('entries')
+                p['exclude'] = 'freeway drive with no town named (title, description, chapters or GPS)'
+                break
             if found:
                 e['locality'], e['guessed'] = list(found[0]), True
                 p['note'] = f"{p['note']}; locality {found[0][0]} from where '{found[1]}' is".lstrip('; ')
+            elif (abroad := [c for c in title_countries(p['title']) if not (usual := usual_locality(plan))
+                             or c != usual[2]]):
+                # a title naming another country is not the channel's usual place (X53fh12knn8: "Pakistan's
+                # Busiest City Karachi To Lahore" was New York; an hour cannot be Karachi to Lahore either, so it is
+                # left to the reviewer; user, 2026-10-16)
+                p['note'] = (f"{p['note']}; the title names {', '.join(abroad)}: set the locality").lstrip('; ')
             elif (usual := usual_locality(plan)):  # nothing names a place: where this channel mostly drives
                 e['locality'], e['guessed'] = list(usual), True
                 p['note'] = (f"{p['note']}; locality {usual[0]}: where most of this channel's reviewed videos are "
                              '(nothing in the title or description names a place: check)').lstrip('; ')
     # a drive "from A to B" without chapters passes through A, B and the towns between: split it along its route
     for p in new:
-        split_gps(p, df, out_dir) or split_route(p, df[title_reach(df, in_reach, p['title'])], home)
+        split_gps(p, df, out_dir) or split_route(p, df[title_reach(df, in_reach, p['title'])], home,
+                                                 os.path.join(out_dir, f"{p['video']}_signals.npz"))
     if home:
         iso2 = common.get_iso2_country_code(common.correct_country(home[2]))
-        for p in new:
+        # a route's towns come from its points on the map, so none is a namesake of a place near home
+        # (3HN-bS3aZk8: Miami to Orlando passed a Charleston that became New York; user, 2026-10-16)
+        for p in (p for p in new if not p.get('route')):
             for e in p.get('entries', []):
                 loc = e.get('locality')
                 if not loc or not e.get('guessed') or e.get('gps') or tuple(loc) == home[:3]:
@@ -3978,6 +4988,8 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
                          if re.search(rf'\b{re.escape(name)}\b|,\s*{code}\b', p['title'] or '', re.I)}
                 if named and (loc[1] in named or home[1] not in named):
                     continue
+                if near_context(row, p, e, df):
+                    continue
                 if _place_near(loc[0], iso2, home[3], home[4]):
                     p['note'] = f"{p['note']}; {loc[0]} here is the place of that name near {home[0]}, " \
                                 f"not {', '.join(filter(None, loc))}".lstrip('; ')
@@ -3989,8 +5001,20 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
         if (len(es) == 1 and es[0].get('locality') and not p.get('route') and os.path.exists(sig_path)
                 and not es[0].get('gps')
                 and not any(s.get('decision') or s.get('applied') for s in es[0]['segments'])):
+            if (role := title_role(p['title'], es[0]['locality'])):
+                p['entries'] = by_role(propose(dict(np.load(sig_path)))[0], es[0]['locality'], role)
+                p['note'] = (f"{p['note']}; the title drives {'to' if role == 'end' else 'from'} "
+                             f"{es[0]['locality'][0]}: only its {role} is there, set the locality of the rest")
+                continue
             es[0]['segments'] = propose(dict(np.load(sig_path)), ONE_PLACE)[0]
             p['note'] = re.sub(r'; (?:rural|highway) driving \d+-\d+s', '', p.get('note') or '')
+    merges = load_merges()
+    for p in new:  # a town the reviewer counts in a bigger city nearby (merged_locality): that city
+        for e in p.get('entries', []):
+            if e.get('locality') and e.get('guessed') and (to := merged_locality(e['locality'], merges)):
+                p['note'] = (f"{p.get('note') or ''}; {e['locality'][0]} counts as {to[0]} (as in your reviews)"
+                             ).lstrip('; ')
+                e['locality'] = list(to)
     for p in new:  # chapters whose places turned out the same ("Hollywood", "Los Angeles") are one group
         if len(p.get('entries', [])) > 1:
             merged = {}
@@ -4107,6 +5131,8 @@ def apply_segments(video_id, locality, state, country, segments, vehicle_type, u
 
 REVIEW_HTML = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>Review proposals</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22>
+<text y=%22.9em%22 font-size=%2290%22>🚕</text></svg>">
 <style>
 body { font-family: Arial, sans-serif; margin: 0; background: #f6f6f6; color: #222; }
 header { position: sticky; top: 0; z-index: 1; background: #fff; border-bottom: 1px solid #ddd;
@@ -4131,6 +5157,7 @@ input.at { width: 56px; font-size: 13px; padding: 2px 4px; }
 @media (max-width: 900px) { .video { grid-template-columns: 1fr; } .desc { border-left: 0; padding-left: 0; } }
 .video h3 { margin: 0 0 4px; font-size: 16px; }
 .note { color: #8a5300; font-size: 13px; margin: 2px 0 8px; }
+.note .warn { color: #c62828; font-weight: 600; }
 .sheet { width: 640px; max-width: 100%; display: block; margin: 8px 0; }
 .thumb { width: 320px; max-width: 100%; display: block; margin: 8px 0; }
 table { border-collapse: collapse; }
@@ -4154,6 +5181,12 @@ tr.entryhead td { border-top: 0; padding-top: 8px; }
 input.t-start, input.t-end { width: 62px; font-size: 13px; padding: 2px 4px; }
 button.small { padding: 3px 8px; font-size: 13px; cursor: pointer;
                border: 1px solid #bbb; border-radius: 3px; background: #fafafa; }
+.channel { font-size: 16px; font-weight: 600; margin-bottom: 4px; }
+#vid, #clock { cursor: pointer; }
+#vid { font-family: monospace; }
+#vid-yt { text-decoration: none; }
+.channel a { color: #1a5fb4; text-decoration: none; }
+.channel a:hover { text-decoration: underline; }
 button.small.yes, button.small.go { background: #dff3e2; border-color: #7cbf86; color: #1d6b2a; }
 button.small.no, button.small.stop { background: #fbe3e3; border-color: #d98a8a; color: #9b2222; }
 .seg.approve td { background: #e8f6ea; }
@@ -4161,6 +5194,7 @@ button.small.no, button.small.stop { background: #fbe3e3; border-color: #d98a8a;
 .seg.approve .yes, .seg.reject .no { font-weight: bold; border-color: #333; }
 .seg.applied td { background: #e3ecf8; }
 tr.split td { font-size: 12px; color: #777; border-top: 0; padding-top: 0; padding-bottom: 0; }
+tr.split td:first-child { max-width: 0; }  /* the reason wraps in the columns the segments set, never widens them */
 .excluded { color: #777; font-size: 14px; }
 .night { color: #2a3f8f; font-weight: bold; }
 .guess { color: #b36b00; font-size: 12px; }
@@ -4175,13 +5209,45 @@ tr.split.playing { background: #fff4e5; }
 .routemap { width: 640px; max-width: 100%; height: 300px; margin: 8px 0; border: 1px solid #ccc;
             position: relative; z-index: 0; }
 .routemap .leaflet-tooltip { font-size: 11px; padding: 1px 4px; }
+html[data-theme=dark]{filter:invert(.9) hue-rotate(180deg);background:#fff}
+html[data-theme=dark] img,html[data-theme=dark] iframe,html[data-theme=dark] video,
+html[data-theme=dark] .leaflet-container,html[data-theme=dark] .locmap,html[data-theme=dark] .routemap
+{filter:invert(1) hue-rotate(180deg)}
+#theme{position:fixed;right:12px;bottom:12px;z-index:9999;padding:6px 10px;border:1px solid #bbb;border-radius:16px;
+background:#fff;color:#222;font-size:13px;cursor:pointer}
 </style>
+<script>
+// dark unless switched to light; a cookie, not localStorage: the hub and each review page run on their own port,
+// and cookies are shared across the ports of a host
+(function () {
+  const m = document.cookie.match(/(?:^|; )theme=(dark|light)/);
+  document.documentElement.dataset.theme = m ? m[1] : 'dark';
+  addEventListener('DOMContentLoaded', () => {
+    const b = document.createElement('button');
+    b.id = 'theme';
+    const label = () => { b.textContent = document.documentElement.dataset.theme === 'dark' ? '☀️ Light' : '🌙 Dark'; };
+    b.onclick = () => {
+      const t = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+      document.documentElement.dataset.theme = t;
+      document.cookie = `theme=${t}; path=/; max-age=31536000; SameSite=Lax`;
+      label();
+    };
+    label();
+    document.body.appendChild(b);
+  });
+})();
+</script>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 </head><body>
 <header>
   <div id="player"></div>
   <div>
+    {% if channel %}<div class="channel">🚕 <a href="{{ channel.url }}" target="_blank" rel="noopener">
+      {{- channel.name }}</a></div>{% endif %}
+    <div class="clock">Video: <span id="vid" title="click to copy">–</span>
+      <a id="vid-yt" href="#" target="_blank" rel="noopener" title="open on YouTube here">↗</a>
+      <span id="vid-copied"></span></div>
     <div class="clock">Time: <span id="clock" title="click to copy">0:00</span> <span id="copied"></span></div>
     <div class="keys">Keys for the outlined segment (the one clicked last): <b>A</b> start here · <b>S</b> end here ·
       <b>D</b> whole video · <b>Q</b> day · <b>W</b> night · <b>F</b> split time here</div>
@@ -4196,7 +5262,7 @@ tr.split.playing { background: #fff4e5; }
 </header>
 <main>
 {% for p in plan if p.entries and p.video in open_videos %}
-<div class="video" data-duration="{{ durations.get(p.video) or '' }}"><div class="main">
+<div class="video" data-video="{{ p.video }}" data-duration="{{ durations.get(p.video) or '' }}"><div class="main">
   <h3>{{ p.title }}</h3>
   <a href="https://www.youtube.com/watch?v={{ p.video }}" target="_blank">{{ p.video }}</a>
   {% if p.upload_date and (p.upload_date | string).isdigit() %}{% set u = '%08d' % (p.upload_date | int) %}
@@ -4208,7 +5274,7 @@ tr.split.playing { background: #fff4e5; }
       <option value="{{ code }}" {{ 'selected' if code == p.vehicle_type }}>{{ code }} ({{ name }})</option>
     {% endfor %}
     </select></label>
-  {% if p.note %}<div class="note">{{ p.note }}</div>{% endif %}
+  {% if p.note %}<div class="note">{{ note_html(p.note) }}</div>{% endif %}
   {% if p.analysed is false %}
   <img class="thumb" src="https://i.ytimg.com/vi/{{ p.video }}/hqdefault.jpg" loading="lazy"
        alt="YouTube thumbnail of {{ p.video }} (not analysed)">
@@ -4240,6 +5306,8 @@ tr.split.playing { background: #fff4e5; }
           {%- if c %}<option selected>{{ c }}</option>{% endif %}</select>
         <span class="locstatus guess">{% if e.guessed %}guessed from title{% elif not e.locality %}
           ⚠ not set: approved segments cannot be added{% endif %}</span>
+        {% if not e.segments %}<button class="drop" data-video="{{ p.video }}" data-entry="{{ ei }}"
+          onclick="dropGroup(this)" title="this group has no segments: remove it">✕ remove</button>{% endif %}
         <div class="locmap"{% if e.locality and e.locality | tojson in new_localities %}
              data-new="1"{% endif %}></div>
       </div>
@@ -4273,21 +5341,25 @@ tr.split.playing { background: #fff4e5; }
           → other locality</button>{% endif %}</td>
     </tr>
     {% if not loop.last %}{% set n = e.segments[loop.index] %}
-    {% if not s.applied and not n.applied %}
     {% set split = n.start - s.end <= max_merge_gap and n.night == s.night %}
     <tr class="split" data-video="{{ p.video }}" data-start="{{ s.end }}" data-end="{{ n.start }}">
       <td colspan="2">{% if split %}suggested split at {{ '%d:%02d' % (s.end // 60, s.end % 60) }}
         {% elif n.start > s.end %}left out {{ '%d:%02d' % (s.end // 60, s.end % 60) }}–{{
-          '%d:%02d' % (n.start // 60, n.start % 60) }}{% else %}{% endif %}</td>
-      <td><button class="small" onclick="play('{{ p.video }}', {{ [s.end - 5, 0] | max }})">▶ {{
+          '%d:%02d' % (n.start // 60, n.start % 60) }}{% else %}{% endif %}
+        {%- set why = gap_reason(p.note, s.end, n.start, n.night != s.night) %}{% if why %}: {{ why }}{% endif %}</td>
+      <td><button class="small" onclick="play('{{ p.video }}', {{ s.end }})">▶ {{
           'split' if split else 'gap' }}</button></td>
-      <td><button class="small"
+      <td>{% if not s.applied and not n.applied %}<button class="small"
           onclick="mergeSplit(this, '{{ p.video }}', {{ ei }}, {{ loop.index0 }})"{% if not split %}
           title="one segment from {{ '%d:%02d' % (s.start // 60, s.start % 60) }} to {{
           '%d:%02d' % (n.end // 60, n.end % 60) }}, the left-out part and the first one's day/night included"
-          {% endif %}>{{ 'Remove split' if split else 'Join' }}</button></td>
+          {% endif %}>{{ 'Remove split' if split else 'Join' }}</button>{% endif %}
+          {%- if loop.index0 == 0 and e.segments | length > 2 and not e.segments | selectattr('applied') | list %}
+          <button class="small" onclick="mergeAll(this, '{{ p.video }}', {{ ei }}, {{ e.segments | length }})"
+          title="one segment of all {{ e.segments | length }} of this locality, the left-out parts included">Join all
+          </button>{% endif %}</td>
     </tr>
-    {% endif %}{% endif %}
+    {% endif %}
   {% endfor %}
     <tr class="addrow"><td colspan="5">
       <button class="small newseg" data-video="{{ p.video }}" data-entry="{{ ei }}" onclick="newSegment(this)"
@@ -4332,17 +5404,50 @@ tr.split.playing { background: #fff4e5; }
 </div>
 {% endfor %}
 {% if not open_videos %}<p>Nothing left to decide in this plan.</p>
-{% elif waiting > open_videos | length %}<p class="more">{{ waiting - open_videos | length }} more videos to decide:
-  they appear here as you finish these {{ open_videos | length }} (reload the page).</p>{% endif %}
+{% elif more %}<p class="more">{{ more }} more videos to decide:
+  they appear here as you finish these (reload the page).</p>{% endif %}
+<p class="more">{% if show_done %}<a href="?">hide the videos already applied</a>{% elif applied %}
+  <a href="?done=1">show the {{ applied }} videos already applied</a> (to correct one){% endif %}</p>
 <details><summary>Excluded videos ({{ plan | selectattr('exclude') | list | length }})</summary>
 {% for p in plan if p.exclude %}
-<div class="excluded"><a href="https://www.youtube.com/watch?v={{ p.video }}" target="_blank">{{ p.video }}</a>
-  {{ p.title }} — {{ p.exclude }}</div>
+<div class="excluded" data-video="{{ p.video }}"><a href="https://www.youtube.com/watch?v={{ p.video }}"
+  target="_blank">{{ p.video }}</a> {{ p.title }} — <span class="why">{{ p.exclude }}</span></div>
 {% endfor %}
 </details>
 </main>
 <script>
 let ytPlayer = null, ytReady = false, pending = null;
+// a time in an exclusion reason or a proposal's note ("skips footage at 4:53", "highway driving 0-1856s", "camera
+// not facing forward 48-154s") plays the video from there (notes: user, 2026-10-16); each text piece on its own,
+// so the note's red warnings stay
+document.querySelectorAll('.excluded .why, .video .note').forEach(el => {
+  const times = /\\b(\\d+):(\\d\\d)(?::(\\d\\d))?\\b|\\b(\\d+)(?:-\\d+)?s\\b/g;  // m:ss, h:mm:ss, 123s, 123-456s
+  const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+  const nodes = [];
+  while (walker.nextNode()) nodes.push(walker.currentNode);
+  nodes.forEach(node => {
+    const text = node.textContent, frag = document.createDocumentFragment();
+    let last = 0;
+    for (const m of text.matchAll(times)) {
+      const [all, a, b, c, sec] = m;
+      const t = sec !== undefined ? +sec : c !== undefined ? +a * 3600 + +b * 60 + +c : +a * 60 + +b;
+      frag.append(text.slice(last, m.index));
+      const link = Object.assign(document.createElement('a'), { href: '#', className: 'at', textContent: all });
+      link.dataset.t = t;
+      frag.append(link);
+      last = m.index + all.length;
+    }
+    if (!last) return;
+    frag.append(text.slice(last));
+    node.replaceWith(frag);
+  });
+});
+document.addEventListener('click', e => {
+  const a = e.target.closest('.excluded a.at, .video .note a.at');
+  if (!a) return;
+  e.preventDefault();
+  play(a.closest('[data-video]').dataset.video, Math.max(+a.dataset.t - 3, 0));  // 3 s before, as ▶ end (user)
+});
 function onYouTubeIframeAPIReady() {
   ytPlayer = new YT.Player('player', { width: 480, height: 270, playerVars: { autoplay: 1, playsinline: 1, rel: 0 },
     events: { onReady: () => { ytReady = true; if (pending) play(...pending); } } });
@@ -4391,8 +5496,15 @@ function activeRow() {
 let clickedRow = null;
 document.addEventListener('click', e => { const r = e.target.closest('tr.seg'); if (r) clickedRow = r; }, true);
 function keyRow() {
-  const video = ytReady && playingVideo();
-  return clickedRow && document.contains(clickedRow) && clickedRow.dataset.video === video ? clickedRow : activeRow();
+  // the row clicked last, until the playback reaches another segment of the video: then the outline follows it
+  // (user, 2026-10-14: XDBi8ukETEA's stayed on the first segment while the second played)
+  const video = ytReady && playingVideo(), here = activeRow();
+  if (clickedRow && document.contains(clickedRow) && clickedRow.dataset.video === video) {
+    const t = ytPlayer.getCurrentTime();
+    if (!(here && here !== clickedRow && +here.dataset.start <= t && t <= +here.dataset.end)) return clickedRow;
+    clickedRow = null;
+  }
+  return here;
 }
 setInterval(() => {
   if (!ytReady) return;
@@ -4416,6 +5528,10 @@ setInterval(() => {
     }
   }
   document.getElementById('clock').textContent = fmt(ytPlayer.getCurrentTime() || 0);
+  const vid = playingVideo();
+  if (vid && document.getElementById('vid').textContent !== vid) document.getElementById('vid').textContent = vid;
+  if (vid) document.getElementById('vid-yt').href =
+    `https://www.youtube.com/watch?v=${vid}&t=${Math.floor(ytPlayer.getCurrentTime() || 0)}s`;
   // playing a left-out stretch between two segments: the line moves to that gap, in orange
   const t = ytPlayer.getCurrentTime(), video = playingVideo();
   const gap = [...document.querySelectorAll(`tr.split[data-video="${video}"]`)]
@@ -4426,6 +5542,11 @@ setInterval(() => {
   document.querySelectorAll('tr.seg.active').forEach(r => { if (r !== row) r.classList.remove('active'); });
   if (row) row.classList.add('active');
 }, 250);
+document.getElementById('vid').onclick = async () => {
+  await navigator.clipboard.writeText(document.getElementById('vid').textContent);
+  document.getElementById('vid-copied').textContent = 'copied';
+  setTimeout(() => { document.getElementById('vid-copied').textContent = ''; }, 1000);
+};
 document.getElementById('clock').onclick = async () => {
   await navigator.clipboard.writeText(document.getElementById('clock').textContent);
   document.getElementById('copied').textContent = 'copied';
@@ -4650,7 +5771,13 @@ window.addEventListener('pageshow', () => {
   });
 });
 function parseTime(text) {
-  const parts = text.trim().split(':').map(Number);
+  // m:ss, h:mm:ss, seconds (754), YouTube's 754s and a link with t=754 or t=12m34s (user, 2026-10-16: videos that
+  // only play on YouTube itself give the time in seconds)
+  text = text.trim();
+  const link = text.match(/[?&#]t=(?:(\\d+)h)?(?:(\\d+)m)?(\\d+)s?\\b/);
+  if (link) return (+link[1] || 0) * 3600 + (+link[2] || 0) * 60 + +link[3];
+  text = text.replace(/s$/, '');
+  const parts = text.split(':').map(Number);
   return parts.length && parts.every(n => Number.isFinite(n)) ? parts.reduce((a, b) => a * 60 + b, 0) : NaN;
 }
 function reloadKeepingPlace(video, t) {
@@ -4725,6 +5852,21 @@ async function mergeSplit(btn, video, entry, seg) {
   if (!res.ok) { btn.disabled = false; alert((await res.json()).error); return; }
   reloadKeepingPlace();
 }
+// all segments of a locality as one (user, 2026-10-16), after a confirmation
+async function mergeAll(btn, video, entry, count) {
+  const rows = [...Array(count).keys()].map(i =>
+    document.querySelector(`tr.seg[data-video="${video}"][data-entry="${entry}"][data-seg="${i}"]`));
+  const bounds = rows.map(r => [+r.dataset.start, +r.dataset.end]);
+  const t = s => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+  const a = Math.min(...bounds.map(b => b[0])), b = Math.max(...bounds.map(b => b[1]));
+  if (!confirm(`Join all ${count} segments of this locality into one, ${t(a)}–${t(b)}? `
+               + 'The left-out parts between them are included and their decisions cleared.')) return;
+  btn.disabled = true;
+  const res = await fetch('merge_all', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ video, entry, seg: 0, bounds }) });
+  if (!res.ok) { btn.disabled = false; alert((await res.json()).error); return; }
+  reloadKeepingPlace();
+}
 // approving needs a locality: without one the approved segments could not be added to the mapping
 function updateApproveRest(video) {
   const btn = video && video.querySelector('.approve-rest');
@@ -4759,6 +5901,12 @@ async function rejectChannel() {
   const out = await res.json();
   alert(`${out.rejected} segments rejected; the channel is rejected.`);
   location.reload();
+}
+async function dropGroup(btn) {
+  const res = await fetch('drop_group', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ video: btn.dataset.video, entry: +btn.dataset.entry }) });
+  if (!res.ok) { alert((await res.json()).error); return; }
+  reloadKeepingPlace();
 }
 async function addLocality(btn) {
   const res = await fetch('add_locality', { method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -4909,6 +6057,27 @@ def review(plan_path, port=None):
 
     plan_dir = os.path.dirname(os.path.abspath(plan_path))
     app = Flask(__name__)
+    app.jinja_env.globals["note_html"] = note_html  # the note, its warnings in red
+    app.jinja_env.globals["gap_reason"] = gap_reason  # why two segments are apart, on the split rows
+    channel_cache = {}
+
+    def channel_link(plan):
+        """{name, url} of the batch's YouTube channel, shown above the clock (user, 2026-10-13): its title from the
+        YouTube Data API, once per page server, else the folder's name."""
+        if not channel_cache:
+            cid = next((p['channel_id'] for p in plan if p.get('channel_id')), None)
+            name = os.path.basename(plan_dir)
+            if cid:
+                try:
+                    items = _api('channels', part='snippet', id=cid).get('items', [])
+                    snippet = items[0]['snippet'] if items else {}
+                    name = snippet.get('title') or name
+                    handle = snippet.get('customUrl')
+                    url = f'https://www.youtube.com/{handle}' if handle else f'https://www.youtube.com/channel/{cid}'
+                except (RuntimeError, KeyError, IndexError, requests.RequestException):
+                    url = f'https://www.youtube.com/channel/{cid}'
+                channel_cache.update(name=name, url=url)
+        return channel_cache or None
 
     def load():
         if not os.path.exists(plan_path):  # a channel run that has not finished its first video yet
@@ -5006,6 +6175,17 @@ def review(plan_path, port=None):
         # a locality group just added, with no segment yet: the reviewer is adding to it (a video whose segments were
         # all decided vanished on "+ add a locality": 5f3r-Q3Wtrc, vx4nUURTgHA; user, 2026-10-13)
         open_videos |= {p['video'] for p in plan for e in p.get('entries', []) if not e['segments']}
+        # decided and not applied yet: stays, to be corrected before Apply (user, 2026-10-14: finished videos vanished
+        # on the reload a merge makes); ?done=1 shows the applied ones too
+        # (a rejection until the next Apply marks it done: it is never applied, and would stay for ever)
+
+        def pending(s):
+            return s.get('decision') == 'approve' and not s.get('applied') or \
+                s.get('decision') == 'reject' and not s.get('done')
+        open_videos |= {v for v, ss in segs.items() if any(pending(s) for s in ss)}
+        applied = {v for v, ss in segs.items() if any(s.get('applied') for s in ss)}
+        if request.args.get('done'):
+            open_videos |= applied
         approved_hidden = sum(s.get('decision') == 'approve' and not s.get('applied')
                               for v, ss in segs.items() if v not in open_videos for s in ss)
         descriptions = {v: describe(v) for v in open_videos}
@@ -5021,10 +6201,13 @@ def review(plan_path, port=None):
         video_country = {p['video']: next(iter(title_countries(p.get('title'))), usual)
                          for p in plan if p['video'] in open_videos}
         return render_template_string(REVIEW_HTML, plan=plan, open_videos=open_videos, approved_hidden=approved_hidden,
+                                      channel=channel_link(plan),
                                       video_country=video_country,
                                       state_countries=sorted(c for c, has in mapping.groupby('country')['state']
                                                              .agg(lambda x: x.notna().mean() > 0.5).items() if has),
                                       new_localities=new_localities, waiting=len(waiting),
+                                      more=len(set(waiting) - open_videos), show_done=bool(request.args.get('done')),
+                                      applied=len(applied - (open_videos if not request.args.get('done') else set())),
                                       durations={v: video_duration(v) for v in open_videos},
                                       routes={p['video']: r for p in plan if p['video'] in open_videos
                                               and not p.get('route')
@@ -5166,10 +6349,11 @@ def review(plan_path, port=None):
         if s.get('applied'):
             return jsonify(error='this segment is already in the mapping'), 409
         at = int(d['at'])
-        if not s['start'] < at < s['end']:
+        if not s['start'] < at < s['end'] - 1:
             return jsonify(error='the split time must be inside the segment'), 400
+        # the second part from the next second: the two do not share a second (user, 2026-10-16)
         segs[d['seg']:d['seg'] + 1] = [{'start': s['start'], 'end': at, 'night': s['night']},
-                                       {'start': at, 'end': s['end'], 'night': s['night']}]
+                                       {'start': at + 1, 'end': s['end'], 'night': s['night']}]
         if at in p.get('removed_splits', []):  # put back: no false cut after all
             p['removed_splits'] = [t for t in p['removed_splits'] if t != at]
         save(plan)
@@ -5187,6 +6371,18 @@ def review(plan_path, port=None):
         if any(not e['segments'] and not e.get('locality') for e in p['entries']):
             return jsonify(error='this video already has an empty group: set its locality first'), 400
         p['entries'].append({'locality': None, 'guessed': False, 'segments': []})
+        save(plan)
+        return jsonify(ok=True)
+
+    @app.route('/drop_group', methods=['POST'])
+    def drop_group():
+        """Remove a locality group with no segments (added by + add a locality and not used)."""
+        d = request.get_json()
+        plan = load()
+        p = next((p for p in plan if p['video'] == d['video'] and 'entries' in p), None)
+        if p is None or not 0 <= d['entry'] < len(p['entries']) or p['entries'][d['entry']]['segments']:
+            return jsonify(error=stale), 409
+        del p['entries'][d['entry']]
         save(plan)
         return jsonify(ok=True)
 
@@ -5297,6 +6493,7 @@ def review(plan_path, port=None):
         e = p['entries'][d['entry']]
         if any(s.get('applied') for s in e['segments']):
             return jsonify(error='these segments are already in the mapping'), 409
+        suggested = e.get('locality') if e.get('guessed') else None
         locality, state, country = (str(x or '').strip() for x in d['locality'])
         state = state or None
         if not locality or country not in COUNTRIES:
@@ -5306,6 +6503,11 @@ def review(plan_path, port=None):
         if not state and len(rows) and rows['state'].notna().mean() > 0.5:
             # without it Apply would make a second Northampton next to Northampton, MA
             return jsonify(error=f'give the state too: the mapping writes one for {country} (e.g. PA)'), 400
+        if suggested and suggested != [locality, state, country]:
+            try:  # a bigger city nearby for the town suggested: learnt for later suggestions
+                record_merge(suggested, [locality, state, country], p['video'])
+            except (OSError, ValueError, KeyError, TypeError):
+                pass
         same = [o for o in p['entries'] if o is not e and o.get('locality') == [locality, state, country]]
         if same:  # this video already has a group for that locality: join it, overlapping segments as one
             joined = []
@@ -5415,6 +6617,24 @@ def review(plan_path, port=None):
         save(plan)
         return jsonify(ok=True)
 
+    @app.route('/merge_all', methods=['POST'])
+    def merge_all():
+        """All segments of one locality of a video as one (Join all)."""
+        d = request.get_json()
+        plan = load()
+        p, segs = lookup(plan, d)
+        if p is None or len(d['bounds']) != len(segs):
+            return jsonify(error=stale), 409
+        if any(s.get('applied') for s in segs):
+            return jsonify(error='one of these segments is already in the mapping'), 409
+        for a, b in zip(segs, segs[1:]):
+            if 0 <= b['start'] - a['end'] <= MAX_MERGE_GAP_S and a['night'] == b['night']:
+                p.setdefault('removed_splits', []).append(a['end'])  # false cuts, kept for tuning the detector
+        segs[:] = [{'start': min(s['start'] for s in segs), 'end': max(s['end'] for s in segs),
+                    'night': segs[0]['night']}]
+        save(plan)
+        return jsonify(ok=True)
+
     @app.route('/sheet/<video_id>.jpg')
     def sheet(video_id):
         return send_from_directory(plan_dir, f'{video_id}.jpg')
@@ -5456,6 +6676,17 @@ def review(plan_path, port=None):
         except Exception as ex:  # an answer either way, or the page waits for ever
             log.append(f'stopped: {ex}')
             return jsonify(log=log, error='\n'.join(log)), 500
+        # a group added and never used would keep its video on the page with nothing to decide (5f3r-Q3Wtrc);
+        # and the rejections are done: off the page from now on, as the applied ones
+        plan = load()
+        for p in plan:
+            if 'entries' in p:
+                p['entries'] = [e for e in p['entries'] if e['segments']]
+                for e in p['entries']:
+                    for seg in e['segments']:
+                        if seg.get('decision') == 'reject':
+                            seg['done'] = True
+        save(plan)
         return jsonify(log=log or ['nothing to add'])
 
     def _apply(plan, log):
@@ -5500,6 +6731,8 @@ if __name__ == '__main__':
                     help='only uploads newer than the channel\'s newest video in the mapping')
     ap.add_argument('--no-download', action='store_true',
                     help='propose whole videos from YouTube Data API metadata, without downloading or analysing')
+    ap.add_argument('--deferred', action='store_true',
+                    help='propose the drives through several localities that --single-city held back')
     ap.add_argument('--single-city', action='store_true',
                     help='leave out drives from one town to another ("from A to B"): only drives within one city')
     ap.add_argument('--review', metavar='PLAN_JSON', help='open the review page for a plan file')
@@ -5514,7 +6747,7 @@ if __name__ == '__main__':
         name = channel_folder(args.channel)
         out = process_channel(args.channel, args.country, args.out or os.path.join('_output/proposals', name),
                               args.pause, args.limit, download=not args.no_download, single_city=args.single_city,
-                              new_only=args.new_only)
+                              new_only=args.new_only, deferred=args.deferred)
         if out:
             with open(out) as f:
                 if any('entries' in p for p in json.load(f)):

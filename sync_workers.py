@@ -8,6 +8,7 @@ that the plan here does not have yet: decisions made here are never overwritten.
 goes into channels.json here, which the review hub and the sheet updates read; then the mapping as reviewed here
 goes to each worker, so its locality guesses and its skipping of videos already in the mapping are up to date.
 """
+import hashlib
 import json
 import os
 import re
@@ -37,16 +38,31 @@ def untouched(p):
             and not any(s.get('decision') or s.get('applied') for e in p.get('entries', []) for s in e['segments']))
 
 
+def fingerprint(p):
+    return hashlib.sha1(json.dumps({k: v for k, v in p.items() if k not in ('undo', 'redo')},
+                                   sort_keys=True).encode()).hexdigest()
+
+
 def merge_plan(name, remote_plan):
     """Add the worker's videos that this plan lacks (or has only as failed downloads). Returns how many."""
     path = os.path.join(rc.ROOT, name, 'plan.json')
     os.makedirs(os.path.dirname(path), exist_ok=True)
+    # the worker's entries as at the last sync: a worker copy that is no different is no newer proposal, and must not
+    # undo one made here since (user, 2026-10-15: fUlJsPo_04c back to Los Angeles, 79 videos proposed again here
+    # reverted to the workers' older copies); none seen yet (the first sync): only remembered
+    seen_path = os.path.join(rc.ROOT, name, 'remote_seen.json')
+    try:
+        with open(seen_path) as f:
+            seen = json.load(f)
+    except (OSError, ValueError):
+        seen = None
     added = 0
     with ps.plan_lock(path):
         local = json.load(open(path)) if os.path.exists(path) else []
         index = {p['video']: i for i, p in enumerate(local)}
         for p in remote_plan:
             i = index.get(p['video'])
+            changed_there = seen is not None and seen.get(p['video']) != fingerprint(p)
             if i is None:
                 local.append(p)
                 added += 1
@@ -54,7 +70,7 @@ def merge_plan(name, remote_plan):
                   and 'entries' in p):
                 local[i] = p  # failed or left out here, proposed there (a rule made less strict since)
                 added += 1
-            elif p != local[i] and 'entries' in p and untouched(local[i]) and untouched(p):
+            elif p != local[i] and 'entries' in p and untouched(local[i]) and untouched(p) and changed_there:
                 # proposed again there (P3PHxtIMZEo: its GPS split came after the first copy); never a left-out copy
                 # over a proposal here (3QeTN5BygQE and others proposed here again were left out by the sync)
                 local[i] = p
@@ -62,6 +78,9 @@ def merge_plan(name, remote_plan):
         with open(path + '.tmp', 'w') as f:
             json.dump(local, f, indent=1)
         os.replace(path + '.tmp', path)
+        with open(seen_path + '.tmp', 'w') as f:
+            json.dump({p['video']: fingerprint(p) for p in remote_plan}, f)
+        os.replace(seen_path + '.tmp', seen_path)
     return added
 
 
@@ -195,6 +214,10 @@ def sync(host):
         ssh(host, f'mkdir -p {REMOTE}/{os.path.dirname(rc.CHANNEL_IDS)}')
         subprocess.run(['scp', '-q', '-o', 'BatchMode=yes', rc.CHANNEL_IDS, f'{host}:{REMOTE}/{rc.CHANNEL_IDS}'],
                        check=True, capture_output=True)
+    if os.path.exists(ps.MERGES):  # towns the reviewer counts in a bigger city nearby: the worker suggests that city
+        subprocess.run(['scp', '-q', '-o', 'BatchMode=yes', ps.MERGES, f'{host}:{REMOTE}/{ps.MERGES}.tmp'],
+                       check=True, capture_output=True)
+        ssh(host, f'mv {REMOTE}/{ps.MERGES}.tmp {REMOTE}/{ps.MERGES}')
     if os.path.exists(rc.REFRESH_QUEUE):  # the channels done before whose new uploads come next
         subprocess.run(['scp', '-q', '-o', 'BatchMode=yes', rc.REFRESH_QUEUE,
                         f'{host}:{REMOTE}/{rc.REFRESH_QUEUE}.tmp'],

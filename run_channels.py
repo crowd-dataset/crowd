@@ -60,12 +60,16 @@ def log(msg):
 PROCESSED_BY = {}  # channel url -> column E (Processed by), as last read
 
 
+COMMENTS = {}  # sheet URL -> its Comments column (D), filled by sheet_rows
+
+
 def sheet_rows():
     """[(row number, channel url, status, country)] of the channels sheet."""
     r = requests.get(SHEET_CSV, timeout=60)
     r.raise_for_status()
     rows = list(csv.reader(io.StringIO(r.content.decode('utf-8'))))
     PROCESSED_BY.update({row[0].strip(): row[4].strip() if len(row) > 4 else '' for row in rows[1:] if row})
+    COMMENTS.update({row[0].strip(): row[3].strip() if len(row) > 3 else '' for row in rows[1:] if row})
     return [(n, row[0].strip(), row[1].strip(), row[2].strip() if len(row) > 2 else '')
             for n, row in enumerate(rows[1:], 2) if row and row[0].strip()]
 
@@ -155,7 +159,10 @@ def write_sheet_todo(state, sheet):
     status = {url: s for _, url, s, _ in sheet}
     # Processed once all its videos are proposed, before the review (user, 2026-10-09)
     want = {'processing': 'Processing', 'to review': 'Processed', 'reviewed': 'Processed', 'rejected': 'Rejected'}
-    todo = [{'row': c['row'], 'url': url, 'status': want[c['status']], 'by': WHO, 'comment': c.get('comment', '')}
+    # the row the sheet has the channel in now: rows deleted above it move it up (duplicates removed, 2026-10-13)
+    now_at = {u: n for n, u, _, _ in sheet}
+    todo = [{'row': now_at.get(url, c['row']), 'url': url, 'status': want[c['status']], 'by': WHO,
+             'comment': c.get('comment', '')}
             for url, c in state.items()
             if c['status'] in want and not c.get('refresh') and ours(url, status)
             and (status.get(url, '') != want[c['status']] or PROCESSED_BY.get(url, '') != WHO)]
@@ -164,7 +171,8 @@ def write_sheet_todo(state, sheet):
     todo += [{'row': rows.get(c['url']), 'url': c['url'], 'status': want[c['status']], 'by': WHO,
               'comment': c.get('comment') or 'from the subscriptions',
               'country': c.get('country') or new[c['url']].get('country', '')}
-             for c in state.values() if c.get('refresh') and c.get('url') in new and c['status'] in want
+             for c in state.values() if c.get('refresh') and not c.get('deferred') and c.get('url') in new
+             and c['status'] in want
              and (status.get(c['url']) != want[c['status']] or PROCESSED_BY.get(c['url'], '') != WHO)]
     if todo and os.path.exists(SHEET_KEY):  # the reviewing machine enters them itself
         try:
@@ -256,7 +264,17 @@ def on_hotspot():
     return 'gateway: 172.20.10.' in r.stdout
 
 
-def run_chunk(url, country, chunk, single_city=False, new_only=False):
+# drives within one city first, on every machine (user, 2026-10-13): the others are held back in the plans and
+# proposed after everything else (deferred_todo)
+SINGLE_CITY_FIRST = True
+# footage from outside the US first (user, 2026-10-16): the sheet's and the refresh queue's channels in other
+# countries, then theirs in the US (a US channel started here waits, its videos are not dropped), then the
+# held-back drives through several localities
+US_LATER = True
+US_NAMES = {'united states', 'united states of america', 'usa', 'us'}
+
+
+def run_chunk(url, country, chunk, single_city=False, new_only=False, deferred=False):
     """One batch of the channel with the latest code; its output, streamed. single_city: only drives within one
     city (set "single_city": true for the channel in channels.json)."""
     env = {k: v for k, v in os.environ.items() if not k.startswith('MallocStackLogging')}  # macOS: "can't turn off
@@ -264,7 +282,8 @@ def run_chunk(url, country, chunk, single_city=False, new_only=False):
     if os.path.exists('cookies.txt'):
         env.setdefault('YT_DLP_COOKIES', 'cookies.txt')
     cmd = [sys.executable, '-u', 'propose_segments.py', '--channel', url, '--country', country,
-           '--limit', str(chunk)] + (['--single-city'] if single_city else []) + (['--new-only'] if new_only else [])
+           '--limit', str(chunk)] + (['--single-city'] if single_city else []) + (['--new-only'] if new_only else []) \
+        + (['--deferred'] if deferred else [])
     out = []
     with subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env) as proc:
         fd, pending, last, done = proc.stdout.fileno(), b'', time.time(), False
@@ -360,6 +379,29 @@ def refresh_todo(state, args):
             todo.append((key in state, None, key, q['url'], q.get('country') or '', q.get('new_only', True)))
     todo.sort(key=lambda t: not t[0])  # one started here first, else the queue's order (its phases)
     return [t[1:] for t in todo]
+
+
+def deferred_todo(state, args):
+    """[(None, state key, url, country, False)] of the channels here whose plans hold drives through several
+    localities held back by SINGLE_CITY_FIRST: the very last work, after the sheet and the refresh queue. Not on
+    the reviewing machine (--no-new), which has every machine's plans."""
+    if args.no_new:
+        return []
+    todo, seen = [], set()
+    for key, c in list(state.items()):
+        if key.startswith('deferred:') or c.get('host') or c['name'] in seen \
+                or c.get('status') in ('rejected', 'error', 'duplicate'):
+            continue
+        try:
+            with open(os.path.join(ROOT, c['name'], 'plan.json')) as f:
+                held = any(p.get('deferred') for p in json.load(f))
+        except (OSError, ValueError):
+            continue
+        url = c.get('url') or key.removeprefix('refresh:')
+        if held and state.get('deferred:' + url, {}).get('status') not in ('rejected', 'error'):
+            seen.add(c['name'])
+            todo.append((None, 'deferred:' + url, url, c.get('country') or '', False))
+    return todo
 
 
 def push_code_on_change(every_s=60):
@@ -491,7 +533,12 @@ def main():
                 and not ((args.no_new or args.refresh_only) and url not in state)]
         started = list(state)  # one channel at a time: the earliest started one first, a new one after them
         todo.sort(key=lambda t: started.index(t[1]) if t[1] in state else len(started))
-        todo = [(n, url, url, country, False) for n, url, country in todo] or refresh_todo(state, args)
+        todo, queue = [(n, url, url, country, False) for n, url, country in todo], refresh_todo(state, args)
+
+        def in_us(t):  # by the sheet's or queue's country, else the one found for the channel before
+            return US_LATER and (t[3] or state.get(t[1], {}).get('country') or '').strip().lower() in US_NAMES
+        todo = [t for t in todo if not in_us(t)] or [t for t in queue if not in_us(t)] \
+            or [t for t in todo if in_us(t)] or [t for t in queue if in_us(t)] or deferred_todo(state, args)
         if not todo:
             log('no channel left to process; waiting for reviews and the sheet')
             time.sleep(IDLE_WAIT_S)
@@ -506,7 +553,10 @@ def main():
         if key not in state and n is not None:
             log(f'SHEET: set row {n} ({url}) to Processing{BY}')
         c = state.setdefault(key, {'row': n, 'name': channel_name(url), 'status': 'processing',
-                                   **({} if n is not None else {'refresh': True, 'url': url, 'new_only': new_only})})
+                                   **({} if n is not None else {'refresh': True, 'url': url, 'new_only': new_only}),
+                                   **({'deferred': True} if key.startswith('deferred:') else {})})
+        if c.get('deferred'):
+            c['status'] = 'processing'  # held-back drives again since the last pass
         c['row'] = n
         write_sheet_todo(state, sheet)
         country = c.get('country') or country_of(url, sheet_country)
@@ -518,7 +568,8 @@ def main():
         c['country'] = country
         save_state(state)
         log(f'{what} ({country}): next {args.chunk} proposals')
-        out = run_chunk(url, country, args.chunk, c.get('single_city', False), c.get('new_only', False))
+        out = run_chunk(url, country, args.chunk, c.get('single_city', SINGLE_CITY_FIRST) and not c.get('deferred'),
+                        c.get('new_only', False), c.get('deferred', False))
         if 'Could not list the channel' not in out:
             c.pop('list_failures', None)
         if 'Traceback (most recent call last)' in out:

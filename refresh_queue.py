@@ -6,8 +6,11 @@ In this order (user, 2026-10-10): 1. the channels subscribed to (_output/subscri
 @handle" per line, read from youtube.com/feed/channels) that have videos in the mapping, or none yet but upload
 drives; 2. the sheet's Processed channels and its Offline ones that are online again; 3. its Not finished ones.
 Phases 1 and 2 fetch the uploads newer than the channel's newest video in the mapping, phase 3 every video not in
-it. Channels whose only country is Russia are Olena's and left out. Writes run_channels.REFRESH_QUEUE ([{url,
-country, name, why, phase, new_only}]) and a readable list beside the subscriptions.
+it. Phase 6 (user, 2026-10-13): the new uploads of the channels added to the sheet from the mapping ("added from
+the mapping" in Comments), after phases 4 and 5 of an earlier queue, which are kept; last of all come the drives
+through several towns held back in the plans (run_channels.deferred_todo). Channels whose only country is Russia
+are Olena's and left out. Writes run_channels.REFRESH_QUEUE ([{url, country, name, why, phase, new_only}]) and a
+readable list beside the subscriptions.
 """
 import collections
 import json
@@ -119,11 +122,21 @@ def main():
     for cid, (n, url, status, country) in sheet.items():
         if status == 'Processed' and not mapped[cid]:
             left_out.append((url, f'row {n}: processed, but none of its videos is in the mapping'))
+        elif status == 'Processed' and rc.COMMENTS.get(url, '').startswith('added from the mapping'):
+            continue  # phase 6, below
         elif status in ('Processed', 'Offline'):
             add(cid, url, country, f'sheet row {n}: ' + ('processed' if status == 'Processed' else 'online again'), 2)
     for cid, (n, url, status, country) in sheet.items():
         if status == 'Not finished':
             add(cid, url, country, f'sheet row {n}: not finished', 3, new_only=False)
+    try:  # phases an earlier queue was given by hand (4, 5: highway-titled videos analysed after all), kept
+        with open(rc.REFRESH_QUEUE) as f:
+            queue += [q for q in json.load(f) if q.get('phase') in (4, 5)]
+    except (OSError, ValueError):
+        pass
+    for cid, (n, url, status, country) in sheet.items():
+        if status == 'Processed' and mapped[cid] and rc.COMMENTS.get(url, '').startswith('added from the mapping'):
+            add(cid, url, country, f'sheet row {n}: added from the mapping, its new uploads', 6)
     with open(HANDLES, 'w') as f:
         json.dump(known, f, indent=1)
     with open(rc.REFRESH_QUEUE + '.tmp', 'w') as f:
