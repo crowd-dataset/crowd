@@ -272,6 +272,9 @@ SINGLE_CITY_FIRST = True
 # held-back drives through several localities
 US_LATER = True
 US_NAMES = ps.US_NAMES
+# channels of these countries wait, "paused" in the state (user, 2026-10-16: none from Russia for now); taken off
+# the set, they go on by themselves
+PAUSED_COUNTRIES = {'russia'}
 
 
 def run_chunk(url, country, chunk, single_city=False, new_only=False, deferred=False):
@@ -533,15 +536,25 @@ def main():
                 and (url in state or args.rows is None or n % args.rows[1] == args.rows[0])
                 and not (url not in state and country.strip().lower() == 'russia')  # Olena's (user, 2026-10-10)
                 and not ((args.no_new or args.refresh_only) and url not in state)]
+        for c in state.values():  # a country taken off PAUSED_COUNTRIES: its channels go on
+            if c.get('status') == 'paused' and (c.get('country') or '').strip().lower() not in PAUSED_COUNTRIES:
+                c['status'] = 'processing'
         started = list(state)  # one channel at a time: the earliest started one first, a new one after them
         todo.sort(key=lambda t: started.index(t[1]) if t[1] in state else len(started))
         todo, queue = [(n, url, url, country, False) for n, url, country in todo], refresh_todo(state, args)
 
-        def in_us(t):  # by the sheet's or queue's country, else the one found for the channel before
-            return US_LATER and (t[3] or state.get(t[1], {}).get('country') or '').strip().lower() in US_NAMES
+        def country_in(t, names):  # by the sheet's or queue's country, else the one found for the channel before
+            return (t[3] or state.get(t[1], {}).get('country') or '').strip().lower() in names
+
+        def in_us(t):
+            return US_LATER and country_in(t, US_NAMES)
+
+        def going(ts):
+            return [t for t in ts if not country_in(t, PAUSED_COUNTRIES)]
+        todo, queue = going(todo), going(queue)
         todo = [t for t in todo if not in_us(t)] or [t for t in queue if not in_us(t)] \
             or [t for t in todo if in_us(t)] or [t for t in queue if in_us(t)] \
-            or (US_LATER and deferred_todo(state, args, 'us')) or deferred_todo(state, args)
+            or (US_LATER and going(deferred_todo(state, args, 'us'))) or going(deferred_todo(state, args))
         if not todo:
             log('no channel left to process; waiting for reviews and the sheet')
             time.sleep(IDLE_WAIT_S)
@@ -551,6 +564,15 @@ def main():
         if key not in state and n is not None and (other := done_before(url, sheet, state)):
             log(f'row {n} {url} is the channel of {other}, done there: skipped (the sheet lists it twice)')
             state[key] = {'row': n, 'name': channel_name(url), 'status': 'duplicate', 'comment': f'same as {other}'}
+            save_state(state)
+            continue
+        # ... and one whose country only YouTube gives, before it is taken on
+        country = state.get(key, {}).get('country') or country_of(url, sheet_country)
+        if (country or '').strip().lower() in PAUSED_COUNTRIES:
+            log(f'{what} ({country}): paused (PAUSED_COUNTRIES)')
+            state.setdefault(key, {'row': n, 'name': channel_name(url),
+                                   **({} if n is not None else {'refresh': True, 'url': url, 'new_only': new_only})}
+                             ).update(status='paused', country=country)
             save_state(state)
             continue
         if key not in state and n is not None:
@@ -563,7 +585,7 @@ def main():
             c['status'] = 'processing'  # held-back drives again since the last pass
         c['row'] = n
         write_sheet_todo(state, sheet)
-        country = c.get('country') or country_of(url, sheet_country)
+        country = c.get('country') or country
         if not country:
             log(f'{what}: no country in the sheet or on YouTube; skipped, fill in column C')
             c['status'] = 'needs country'
