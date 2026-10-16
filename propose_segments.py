@@ -938,12 +938,23 @@ def propose(sig, p=PARAMS):
         # a camera on the driver keeps seeing him, but turning his head hides the face for a while, so judge
         # the share of frames with a big face over a longer window rather than frame by frame
         share = _rolling_mean((sig['face'] > 0).astype(float), p['driver_window_s'] * FPS)
-        for a, b in _runs(share > p['driver_share']):
-            if (b - a) / FPS < p['driver_min_s']:
-                continue
-            # a few close faces (passers-by) are no camera on the driver: a hint under DRIVER_CUT_SHARE (user,
-            # 2026-10-14: 248nL9hGz8s split at 10:52-11:44 for 13%; 8 of the 12 cuts approved across were under 0.2)
-            if share[a:b].max() < DRIVER_CUT_SHARE:
+        runs = [(a, b) for a, b in _runs(share > p['driver_share']) if (b - a) / FPS >= p['driver_min_s']]
+        # a few close faces (passers-by) are no camera on the driver: a hint under DRIVER_CUT_SHARE (user,
+        # 2026-10-14: 248nL9hGz8s split at 10:52-11:44 for 13%; 8 of the 12 cuts approved across were under 0.2)
+        sure = [share[a:b].max() >= DRIVER_CUT_SHARE for a, b in runs]
+        # ... unless next to a cut one, and then the footage between them is the driver too, the face turned away for
+        # a while (1MDz3XJ82Oc 0:57-1:57; user, 2026-10-16): in reviewed videos, of 67 hint runs next to a cut one
+        # within DRIVER_GAP_S none was approved, of 92 stretches between two cut ones 3
+        pairs = [k for k in range(len(runs) - 1)
+                 if (sure[k] or sure[k + 1]) and (runs[k + 1][0] - runs[k][1]) / FPS <= DRIVER_GAP_S]
+        cut_run = [c or k in pairs or k - 1 in pairs for k, c in enumerate(sure)]
+        for k in pairs:
+            a, b = runs[k][1], runs[k + 1][0]
+            if b > a:
+                keep[a:b] = False
+                notes.append(f'camera on the driver {a / FPS:.0f}-{b / FPS:.0f}s (between two such stretches)')
+        for (a, b), cut_it in zip(runs, cut_run):
+            if not cut_it:
                 t0, t1 = int(a / FPS), int(b / FPS)
                 notes.append(f'faces in {share[a:b].max():.0%} of the frames at {t0 // 60}:{t0 % 60:02d}-'
                              f'{t1 // 60}:{t1 % 60:02d}: camera on the driver? check')
@@ -1444,6 +1455,7 @@ SKIP_STOP_S, SKIP_STOP_MOTION, SKIP_SAME_NCC = 2, 0.2, 0.9  # a car pulling away
 # sky change across an edit cut that makes it a splice of night and day: on the approved segments 5 gives +363 s
 # right and none worse (XDBi8ukETEA, -TY9uuHDcP8, 7oAdCb9eINM); 30 lost 9eI2niyrIwo, -2,718 s
 STITCH_SKY_JUMP = 5
+DRIVER_GAP_S = 600  # footage between two camera-on-the-driver stretches up to this long is the driver too
 DRIVER_CUT_SHARE = 0.2  # face frames in a minute from which a camera on the driver is cut, not only noted
 WAIT_S, WAITS_PER_HOUR = 20, 3  # few waits at lights: see propose
 
