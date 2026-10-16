@@ -347,27 +347,35 @@ def night_clip_track(path, duration, work_dir):
 # where CLIP is unsure SPOTS_NIGHT or more mean night: on the night test 49 of 81 wrong segments fixed with CLIP and
 # them, 43 with CLIP alone, 3 of 197 right ones broken either way
 SPOTS_NIGHT = 6
+# ... or LAMPS_NIGHT or more lit orange lamps (light_spots), also at dusk: on the same test 54 fixed, 3 broken
+LAMPS_NIGHT = 4
 
 
 def light_spots(png):
-    """The number of small bright spots in a frame (PNG bytes)."""
-    img = cv2.imdecode(np.frombuffer(png, np.uint8), cv2.IMREAD_GRAYSCALE)
+    """(small bright spots on a dark surround, small lit orange lamps anywhere) in a frame (PNG bytes). The lamps:
+    pixels of hue 8-32 (OpenCV), saturation 140+, value 220+, as at dusk when the sky is still light (user,
+    2026-10-16)."""
+    img = cv2.imdecode(np.frombuffer(png, np.uint8), cv2.IMREAD_COLOR)
     if img is None:
         return None
-    g = cv2.resize(img, (320, 180)).astype(np.float32)
-    mask = ((g >= 230) & (cv2.blur(g, (15, 15)) <= 110)).astype(np.uint8)
-    _, _, stats, _ = cv2.connectedComponentsWithStats(mask, 8)
-    return int(((stats[1:, cv2.CC_STAT_AREA] >= 2) & (stats[1:, cv2.CC_STAT_AREA] <= 150)).sum())
+    img = cv2.resize(img, (320, 180))
+    g = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY).astype(np.float32)
+    h, sat, v = cv2.split(cv2.cvtColor(img, cv2.COLOR_BGR2HSV))
+    out = []
+    for mask in ((g >= 230) & (cv2.blur(g, (15, 15)) <= 110), (h >= 8) & (h <= 32) & (sat >= 140) & (v >= 220)):
+        _, _, stats, _ = cv2.connectedComponentsWithStats(mask.astype(np.uint8), 8)
+        out.append(int(((stats[1:, cv2.CC_STAT_AREA] >= 2) & (stats[1:, cv2.CC_STAT_AREA] <= 150)).sum()))
+    return tuple(out)
 
 
 def light_spots_track(path, duration):
-    """[(second, light_spots)] every NIGHT_EVERY_S over the whole video, as night_clip_track."""
+    """[(second, spots, lamps)] of light_spots every NIGHT_EVERY_S over the whole video, as night_clip_track."""
     out = []
     for t in np.arange(NIGHT_EVERY_S / 2, duration or 0, NIGHT_EVERY_S):
         png = subprocess.run(['ffmpeg', '-v', 'error', '-ss', f'{t:.1f}', '-i', path, '-frames:v', '1', '-f',
                               'image2pipe', '-vcodec', 'png', '-'], capture_output=True, timeout=120).stdout
         if png and (n := light_spots(png)) is not None:
-            out.append((float(t), n))
+            out.append((float(t), *n))
     return out
 
 
@@ -1126,12 +1134,15 @@ def propose(sig, p=PARAMS):
         jumps = ev[(ev[:, 2] >= SKIP_RATIO) & (ev[:, 1] >= SKIP_SCORE), 0] * FPS
         bounds = sorted({0, n, *np.flatnonzero(np.diff(night.astype(int))) + 1, *jumps.astype(int)})
         spots = np.asarray(sig.get('spots', np.zeros((0, 2)))).reshape(-1, 2)
+        orange = np.asarray(sig.get('lamps', np.zeros((0, 2)))).reshape(-1, 2)
         pieces = []
         for a, b in zip(bounds, bounds[1:]):
             inside = clip[(clip[:, 0] * FPS >= a) & (clip[:, 0] * FPS < b), 1]
             m = np.median(inside) if len(inside) >= 2 else 0.5
             lit = spots[(spots[:, 0] * FPS >= a) & (spots[:, 0] * FPS < b), 1]
             lamps = len(lit) >= 2 and np.median(lit) >= SPOTS_NIGHT  # unsure CLIP, lit lamps: night
+            lit = orange[(orange[:, 0] * FPS >= a) & (orange[:, 0] * FPS < b), 1]
+            lamps = lamps or (len(lit) >= 2 and np.median(lit) >= LAMPS_NIGHT)
             pieces.append((a, b, True if m >= 1 - NIGHT_CLIP_SURE else False if m <= NIGHT_CLIP_SURE
                            else True if lamps and len(inside) >= 2 else None))
         # unsure pieces between two sure ones of the same label take it (lmALZy7EF-g 29:50-32:47: dusk CLIP
@@ -2373,7 +2384,8 @@ def analyse_video(video_id, out_dir, meta=None):
         sig['town_scene'] = np.array(town_scene_track(path, meta.get('duration'), work_dir), float).reshape(-1, 2)
         sig['night_scene'] = np.array(night_scene_track(path, sig, work_dir), float).reshape(-1, 2)
         sig['night_clip'] = np.array(night_clip_track(path, meta.get('duration'), work_dir), float).reshape(-1, 2)
-        sig['spots'] = np.array(light_spots_track(path, meta.get('duration')), float).reshape(-1, 2)
+        lit = np.array(light_spots_track(path, meta.get('duration')), float).reshape(-1, 3)
+        sig['spots'], sig['lamps'] = lit[:, :2], lit[:, [0, 2]]
         sig['aerial'] = np.array(aerial_track(path, meta.get('duration'), work_dir), float).reshape(-1, 2)
         track = step_bob_track(path, meta.get('duration'))  # the whole video's measure is its middle
         sig['bob_track'] = np.array(track, float).reshape(-1, 2)
