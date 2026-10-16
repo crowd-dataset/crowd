@@ -795,7 +795,7 @@ def dataset_figures(df_mapping: pl.DataFrame, seg: pl.DataFrame, flags: dict) ->
     fig.update_yaxes(title_text="Length of segment (minutes)", col=1)
     _save(_style(fig), "box_segment_length")
 
-    # county and region maps, terrain views and spike maps of the footage
+    # county and region maps, spike maps and smoothed maps of the footage
     area_figures.dataset_area_figures(df_mapping, seg, loc_hover, flags)
 
 
@@ -1075,14 +1075,6 @@ DETECTION_FIGURES = {
                                                "the WHO's pedestrian share of them, 2016) against pedestrians per "
                                                "minute: where walking is more or less deadly than the number of "
                                                "pedestrians on the street predicts.",
-    "terrain_pedestrians_europe": "Pedestrians per minute in Europe as a terrain: height and colour show the "
-                                  "number of pedestrians per minute, smoothed over about 40 km.",
-    "terrain_pedestrians_north_america": "Pedestrians per minute in North America as a terrain.",
-    "terrain_pedestrians_asia": "Pedestrians per minute in Asia as a terrain.",
-    "terrain_pedestrians_night_europe": "Pedestrians per minute at night in Europe as a terrain: where streets stay "
-                                        "busy after dark.",
-    "terrain_pedestrians_night_north_america": "Pedestrians per minute at night in North America as a terrain.",
-    "terrain_pedestrians_night_asia": "Pedestrians per minute at night in Asia as a terrain.",
     "map_us_counties_pedestrians": "Pedestrians per minute per US county (counties with at least an hour of "
                                    "analysed footage).",
     "map_eu_regions_pedestrians": "Pedestrians per minute per European region (NUTS 2; regions with at least an "
@@ -1467,7 +1459,7 @@ def detection_figures(df_mapping: pl.DataFrame, det: pl.DataFrame, classes: list
                                 | (pl.col("_gap").rank("ordinal", descending=True) <= 8)
                                 | (pl.col("_gap").rank("ordinal") <= 8)))
 
-    # pedestrian and night-life terrains, and road users per US county and European region
+    # road users per US county and European region, and smoothed maps
     area_figures.detection_area_figures(df_mapping, d, classes, loc_hover, flags)
 
     # README tables

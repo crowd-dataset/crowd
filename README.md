@@ -952,21 +952,6 @@ Hours of footage per million people per European region (population: Eurostat).
 [![Share of night footage per European region](figures/map_eu_regions_night_share.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/map_eu_regions_night_share.html)
 Share of footage recorded at night per European region (regions with at least an hour of footage).
 
-[![Footage in Europe as a terrain](figures/terrain_footage_europe.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/terrain_footage_europe.html)
-Footage in Europe as a terrain: height and colour show the hours of footage, smoothed over about 40 km. The HTML version can be turned and zoomed; hover over a dot for its locality.
-
-[![Footage in North America as a terrain](figures/terrain_footage_north_america.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/terrain_footage_north_america.html)
-Footage in North America as a terrain.
-
-[![Footage in Asia as a terrain](figures/terrain_footage_asia.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/terrain_footage_asia.html)
-Footage in Asia as a terrain.
-
-[![Population and footage in India as terrains](figures/terrain_population_footage_india.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/terrain_population_footage_india.html)
-Population (cities of over 15,000 people, GeoNames) next to footage in India, each terrain scaled to its own highest peak: where the people are and where the footage is.
-
-[![Population and footage in Nigeria as terrains](figures/terrain_population_footage_nigeria.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/terrain_population_footage_nigeria.html)
-Population next to footage in Nigeria: the footage comes from a few places, while the population is spread over many cities.
-
 [![Footage per locality in the United States as spikes](figures/spikes_footage_usa.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/spikes_footage_usa.html)
 One spike per locality in the United States; height and colour show its hours of footage (log scale).
 
@@ -1237,24 +1222,6 @@ Road traffic deaths per 100,000 people against pedestrians per minute: countries
 
 [![Pedestrian road deaths per 100,000 people (road deaths times the WHO's pedestrian share of them, 2016) against pedestrians per minute: where walking is more or less deadly than the number of pedestrians on the street predicts.](figures/bubble_pedestrian_deaths_vs_pedestrians.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/bubble_pedestrian_deaths_vs_pedestrians.html)
 Pedestrian road deaths per 100,000 people (road deaths times the WHO's pedestrian share of them, 2016) against pedestrians per minute: where walking is more or less deadly than the number of pedestrians on the street predicts.
-
-[![Pedestrians per minute in Europe as a terrain: height and colour show the number of pedestrians per minute, smoothed over about 40 km.](figures/terrain_pedestrians_europe.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/terrain_pedestrians_europe.html)
-Pedestrians per minute in Europe as a terrain: height and colour show the number of pedestrians per minute, smoothed over about 40 km.
-
-[![Pedestrians per minute in North America as a terrain.](figures/terrain_pedestrians_north_america.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/terrain_pedestrians_north_america.html)
-Pedestrians per minute in North America as a terrain.
-
-[![Pedestrians per minute in Asia as a terrain.](figures/terrain_pedestrians_asia.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/terrain_pedestrians_asia.html)
-Pedestrians per minute in Asia as a terrain.
-
-[![Pedestrians per minute at night in Europe as a terrain: where streets stay busy after dark.](figures/terrain_pedestrians_night_europe.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/terrain_pedestrians_night_europe.html)
-Pedestrians per minute at night in Europe as a terrain: where streets stay busy after dark.
-
-[![Pedestrians per minute at night in North America as a terrain.](figures/terrain_pedestrians_night_north_america.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/terrain_pedestrians_night_north_america.html)
-Pedestrians per minute at night in North America as a terrain.
-
-[![Pedestrians per minute at night in Asia as a terrain.](figures/terrain_pedestrians_night_asia.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/terrain_pedestrians_night_asia.html)
-Pedestrians per minute at night in Asia as a terrain.
 
 [![Pedestrians per minute per US county (counties with at least an hour of analysed footage).](figures/map_us_counties_pedestrians.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/map_us_counties_pedestrians.html)
 Pedestrians per minute per US county (counties with at least an hour of analysed footage).

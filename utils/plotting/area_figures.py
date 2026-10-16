@@ -4,27 +4,23 @@ Maps by area and 3D views of where the footage (and, with YOLO detections, the r
 - County and region maps: localities are assigned to US counties and European NUTS-2 regions by their coordinates
   (point in polygon), and each area is coloured by its footage, footage per million people or share of night
   footage (or detections per minute).
-- Terrain views: a smoothed surface of footage, population or detections per minute over a tilted flat map, as in
-  population-density "mountain" maps; and flat spike maps of a country, one spike per locality.
+- Spike maps: a country as a tilted flat map, one spike per locality.
+- Smoothed maps: a value per locality spread over the land, with callouts at the highest and lowest places.
 
 Outlines and populations are public downloads, cached in _output/geo_cache (refreshed every half year): US
 counties (plotly's datasets) and their populations (US Census Bureau estimates), NUTS-2 regions (Eurostat GISCO)
-and their populations (Eurostat), and cities of over 15,000 people (GeoNames) for population terrains. A figure
-whose download fails is skipped.
+and their populations (Eurostat). A figure whose download fails is skipped.
 """
 
-import io
 import json
 import math
 import os
 import time
-import zipfile
 
 import numpy as np
 import plotly.graph_objects as go
 import polars as pl
 import requests
-from plotly.subplots import make_subplots
 
 import common
 from custom_logger import CustomLogger
@@ -42,11 +38,9 @@ SOURCES = {
                   "NUTS_RG_20M_2021_4326_LEVL_2.geojson",
     "nuts2_population.json": "https://ec.europa.eu/eurostat/api/dissemination/statistics/1.0/data/demo_r_d2jan"
                              "?sex=T&age=TOTAL&lastTimePeriod=1&format=JSON&lang=EN",
-    "cities15000.zip": "https://download.geonames.org/export/dump/cities15000.zip",
 }
 EUROPE_VIEW = dict(projection_type="natural earth", lonaxis_range=[-25, 45], lataxis_range=[34, 71.5])
-# (lon min, lon max, lat min, lat max) of the terrain views
-BOXES = {"Europe": (-11, 42, 34.5, 71), "North America": (-128, -60, 14, 58), "Asia": (60, 150, -10, 55)}
+# (lon min, lon max, lat min, lat max) of the spike maps
 SPIKE_BOXES = {"USA": (-125, -66.5, 24, 49.5), "RUS": (19, 180, 41, 78), "JPN": (128.5, 146, 30, 46)}
 MIN_HOURS_AREA = 1  # areas with less footage (or analysed footage) are left out of share and rate maps
 
@@ -249,7 +243,7 @@ def _detection_area_maps(d: pl.DataFrame, df_mapping: pl.DataFrame, flags: dict,
                                       "hour")
 
 
-# --- terrain and spikes -----------------------------------------------------------------------------------------
+# --- spikes -----------------------------------------------------------------------------------------------
 
 def _blur(grid: np.ndarray, sigma_y: float, sigma_x: float) -> np.ndarray:
     """Gaussian blur (sigmas in cells), with numpy only."""
@@ -260,24 +254,14 @@ def _blur(grid: np.ndarray, sigma_y: float, sigma_x: float) -> np.ndarray:
     return grid
 
 
-def _surface(lon, lat, w, box, cell: float, sigma_km: float = 40, rate=None) -> tuple:
-    """(lon centres, lat centres, grid) of the smoothed sum of weights `w` per cell, or with `rate` the smoothed
-    weighted mean of `rate` (weights `w`), 0 where there is too little weight."""
+def _surface(lon, lat, w, box, cell: float, sigma_km: float = 40) -> tuple:
+    """(lon centres, lat centres, grid) of the smoothed sum of weights `w` per cell."""
     nx, ny = int((box[1] - box[0]) / cell), int((box[3] - box[2]) / cell)
     rng = [[box[2], box[3]], [box[0], box[1]]]
     sy = sigma_km / 111 / cell
     sx = sy / max(math.cos(math.radians((box[2] + box[3]) / 2)), 0.2)
     weight, _, _ = np.histogram2d(lat, lon, bins=[ny, nx], range=rng, weights=w)
-    weight = _blur(weight, sy, sx)
-    if rate is not None:
-        num, _, _ = np.histogram2d(lat, lon, bins=[ny, nx], range=rng, weights=w * rate)
-        num = _blur(num, sy, sx)
-        mean = num / np.maximum(weight, 1e-12)
-        # fade out where there is little footage, so places without data are flat rather than cut off by cliffs
-        k = np.percentile(weight[weight > 0], 50) if (weight > 0).any() else 1
-        grid = mean * weight / (weight + k)
-    else:
-        grid = weight
+    grid = _blur(weight, sy, sx)
     return (np.linspace(box[0], box[1], nx + 1)[:-1] + cell / 2, np.linspace(box[2], box[3], ny + 1)[:-1] + cell / 2,
             grid)
 
@@ -309,102 +293,8 @@ def _scene(box, z_max: float, distance: float = 1.0) -> dict:
                             up=dict(x=0, y=0, z=1)))
 
 
-def _terrain_traces(lons, lats, grid, box, colorscale, labels: pl.DataFrame | None, hover_pts: pl.DataFrame | None):
-    """Surface, borders, peak labels and hover points of one terrain."""
-    z = grid / grid.max() if grid.max() > 0 else grid
-    traces = [go.Surface(x=lons, y=lats, z=np.round(z, 4), surfacecolor=z, colorscale=colorscale, cmin=0, cmax=1,
-                         showscale=False, hoverinfo="skip", opacity=1,
-                         lighting=dict(ambient=0.75, diffuse=0.6, specular=0.05, roughness=0.9))]
-    bx, by = _borders(box)
-    traces.append(go.Scatter3d(x=bx, y=by, z=[0.003 if v is not None else None for v in bx], mode="lines",
-                               line=dict(color="#555555", width=1.5), hoverinfo="skip", showlegend=False))
-
-    def height(lon, lat):  # the top of the peak around a point (a few cells either way)
-        i = int(np.clip(np.searchsorted(lats, lat), 0, len(lats) - 1))
-        j = int(np.clip(np.searchsorted(lons, lon), 0, len(lons) - 1))
-        return z[max(i - 3, 0):i + 4, max(j - 3, 0):j + 4].max()
-    if labels is not None and labels.height:
-        traces.append(go.Scatter3d(x=labels["lon"], y=labels["lat"],
-                                   z=[height(x, y) + 0.04 for x, y in zip(labels["lon"], labels["lat"])],
-                                   mode="text", text=labels["name"], textfont=dict(size=12, color="#222222"),
-                                   hoverinfo="skip", showlegend=False))
-    if hover_pts is not None and hover_pts.height:
-        traces.append(go.Scatter3d(x=hover_pts["lon"], y=hover_pts["lat"], z=[0.006] * hover_pts.height,
-                                   mode="markers", marker=dict(size=1.5, color="#555555", opacity=0.3),
-                                   text=hover_pts["hover"], hovertemplate=hover.GL_TEMPLATE, showlegend=False))
-    return traces
-
-
 def _in_box(df: pl.DataFrame, box) -> pl.DataFrame:
     return df.filter(pl.col("lon").is_between(box[0], box[1]), pl.col("lat").is_between(box[2], box[3]))
-
-
-def _terrains(pts: pl.DataFrame, value: str, name: str, colorscale, note: str, rate: bool = False):
-    """Terrain views of `value` per locality for each region in BOXES (pts: lon, lat, name, hover, `value`, and
-    minutes with `rate`, the weights of a smoothed mean)."""
-    from utils.plotting import dataset_figures as dfig
-    for region, box in BOXES.items():
-        p = _in_box(pts, box).filter(pl.col(value) > 0)
-        if p.height < 3:
-            continue
-        cell = 0.25 if region == "Europe" else 0.35
-        if rate:
-            lons, lats, grid = _surface(p["lon"].to_numpy(), p["lat"].to_numpy(), p["minutes"].to_numpy(), box,
-                                        cell, rate=p[value].to_numpy())
-        else:
-            lons, lats, grid = _surface(p["lon"].to_numpy(), p["lat"].to_numpy(), p[value].to_numpy(), box, cell)
-        # labelled: the localities with the most footage (with `rate`, the most analysed footage)
-        labels = p.sort("minutes" if rate else value, descending=True).head(10)
-        fig = go.Figure(_terrain_traces(lons, lats, grid, box, colorscale, labels, p))
-        fig.update_layout(scene=_scene(box, 1.0))
-        fig.add_annotation(text=f"{region}: {note}", x=0.01, y=0.01, xref="paper", yref="paper", showarrow=False,
-                           xanchor="left", font=dict(size=15, color="#555555"))
-        dfig._save(dfig._style(fig, width=1600, height=1000, margin=dict(l=0, r=0, t=0, b=0)),
-                   f"{name}_{region.lower().replace(' ', '_')}", save_eps=False)
-
-
-def _cities(iso2: str) -> pl.DataFrame | None:
-    """Cities of over 15,000 people in a country (GeoNames): lon, lat, name, population."""
-    path = _fetch("cities15000.zip")
-    if not path:
-        return None
-    with zipfile.ZipFile(path) as z:
-        raw = z.read("cities15000.txt")
-    df = pl.read_csv(io.BytesIO(raw), separator="\t", has_header=False, quote_char=None, infer_schema_length=0)
-    df = df.select(pl.nth(1).alias("name"), pl.nth(4).cast(pl.Float64).alias("lat"),
-                   pl.nth(5).cast(pl.Float64).alias("lon"), pl.nth(8).alias("iso2"),
-                   pl.nth(14).cast(pl.Float64).alias("population"))
-    return df.filter(pl.col("iso2") == iso2)
-
-
-def _population_vs_footage(locs: pl.DataFrame, iso3: str, iso2: str, country: str, name: str):
-    """A country's population terrain (GeoNames cities) next to its footage terrain."""
-    from utils.plotting import dataset_figures as dfig
-    shape = map_labels.country_shapes().get(iso3)
-    cities = _cities(iso2)
-    if shape is None or cities is None or not cities.height:
-        return
-    xs = [x for r in shape["rings"] for x, _ in r]
-    ys = [y for r in shape["rings"] for _, y in r]
-    box = (min(xs) - 0.5, max(xs) + 0.5, min(ys) - 0.5, max(ys) + 0.5)
-    cell = max(box[1] - box[0], box[3] - box[2]) / 160
-    foot = locs.filter(pl.col("iso3") == iso3, pl.col("hours") > 0)
-    fig = make_subplots(rows=1, cols=2, specs=[[{"type": "scene"}, {"type": "scene"}]], horizontal_spacing=0.0,
-                        subplot_titles=["Population (cities of over 15,000 people)",
-                                        f"Footage in the dataset ({foot['hours'].sum():,.0f} hours)"])
-    big = cities.sort("population", descending=True).head(8)
-    for col, (pts, weights, labels, hov) in enumerate([
-            (cities, "population", big, None),
-            (foot, "hours", foot.sort("hours", descending=True).head(8), foot)], 1):
-        lons, lats, grid = _surface(pts["lon"].to_numpy(), pts["lat"].to_numpy(), pts[weights].to_numpy(), box,
-                                    cell, sigma_km=25)
-        for t in _terrain_traces(lons, lats, grid, box, "YlOrRd", labels, hov):
-            fig.add_trace(t, row=1, col=col)
-    fig.update_layout(scene=_scene(box, 1.0, distance=1.45), scene2=_scene(box, 1.0, distance=1.45))
-    fig.update_annotations(font_size=18)
-    fig.add_annotation(text=f"{country}: each terrain scaled to its own highest peak", x=0.5, y=0.955, xref="paper",
-                       yref="paper", showarrow=False, font=dict(size=14, color="#555555"))
-    dfig._save(dfig._style(fig, width=1600, height=850, margin=dict(l=0, r=0, t=40, b=0)), name, save_eps=False)
 
 
 def _spike_map(locs: pl.DataFrame, iso3: str, name: str, country: str):
@@ -703,13 +593,9 @@ def _localities(seg: pl.DataFrame, df_mapping: pl.DataFrame, loc_hover: pl.DataF
 
 
 def dataset_area_figures(df_mapping: pl.DataFrame, seg: pl.DataFrame, loc_hover: pl.DataFrame, flags: dict):
-    """County and region maps, footage terrains, population against footage and spike maps (from the mapping)."""
+    """County and region maps, spike maps and smoothed maps of the footage (from the mapping)."""
     _area_maps(seg, df_mapping, flags)
     locs = _localities(seg, df_mapping, loc_hover, flags)
-    _terrains(locs, "hours", "terrain_footage", "YlOrRd", "height and colour show the footage (hours), smoothed over "
-              "~40 km")
-    for iso3, iso2, country in [("IND", "IN", "India"), ("NGA", "NG", "Nigeria")]:
-        _population_vs_footage(locs, iso3, iso2, country, f"terrain_population_footage_{country.lower()}")
     for iso3, country in [("USA", "United States"), ("RUS", "Russia"), ("JPN", "Japan")]:
         _spike_map(locs, iso3, f"spikes_footage_{iso3.lower()}", country)
     _field_maps(locs)
@@ -717,20 +603,7 @@ def dataset_area_figures(df_mapping: pl.DataFrame, seg: pl.DataFrame, loc_hover:
 
 def detection_area_figures(df_mapping: pl.DataFrame, d: pl.DataFrame, classes: list, loc_hover: pl.DataFrame,
                            flags: dict):
-    """Pedestrian and night-life terrains and county and region maps of road users (from YOLO detections; `d`: one
-    row per analysed segment with id, seconds, minutes, night and a count column per class)."""
-    person = classes[0]
-    pts = (d.group_by("id").agg((pl.col(person).sum() / pl.sum("minutes")).alias("rate"), pl.sum("minutes"))
-            .join(df_mapping.select("id", "locality", "iso3", "lat", "lon"), on="id").join(loc_hover, on="id")
-            .drop_nulls(["lat", "lon"])
-            .with_columns(pl.concat_str([pl.col("iso3").replace_strict(flags, default="🏳️"), pl.col("locality")],
-                                        separator=" ").alias("name")))
-    _terrains(pts, "rate", "terrain_pedestrians", "YlOrRd", "height and colour show pedestrians per minute, "
-              "smoothed over ~40 km (weighted by analysed footage)", rate=True)
-    night = (d.filter(pl.col("night")).group_by("id")
-              .agg((pl.col(person).sum() / pl.sum("minutes")).alias("rate"), pl.sum("minutes"))
-              .join(pts.select("id", "locality", "iso3", "lat", "lon", "hover", "name"), on="id"))
-    _terrains(night, "rate", "terrain_pedestrians_night", "Purples", "height and colour show pedestrians per minute "
-              "at night, smoothed over ~40 km", rate=True)
+    """County and region maps and smoothed maps of road users (from YOLO detections; `d`: one row per analysed
+    segment with id, seconds, minutes, night and a count column per class)."""
     _detection_area_maps(d, df_mapping, flags, classes)
     _detection_field_maps(d, df_mapping, flags, classes)
