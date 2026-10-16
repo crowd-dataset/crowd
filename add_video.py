@@ -18,6 +18,7 @@ import ast
 import io
 import json
 import math
+import time
 import re
 import unicodedata
 from geopy.geocoders import Nominatim
@@ -1702,14 +1703,20 @@ def get_worldpop_population(lat, lon, km=3):
     n = 24
     ring = [[lon + km / (111.32 * math.cos(math.radians(lat))) * math.cos(2 * math.pi * i / n),
              lat + km / 110.57 * math.sin(2 * math.pi * i / n)] for i in range(n)]
-    shape = {'type': 'FeatureCollection', 'features': [{'type': 'Feature', 'properties': {},
-                                                        'geometry': {'type': 'Polygon', 'coordinates': [ring + ring[:1]]}}]}
-    try:
-        r = requests.get('https://api.worldpop.org/v1/services/stats', timeout=120,
-                         params={'dataset': 'wpgppop', 'year': 2020, 'geojson': json.dumps(shape), 'runasync': 'false'})
-        return int(round(r.json().get('data', {}).get('total_population') or 0))
-    except (RequestException, ValueError, AttributeError):
-        return 0
+    polygon = {'type': 'Polygon', 'coordinates': [ring + ring[:1]]}
+    shape = {'type': 'FeatureCollection', 'features': [{'type': 'Feature', 'properties': {}, 'geometry': polygon}]}
+    params = {'dataset': 'wpgppop', 'year': 2020, 'geojson': json.dumps(shape), 'runasync': 'false'}
+    # a few tries: a refused or empty answer left Chiweta and Dong Le without a population (2026-10-16)
+    for attempt in range(3):
+        try:
+            r = requests.get('https://api.worldpop.org/v1/services/stats', timeout=120, params=params)
+            if (pop := int(round(r.json().get('data', {}).get('total_population') or 0))):
+                return pop
+        except (RequestException, ValueError, AttributeError):
+            pass
+        if attempt < 2:
+            time.sleep(10)
+    return 0
 
 
 def get_country_average_height(iso3_code):
