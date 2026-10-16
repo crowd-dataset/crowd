@@ -1,5 +1,7 @@
 import pandas as pd
 from math import radians, sin, cos, sqrt, atan2
+import os
+os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # top folder: mapping.csv, ...
 
 RADIUS_KM = 2.0
 

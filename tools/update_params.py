@@ -6,6 +6,7 @@ import zipfile
 import pandas as pd
 import pycountry
 import requests
+os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # top folder: mapping.csv, ...
 
 mapping_path = "mapping.csv"
 height_path = "height_data.csv"

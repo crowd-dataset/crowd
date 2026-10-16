@@ -492,7 +492,7 @@ The code is open-source and free to use. It is aimed for, but not limited to, ac
 - `archive/`: old files no code uses any more (`mappingsubmitted.csv`)
 - `tests/`
 
-Run the scripts in `release/` and `tools/` from the top folder as modules, e.g. `python -m tools.update_traffic_index`.
+Run the scripts with the virtual environment active (see [Step 11](#step-11-run-the-scripts)).
 
 ## Getting started
 
@@ -660,29 +660,34 @@ Device: NVIDIA GeForce RTX 5090
 
 On a machine without a supported GPU, `CUDA available` will be `False` and the CPU version of PyTorch will be used.
 
-### Step 10: Add the datasets
+### Step 10: Create `config` and `secret`
 
-Place the required datasets, including `mapping.csv`, in the `data/` directory.
-
-The expected structure is:
-
-```text
-crowd/
-├── data/
-│   ├── mapping.csv
-│   └── ...
-├── analysis.py
-├── pyproject.toml
-└── ...
-```
-
-### Step 11: Run the analysis
-
-Run:
+`mapping.csv` (the videos, segments and localities) is in the top folder of the repository. Copy the two templates in the top folder:
 
 ```bash
-python analysis.py
+cp default.config config
+cp default.secret secret
 ```
+
+In `config`, set `data` to the folders that hold (or will hold) the YOLO output (`bbox/*.csv` in each), `videos` to the folders with the videos, and `mapping` to the mapping file (`mapping.csv`); the other parameters are described in [Configuration of project](#configuration-of-project). Without a `config`, `default.config` is used. Fill in only the keys of `secret` you need ([The `secret` file](#the-secret-file)); the analysis needs none.
+
+### Step 11: Run the scripts
+
+Run the scripts from the top folder of the repository with the virtual environment active:
+
+```bash
+python main.py       # download the videos and run YOLO on their segments (runs in a loop)
+python analysis.py   # tables and figures from the YOLO output in the data folders
+```
+
+The scripts in `tools/` and `release/` can be run as a file or as a module, and from any folder (they switch to the top folder, where `mapping.csv` and the other files are):
+
+```bash
+python tools/check_lists.py
+python -m tools.check_lists
+```
+
+The tests run with `python -m pytest tests` (after `uv pip install pytest`).
 
 
 ### Configuration of project

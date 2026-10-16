@@ -3,6 +3,8 @@ import pandas as pd
 import glob
 import shutil
 import ast
+import os
+os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # top folder: mapping.csv, ...
 
 
 def parse_nested_list(cell):

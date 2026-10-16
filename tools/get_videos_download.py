@@ -1,7 +1,10 @@
 # by Pavlo Bazilinskyy <pavlo.bazilinskyy@gmail.com>
 import os
 import pandas as pd
-import common
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # top folder: common, logmod, ...
+os.chdir(sys.path[0])  # files such as mapping.csv are opened relative to the top folder
+import common  # noqa: E402
 
 # get a list of already downloaded video files (assuming mp4 format)
 downloaded_videos = set()

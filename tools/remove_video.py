@@ -1,6 +1,8 @@
 import csv
 import re
 import ast  # Still useful for parsing numeric or nested lists like time_of_day
+import os
+os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # top folder: mapping.csv, ...
 
 
 def remove_video_data(input_file, output_file, video_ids_to_remove):

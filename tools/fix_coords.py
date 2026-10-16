@@ -14,6 +14,7 @@ import os
 import subprocess
 
 from flask import Flask, jsonify, render_template_string, request
+os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # top folder: mapping.csv, ...
 
 MAPPING = 'mapping.csv'
 FIXES = '_output/coords_fixes.json'

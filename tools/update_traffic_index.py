@@ -25,7 +25,10 @@ from datetime import datetime, timezone
 
 import requests
 
-import common
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # top folder: common, logmod, ...
+os.chdir(sys.path[0])  # files such as mapping.csv are opened relative to the top folder
+import common  # noqa: E402
 
 URL = "https://api.tomtom.com/traffic/services/4/flowSegmentData/absolute/10/json"
 LOG = "logs/traffic_index_log.csv"

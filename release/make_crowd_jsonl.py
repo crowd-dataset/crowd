@@ -40,7 +40,9 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-from release import split_large_files
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # top folder: common, logmod, ...
+os.chdir(sys.path[0])  # files such as mapping.csv are opened relative to the top folder
+from release import split_large_files  # noqa: E402
 
 # -----------------------------------------------------------------------------
 # Edit these paths when running without positional arguments.

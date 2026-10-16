@@ -17,7 +17,11 @@ from pathlib import Path
 from typing import Any, Dict, List, Set, Tuple
 
 import pandas as pd
-import common
+import os
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # top folder: common, logmod, ...
+os.chdir(sys.path[0])  # files such as mapping.csv are opened relative to the top folder
+import common  # noqa: E402
 
 
 # =========================

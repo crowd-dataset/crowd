@@ -30,8 +30,10 @@ import sys
 import time
 import uuid
 
-import common
-from helper_script import Youtube_Helper
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # top folder: common, logmod, ...
+os.chdir(sys.path[0])  # files such as mapping.csv are opened relative to the top folder
+import common  # noqa: E402
+from helper_script import Youtube_Helper  # noqa: E402
 
 CHECK_S = 3600            # how often the mapping on GitHub is read again
 RETRY_S = 86400           # a video that failed is tried again after this long

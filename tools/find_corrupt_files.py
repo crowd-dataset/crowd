@@ -18,10 +18,12 @@ import os
 import shutil
 import subprocess
 import sys
-import common
-from dataclasses import dataclass
-from pathlib import Path
-from typing import Iterable, Optional, Tuple, List
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # top folder: common, logmod, ...
+os.chdir(sys.path[0])  # files such as mapping.csv are opened relative to the top folder
+import common  # noqa: E402
+from dataclasses import dataclass  # noqa: E402
+from pathlib import Path  # noqa: E402
+from typing import Iterable, Optional, Tuple, List  # noqa: E402
 
 # =========================
 # EDIT THESE PATHS

@@ -36,7 +36,9 @@ import re
 import sys
 from typing import Any, Dict, List, Optional, Tuple
 
-from custom_logger import CustomLogger
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # top folder: common, logmod, ...
+os.chdir(sys.path[0])  # files such as mapping.csv are opened relative to the top folder
+from custom_logger import CustomLogger  # noqa: E402
 
 
 def _parse_log_level(name: str) -> int:

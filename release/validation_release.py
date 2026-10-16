@@ -70,7 +70,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
-from release import make_crowd_jsonl, split_large_files
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # top folder: common, logmod, ...
+os.chdir(sys.path[0])  # files such as mapping.csv are opened relative to the top folder
+from release import make_crowd_jsonl, split_large_files  # noqa: E402
 
 # Progress bars
 try:
