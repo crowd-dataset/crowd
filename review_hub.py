@@ -98,7 +98,6 @@ background:#fff;color:#222;font-size:13px;cursor:pointer}
  <span class="s">{% if b.row %}· row {{ b.row }} {% endif %}· {{ b.state }}</span></span>
  <span>{{ b.waiting }} of {{ b.proposed }} to review</span></a>
 {% else %}<p>Nothing to review.</p>{% endfor %}
-{% if done %}<p class="done">All decided: {{ done|join(', ') }}</p>{% endif %}
 <div class="acts">
 <button class="g" title="commit mapping.csv as it is now and push it to GitHub"
  onclick="act(this, '/push_mapping', 'Commit mapping.csv as it is now and push it to GitHub?')"
@@ -112,6 +111,7 @@ background:#fff;color:#222;font-size:13px;cursor:pointer}
 <button class="g" title="bring the workers' new proposals here now, instead of waiting for the hourly sync"
  onclick="act(this, '/fetch_batches')">Fetch new batches</button>
 </div>
+{% if done %}<p class="done">All decided: {{ done|join(', ') }}</p>{% endif %}
 <div id="pop"><span id="popmsg"></span>
 <button onclick="this.parentNode.style.display='none'" title="close">&times;</button></div>
 <script>
@@ -161,8 +161,7 @@ def index():
             health = json.load(f)
     except (OSError, ValueError):
         health = []
-    # "GPU 34%" -> one short coloured figure (user, 2026-10-13: on one line, high and low at a glance)
-    for w in health:
+    for w in health:  # "GPU 34%" -> one short coloured figure (user, 2026-10-13: on one line, high and low at a glance)
         m = re.match(r'(GPU|CPU) (\d+)%$', w.get('what', ''))
         w['kind'], w['pct'] = (m.group(1), int(m.group(2))) if m else (None, None)
         w['level'] = None if not m else 'hi' if w['pct'] >= 60 else 'mid' if w['pct'] >= 30 else 'lo'
