@@ -275,7 +275,9 @@ def sheet_scores(sheet_path, scenes, prefix='', bottom=False):
         shutil.rmtree(work_dir, ignore_errors=True)
 
 
-STEP_BOB_WALK, STEP_BOB_HINT = 0.75, 0.6  # step_bob: left out as a walk / a note to check
+# step_bob: left out as a walk (not offered for review: user, 2026-10-16; of 649 reviewed videos, 0.65+ in 16
+# rejected and no approved one, whose highest is 0.62) / a note to check
+STEP_BOB_WALK, STEP_BOB_HINT = 0.65, 0.6
 
 
 BOB_EVERY_S = 45  # step_bob_track: one 15-s reading this often through the video
