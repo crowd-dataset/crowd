@@ -161,7 +161,8 @@ def index():
             health = json.load(f)
     except (OSError, ValueError):
         health = []
-    for w in health:  # "GPU 34%" -> one short coloured figure (user, 2026-10-13: on one line, high and low at a glance)
+    # "GPU 34%" -> one short coloured figure (user, 2026-10-13: on one line, high and low at a glance)
+    for w in health:
         m = re.match(r'(GPU|CPU) (\d+)%$', w.get('what', ''))
         w['kind'], w['pct'] = (m.group(1), int(m.group(2))) if m else (None, None)
         w['level'] = None if not m else 'hi' if w['pct'] >= 60 else 'mid' if w['pct'] >= 30 else 'lo'

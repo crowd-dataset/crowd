@@ -2656,6 +2656,20 @@ def exclusion_reason(meta):
     return None
 
 
+US_NAMES = {'united states', 'united states of america', 'usa', 'us'}
+
+
+def us_title(title):
+    """A title naming a place in the US: the country, a state (not Georgia, also a country: "Tbilisi, Georgia") or
+    a state's code after a comma ("Miami, FL"). Such videos of channels elsewhere wait for the US step (user,
+    2026-10-16)."""
+    t = english_states(title or '')
+    states = '|'.join(re.escape(x) for x in add_video.US_STATE_CODES if x != 'georgia')
+    codes = '|'.join(sorted(set(add_video.US_STATE_CODES.values())))
+    return bool('United States' in title_countries(title) or re.search(r'\bU\.?S\.?A\b', t)
+                or re.search(rf'\b(?:{states})\b', t, flags=re.I) or re.search(rf',\s*(?:{codes})\b', t))
+
+
 def title_countries(title):
     """The countries of the mapping a title names, not inside a US state's name: "New Jersey" is not Jersey,
     "Atlanta, Georgia" not the country."""
@@ -4509,7 +4523,7 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
     downloaded: each video is proposed whole from its metadata, and a later run with download analyses
     those not decided yet. only: just these video ids (to propose again ones taken out of the plan). single_city:
     a video through several localities (multi_city) is held back in the plan ("deferred"); deferred: propose those
-    now, and nothing else.
+    now, and nothing else ('us': the videos in the US of a channel elsewhere, held back until the US step).
     """
     os.makedirs(out_dir, exist_ok=True)
     plan_path = os.path.join(out_dir, 'plan.json')
@@ -4523,8 +4537,10 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
                 else:
                     plan[p['video']] = p
 
-    if deferred:  # the multi-city drives held back (single_city), now that everything else is done
-        only, single_city = {v for v, p in plan.items() if p.get('deferred')}, False
+    if deferred:  # the drives held back, now that everything else is done
+        kind = 'multi_city' if deferred is True else deferred
+        # the US step: drives within one city first there too
+        only, single_city = {v for v, p in plan.items() if p.get('deferred') == kind}, kind == 'us'
         for v in only:
             plan.pop(v)
     if os.path.exists(os.path.join(out_dir, CHANNEL_REJECTED)):  # "Reject the whole channel" on the review page
@@ -4680,6 +4696,14 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
                 scope.discard(vid)
                 continue  # search results come in no date order: older than the channel's newest video in the mapping
             reason = exclusion_reason(meta)
+            # footage from outside the US first (user, 2026-10-16): a channel elsewhere filming in the US waits
+            if not reason and not deferred and country.strip().lower() not in US_NAMES and us_title(meta['title']):
+                plan[vid] = {'video': vid, 'title': meta['title'], 'deferred': 'us',
+                             'exclude': 'held back for later: the title names a place in the US (footage from '
+                                        'outside the US first)'}
+                touched.append(vid)
+                commit([vid])
+                continue
             if not reason and single_city:
                 if single_home is None:
                     single_home = channel_home(meta.get('channel_id'), df, plan, country) or False
@@ -5043,6 +5067,12 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
         # refusing server) for a video that got none: the next run tries it again
         if failures_before == LOOKUP_FAILURES[0] or any(e.get('locality') for e in p.get('entries', [])):
             p['located'] = True
+        # ... and one found in the US without the title saying so ("Driving in Miami" from a channel elsewhere)
+        if not deferred and country.strip().lower() not in US_NAMES and undecided(p) and any(
+                len(e.get('locality') or ()) > 2 and e['locality'][2] == 'United States' for e in p.get('entries', [])):
+            plan[p['video']] = {'video': p['video'], 'title': p['title'], 'deferred': 'us',
+                                'exclude': 'held back for later: proposed in the US (footage from outside the US '
+                                           'first)'}
     commit(touched)
     kept = sum('entries' in p for p in new)
     print(f'{len(new)} videos added or re-analysed: {kept} proposed, {len(new) - kept} excluded -> {plan_path}')
@@ -6731,8 +6761,9 @@ if __name__ == '__main__':
                     help='only uploads newer than the channel\'s newest video in the mapping')
     ap.add_argument('--no-download', action='store_true',
                     help='propose whole videos from YouTube Data API metadata, without downloading or analysing')
-    ap.add_argument('--deferred', action='store_true',
-                    help='propose the drives through several localities that --single-city held back')
+    ap.add_argument('--deferred', nargs='?', const='multi_city',
+                    help='propose the drives through several localities that --single-city held back, or with "us" '
+                         'the videos in the US of a channel elsewhere')
     ap.add_argument('--single-city', action='store_true',
                     help='leave out drives from one town to another ("from A to B"): only drives within one city')
     ap.add_argument('--review', metavar='PLAN_JSON', help='open the review page for a plan file')

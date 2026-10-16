@@ -271,7 +271,7 @@ SINGLE_CITY_FIRST = True
 # countries, then theirs in the US (a US channel started here waits, its videos are not dropped), then the
 # held-back drives through several localities
 US_LATER = True
-US_NAMES = {'united states', 'united states of america', 'usa', 'us'}
+US_NAMES = ps.US_NAMES
 
 
 def run_chunk(url, country, chunk, single_city=False, new_only=False, deferred=False):
@@ -283,7 +283,7 @@ def run_chunk(url, country, chunk, single_city=False, new_only=False, deferred=F
         env.setdefault('YT_DLP_COOKIES', 'cookies.txt')
     cmd = [sys.executable, '-u', 'propose_segments.py', '--channel', url, '--country', country,
            '--limit', str(chunk)] + (['--single-city'] if single_city else []) + (['--new-only'] if new_only else []) \
-        + (['--deferred'] if deferred else [])
+        + (['--deferred'] + ([deferred] if isinstance(deferred, str) else []) if deferred else [])
     out = []
     with subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env) as proc:
         fd, pending, last, done = proc.stdout.fileno(), b'', time.time(), False
@@ -381,10 +381,11 @@ def refresh_todo(state, args):
     return [t[1:] for t in todo]
 
 
-def deferred_todo(state, args):
+def deferred_todo(state, args, kind='multi_city'):
     """[(None, state key, url, country, False)] of the channels here whose plans hold drives through several
-    localities held back by SINGLE_CITY_FIRST: the very last work, after the sheet and the refresh queue. Not on
-    the reviewing machine (--no-new), which has every machine's plans."""
+    localities held back by SINGLE_CITY_FIRST: the very last work, after the sheet and the refresh queue; with kind
+    'us', those holding videos in the US of a channel elsewhere (US_LATER), done in the US step. Not on the
+    reviewing machine (--no-new), which has every machine's plans."""
     if args.no_new:
         return []
     todo, seen = [], set()
@@ -394,13 +395,14 @@ def deferred_todo(state, args):
             continue
         try:
             with open(os.path.join(ROOT, c['name'], 'plan.json')) as f:
-                held = any(p.get('deferred') for p in json.load(f))
+                held = any(p.get('deferred') == kind for p in json.load(f))
         except (OSError, ValueError):
             continue
         url = c.get('url') or key.removeprefix('refresh:')
-        if held and state.get('deferred:' + url, {}).get('status') not in ('rejected', 'error'):
+        dkey = 'deferred:' + ('us:' if kind == 'us' else '') + url
+        if held and state.get(dkey, {}).get('status') not in ('rejected', 'error'):
             seen.add(c['name'])
-            todo.append((None, 'deferred:' + url, url, c.get('country') or '', False))
+            todo.append((None, dkey, url, c.get('country') or '', False))
     return todo
 
 
@@ -538,7 +540,8 @@ def main():
         def in_us(t):  # by the sheet's or queue's country, else the one found for the channel before
             return US_LATER and (t[3] or state.get(t[1], {}).get('country') or '').strip().lower() in US_NAMES
         todo = [t for t in todo if not in_us(t)] or [t for t in queue if not in_us(t)] \
-            or [t for t in todo if in_us(t)] or [t for t in queue if in_us(t)] or deferred_todo(state, args)
+            or [t for t in todo if in_us(t)] or [t for t in queue if in_us(t)] \
+            or (US_LATER and deferred_todo(state, args, 'us')) or deferred_todo(state, args)
         if not todo:
             log('no channel left to process; waiting for reviews and the sheet')
             time.sleep(IDLE_WAIT_S)
@@ -554,7 +557,8 @@ def main():
             log(f'SHEET: set row {n} ({url}) to Processing{BY}')
         c = state.setdefault(key, {'row': n, 'name': channel_name(url), 'status': 'processing',
                                    **({} if n is not None else {'refresh': True, 'url': url, 'new_only': new_only}),
-                                   **({'deferred': True} if key.startswith('deferred:') else {})})
+                                   **({'deferred': 'us' if key.startswith('deferred:us:') else True}
+                                      if key.startswith('deferred:') else {})})
         if c.get('deferred'):
             c['status'] = 'processing'  # held-back drives again since the last pass
         c['row'] = n
