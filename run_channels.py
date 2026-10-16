@@ -415,7 +415,8 @@ def push_code_on_change(every_s=60):
     while a long batch runs here (a night of 25-minute videos kept them away from 22:42 to 07:44), and twice a day
     write review_lessons.md. A thread of the reviewing machine's runner (--sync)."""
     import sync_workers  # the laptop's: it names the workers
-    seen, synced, lessons, checked = None, 0, 0, 0
+    threading.Thread(target=push_code_loop, args=(every_s,), daemon=True).start()
+    synced, lessons, checked = 0, 0, 0
     while True:
         if time.time() - lessons > 12 * 3600:  # what the reviews overrule, twice a day (user, 2026-10-11)
             try:
@@ -437,8 +438,19 @@ def push_code_on_change(every_s=60):
             except subprocess.TimeoutExpired:
                 log('the worker sync took over 30 min: stopped it, next try in an hour')
             synced = time.time()
+        time.sleep(every_s)
+
+
+def push_code_loop(every_s):
+    """Forever: send the code to the worker machines when a .py file here changes, and once at the start (what changed
+    while this runner restarted). Its own thread: in push_code_on_change's loop the hourly sync (up to 30 min) and the
+    review lessons (up to an hour) held it back, and a restart forgot a change not sent yet (lin5080 ran 18:53's code
+    until 19:15 on 2026-10-16)."""
+    import sync_workers
+    seen = None
+    while True:
         now = {f: os.path.getmtime(f) for f in os.listdir('.') if f.endswith('.py')}
-        if seen is not None and now != seen:
+        if now != seen:
             for host in sync_workers.WORKERS:
                 try:
                     pushed = sync_workers.push_code(host)
