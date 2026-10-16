@@ -329,6 +329,45 @@ def aerial_track(path, duration, work_dir):
     return sorted(_clip_scores(path, times, work_dir, AERIAL_SCENES).items())
 
 
+# a camera facing the driver, seen by CLIP (user, 2026-10-16: jykQR2dKANc, AlCduyvTAxI, 1MDz3XJ82Oc; the Haar face
+# detector misses a face turned away or in sunglasses): a frame every DRIVER_CLIP_EVERY_S within DRIVER_NEAR_S of a
+# frame with a face. On those three videos 200 of 210 frames of the driver scored 0.9+, 4 of 524 of the road, never
+# two in a row: DRIVER_CLIP_RUN readings in a row at DRIVER_CLIP_SURE or more are the driver
+DRIVER_SCENES = (['a person driving a car, filmed from the dashboard', 'a selfie of a driver inside a car',
+                  'the face of a man sitting in a car', 'a person talking to the camera inside a car',
+                  'a road seen through a car windshield', 'a city street seen from a driving car',
+                  'a highway seen from a car', 'a residential street seen from a car', 'traffic ahead on a road',
+                  'a parking lot'], 4, 'a photo of ')
+DRIVER_CLIP_EVERY_S, DRIVER_NEAR_S, DRIVER_CLIP_SURE, DRIVER_CLIP_RUN = 10, 300, 0.9, 2
+
+
+def driver_clip_track(path, face, work_dir):
+    """[(second, CLIP score of DRIVER_SCENES)] every DRIVER_CLIP_EVERY_S within DRIVER_NEAR_S of a face frame."""
+    seen = np.flatnonzero(np.asarray(face) > 0) / FPS
+    if not len(seen):
+        return []
+    times = [float(t) for t in np.arange(DRIVER_CLIP_EVERY_S / 2, len(face) / FPS, DRIVER_CLIP_EVERY_S)
+             if np.abs(seen - t).min() <= DRIVER_NEAR_S]
+    return sorted(_clip_scores(path, times, work_dir, DRIVER_SCENES).items())
+
+
+def driver_clip_runs(sig):
+    """[(first frame, end frame)] of DRIVER_CLIP_RUN or more driver_clip readings in a row that are sure."""
+    dc = np.asarray(sig.get('driver_clip', np.zeros((0, 2)))).reshape(-1, 2)
+    out, run = [], []
+    for t, score in dc:
+        if score >= DRIVER_CLIP_SURE and (not run or t - run[-1] <= 1.5 * DRIVER_CLIP_EVERY_S):
+            run.append(t)
+            continue
+        if len(run) >= DRIVER_CLIP_RUN:
+            out.append(run)
+        run = [t] if score >= DRIVER_CLIP_SURE else []
+    if len(run) >= DRIVER_CLIP_RUN:
+        out.append(run)
+    half = DRIVER_CLIP_EVERY_S / 2
+    return [(int(max(0, r[0] - half) * FPS), int((r[-1] + half) * FPS)) for r in out]
+
+
 # night both ways, over the whole video: dusk with the street lights on counts as night, as the reviews label it
 # (lmALZy7EF-g 27:47-37:47; user, 2026-10-16). On 374 approved segments (104 the brightness rules got wrong, 270
 # right) taking CLIP's label where it is sure (0.2/0.8) fixed 54 and broke 3; CLIP alone was right on 334
@@ -945,6 +984,11 @@ def propose(sig, p=PARAMS):
         # a few close faces (passers-by) are no camera on the driver: a hint under DRIVER_CUT_SHARE (user,
         # 2026-10-14: 248nL9hGz8s split at 10:52-11:44 for 13%; 8 of the 12 cuts approved across were under 0.2)
         sure = [share[a:b].max() >= DRIVER_CUT_SHARE for a, b in runs]
+        # ... and where CLIP sees the driver, face or not (driver_clip_runs)
+        for run in driver_clip_runs(sig):
+            k = int(np.searchsorted([a for a, _ in runs], run[0]))
+            runs.insert(k, run)
+            sure.insert(k, True)
         # ... unless next to a cut one, and then the footage between them is the driver too, the face turned away for
         # a while (1MDz3XJ82Oc 0:57-1:57; user, 2026-10-16): in reviewed videos, of 67 hint runs next to a cut one
         # within DRIVER_GAP_S none was approved, of 92 stretches between two cut ones 3
@@ -2428,6 +2472,8 @@ def analyse_video(video_id, out_dir, meta=None):
         lit = np.array(light_spots_track(path, meta.get('duration')), float).reshape(-1, 3)
         sig['spots'], sig['lamps'] = lit[:, :2], lit[:, [0, 2]]
         sig['aerial'] = np.array(aerial_track(path, meta.get('duration'), work_dir), float).reshape(-1, 2)
+        driver = driver_clip_track(path, sig.get('face', np.zeros(0)), work_dir)
+        sig['driver_clip'] = np.array(driver, float).reshape(-1, 2)
         track = step_bob_track(path, meta.get('duration'))  # the whole video's measure is its middle
         sig['bob_track'] = np.array(track, float).reshape(-1, 2)
         sig['step_bob'] = np.array(np.median([x for _, x in track]) if len(track) >= 3 else 0, float)
