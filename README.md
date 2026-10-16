@@ -943,9 +943,6 @@ Hours of footage per million people per US county (population: US Census Bureau 
 [![Share of night footage per US county](figures/map_us_counties_night_share.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/map_us_counties_night_share.html)
 Share of footage recorded at night per US county (counties with at least an hour of footage).
 
-[![Footage per locality in the United States as spikes](figures/spikes_footage_usa.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/spikes_footage_usa.html)
-One spike per locality in the United States; height and colour show its hours of footage (log scale).
-
 [![Footage per European region](figures/map_eu_regions_footage.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/map_eu_regions_footage.html)
 Footage per European region (Eurostat NUTS 2: EU, EFTA and candidate countries; not the United Kingdom, Ukraine or Russia).
 
@@ -969,6 +966,9 @@ Population (cities of over 15,000 people, GeoNames) next to footage in India, ea
 
 [![Population and footage in Nigeria as terrains](figures/terrain_population_footage_nigeria.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/terrain_population_footage_nigeria.html)
 Population next to footage in Nigeria: the footage comes from a few places, while the population is spread over many cities.
+
+[![Footage per locality in the United States as spikes](figures/spikes_footage_usa.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/spikes_footage_usa.html)
+One spike per locality in the United States; height and colour show its hours of footage (log scale).
 
 [![Footage per locality in Russia as spikes](figures/spikes_footage_rus.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/spikes_footage_rus.html)
 One spike per locality in Russia.
