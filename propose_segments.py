@@ -310,7 +310,8 @@ NIGHT_EVERY_S, NIGHT_SCENE_DAY = 30, 0.1
 # with even 2 of 8 frames aerial
 AERIAL_SCENES = (['an aerial view from a drone', "a bird's-eye view of a city", 'a drone shot of the coast',
                   'a road seen through a car windshield', 'a city street seen from a driving car',
-                  'a highway seen from a car', 'a residential street seen from a car', 'a person walking on a sidewalk',
+                  'a highway seen from a car', 'a residential street seen from a car',
+                  'a person walking on a sidewalk',
                   'the inside of a car', 'a person talking to the camera', 'a parking lot'], 3, 'a photo of ')
 AERIAL_FRAMES, AERIAL_SHARE = 8, 0.5
 
@@ -1896,7 +1897,8 @@ def gap_reason(note, a, b, night_change=False):
     whose stretch meets the gap a-b (s), a cut in the picture or an edit cut at it, a switch between day and night."""
     out = []
     for item in (note or '').split('; '):
-        if (item.startswith('possibly') and not item.startswith('possibly dusk')) or '(kept' in item or 'kept:' in item:
+        if ((item.startswith('possibly') and not item.startswith('possibly dusk'))
+                or '(kept' in item or 'kept:' in item):
             continue  # a hint that left the footage in; dusk stays: a split at it outlives a changed day/night
             # (3ivZS04LX78: the reason was gone once both sides were set to night; user, 2026-10-16)
         if (m := re.match(r'(.+?) (\d+)-(\d+)s\b', item)) and int(m.group(2)) <= b + 2 and int(m.group(3)) >= a - 2:
@@ -4654,8 +4656,10 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
                 cached = json.load(f)
         except (OSError, ValueError):
             cached = {}
-        if only is not None:  # chosen videos need no listing: a search URL's results or a channel YouTube will not list
-            ids = sorted(only)  # may lack them (AbaoAmbience, CaliforniaGoldenState: 32 left out for good, 2026-10-14)
+        # chosen videos need no listing: a search URL's results or a channel YouTube will not list may lack them
+        # (AbaoAmbience, CaliforniaGoldenState: 32 left out for good, 2026-10-14)
+        if only is not None:
+            ids = sorted(only)
         elif cached.get('date') == today and cached.get('url') == url:
             ids = cached['ids']
         else:
@@ -4994,7 +4998,8 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
             # a freeway drive whose only place is a region or a sight, or none: no town to give it, unless its GPS
             # overlay says (HXJ9w8h4CwA, "Southern California freeway drive" was Los Angeles; user, 2026-10-16)
             sig_path = os.path.join(out_dir, f"{p['video']}_signals.npz")
-            if (HIGHWAY_TITLE.search(p['title'] or '') and not (found and _name_key(found[0][0]) in _name_key(found[1]))
+            if (HIGHWAY_TITLE.search(p['title'] or '')
+                    and not (found and _name_key(found[0][0]) in _name_key(found[1]))
                     and not (os.path.exists(sig_path) and 'gps' in np.load(sig_path).files)):
                 p.pop('entries')
                 p['exclude'] = 'freeway drive with no town named (title, description, chapters or GPS)'
@@ -5093,8 +5098,9 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
         if failures_before == LOOKUP_FAILURES[0] or any(e.get('locality') for e in p.get('entries', [])):
             p['located'] = True
         # ... and one found in the US without the title saying so ("Driving in Miami" from a channel elsewhere)
-        if not deferred and country.strip().lower() not in US_NAMES and undecided(p) and any(
-                len(e.get('locality') or ()) > 2 and e['locality'][2] == 'United States' for e in p.get('entries', [])):
+        in_us = any(len(e.get('locality') or ()) > 2 and e['locality'][2] == 'United States'
+                    for e in p.get('entries', []))
+        if not deferred and country.strip().lower() not in US_NAMES and undecided(p) and in_us:
             plan[p['video']] = {'video': p['video'], 'title': p['title'], 'deferred': 'us',
                                 'exclude': 'held back for later: proposed in the US (footage from outside the US '
                                            'first)'}
