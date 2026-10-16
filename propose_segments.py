@@ -1511,6 +1511,7 @@ SKIP_STOP_S, SKIP_STOP_MOTION, SKIP_SAME_NCC = 2, 0.2, 0.9  # a car pulling away
 # sky change across an edit cut that makes it a splice of night and day: on the approved segments 5 gives +363 s
 # right and none worse (XDBi8ukETEA, -TY9uuHDcP8, 7oAdCb9eINM); 30 lost 9eI2niyrIwo, -2,718 s
 STITCH_SKY_JUMP = 5
+HIGHWAY_GAP_S = 600  # a piece up to this long between rural/highway stretches of a highway title's video: no town
 DRIVER_GAP_S = 600  # footage between two camera-on-the-driver stretches up to this long is the driver too
 DRIVER_CUT_SHARE = 0.2  # face frames in a minute from which a camera on the driver is cut, not only noted
 WAIT_S, WAITS_PER_HOUR = 20, 3  # few waits at lights: see propose
@@ -4932,6 +4933,19 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
             # the rural and highway checks and a GPS overlay find (user, 2026-10-11: uVHGEdTyAXk, Galt to Tulare)
             if hit := HIGHWAY_TITLE.search(title_text(meta['title'])):
                 notes.append(f"the title mentions '{hit.group(0)}': check that only driving through towns is left")
+                # ... and a short piece between two rural or highway stretches is no town on the way (1Rz63qdJN38
+                # 17:21-20:08; user, 2026-10-16): in reviewed videos with a highway title, of 31 such pieces up to
+                # HIGHWAY_GAP_S 30 were rejected (of 147 in other videos 44 approved: those stay)
+                found = re.findall(r'(?:rural|highway) driving (\d+)-(\d+)s', '; '.join(notes))
+                spans = [(int(a), int(b)) for a, b in found]
+                gaps = [g for g in segments if g['end'] - g['start'] <= HIGHWAY_GAP_S
+                        and any(abs(b - g['start']) <= 3 for _, b in spans)
+                        and any(abs(a - g['end']) <= 3 for a, _ in spans)]
+                if gaps:
+                    segments = [g for g in segments if g not in gaps]
+                    notes.append('left out between highway stretches, no town: ' + ', '.join(
+                        f"{g['start'] // 60}:{g['start'] % 60:02d}-{g['end'] // 60}:{g['end'] % 60:02d}"
+                        for g in gaps))
             if not segments:
                 plan[vid] = {'video': vid, 'title': meta['title'],
                              'exclude': 'no usable footage left: ' + ('; '.join(notes) or 'too short')}
