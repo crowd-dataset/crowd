@@ -770,6 +770,19 @@ def get_latest_segment_values(start_times, end_times, time_of_day_values):
     return out
 
 
+COUNTRY_COLUMNS = ('population_country', 'traffic_mortality', 'literacy_rate', 'avg_height', 'med_age', 'gini')
+
+
+def mapping_country_values(iso3):
+    """Country-level values of a country already in the mapping (set by tools/update_params.py), so a new
+    locality matches its other localities; the web lookups below use other sources and years."""
+    df = load_csv(FILE_PATH)
+    same = df[df['iso3'] == iso3]
+    if same.empty:
+        return {}
+    return {c: ('' if pd.isna(v) else v) for c, v in same.iloc[0][list(COUNTRY_COLUMNS)].items()}
+
+
 def new_locality_row(locality, state, country, locality_aka=None, near=None, at=None):
     """Row values for a locality not yet in the mapping, looked up from the web services. near=(lat, lon): where
     the locality is known to be (footage filmed there); a lookup by name landing farther away found a namesake
@@ -809,7 +822,7 @@ def new_locality_row(locality, state, country, locality_aka=None, near=None, at=
         country_population = 1578000
     else:
         country_population = get_country_population(country_data)
-    return {
+    row = {
         'locality': locality,
         'locality_aka': f"[{','.join(aka)}]",  # as the mapping writes it
         'country': country,
@@ -841,6 +854,8 @@ def new_locality_row(locality, state, country, locality_aka=None, near=None, at=
         # empty when TomTom has no reading here, so it is not mistaken for free-flowing traffic (0)
         'traffic_index': '' if traffic is None else traffic
     }
+    row.update(mapping_country_values(iso3_code))
+    return row
 
 
 @app.route('/', methods=['GET', 'POST'])
