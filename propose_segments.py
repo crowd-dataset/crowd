@@ -5292,7 +5292,7 @@ background:#fff;color:#222;font-size:13px;cursor:pointer}
       <span id="vid-copied"></span></div>
     <div class="clock">Time: <span id="clock" title="click to copy">0:00</span> <span id="copied"></span></div>
     <div class="keys">Keys for the outlined segment (the one clicked last): <b>A</b> start here · <b>S</b> end here ·
-      <b>D</b> whole video · <b>Q</b> day · <b>W</b> night · <b>F</b> split time here</div>
+      <b>D</b> whole video · <b>Q</b> day · <b>W</b> night · <b>F</b> split time here · <b>C</b> copy the time</div>
     <div id="status"></div>
     {% if waiting > open_videos | length %}<div class="keys">Showing {{ open_videos | length }} of {{ waiting }}
       videos left to decide; the next appear as you finish these.</div>{% endif %}
@@ -5584,13 +5584,22 @@ setInterval(() => {
   document.querySelectorAll('tr.seg.active').forEach(r => { if (r !== row) r.classList.remove('active'); });
   if (row) row.classList.add('active');
 }, 250);
+function copyText(text) {
+  // the Clipboard API exists only on https and localhost; served from mini over http, the old way
+  if (navigator.clipboard) return navigator.clipboard.writeText(text).catch(() => {});
+  const box = Object.assign(document.createElement('textarea'), { value: text });
+  document.body.appendChild(box);
+  box.select();
+  document.execCommand('copy');
+  box.remove();
+}
 document.getElementById('vid').onclick = async () => {
-  await navigator.clipboard.writeText(document.getElementById('vid').textContent);
+  await copyText(document.getElementById('vid').textContent);
   document.getElementById('vid-copied').textContent = 'copied';
   setTimeout(() => { document.getElementById('vid-copied').textContent = ''; }, 1000);
 };
 document.getElementById('clock').onclick = async () => {
-  await navigator.clipboard.writeText(document.getElementById('clock').textContent);
+  await copyText(document.getElementById('clock').textContent);
   document.getElementById('copied').textContent = 'copied';
   setTimeout(() => { document.getElementById('copied').textContent = ''; }, 1000);
 };
@@ -5642,14 +5651,19 @@ document.addEventListener('keydown', e => {
   if (e.metaKey || e.ctrlKey || e.altKey) return;
   let key = e.key.toLowerCase();
   if (!/^[a-z]$/.test(key) && /^Key[A-Z]$/.test(e.code)) key = e.code.slice(3).toLowerCase();  // Cyrillic layouts
-  if (!['a', 's', 'd', 'q', 'w', 'f'].includes(key)) return;
+  if (!['a', 's', 'd', 'q', 'w', 'f', 'c'].includes(key)) return;
+  if (key === 'c') {  // the current time to the clipboard, as a click on it does (user, 2026-10-16)
+    e.preventDefault();
+    document.getElementById('clock').click();
+    return;
+  }
   const row = keyRow();
   if (!row) return;
   e.preventDefault();
   const t = Math.floor(ytPlayer.getCurrentTime());
   if (key === 'f') {  // current time into the Split box of the segment it falls in, and to the clipboard
     row.querySelector('input.at').value = fmt(t);
-    navigator.clipboard.writeText(fmt(t)).catch(() => {});
+    copyText(fmt(t));
     document.getElementById('copied').textContent = `${fmt(t)} in the Split box`;
     setTimeout(() => { document.getElementById('copied').textContent = ''; }, 1500);
   }
