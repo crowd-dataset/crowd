@@ -169,8 +169,8 @@ PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
 <style>
 :root{--bg:#f6f7f9;--card:#fff;--fg:#1b1f24;--muted:#667085;--line:#e4e7ec;--track:#eef0f3;--link:#2563eb;
  --ok:#16a34a;--warn:#d97706;--bad:#dc2626;--bar:#2563eb}
-@media (prefers-color-scheme:dark){:root{--bg:#0f1115;--card:#171a21;--fg:#e6e8ec;--muted:#8b93a1;--line:#272c36;
- --track:#232833;--link:#60a5fa;--ok:#4ade80;--warn:#fbbf24;--bad:#f87171;--bar:#60a5fa}}
+:root[data-theme=dark]{--bg:#0f1115;--card:#171a21;--fg:#e6e8ec;--muted:#8b93a1;--line:#272c36;
+ --track:#232833;--link:#60a5fa;--ok:#4ade80;--warn:#fbbf24;--bad:#f87171;--bar:#60a5fa}
 *{box-sizing:border-box}body{margin:0;padding:16px;background:var(--bg);color:var(--fg);
  font:14px/1.4 system-ui,-apple-system,"Segoe UI",sans-serif}
 a{color:var(--link);text-decoration:none}a:hover{text-decoration:underline}
@@ -197,7 +197,30 @@ th{color:var(--muted);font-weight:500}td.n,th.n{text-align:right;font-variant-nu
 .dl .scroll{position:relative;padding:0;min-height:200px}.dl .scroll>div{position:absolute;inset:0;overflow:auto}
 .dl .scroll th{position:sticky;top:0;background:var(--card)}
 @media (max-width:900px){.dl{grid-template-columns:1fr}.dl .scroll{height:400px}}
-</style></head><body>
+#theme{position:fixed;right:12px;bottom:12px;z-index:9999;padding:6px 10px;border:1px solid var(--line);
+border-radius:16px;background:var(--bg);color:var(--fg);font-size:13px;cursor:pointer}
+</style>
+<script>
+// dark unless switched to light, as on the review hub: a cookie, shared by all the pages of this host (any port)
+(function () {
+  const m = document.cookie.match(/(?:^|; )theme=(dark|light)/);
+  document.documentElement.dataset.theme = m ? m[1] : 'dark';
+  addEventListener('DOMContentLoaded', () => {
+    const b = document.createElement('button');
+    b.id = 'theme';
+    const label = () => { b.textContent = document.documentElement.dataset.theme === 'dark' ? '☀️ Light' : '🌙 Dark'; };
+    b.onclick = () => {
+      const t = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+      document.documentElement.dataset.theme = t;
+      document.cookie = `theme=${t}; path=/; max-age=31536000; SameSite=Lax`;
+      label();
+    };
+    label();
+    document.body.appendChild(b);
+  });
+})();
+</script>
+</head><body>
 <h1>🚚 Pipeline status</h1>
 <div class="muted small">snapshot {{ ago(s.at) }} ago (every 2 min) ·
  <a href="#" onclick="location.port=8770;return false">review hub</a>
@@ -298,13 +321,36 @@ LIST_PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1"><title>{{ title }}</title>
 <style>
 :root{--bg:#f6f7f9;--fg:#1b1f24;--muted:#667085;--line:#e4e7ec;--link:#2563eb}
-@media (prefers-color-scheme:dark){:root{--bg:#0f1115;--fg:#e6e8ec;--muted:#8b93a1;--line:#272c36;--link:#60a5fa}}
+:root[data-theme=dark]{--bg:#0f1115;--fg:#e6e8ec;--muted:#8b93a1;--line:#272c36;--link:#60a5fa}
 body{margin:0;padding:16px;background:var(--bg);color:var(--fg);font:14px/1.4 system-ui,-apple-system,sans-serif}
 a{color:var(--link);text-decoration:none}a:hover{text-decoration:underline}h1{font-size:20px;margin:0 0 4px}
 .muted{color:var(--muted)}table{border-collapse:collapse;margin-top:12px;font-size:13px}
 td,th{padding:3px 10px 3px 0;border-top:1px solid var(--line);text-align:left;white-space:nowrap}
 th{color:var(--muted);font-weight:500}td.t{white-space:normal;max-width:520px}td.n{text-align:right}
-</style></head><body><h1>🚚 {{ title }}</h1>
+#theme{position:fixed;right:12px;bottom:12px;z-index:9999;padding:6px 10px;border:1px solid var(--line);
+border-radius:16px;background:var(--bg);color:var(--fg);font-size:13px;cursor:pointer}
+</style>
+<script>
+// dark unless switched to light, as on the review hub: a cookie, shared by all the pages of this host (any port)
+(function () {
+  const m = document.cookie.match(/(?:^|; )theme=(dark|light)/);
+  document.documentElement.dataset.theme = m ? m[1] : 'dark';
+  addEventListener('DOMContentLoaded', () => {
+    const b = document.createElement('button');
+    b.id = 'theme';
+    const label = () => { b.textContent = document.documentElement.dataset.theme === 'dark' ? '☀️ Light' : '🌙 Dark'; };
+    b.onclick = () => {
+      const t = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+      document.documentElement.dataset.theme = t;
+      document.cookie = `theme=${t}; path=/; max-age=31536000; SameSite=Lax`;
+      label();
+    };
+    label();
+    document.body.appendChild(b);
+  });
+})();
+</script>
+</head><body><h1>🚚 {{ title }}</h1>
 <div class="muted"><a href="..">pipeline status</a> · {{ rows|length }} videos
 {% if note %} · {{ note }}{% endif %}</div>
 <table><tr>{% for c in cols %}<th>{{ c }}</th>{% endfor %}</tr>

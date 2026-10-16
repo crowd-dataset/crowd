@@ -53,8 +53,8 @@ PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
 <text y=%22.9em%22 font-size=%2290%22>🚐</text></svg>">
 <style>
 :root{--bg:#f6f7f9;--card:#fff;--fg:#1b1f24;--muted:#667085;--line:#e4e7ec;--link:#2563eb;--head:#eef0f3}
-@media (prefers-color-scheme:dark){:root{--bg:#0f1115;--card:#171a21;--fg:#e6e8ec;--muted:#8b93a1;--line:#272c36;
- --link:#60a5fa;--head:#1d2129}}
+:root[data-theme=dark]{--bg:#0f1115;--card:#171a21;--fg:#e6e8ec;--muted:#8b93a1;--line:#272c36;
+ --link:#60a5fa;--head:#1d2129}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif}
 main{max-width:1000px;margin:0 auto;padding:16px 16px 48px}
@@ -67,7 +67,30 @@ th,td{padding:4px 10px;border-bottom:1px solid var(--line);text-align:left;white
 th{background:var(--head);font-weight:600}td:nth-child(n+3){font-variant-numeric:tabular-nums}
 details{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:8px 14px;margin:10px 0}
 summary{cursor:pointer}code{font-size:90%;background:var(--head);padding:1px 4px;border-radius:4px}
-</style></head><body>
+#theme{position:fixed;right:12px;bottom:12px;z-index:9999;padding:6px 10px;border:1px solid var(--line);
+border-radius:16px;background:var(--bg);color:var(--fg);font-size:13px;cursor:pointer}
+</style>
+<script>
+// dark unless switched to light, as on the review hub: a cookie, shared by all the pages of this host (any port)
+(function () {
+  const m = document.cookie.match(/(?:^|; )theme=(dark|light)/);
+  document.documentElement.dataset.theme = m ? m[1] : 'dark';
+  addEventListener('DOMContentLoaded', () => {
+    const b = document.createElement('button');
+    b.id = 'theme';
+    const label = () => { b.textContent = document.documentElement.dataset.theme === 'dark' ? '☀️ Light' : '🌙 Dark'; };
+    b.onclick = () => {
+      const t = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+      document.documentElement.dataset.theme = t;
+      document.cookie = `theme=${t}; path=/; max-age=31536000; SameSite=Lax`;
+      label();
+    };
+    label();
+    document.body.appendChild(b);
+  });
+})();
+</script>
+</head><body>
 <header><h1>🚐 CROWD dataset</h1>
 <p>Built nightly on the mini from the review mapping, including reviews not yet pushed to GitHub ·
 last built __BUILT__ ·
