@@ -5724,13 +5724,15 @@ async function decide(btn, decision, advance = false) {
   return true;
 }
 function nextOpen(row, otherVideo = false) {
-  // next undecided segment: the rest of this video first (unless otherVideo), then the following videos, then
+  // next undecided segment: this video's first, also those above (unless otherVideo; the page moved on to the
+  // next video while one above in this video was still open: user, 2026-10-16), then the following videos, then
   // from the top
-  const open = r => !r.classList.contains('approve') && !r.classList.contains('reject')
-                    && !(otherVideo && r.dataset.video === row.dataset.video);
+  const mine = r => r.dataset.video === row.dataset.video;
+  const open = r => !r.classList.contains('approve') && !r.classList.contains('reject') && !(otherVideo && mine(r));
   const rows = [...document.querySelectorAll('tr.seg:not(.applied)')];
   const i = rows.indexOf(row);
-  return rows.slice(i + 1).find(open) || rows.slice(0, Math.max(i, 0)).find(open);
+  const after = rows.slice(i + 1), before = rows.slice(0, Math.max(i, 0));
+  return (!otherVideo && [...after, ...before].find(r => mine(r) && open(r))) || after.find(open) || before.find(open);
 }
 function goToNextOpen(row) {
   const next = nextOpen(row);
