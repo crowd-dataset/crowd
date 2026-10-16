@@ -3053,6 +3053,22 @@ def by_role(segments, loc, role):
 NAMESAKE_RATIO = 4  # a city this many times bigger than every namesake a title could mean is the one meant
 
 
+# towns named after a landform: right after a capitalised name they are the end of that name ("Red Rock Canyon"
+# is no Canyon, TX: KlILKnTeVag; "Myrtle Beach", "Great Plains"; user, 2026-10-16), unless that word only leads in
+# to the place ("Driving Through Summit, NJ")
+LANDFORM_TOWNS = {'canyon', 'beach', 'plains', 'summit', 'mesa', 'gap', 'bay'}
+LEAD_WORDS = {'in', 'into', 'to', 'from', 'through', 'thru', 'around', 'across', 'near', 'via', 'of', 'and', 'the',
+              'downtown', 'drive', 'driving', 'drives', 'visit', 'visiting', 'exploring', 'explore', 'tour', 'night',
+              'morning', 'evening', 'sunset', 'sunrise', 'rainy', 'snowy', 'winter', 'summer', 'spring', 'fall',
+              'autumn', 'at', 'on', 'by', 'for', 'with'}
+
+
+def _ends_a_name(title, at):
+    """Whether the word before position `at` of the title is a capitalised name word, not a lead-in."""
+    m = re.search(r"([A-Za-z][\w'’.]*)\s+$", title[:at])
+    return bool(m and m.group(1)[0].isupper() and m.group(1).lower() not in LEAD_WORDS)
+
+
 def _title_locality(title, df, exact_case=False, word_needs_state=False):
     title = english_states(title)
     found = set()
@@ -3081,7 +3097,8 @@ def _title_locality(title, df, exact_case=False, word_needs_state=False):
             state = row['state'] if isinstance(row['state'], str) else ''
             spans = [m.span() for m in re.finditer(pattern, title or '', flags)
                      if not (word_needs_state and (other := re.match(r',\s*([A-Z]{2})\b', (title or '')[m.end():]))
-                             and other.group(1) != state)]
+                             and other.group(1) != state)
+                     and not (name.lower() in LANDFORM_TOWNS and _ends_a_name(title or '', m.start()))]
             if spans:
                 state = row['state'] if isinstance(row['state'], str) else None
                 found.update(((row['locality'], state, row['country']), s) for s in spans)
