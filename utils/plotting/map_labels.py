@@ -14,11 +14,13 @@ import urllib.request
 
 import common
 from custom_logger import CustomLogger
+from utils.plotting import constants
 
 logger = CustomLogger(__name__)
 
-# Country outlines and label points (`ct`) used by plotly to draw world maps.
-TOPOJSON_URL = "https://cdn.plot.ly/world_110m.json"
+# Country outlines and label points (`ct`) used by plotly to draw world maps (constants.TOPOJSON_URL: Crimea in
+# Ukraine).
+TOPOJSON_URL = constants.TOPOJSON_URL + "world_110m.json"
 
 # Label metrics for 11px Open Sans (measured in the browser).
 CHAR_W = 6.2      # average character width
@@ -37,7 +39,7 @@ NEAR = {"middle right": (1, 0), "middle left": (-1, 0), "top center": (0, -1), "
 
 
 def _load_topojson() -> dict:
-    path = os.path.join(common.output_dir, "world_110m.json")
+    path = os.path.join(common.output_dir, "world_110m_un.json")
     if not os.path.exists(path):
         os.makedirs(common.output_dir, exist_ok=True)
         urllib.request.urlretrieve(TOPOJSON_URL, path)

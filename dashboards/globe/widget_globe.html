@@ -159,7 +159,8 @@ d3.select(cv).call(d3.drag().on('drag', e => {
 }));
 
 setup();
-fetch('https://cdn.jsdelivr.net/npm/world-atlas@2.0.2/countries-110m.json').then(r => r.json()).then(w => {
+// plotly's world map on UN boundaries: Crimea is part of Ukraine
+fetch('https://cdn.plot.ly/un/world_110m.json').then(r => r.json()).then(w => {
   land = topojson.feature(w, w.objects.land);
   borders = topojson.mesh(w, w.objects.countries, (a, b) => a !== b);
   draw(performance.now());

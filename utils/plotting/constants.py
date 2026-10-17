@@ -25,6 +25,11 @@ BAR_COLOR_2: Final[str] = BAR_COLORS[1]
 BAR_COLOR_3: Final[str] = BAR_COLORS[2]
 BAR_COLOR_4: Final[str] = BAR_COLORS[3]
 
+# Country outlines of every plotly map (HTML, PNG/EPS and map_labels): plotly's world map on UN boundaries, which
+# draws Crimea as part of Ukraine (plotly.js 2's default, https://cdn.plot.ly/world_110m.json, puts it in Russia).
+# plotly.js 3 uses these by default.
+TOPOJSON_URL: Final[str] = "https://cdn.plot.ly/un/"
+
 # Continent colours used in every figure (Okabe-Ito palette, distinguishable with colour-blindness)
 CONTINENT_COLORS: Final[dict] = {
     "Africa": "#E69F00",

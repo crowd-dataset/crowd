@@ -5,11 +5,13 @@ import plotly.io as pio
 import shutil
 from custom_logger import CustomLogger
 from utils.plotting import hover
+from utils.plotting.constants import TOPOJSON_URL
 
 logger = CustomLogger(__name__)  # use custom logger
 
 # Without this, kaleido bakes a "Loading [MathJax]..." box into PDF/EPS exports; no figure uses LaTeX.
 pio.kaleido.scope.mathjax = None
+pio.kaleido.scope.topojson = TOPOJSON_URL  # see constants.TOPOJSON_URL
 
 
 class IO:
@@ -81,6 +83,7 @@ class IO:
             paths.append(os.path.join(output_final, filename + ".html"))
         for i, path in enumerate(paths):
             interactive.write_html(path, include_plotlyjs="directory", auto_open=self._open_html() and i == 0,
+                                   config={"topojsonURL": TOPOJSON_URL},
                                    post_script=post_script)
             if popups:
                 with open(path, encoding="utf-8") as f:
