@@ -45,9 +45,13 @@ It is shown by the widget server of dashboard-workstations; in its `widgets.json
   "pages": {"/globe": "http://<reviewing machine>:8771/globe"},
   "proxies": {"/globe.json": "http://<reviewing machine>:8771/globe.json"},
   "vars": {"__DATASET__": "http://<reviewing machine>:8772/"},
-  "windows": [["globe", "globe", 330, 480]]
+  "windows": [["globe", "globe", 330, 480]],
+  "order": ["globe", "machines", "pages"]
 }
 ```
+
+`order` puts the widgets top to bottom (here the globe on top and the local pages at the bottom); each docks below
+the one before it with the widget server's `dock.js`.
 
 ## Dataset page (`build_dataset_page.sh`, `dataset_page.py`)
 

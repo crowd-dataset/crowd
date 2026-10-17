@@ -25,6 +25,7 @@ canvas { display:block; margin:0 auto; cursor:grab } canvas:active { cursor:grab
 <div id="tip"></div>
 <script src="https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/topojson-client@3.1.0/dist/topojson-client.min.js"></script>
+<script src="dock.js"></script><!-- the widget server's: dock below the widget before this one -->
 <script>
 const LAPTOP = __REFRESH__ > 60;          // the laptop: fewer frames and hourly data (battery)
 const FIGURE = window.GLOBE;              // the README figure: its data built in, no widget server
@@ -135,13 +136,6 @@ function fit() {
   height = document.body.scrollHeight + (outerHeight - innerHeight);
   if (Math.abs(outerHeight - height) > 1) resizeTo(outerWidth, height);
 }
-async function dock() {  // just below the machines widget
-  try {
-    const p = await (await fetch('layout?name=machines', {cache: 'no-store'})).json();
-    const x = p.h ? p.x : screenX, y = p.h ? p.y + p.h : screenY;
-    if (screenX !== x || screenY !== y) moveTo(x, y);
-  } catch (e) {}
-}
 
 cv.addEventListener('mousemove', e => {
   const b = cv.getBoundingClientRect(), mx = e.clientX - b.left, my = e.clientY - b.top;
@@ -186,7 +180,7 @@ if (FIGURE) {  // a page of its own: it turns while visible
 } else {
   check(); setInterval(check, LAPTOP ? 15000 : 3000);
   document.addEventListener('visibilitychange', check);
-  dock(); setInterval(dock, LAPTOP ? 60000 : 5000);
+  dock('globe', height); setInterval(() => dock('globe', height), LAPTOP ? 60000 : 5000);
   addEventListener('focus', () => LAPTOP && load());
 }
 </script></body></html>
