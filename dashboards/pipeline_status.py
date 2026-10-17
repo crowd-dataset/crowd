@@ -32,6 +32,7 @@ PORT, REFRESH_S, TAIL = 8771, 120, 600
 DOWNLOADER = ('lin4080', '~/Documents/GitHub/pedestrians-in-youtube/_output/download_status.json')
 HOST = os.environ.get('REVIEW_HOST', '127.0.0.1')
 STUCK_MIN = sw.STUCK_MIN
+HISTORY = os.path.join(rc.ROOT, 'status_history.jsonl')  # hourly: refresh channels not started, batches to review
 app = Flask(__name__)
 snapshot = {}
 
@@ -114,7 +115,39 @@ def downloads():
     done = sum(r['t'] > now - hours * 3600 for r in d.get('recent', []))
     d['rate'] = done / hours if hours > 0.25 else None
     d['eta'] = d['queue'] / d['rate'] * 3600 if d['rate'] else None
+    # room on the download drives above their reserve, and how many videos of the recent average size fit there
+    sizes = [r['mb'] / 1000 for r in d.get('recent', []) if r.get('mb')]
+    d['room_gb'] = sum(max(0, r['free_gb'] - d['reserve_gb']) for r in d.get('drives', []) if r.get('mounted'))
+    d['video_gb'] = sum(sizes) / len(sizes) if sizes else None
+    if d['video_gb'] and d['rate']:
+        d['full_in'] = d['room_gb'] / (d['rate'] * d['video_gb']) * 3600
     return dict(d, host=host, failed_24h=sum(f['t'] > now - 86400 for f in d.get('failures', [])))
+
+
+def history(entry):
+    """Adds entry to HISTORY when the last one is an hour old; returns the last 8 days."""
+    rows = []
+    if os.path.exists(HISTORY):
+        with open(HISTORY) as f:
+            rows = [json.loads(line) for line in f if line.strip()]
+    if not rows or entry['t'] - rows[-1]['t'] >= 3600:
+        rows = [r for r in rows if r['t'] > entry['t'] - 8 * 86400] + [entry]
+        with open(HISTORY + '.tmp', 'w') as f:
+            f.writelines(json.dumps(r) + '\n' for r in rows)
+        os.replace(HISTORY + '.tmp', HISTORY)
+    return rows
+
+
+def paces(rows, now):
+    """Per day over the last 7 days: refresh channels started, batches the workers finished, batches reviewed (a
+    channel entering or leaving 'to review'); None with less than 12 h of history."""
+    rows = [r for r in rows if r['t'] > now - 7 * 86400]
+    if len(rows) < 2 or rows[-1]['t'] - rows[0]['t'] < 12 * 3600:
+        return None
+    days = (rows[-1]['t'] - rows[0]['t']) / 86400
+    added = sum(len(set(b['to_review']) - set(a['to_review'])) for a, b in zip(rows, rows[1:]))
+    reviewed = sum(len(set(a['to_review']) - set(b['to_review'])) for a, b in zip(rows, rows[1:]))
+    return dict(started=(rows[0]['left'] - rows[-1]['left']) / days, added=added / days, reviewed=reviewed / days)
 
 
 def collect():
@@ -140,13 +173,17 @@ def collect():
     batches = list(batches.values())
     todo = json.load(open(rc.SHEET_TODO)) if os.path.exists(rc.SHEET_TODO) else []
     queue = json.load(open(rc.REFRESH_QUEUE)) if os.path.exists(rc.REFRESH_QUEUE) else []
+    left = sum(1 for q in queue if q['url'] not in by_url)  # refresh channels not started
+    now = time.time()
+    pace = paces(history(dict(t=now, left=left, to_review=sorted(
+        k for k, c in state.items() if c.get('status') == 'to review'))), now)
     statuses = collections.Counter((c.get('host', 'mini'), c.get('status', '?')) for c in state.values())
     hosts = sorted({h for h, _ in statuses})
     order = ['processing', 'to review', 'reviewed', 'marked', 'rejected', 'duplicate', 'error']
     names = sorted({s for _, s in statuses}, key=lambda s: order.index(s) if s in order else 99)
     return dict(
         at=time.time(), workers=workers, downloads=dl, batches=sorted(batches, key=lambda b: -b['waiting']),
-        sheet_todo=len(todo), queue=len(queue),
+        sheet_todo=len(todo), queue=len(queue), left=left, pace=pace,
         queue_phases=sorted(collections.Counter(q.get('phase') for q in queue).items(), key=lambda x: str(x[0])),
         last_sync=os.path.getmtime(sw.HEALTH) if os.path.exists(sw.HEALTH) else None,
         hosts=hosts, statuses=[(s, [statuses.get((h, s), 0) for h in hosts]) for s in names])
@@ -229,7 +266,10 @@ border-radius:16px;background:var(--bg);color:var(--fg);font-size:13px;cursor:po
 <div class="tiles">
  <a class="tile" href="#" onclick="location.port=8770;return false"><span class="muted small">Batches to review</span>
   <b>{{ s.batches|length }}</b>
-  <span class="small muted">{{ s.batches|sum(attribute='waiting') }} videos waiting</span></a>
+  <span class="small muted">{{ s.batches|sum(attribute='waiting') }} videos waiting
+  {%- if s.pace %} · workers add {{ '%.1f'|format(s.pace.added) }}/day, you review
+  {{ '%.1f'|format(s.pace.reviewed) }}/day (7 days){% if s.pace.reviewed > s.pace.added %}: clear in about
+  {{ dur(s.batches|length / (s.pace.reviewed - s.pace.added) * 86400) }}{% endif %}{% endif %}</span></a>
  <div class="tile"><span class="muted small">Sheet updates waiting</span><b>{{ s.sheet_todo }}</b>
   <span class="small muted">sheet_todo.json, entered by hand</span></div>
  <div class="tile"><span class="muted small">Last worker sync</span>
@@ -237,7 +277,9 @@ border-radius:16px;background:var(--bg);color:var(--fg);font-size:13px;cursor:po
   <span class="small muted">ago (hourly)</span></div>
  <div class="tile"><span class="muted small">Refresh queue</span><b>{{ s.queue }}</b>
   <span class="small muted">
-  {% for p, n in s.queue_phases %}phase {{ p }}: {{ n }}{{ ' · ' if not loop.last }}{% endfor %}</span></div>
+  {% for p, n in s.queue_phases %}phase {{ p }}: {{ n }}{{ ' · ' if not loop.last }}{% endfor %}<br>
+  {{ s.left }} not started{% if s.pace %} · {{ '%.1f'|format(s.pace.started) }}/day (7 days){% if s.pace.started > 0
+  %} · about {{ dur(s.left / s.pace.started * 86400) }} left{% endif %}{% endif %}</span></div>
 </div>
 <h2>Workers</h2><div class="grid">
 {% for w in s.workers %}<div class="card">
@@ -267,6 +309,11 @@ border-radius:16px;background:var(--bg);color:var(--fg);font-size:13px;cursor:po
  <div class="row" style="margin-top:8px"><a href="downloads/todo"><b>{{ d.queue }}</b> videos to download</a>
   · <a href="downloads/done">downloaded</a>{% if d.rate %} ·
   {{ '%.0f'|format(d.rate) }} videos/h (last 3 h) · about {{ dur(d.eta) }} left{% endif %}</div>
+ {% if d.video_gb %}<div class="small muted">room for about {{ (d.room_gb / d.video_gb)|round|int }} more videos
+  ({{ '%.1f'|format(d.room_gb / 1000) }} TB at {{ '%.1f'|format(d.video_gb) }} GB each)
+  {%- if d.room_gb >= d.queue * d.video_gb %}: enough for the queue{% else %}
+  <span style="color:var(--warn)">· not enough for the queue{% if d.full_in %}: drives full in
+  about {{ dur(d.full_in) }}{% endif %}</span>{% endif %}</div>{% endif %}
  {% if d.current %}<div class="row ell small">now:
   <a href="https://youtu.be/{{ d.current }}" target="_blank">{{ d.current }}</a></div>{% endif %}
  <div class="small muted">{{ d.downloaded }} downloaded and {{ d.failed }} failed since it started
@@ -416,7 +463,16 @@ def _check_parse_log():
     assert parse_log(lines[:-1], now - 2 * 3600, now)['state'] == 'stalled'
 
 
+def _check_paces():
+    h = [dict(t=0, left=100, to_review=['a', 'b']), dict(t=43200, left=99, to_review=['b', 'c']),
+         dict(t=86400, left=96, to_review=['c', 'd', 'e'])]
+    assert paces(h, 86400) == dict(started=4.0, added=3.0, reviewed=2.0), paces(h, 86400)
+    assert paces(h[:2], 43200)['started'] == 2.0  # 12 h: just enough
+    assert paces(h[:1], 0) is None
+
+
 if __name__ == '__main__':
     _check_parse_log()
+    _check_paces()
     threading.Thread(target=refresher, daemon=True).start()
     app.run(host=HOST, port=PORT, debug=False)

@@ -25,7 +25,10 @@ REVIEW_HOST=0.0.0.0 python dashboards/pipeline_status.py
 Every 2 minutes it reads the end of each worker's `runner.log` over SSH (the workers of `sync_workers.py`) and this
 machine's `_output/proposals` state; the page shows that snapshot, so opening it costs the workers nothing. A worker is
 *blocked* when a problem (sign-in check, quota, error) came after its last progress, *stalled* when its log has been
-quiet for an hour, *idle* when it has no channel left. It also serves the globe widget (`/globe`) and its data
+quiet for an hour, *idle* when it has no channel left. Estimates: each worker's channel and the download queue at
+their recent pace; the refresh queue (channels not started) and the review backlog (batches the workers finish and you
+review) at the pace of the last 7 days, from an hourly history it keeps in `_output/proposals/status_history.jsonl`; and
+whether the download drives have room for the queue. It also serves the globe widget (`/globe`) and its data
 (`/globe.json`).
 
 ## Globe widget (`globe/widget_globe.html`, `globe/globe_data.py`)
