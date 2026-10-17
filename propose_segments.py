@@ -3903,12 +3903,13 @@ FROM_TO = (re.compile(r"\bfrom\s+(.+?)\s+to\s+(.+?)" + _END, re.I),
            re.compile(r"^(?!(?:Welcome|Back|Return|Road|Guide|Dusk|Dawn|Day|Night|"
                       r"Sunset|Sunrise|Morning|Evening|Sea)\b)"
                       r"([A-Z][\w'’.-]*(?: [A-Z][\w'’.-]*){0,3})\s+[Tt]o\s+([A-Z][\w'’.-]*(?: [A-Z][\w'’.-]*){0,3})"
-                      r"\s*(?:\s[-–—|]\s|\||:|\(|$)"),
-           # ... or such a piece after a dash, bar or colon: "Driving Germany 4K - Werder to Berlin" (XfTNDV_nagE)
+                      r"(?:\s+via\s+[^|–—:(]+?)?\s*(?:\s[-–—|]\s|\||:|\(|$)"),
+           # ... or such a piece after a dash, bar or colon: "Driving Germany 4K - Werder to Berlin" (XfTNDV_nagE),
+           # also with the road it takes: "| Boulder City to Las Vegas via I-11, 215 & I-15 |" (zMU7Qt6yijA)
            re.compile(r"(?:\s[-–—|]\s|\|\s*|:\s+)(?!(?:Welcome|Back|Return|Road|Guide|Dusk|Dawn|Day|Night|"
                       r"Sunset|Sunrise|Morning|Evening|Sea)\b)"
                       r"([A-Z][\w'’.-]*(?: [A-Z][\w'’.-]*){0,3})\s+[Tt]o\s+([A-Z][\w'’.-]*(?: [A-Z][\w'’.-]*){0,3})"
-                      r"\s*(?:\s[-–—|]\s|\||:|\(|$)"),
+                      r"(?:\s+via\s+[^|–—:(]+?)?\s*(?:\s[-–—|]\s|\||:|\(|$)"),
            # an arrow between two places ("Ingleburn → Surry Hills | Sydney POV", AroundSydney), or a dash right after
            # a drive word ("Drive Wąchock – Starachowice", 3Xg0vN2LqKo; user, 2026-10-16); a dash elsewhere
            # separates a title's parts ("TeslaXDrive — What This Channel Is")
@@ -4135,6 +4136,16 @@ def area_city(title, df, home=None, near=None):
     return None
 
 
+def _generic_end(name):
+    """Whether a drive's end names no town: "Downtown", a street ("Eastern Ave to Rainbow Blvd"), a county or an
+    airport, or no end at all ("Scenic Drive to Pine Mountain Club", "Visit to Khor Fakkan"; user, 2026-10-17)."""
+    name = re.sub(r',.*', '', name.strip())
+    return (_name_key(name) in GENERIC_ENDS
+            or bool(re.search(r'\b(?:ave(?:nue)?|blvd|boulevard|st|street|rd|road|drive|dr|lane|way|county'
+                              r'|airport)\.?$', name, re.I))
+            or bool(re.match(r'(?:downtown|scenic|visit|flying|sunny|sunset|night|morning)\b', name, re.I)))
+
+
 def multi_city(meta, df, home=None):
     """Why a video, by its title or chapters, drives through more than one locality, else None: a drive from one
     town to another, to or away from a town, or chapters naming two or more localities (user, 2026-10-13: single
@@ -4153,7 +4164,7 @@ def multi_city(meta, df, home=None):
             and not area_city(title, df, home):
         return 'a drive from one town to another'
     if ends and m and sum(bool(loc) for _, loc in ends) == 1 and not area_city(title, df, home) \
-            and not any(_name_key(re.sub(r',.*', '', x.strip())) in GENERIC_ENDS for x in m.groups()):
+            and not any(_generic_end(x) for x in m.groups()):
         return 'a drive from one town to another (one end not found)'
     if (loc := _title_locality(title, df)) and (role := title_role(title, loc)):
         return f"a drive {'to' if role == 'end' else 'away from'} {loc[0]}"
