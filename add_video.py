@@ -850,7 +850,7 @@ def new_locality_row(locality, state, country, locality_aka=None, near=None, at=
         'traffic_mortality': mortality_future.result(),
         'start_time': [],
         'end_time': [],
-        'continent': get_country_continent(country_data),
+        'continent': get_country_continent(country_data) or known_continent(country),
         'literacy_rate': literacy_future.result(),
         'avg_height': get_country_average_height(iso3_code),
         'med_age': get_country_median_age(iso2_code),
@@ -1474,6 +1474,17 @@ def get_country_data(iso3_code: str):
     except RequestException as e:
         print(f"Error fetching country data for '{iso3_code}': {e}")
         return None
+
+
+def known_continent(country):
+    """The continent the mapping's rows of this country have, for a country lookup that gave none (three new
+    localities in Kenya had none; user, 2026-10-17)."""
+    try:
+        df = load_csv(FILE_PATH)
+        rows = df[(df['country'] == country) & df['continent'].fillna('').astype(str).str.strip().ne('')]
+        return str(rows['continent'].mode().iloc[0]) if len(rows) else ''
+    except Exception:  # noqa: BLE001 (no mapping to read: the field stays empty)
+        return ''
 
 
 def get_country_continent(country_data: list):
