@@ -17,6 +17,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import time
 
 import pandas as pd
 
@@ -140,12 +141,14 @@ two days (03:23) found in your reviews.</p>
 
 def stop_finished_pages():
     """Stop the review pages of batches with nothing left to review: they stayed up for days (user, 2026-10-17);
-    /open starts one again. Under the locks a page writes mapping.csv and its plan with, so none stops mid-Apply (a
-    kill there truncated mapping.csv, 2026-10-05)."""
+    /open starts one again. Only an hour after the plan last changed: a page went offline right after its last
+    decision (user, 2026-10-17). Under the locks a page writes mapping.csv and its plan with, so none stops
+    mid-Apply (a kill there truncated mapping.csv, 2026-10-05)."""
     for name, (proc, _) in list(servers.items()):
-        if proc.poll() is None and rc.review_counts(name)[0]:
+        plan = os.path.join(rc.ROOT, name, 'plan.json')
+        if proc.poll() is None and (rc.review_counts(name)[0] or time.time() - os.path.getmtime(plan) < 3600):
             continue
-        with ps.plan_lock(add_video.FILE_PATH), ps.plan_lock(os.path.join(rc.ROOT, name, 'plan.json')):
+        with ps.plan_lock(add_video.FILE_PATH), ps.plan_lock(plan):
             proc.terminate()
             proc.wait()
         del servers[name]
