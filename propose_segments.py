@@ -5326,6 +5326,20 @@ REVIEW_PAGE = 50  # videos with something left to decide shown at once in the re
 MAX_MERGE_GAP_S = 2  # wider gaps are excluded footage (stops, freeway), not suggested splits
 CHANNEL_DONE = 'Every video of this channel is proposed or in the mapping.'
 CHANNEL_REJECTED = 'channel_rejected'  # a file in a channel's folder: the reviewer rejected the whole channel
+
+
+def reject_undecided(plan):
+    """Reject every undecided segment of the plan (a rejected channel); returns how many."""
+    n = 0
+    for p in plan:
+        for e in p.get('entries', []):
+            for seg in e['segments']:
+                if not seg.get('decision') and not seg.get('applied'):
+                    seg['decision'] = 'reject'
+                    n += 1
+    return n
+
+
 WALK_HINT = "the camera bobs like a walker's steps"  # the start of propose's walk hint in a note
 WALK_CHANNEL_MIN, WALK_CHANNEL_SHARE = 20, 0.7  # analysed videos, the share with WALK_HINT: a channel of walks
 MARKED_REJECT = 2  # videos marked sped up (or with ghosts) in review that reject their channel (user, 2026-10-10)
@@ -6840,13 +6854,7 @@ def review(plan_path, port=None):
         """Reject every undecided segment of the batch and mark the channel rejected: the fetcher stops it (here,
         or on a worker after the hourly sync) and the sheet says Rejected."""
         plan = load()
-        n = 0
-        for p in plan:
-            for e in p.get('entries', []):
-                for seg in e['segments']:
-                    if not seg.get('decision') and not seg.get('applied'):
-                        seg['decision'] = 'reject'
-                        n += 1
+        n = reject_undecided(plan)
         save(plan)
         with open(os.path.join(plan_dir, CHANNEL_REJECTED), 'w') as f:
             f.write(f'rejected in review on {time.strftime("%Y-%m-%d")}')
@@ -7001,7 +7009,8 @@ def review(plan_path, port=None):
                     done += 1
                     save(plan)  # after every segment, so a failure part way never re-applies one
                 if done:
-                    log.append(f"{p['video']}: {done} segment(s) added to {e['locality'][0]}")
+                    # city, state and country (user, 2026-10-17)
+                    log.append(f"{p['video']}: {done} segment(s) added to {', '.join(x for x in e['locality'] if x)}")
 
     port = port or 5000 + random.randint(0, 999)
     Timer(1.25, lambda: webbrowser.open(f'http://127.0.0.1:{port}')).start()

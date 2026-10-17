@@ -75,6 +75,10 @@ def merge_plan(name, remote_plan):
                 # over a proposal here (3QeTN5BygQE and others proposed here again were left out by the sync)
                 local[i] = p
                 added += 1
+        if os.path.exists(os.path.join(rc.ROOT, name, ps.CHANNEL_REJECTED)):
+            # rejected in review here: what the worker proposed before it heard is rejected too (user, 2026-10-17:
+            # tonechkanz offered again an hour after its rejection)
+            ps.reject_undecided(local)
         with open(path + '.tmp', 'w') as f:
             json.dump(local, f, indent=1)
         os.replace(path + '.tmp', path)
