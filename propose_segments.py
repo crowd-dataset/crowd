@@ -6204,10 +6204,22 @@ function update() {
   const yes = rows.filter(r => r.classList.contains('approve')).length;
   const no = rows.filter(r => r.classList.contains('reject')).length;
   const open = rows.length - yes - no;
-  document.getElementById('status').textContent =
-    `${rows.length} segments to review: ${yes} approved, ${no} rejected, ${open} undecided` +
+  // "N undecided" goes to the first undecided segment of the list (user, 2026-10-17)
+  document.getElementById('status').innerHTML =
+    `${rows.length} segments to review: ${yes} approved, ${no} rejected, ` +
+    (open ? `<a href="#" onclick="toFirstOpen(); return false" title="go to the first undecided segment">` +
+            `${open} undecided</a>` : '0 undecided') +
     (APPROVED_HIDDEN ? ` (+${APPROVED_HIDDEN} approved in finished videos, waiting for Apply)` : '');
   document.getElementById('apply').disabled = yes + APPROVED_HIDDEN === 0;
+}
+function toFirstOpen() {
+  const row = [...document.querySelectorAll('tr.seg:not(.applied)')]
+    .find(r => !r.classList.contains('approve') && !r.classList.contains('reject'));
+  if (!row) return;
+  clickedRow = row;  // the keys go on with it
+  // at once, not smoothly: the jump can cross the whole page
+  window.scrollTo({ top: row.closest('.video').getBoundingClientRect().top + window.scrollY - 8 });
+  play(row.dataset.video, +row.dataset.start);
 }
 const APPROVED_HIDDEN = {{ approved_hidden }};  // approved segments of finished videos, which are not shown
 document.getElementById('apply').onclick = async () => {
