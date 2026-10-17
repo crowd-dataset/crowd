@@ -2528,9 +2528,10 @@ HIGHWAY_TITLE = re.compile(r'(?i:road ?trip|\bhighways?\b|\bfreeways?\b|\bhwy\b|
 # walks and rides on boats are no vehicle type the dataset takes; a title that also says drive keeps the video.
 # "Inside" is a walk through a building (8xybXtQ0LgA, "Inside Planet Hollywood Shop": none of 23 such titles kept)
 # and "Waking Tour", "Waling Tour" are typos of a walk (1pNtxLv45JI, AW7T4eSiVRk)
-NOT_DRIVING_TITLE = re.compile(r'\b(?:walk(?:s|ing)?|wa(?:king|ling) tour|walk-?through|inside|stroll(?:ing)?'
-                               r'|hik(?:e|ing)|on foot'
+NOT_DRIVING_TITLE = re.compile(r'\b(?:walk(?:s|ing|around|about)?|wa(?:king|ling) tour|walk-?through|inside'
+                               r'|stroll(?:ing)?|hik(?:e|ing)|on foot'
                                r'|(?:boat|ferry) ride'
+                               # "Walkaround" (n_fmYiLgcaI; user, 2026-10-17: none of 96 walk-around titles approved)
                                # boats (mcaow4mKo54: "Cruising on a Yatch in Dubai"; user, 2026-10-16); not ferries
                                # (Little Ferry, Dobbs Ferry are towns, and a drive onto a BC ferry was approved) nor a
                                # bare "boat" ("Studley boat park")
