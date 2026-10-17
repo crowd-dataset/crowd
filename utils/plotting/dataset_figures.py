@@ -23,6 +23,7 @@ from PIL import Image
 from plotly.subplots import make_subplots
 
 import common
+from custom_logger import CustomLogger
 from utils.analytics.metrics_cache import MetricsCache
 from utils.core.dataset_stats import Dataset_Stats
 from utils.plotting import area_figures, hover, map_labels
@@ -32,6 +33,8 @@ from utils.plotting.io import IO
 io = IO()
 
 # Country-level columns of the mapping compared with the amount of footage and detection rates (column -> name).
+logger = CustomLogger(__name__)
+
 INDICATORS = {
     "population_country": "Population (log10)",
     "traffic_mortality": "Road traffic deaths per 100k",
@@ -748,6 +751,7 @@ def dataset_figures(df_mapping: pl.DataFrame, seg: pl.DataFrame, flags: dict) ->
     _save(_globe([("Each locality", "One spike per locality", dots, 1.2),
                   ("Areas of ~200 km", "One spike per ~200 km area", areas, 2)]),
           "globe_localities_footage_spikes", post_script=SPIN_JS, save_eps=False)
+    _widget_globe(dots)
 
     # footprints of the channels with the most footage: where each one films (travel channels vs local drivers);
     # channels are numbered by footage; in the HTML each number links to the channel on YouTube
@@ -867,6 +871,59 @@ def _earth_mesh(width: int = 180, height: int = 90):
     return go.Mesh3d(x=x, y=y, z=z, i=np.concatenate([a, a]), j=np.concatenate([b, c]), k=np.concatenate([c, d]),
                      vertexcolor=[f"#{r:02x}{g:02x}{b_:02x}" for r, g, b_ in pixels.reshape(-1, 3)],
                      hoverinfo="skip", showscale=False, lighting=dict(ambient=1, diffuse=0, specular=0, fresnel=0))
+
+
+# the CROWD dashboards' globe widget (dashboards/globe), as a README figure: htmlpreview.github.io runs only scripts
+# hosted on GitHub, so its d3 and topojson-client are saved next to the figures (once), as plotly.min.js is
+WIDGET_GLOBE = os.path.join(common.root_dir, "dashboards", "globe", "widget_globe.html")
+WIDGET_SCRIPTS = {"d3.min.js": "https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js",
+                  "topojson-client.min.js": "https://cdn.jsdelivr.net/npm/topojson-client@3.1.0/dist/"
+                                            "topojson-client.min.js"}
+README_URL = "https://github.com/crowd-dataset/crowd#readme"
+
+
+def _widget_globe(dots: pl.DataFrame):
+    """The globe widget with every locality built in (a square each, its size growing with the hours of footage) as
+    globe_localities_widget.html, and a still of it (plotly, in the widget's colours) as the PNG. dots: lat, lon,
+    hours, locality, country."""
+    folder = os.path.join(common.root_dir, "figures")
+    html = open(WIDGET_GLOBE, encoding="utf-8").read()
+    for name, url in WIDGET_SCRIPTS.items():
+        path = os.path.join(folder, name)
+        if not os.path.exists(path):
+            try:
+                r = requests.get(url, timeout=60)
+                r.raise_for_status()
+            except requests.RequestException as e:
+                logger.warning(f"Could not download {url} ({e}); globe_localities_widget is skipped.")
+                return
+            with open(path, "wb") as f:
+                f.write(r.content)
+        html = html.replace(url, name)
+    d = dots.drop_nulls(["lat", "lon"]).sort("hours", descending=True)
+    names = [f"{loc}, {country}" for loc, country in zip(d["locality"], d["country"])]
+    data = dict(localities=d.height, hours=round(d["hours"].sum()), points=[
+        [round(lat, 3), round(lon, 3), round(h, 1), 0, 0, n]
+        for lat, lon, h, n in zip(d["lat"], d["lon"], d["hours"], names)])
+    built_in = "<script>window.GLOBE = " + json.dumps(data, ensure_ascii=False, separators=(",", ":")) + ";</script>\n"
+    html = (html.replace("__REFRESH__", "3600").replace("__DATASET__", README_URL)
+                .replace("<script>\nconst LAPTOP", built_in + "<script>\nconst LAPTOP", 1))
+    with open(os.path.join(folder, "globe_localities_widget.html"), "w", encoding="utf-8") as f:
+        f.write(html)
+    # the still: the widget's first view (centred on 10° E, 22° N) and colours
+    fig = go.Figure(go.Scattergeo(lat=d["lat"], lon=d["lon"], mode="markers", hoverinfo="skip",
+                                  marker=dict(symbol="square", color="#2563eb", opacity=0.6, line_width=0,
+                                              size=(2.4 * (1.2 + np.minimum(3.8, np.sqrt(d["hours"]) / 5))))))
+    fig.update_geos(projection_type="orthographic", projection_rotation=dict(lon=10, lat=22), showland=True,
+                    landcolor="#f8fafc", showocean=True, oceancolor="#dfeaf6", showcountries=True,
+                    countrycolor="#cbd5e1", coastlinecolor="#cbd5e1", showlakes=False, showframe=False,
+                    lataxis=dict(showgrid=True, gridcolor="rgba(15,23,42,0.06)"),
+                    lonaxis=dict(showgrid=True, gridcolor="rgba(15,23,42,0.06)"))
+    fig.add_annotation(text=f"{d.height:,} localities · {d['hours'].sum():,.0f} h of footage", x=0.01, y=0.01,
+                       xref="paper", yref="paper", showarrow=False, font=dict(size=16, color="#667085"))
+    fig = _style(fig, width=1000, height=1000, margin=dict(l=20, r=20, t=20, b=20), showlegend=False)
+    for out in (folder, common.output_dir):
+        fig.write_image(os.path.join(out, "globe_localities_widget.png"))
 
 
 def _globe_cells(dots: pl.DataFrame, deg: float = 2.0) -> pl.DataFrame:

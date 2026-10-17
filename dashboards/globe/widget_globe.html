@@ -27,6 +27,7 @@ canvas { display:block; margin:0 auto; cursor:grab } canvas:active { cursor:grab
 <script src="https://cdn.jsdelivr.net/npm/topojson-client@3.1.0/dist/topojson-client.min.js"></script>
 <script>
 const LAPTOP = __REFRESH__ > 60;          // the laptop: fewer frames and hourly data (battery)
+const FIGURE = window.GLOBE;              // the README figure: its data built in, no widget server
 const FPS = LAPTOP ? 8 : 10, SPEED = 5;   // frames per second, degrees per second (the mini's worker shares its CPU)
 const cv = document.getElementById('g'), ctx = cv.getContext('2d'), tip = document.getElementById('tip');
 const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
@@ -35,7 +36,7 @@ let size, proj, path, land, borders, tiers = [[], [], []], data, rot = [-10, -22
 const grat = d3.geoGraticule10();
 
 function setup() {
-  size = Math.min(document.body.clientWidth - 20, 420);
+  size = Math.min(document.body.clientWidth - 20, FIGURE ? innerHeight - 70 : 420);
   const dpr = devicePixelRatio || 1;
   cv.width = cv.height = Math.round(size * dpr); cv.style.width = cv.style.height = size + 'px';
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -108,7 +109,7 @@ async function check() {
 
 async function load() {
   try {
-    data = await (await fetch('globe.json', {cache: 'no-store'})).json();
+    data = FIGURE || await (await fetch('globe.json', {cache: 'no-store'})).json();
     if (data.error) throw new Error(data.error);
   } catch (e) { document.getElementById('stamp').textContent = 'unreachable (TU/e only)'; return; }
   tiers = [[], [], []];
@@ -116,13 +117,14 @@ async function load() {
     tiers[day ? 2 : rec ? 1 : 0].push({lon: lon * Math.PI / 180, s: Math.sin(lat * Math.PI / 180),
       k: Math.cos(lat * Math.PI / 180), r: 0.6 + Math.min(1.9, Math.sqrt(h) / 10), h, rec, day, name});
   const days = Math.round(data.recent_h / 24);
-  document.getElementById('leg').innerHTML =
+  document.getElementById('leg').innerHTML = (FIGURE ? '' :
     `<span><b style="background:var(--day)"></b>today: ${fmt(data.day_places)} places, +${fmt(data.day)} segments</span>` +
-    `<span><b style="background:var(--recent)"></b>${days} days: ${fmt(data.recent_places)} places, +${fmt(data.recent)}</span>` +
+    `<span><b style="background:var(--recent)"></b>${days} days: ${fmt(data.recent_places)} places, +${fmt(data.recent)}</span>`) +
     `<span><b style="background:var(--old);opacity:.6"></b>${fmt(data.localities)} localities · ${fmt(data.hours)} h</span>`;
   draw(performance.now());  // at once, even while hidden
-  document.getElementById('stamp').textContent = new Date(data.built * 1000).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
-  fit();
+  document.getElementById('stamp').textContent = FIGURE ? '' :
+    new Date(data.built * 1000).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
+  if (!FIGURE) fit();
 }
 
 let height = 0;
@@ -165,7 +167,7 @@ fetch('https://cdn.plot.ly/un/world_110m.json').then(r => r.json()).then(w => {
   borders = topojson.mesh(w, w.objects.countries, (a, b) => a !== b);
   draw(performance.now());
 }).catch(() => {});
-load(); setInterval(load, Math.max(600, __REFRESH__) * 1000);
+load(); if (!FIGURE) setInterval(load, Math.max(600, __REFRESH__) * 1000);
 const pp = document.getElementById('pp');
 const label = () => { pp.textContent = paused ? '▶ turn' : '⏸ pause'; };
 pp.onclick = () => {
@@ -175,8 +177,13 @@ pp.onclick = () => {
   if (paused) draw(performance.now()); else start();
 };
 label();
-check(); setInterval(check, LAPTOP ? 15000 : 3000);
-document.addEventListener('visibilitychange', check);
-dock(); setInterval(dock, LAPTOP ? 60000 : 5000);
-addEventListener('focus', () => LAPTOP && load());
+if (FIGURE) {  // a page of its own: it turns while visible
+  addEventListener('resize', () => { setup(); draw(performance.now()); });
+  document.addEventListener('visibilitychange', start); start();
+} else {
+  check(); setInterval(check, LAPTOP ? 15000 : 3000);
+  document.addEventListener('visibilitychange', check);
+  dock(); setInterval(dock, LAPTOP ? 60000 : 5000);
+  addEventListener('focus', () => LAPTOP && load());
+}
 </script></body></html>

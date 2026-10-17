@@ -1056,6 +1056,9 @@ The same localities on a globe. The HTML version spins until you grab it; drag t
 [![Localities in the dataset on a 3D globe with spikes](figures/globe_localities_footage_spikes.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/globe_localities_footage_spikes.html)
 The localities on a 3D satellite globe (NASA Blue Marble), with a spike for each locality whose height shows its hours of footage on a log scale, so localities with little footage are visible too. In the HTML version, a button merges neighbouring localities into one spike per area of about 200 km, which is easier to read where localities are dense. Each spike is orange for the share of its footage recorded by day and blue for the share at night. The HTML version spins until you grab it; drag to turn it, scroll to zoom.
 
+[![Localities in the dataset on the spinning globe of the dashboards](figures/globe_localities_widget.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/globe_localities_widget.html)
+The spinning globe of the CROWD dashboards: every locality as a square that grows with its hours of footage. The HTML version turns until you grab it; drag to turn it and hover over a square for the locality and its footage.
+
 [![Footage by continent, country and locality](figures/treemap_footage.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/treemap_footage.html)
 Footage by continent, country and locality, coloured by the share recorded at night. In the HTML version, click a box to zoom in down to the localities.
 
