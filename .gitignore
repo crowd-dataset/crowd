@@ -88,3 +88,6 @@ mapping.csv.lock
 
 # the Google service account key that writes the channels sheet (run_channels.write_sheet)
 google_sheets_key.json
+
+# the reviewer's problem reports, kept on mini only for now (user, 2026-10-17)
+reported_problems.csv

@@ -1205,7 +1205,7 @@ def propose(sig, p=PARAMS):
         jumps = ev[(ev[:, 2] >= SKIP_RATIO) & (ev[:, 1] >= SKIP_SCORE), 0] * FPS
         bounds = sorted({0, n, *np.flatnonzero(np.diff(night.astype(int))) + 1, *jumps.astype(int)})
         spots = np.asarray(sig.get('spots', np.zeros((0, 2)))).reshape(-1, 2)
-        orange = np.asarray(sig.get('lamps', np.zeros((0, 2)))).reshape(-1, 2)
+        orange = lamp_spots(sig)
         pieces = []
         for a, b in zip(bounds, bounds[1:]):
             inside = clip[(clip[:, 0] * FPS >= a) & (clip[:, 0] * FPS < b), 1]
@@ -1238,7 +1238,7 @@ def propose(sig, p=PARAMS):
         for seg in segments:
             first = seg['start'] // DUSK_EVERY_S
             span = slice(first, max(seg['end'] // DUSK_EVERY_S, first + 1))
-            sat, lamps = sig['saturation'][span], sig['lamps'][span]
+            sat, lamps = sig['saturation'][span], dusk_lamps(sig)[span]
             if not seg['night'] and len(sat) and (np.median(sat) > p['dusk_saturation']
                                                   or np.median(lamps) > p['dusk_lamps']):
                 notes.append(f"possibly dusk {seg['start']}-{seg['end']}s: street lights may be on, check night")
@@ -1246,6 +1246,21 @@ def propose(sig, p=PARAMS):
 
 
 DUSK_EVERY_S = 10  # one colour frame this often for the dusk hint
+
+
+def lamp_spots(sig):
+    """[(second, lit orange lamps)] of light_spots_track. Saved as 'lamps' from 2026-10-16 16:04 to 23:00, over
+    dusk_colours' measure of that name (88 videos): those have 'spots' and a 'lamps' of two columns."""
+    if 'lamp_spots' in sig:
+        return np.asarray(sig['lamp_spots']).reshape(-1, 2)
+    old = np.asarray(sig.get('lamps', np.zeros(0)))
+    return old if 'spots' in sig and old.ndim == 2 and old.shape[1] == 2 else np.zeros((0, 2))
+
+
+def dusk_lamps(sig):
+    """dusk_colours' % of lit orange lamp pixels per DUSK_EVERY_S, or zeros where lamp_spots overwrote it."""
+    old = np.asarray(sig.get('lamps', np.zeros(0)))
+    return old if old.ndim == 1 else np.zeros(len(sig['saturation']))
 
 
 def dusk_colours(path):
@@ -2471,7 +2486,7 @@ def analyse_video(video_id, out_dir, meta=None):
         sig['night_scene'] = np.array(night_scene_track(path, sig, work_dir), float).reshape(-1, 2)
         sig['night_clip'] = np.array(night_clip_track(path, meta.get('duration'), work_dir), float).reshape(-1, 2)
         lit = np.array(light_spots_track(path, meta.get('duration')), float).reshape(-1, 3)
-        sig['spots'], sig['lamps'] = lit[:, :2], lit[:, [0, 2]]
+        sig['spots'], sig['lamp_spots'] = lit[:, :2], lit[:, [0, 2]]
         sig['aerial'] = np.array(aerial_track(path, meta.get('duration'), work_dir), float).reshape(-1, 2)
         driver = driver_clip_track(path, sig.get('face', np.zeros(0)), work_dir)
         sig['driver_clip'] = np.array(driver, float).reshape(-1, 2)
