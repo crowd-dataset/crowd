@@ -751,7 +751,7 @@ def dataset_figures(df_mapping: pl.DataFrame, seg: pl.DataFrame, flags: dict) ->
     _save(_globe([("Each locality", "One spike per locality", dots, 1.2),
                   ("Areas of ~200 km", "One spike per ~200 km area", areas, 2)]),
           "globe_localities_footage_spikes", post_script=SPIN_JS, save_eps=False)
-    _widget_globe(dots)
+    _widget_globe()
 
     # footprints of the channels with the most footage: where each one films (travel channels vs local drivers);
     # channels are numbered by footage; in the HTML each number links to the channel on YouTube
@@ -882,10 +882,33 @@ WIDGET_SCRIPTS = {"d3.min.js": "https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.mi
 README_URL = "https://github.com/crowd-dataset/crowd#readme"
 
 
-def _widget_globe(dots: pl.DataFrame):
-    """The globe widget with every locality built in (a square each, its size growing with the hours of footage) as
-    globe_localities_widget.html, and a still of it (plotly, in the widget's colours) as the PNG. dots: lat, lon,
-    hours, locality, country."""
+def _mapping_on_github(ago_s: int) -> str:
+    """mapping.csv on GitHub's main as it was ago_s seconds ago ('' when it cannot be fetched), as the globe on
+    bazilinskyy.github.io does: the history of mapping.csv from GitHub's API (a CI checkout has no history)."""
+    until = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - ago_s))
+    token = os.environ.get("GITHUB_TOKEN")  # the Action's: a higher API rate limit
+    try:
+        r = requests.get("https://api.github.com/repos/crowd-dataset/crowd/commits", timeout=60,
+                         params=dict(sha="main", path="mapping.csv", until=until, per_page=1),
+                         headers={"Authorization": f"Bearer {token}"} if token else {})
+        r.raise_for_status()
+        if not r.json():
+            return ""
+        r = requests.get(f"https://raw.githubusercontent.com/crowd-dataset/crowd/{r.json()[0]['sha']}/mapping.csv",
+                         timeout=300)
+        r.raise_for_status()
+        return r.text
+    except requests.RequestException as e:
+        logger.warning(f"Could not get mapping.csv as it was {ago_s // 86400} days ago ({e}); the globe widget "
+                       "figure shows no recent places.")
+        return ""
+
+
+def _widget_globe():
+    """The globe widget with every locality built in (a square each, its size growing with the hours of footage) and
+    the places with segments added in the last week (red) and month (amber), as on bazilinskyy.github.io, as
+    globe_localities_widget.html; a still of it (plotly, in the widget's colours) as the PNG."""
+    from dashboards.globe import globe_data  # the widget's own comparison of two mappings
     folder = os.path.join(common.root_dir, "figures")
     html = open(WIDGET_GLOBE, encoding="utf-8").read()
     for name, url in WIDGET_SCRIPTS.items():
@@ -900,28 +923,42 @@ def _widget_globe(dots: pl.DataFrame):
             with open(path, "wb") as f:
                 f.write(r.content)
         html = html.replace(url, name)
-    d = dots.drop_nulls(["lat", "lon"]).sort("hours", descending=True)
-    names = [f"{loc}, {country}" for loc, country in zip(d["locality"], d["country"])]
-    data = dict(localities=d.height, hours=round(d["hours"].sum()), points=[
-        [round(lat, 3), round(lon, 3), round(h, 1), 0, 0, n]
-        for lat, lon, h, n in zip(d["lat"], d["lon"], d["hours"], names)])
+    with open(common.get_configs("mapping"), encoding="utf-8") as f:
+        now = globe_data.segments(f.read())
+    week, month = (globe_data.segments(t) if t else {} for t in map(_mapping_on_github, (7 * 86400, 30 * 86400)))
+    points, totals = globe_data.compare(now, week, month)  # [lat, lon, hours, new in a month, new in a week, name]
+    data = dict(date=time.strftime("%Y-%m-%d", time.gmtime()), localities=len(points),
+                hours=round(sum(p[2] for p in points)), **totals, points=points)
     built_in = "<script>window.GLOBE = " + json.dumps(data, ensure_ascii=False, separators=(",", ":")) + ";</script>\n"
     html = (html.replace("__REFRESH__", "3600").replace("__DATASET__", README_URL)
                 .replace("<script>\nconst LAPTOP", built_in + "<script>\nconst LAPTOP", 1))
     with open(os.path.join(folder, "globe_localities_widget.html"), "w", encoding="utf-8") as f:
         f.write(html)
-    # the still: the widget's first view (centred on 10° E, 22° N) and colours
-    fig = go.Figure(go.Scattergeo(lat=d["lat"], lon=d["lon"], mode="markers", hoverinfo="skip",
-                                  marker=dict(symbol="square", color="#2563eb", opacity=0.6, line_width=0,
-                                              size=(2.4 * (1.2 + np.minimum(3.8, np.sqrt(d["hours"]) / 5))))))
+    # the still: the widget's first view (centred on 10° E, 22° N) and colours; older places as squares, the last
+    # month's and week's as circles on top
+    lat, lon, hours, month_new, week_new = (np.array([p[k] for p in points]) for k in range(5))
+    fig = go.Figure()
+    for name, sel, marker in [
+            (f"{len(points):,} localities · {data['hours']:,} h", (month_new == 0),
+             dict(symbol="square", color="#2563eb", opacity=0.6,
+                  size=2.4 * (1.2 + np.minimum(3.8, np.sqrt(hours) / 5)))),
+            (f"last month: {totals['recent_places']:,} places, +{totals['recent']:,} segments",
+             (month_new > 0) & (week_new == 0), dict(color="#d97706", size=9)),
+            (f"last week: {totals['day_places']:,} places, +{totals['day']:,} segments", week_new > 0,
+             dict(color="#e11d48", size=10))]:
+        size = marker.pop("size")
+        fig.add_trace(go.Scattergeo(lat=lat[sel], lon=lon[sel], mode="markers", name=name, hoverinfo="skip",
+                                    marker=dict(size=size[sel] if isinstance(size, np.ndarray) else size,
+                                                line=dict(width=0 if marker.get("symbol") else 1, color="white"),
+                                                **marker)))
     fig.update_geos(projection_type="orthographic", projection_rotation=dict(lon=10, lat=22), showland=True,
                     landcolor="#f8fafc", showocean=True, oceancolor="#dfeaf6", showcountries=True,
                     countrycolor="#cbd5e1", coastlinecolor="#cbd5e1", showlakes=False, showframe=False,
                     lataxis=dict(showgrid=True, gridcolor="rgba(15,23,42,0.06)"),
                     lonaxis=dict(showgrid=True, gridcolor="rgba(15,23,42,0.06)"))
-    fig.add_annotation(text=f"{d.height:,} localities · {d['hours'].sum():,.0f} h of footage", x=0.01, y=0.01,
-                       xref="paper", yref="paper", showarrow=False, font=dict(size=16, color="#667085"))
-    fig = _style(fig, width=1000, height=1000, margin=dict(l=20, r=20, t=20, b=20), showlegend=False)
+    fig = _style(fig, width=1000, height=1000, margin=dict(l=20, r=20, t=20, b=20),
+                 legend=dict(x=0.01, y=0.01, yanchor="bottom", itemsizing="constant", bgcolor="rgba(255,255,255,0.8)",
+                             title=dict(text=f"As of {data['date']}")))
     for out in (folder, common.output_dir):
         fig.write_image(os.path.join(out, "globe_localities_widget.png"))
 

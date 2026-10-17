@@ -116,16 +116,19 @@ async function load() {
   for (const [lat, lon, h, rec, day, name] of data.points)
     tiers[day ? 2 : rec ? 1 : 0].push({lon: lon * Math.PI / 180, s: Math.sin(lat * Math.PI / 180),
       k: Math.cos(lat * Math.PI / 180), r: 0.6 + Math.min(1.9, Math.sqrt(h) / 10), h, rec, day, name});
-  const days = Math.round(data.recent_h / 24);
-  document.getElementById('leg').innerHTML = (FIGURE ? '' :
-    `<span><b style="background:var(--day)"></b>today: ${fmt(data.day_places)} places, +${fmt(data.day)} segments</span>` +
-    `<span><b style="background:var(--recent)"></b>${days} days: ${fmt(data.recent_places)} places, +${fmt(data.recent)}</span>`) +
+  const [dayLabel, recentLabel] = periods();
+  document.getElementById('leg').innerHTML =
+    `<span><b style="background:var(--day)"></b>${dayLabel}: ${fmt(data.day_places)} places, +${fmt(data.day)} segments</span>` +
+    `<span><b style="background:var(--recent)"></b>${recentLabel}: ${fmt(data.recent_places)} places, +${fmt(data.recent)}</span>` +
     `<span><b style="background:var(--old);opacity:.6"></b>${fmt(data.localities)} localities · ${fmt(data.hours)} h</span>`;
   draw(performance.now());  // at once, even while hidden
-  document.getElementById('stamp').textContent = FIGURE ? '' :
+  document.getElementById('stamp').textContent = FIGURE ? `as of ${data.date}` :
     new Date(data.built * 1000).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
   if (!FIGURE) fit();
 }
+
+// the periods of the red and amber places: the widget's day and RECENT_H, the figure's week and month
+const periods = () => FIGURE ? ['last week', 'last month'] : ['today', `${Math.round(data.recent_h / 24)} days`];
 
 let height = 0;
 function fit() {
@@ -146,10 +149,10 @@ cv.addEventListener('mousemove', e => {
   for (const [x, y, p] of shown) { const d = (x - mx) ** 2 + (y - my) ** 2; if (d <= bd) { bd = d; best = p; } }  // ties: the newer (drawn later)
   hover = true;
   if (!best) { tip.style.display = 'none'; return; }
-  const days = Math.round(data.recent_h / 24);
+  const [dayLabel, recentLabel] = periods();
   tip.innerHTML = `<div class="n">${best.name}</div>${fmt(best.h)} h of footage` +
-    (best.rec ? `<div class="r">+${fmt(best.rec)} segments in ${days} days</div>` : '') +
-    (best.day ? `<div class="d">+${fmt(best.day)} today</div>` : '');
+    (best.rec ? `<div class="r">+${fmt(best.rec)} segments in ${FIGURE ? 'the ' : ''}${recentLabel}</div>` : '') +
+    (best.day ? `<div class="d">+${fmt(best.day)} ${FIGURE ? 'in the ' : ''}${dayLabel}</div>` : '');
   tip.style.display = 'block';
   tip.style.left = Math.min(e.clientX + 12, innerWidth - tip.offsetWidth - 4) + 'px';
   tip.style.top = Math.min(e.clientY + 12, innerHeight - tip.offsetHeight - 4) + 'px';

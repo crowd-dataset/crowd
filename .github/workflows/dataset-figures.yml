@@ -91,7 +91,10 @@ jobs:
           EOF
 
       # Only the packages the analysis and figures need (not torch/YOLO).
+      # The token: the globe widget figure reads the history of mapping.csv from GitHub's API.
       - name: Run analysis
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: >-
           uv run --no-project --python 3.12
           --with polars --with pyarrow --with pandas==2.2.3
