@@ -2838,11 +2838,13 @@ def title_countries(title):
     codes = '|'.join(sorted(set(add_video.US_STATE_CODES.values())))
     title = re.sub(rf"\b(?:[A-Z][\w'’.]*\s+){{1,4}}(?:{codes})\b", ' ', title)
     title = re.sub(rf'\b(?:{states})\b', ' ', title, flags=re.I)
-    found = [c for c in COUNTRIES if re.search(rf'\b{re.escape(c)}\b', title)]
+    # ... also in capitals ("DRIVING in MOSCOW: South-Eastern Okrug, RUSSIA", t0H4dB4tsVA; user, 2026-10-17), not in
+    # lower case: a turkey, china, a jordan
+    found = [c for c in COUNTRIES if re.search(rf'\b(?:{re.escape(c)}|{re.escape(c.upper())})\b', title)]
     # ... and by the everyday name where the mapping writes another (Io1qs4lQmS4: "GIRESUN, Turkey" is in Türkiye;
     # user, 2026-10-17); not before another name word ("Turkey Run", "Turkey Creek" are US places)
     found += [c for alias, c in COUNTRY_ALIASES.items() if c not in found
-              and re.search(rf"\b{re.escape(alias)}\b(?!\s+[A-Z][a-z])", title)]
+              and re.search(rf"\b(?:{re.escape(alias)}|{re.escape(alias.upper())})\b(?!\s+[A-Z][a-z])", title)]
     # a flag emoji names its country (OoOwyF8-T24: "Warsaw's Most Beautiful Bike Route 4K 🇵🇱" is no Warsaw, NY)
     flags = [chr(ord(a) - 0x1F1E6 + 65) + chr(ord(b) - 0x1F1E6 + 65)
              for a, b in re.findall('([\U0001F1E6-\U0001F1FF])([\U0001F1E6-\U0001F1FF])', title)]
