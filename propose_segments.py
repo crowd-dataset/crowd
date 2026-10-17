@@ -5063,8 +5063,12 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
         if vid in reanalyse:  # keep a vehicle type picked in the review page
             vt, vehicle_note = plan[vid].get('vehicle_type', vt), 'vehicle as in the earlier proposal'
         named = title_countries(meta['title'])  # "…hacia Carolina, Puerto Rico": not San Juan, Texas
-        locality = title_city(meta['title'], guess_locality(meta['title'], named[0] if len(named) == 1 else country,
-                                                            df), df)
+        guess = guess_locality(meta['title'], named[0] if len(named) == 1 else country, df)
+        if not guess and len(named) > 1:  # "Slovenia Metlika 4K | ... | LUNITO Finland" (AKJFTdnsw-I, a channel
+            # naming its home): the one named country that has a town of the title (user, 2026-10-17)
+            found = {tuple(g) for c in named if (g := guess_locality(meta['title'], c, df))}
+            guess = list(next(iter(found))) if len(found) == 1 else None
+        locality = title_city(meta['title'], guess, df)
         touched.append(vid)
         plan[vid] = ({
             'video': vid, 'title': meta['title'], 'analysed': analysed,
