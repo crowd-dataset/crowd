@@ -3910,9 +3910,12 @@ FROM_TO = (re.compile(r"\bfrom\s+(.+?)\s+to\s+(.+?)" + _END, re.I),
                       r"(?:\s+via\s+[^|–—:(]+?)?\s*(?:\s[-–—|]\s|\||:|\(|$)"),
            # ... or such a piece after a dash, bar or colon: "Driving Germany 4K - Werder to Berlin" (XfTNDV_nagE),
            # also with the road it takes: "| Boulder City to Las Vegas via I-11, 215 & I-15 |" (zMU7Qt6yijA)
-           re.compile(r"(?:\s[-–—|]\s|\|\s*|:\s+)(?!(?:Welcome|Back|Return|Road|Guide|Dusk|Dawn|Day|Night|"
+           # ... a town may have its state ("| Council Bluffs, Iowa to Omaha, Nebraska |", BPgWe0tYG0g) and the pair
+           # may follow a comma ("Highway 111, Palm Springs To Indio California, USA |", 8AbWRytSJ_U; user, 2026-10-17)
+           re.compile(r"(?:\s[-–—|]\s|\|\s*|:\s+|,\s+)(?!(?:Welcome|Back|Return|Road|Guide|Dusk|Dawn|Day|Night|"
                       r"Sunset|Sunrise|Morning|Evening|Sea)\b)"
-                      r"([A-Z][\w'’.-]*(?: [A-Z][\w'’.-]*){0,3})\s+[Tt]o\s+([A-Z][\w'’.-]*(?: [A-Z][\w'’.-]*){0,3})"
+                      r"([A-Z][\w'’.-]*(?: [A-Z][\w'’.-]*){0,3})(?:,\s*[A-Z][a-z]+(?: [A-Z][a-z]+)?)?\s+[Tt]o\s+"
+                      r"([A-Z][\w'’.-]*(?: [A-Z][\w'’.-]*){0,3})(?:,\s*[A-Z][\w.]*(?: [A-Z][a-z]+)?)*"
                       r"(?:\s+via\s+[^|–—:(]+?)?\s*(?:\s[-–—|]\s|\||:|\(|$)"),
            # an arrow between two places ("Ingleburn → Surry Hills | Sydney POV", AroundSydney), or a dash right after
            # a drive word ("Drive Wąchock – Starachowice", 3Xg0vN2LqKo; user, 2026-10-16); a dash elsewhere
