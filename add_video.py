@@ -783,6 +783,10 @@ def mapping_country_values(iso3):
     return {c: ('' if pd.isna(v) else v) for c, v in same.iloc[0][list(COUNTRY_COLUMNS)].items()}
 
 
+PLAIN_LETTERS = str.maketrans({'Đ': 'D', 'đ': 'd', 'Ø': 'O', 'ø': 'o', 'Ł': 'L', 'ł': 'l', 'ı': 'i',
+                               '’': "'", '‘': "'", 'ʻ': "'"})
+
+
 def new_locality_row(locality, state, country, locality_aka=None, near=None, at=None):
     """Row values for a locality not yet in the mapping, looked up from the web services. near=(lat, lon): where
     the locality is known to be (footage filmed there); a lookup by name landing farther away found a namesake
@@ -791,7 +795,10 @@ def new_locality_row(locality, state, country, locality_aka=None, near=None, at=
     alternative name (Guánica: Guanica)."""
     aka = [a.strip() for a in (locality_aka[1:-1].split(',') if isinstance(locality_aka, str)
                                else locality_aka or []) if a.strip()]
-    plain = ''.join(c for c in unicodedata.normalize('NFKD', locality) if not unicodedata.combining(c))
+    # letters that are no letter plus accent come apart by hand: Đồng Lê is Dong Le, Lee’s Summit Lee's Summit
+    # (both were left without a plain name; user, 2026-10-17)
+    plain = ''.join(c for c in unicodedata.normalize('NFKD', locality.translate(PLAIN_LETTERS))
+                    if not unicodedata.combining(c))
     if plain != locality and plain.isascii() and plain not in aka:  # not for other scripts or letters like ß
         aka.append(plain)
     country_corrected = common.correct_country(country)
