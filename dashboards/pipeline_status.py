@@ -30,6 +30,10 @@ from globe import globe_data  # noqa: E402
 PORT, REFRESH_S, TAIL = 8771, 120, 600
 # the video downloader (tools/download_videos.py): its machine and the status file it writes there
 DOWNLOADER = ('lin4080', '~/Documents/GitHub/pedestrians-in-youtube/_output/download_status.json')
+# the nightly inventory of the video files (tools/video_inventory.py): its machine and summary (the rows: .csv)
+INVENTORY = ('lin4080', '~/crowd-counts/_output/video_inventory.json')
+PROBLEMS = {'duplicate': 'also in an earlier folder', 'unreadable': 'no video stream: broken or partial',
+            'short': "over 5 s shorter than its last segment's end", 'unused': 'in no mapping'}
 HOST = os.environ.get('REVIEW_HOST', '127.0.0.1')
 STUCK_MIN = sw.STUCK_MIN
 HISTORY = os.path.join(rc.ROOT, 'status_history.jsonl')  # hourly: refresh channels not started, batches to review
@@ -124,6 +128,14 @@ def downloads():
     return dict(d, host=host, failed_24h=sum(f['t'] > now - 86400 for f in d.get('failures', [])))
 
 
+def inventory():
+    host, path = INVENTORY
+    try:
+        return dict(json.loads(sw.ssh(host, f'cat {path}')), host=host)
+    except Exception as e:
+        return dict(host=host, error=str(e)[-200:])
+
+
 def history(entry):
     """Adds entry to HISTORY when the last one is an hour old; returns the last 8 days."""
     rows = []
@@ -153,10 +165,10 @@ def paces(rows, now):
 def collect():
     state = rc.load_state()
     by_url = {(c.get('url') or k.split('refresh:', 1)[-1]): c for k, c in state.items()}
-    with ThreadPoolExecutor(len(sw.WORKERS) + 1) as ex:
-        dl = ex.submit(downloads)
+    with ThreadPoolExecutor(len(sw.WORKERS) + 2) as ex:
+        dl, inv = ex.submit(downloads), ex.submit(inventory)
         workers = list(ex.map(worker, sw.WORKERS))
-        dl = dl.result()
+        dl, inv = dl.result(), inv.result()
     for w in workers:
         url = w.get('channel') or ''
         c = by_url.get(url)  # a channel not in the state yet: the last part of its URL (@name or channel id)
@@ -182,7 +194,8 @@ def collect():
     order = ['processing', 'to review', 'reviewed', 'marked', 'rejected', 'duplicate', 'error']
     names = sorted({s for _, s in statuses}, key=lambda s: order.index(s) if s in order else 99)
     return dict(
-        at=time.time(), workers=workers, downloads=dl, batches=sorted(batches, key=lambda b: -b['waiting']),
+        at=time.time(), workers=workers, downloads=dl, inventory=inv,
+        batches=sorted(batches, key=lambda b: -b['waiting']),
         sheet_todo=len(todo), queue=len(queue), left=left, pace=pace,
         queue_phases=sorted(collections.Counter(q.get('phase') for q in queue).items(), key=lambda x: str(x[0])),
         last_sync=os.path.getmtime(sw.HEALTH) if os.path.exists(sw.HEALTH) else None,
@@ -335,6 +348,19 @@ border-radius:16px;background:var(--bg);color:var(--fg);font-size:13px;cursor:po
  <td class="ell" style="max-width:420px">{{ r.title or '' }}</td><td class="n">{{ '%.1f'|format(r.mb / 1000) }} GB</td>
  <td class="muted">{{ r.drive.split('/')[3] if r.drive.startswith('/media/') else r.drive }}</td></tr>{% endfor %}
 </table></div></div>{% endif %}</div>{% endif %}
+{% set v = s.inventory %}{% if v %}<h2>Video files ({{ v.host }})</h2><div class="card">
+{% if v.error %}<div class="prob">inventory not readable: {{ v.error }}</div>{% else %}
+ <div class="row"><b>{{ v.videos }}</b> videos, {{ v.tb }} TB · {{ v.missing }} in the mapping on no drive (the
+  download queue) <span class="small muted">· inventory of {{ hm(v.t) }}, nightly</span></div>
+ <div class="small">{% for f in v.folders %}{{ f.folder.split('/')[3] if f.folder.startswith('/media/')
+  else f.folder }}:
+  {{ f.files }} ({{ f.tb }} TB){{ ' · ' if not loop.last }}{% endfor %}</div>
+ <table style="margin-top:8px"><tr><th>problem</th><th class="n">files</th><th class="n">GB</th><th></th></tr>
+ {% for p, what in problems.items() %}{% set n = v.problems.get(p, {}) %}<tr>
+  <td>{% if n.files %}<a href="inventory/{{ p }}">{{ p }}</a>{% else %}{{ p }}{% endif %}</td>
+  <td class="n">{{ n.files or 0 }}</td><td class="n">{{ n.gb or 0 }}</td>
+  <td class="muted">{{ what }}</td></tr>{% endfor %}
+ </table>{% endif %}</div>{% endif %}
 {% if s.batches %}<h2>Batches waiting for review</h2><div class="card"><table>
 <tr><th>channel</th><th>fetched on</th><th class="n">to review</th><th class="n">proposed</th></tr>
 {% for b in s.batches %}<tr><td>{{ b.name }}</td><td class="muted">{{ b.host }}</td>
@@ -359,7 +385,7 @@ def dur(sec):
 def index():
     if not snapshot.get('at'):
         return '<meta http-equiv="refresh" content="5">Collecting the first snapshot…'
-    return render_template_string(PAGE, s=snapshot, dur=dur,
+    return render_template_string(PAGE, s=snapshot, dur=dur, problems=PROBLEMS,
                                   hm=lambda t: time.strftime('%d %b %H:%M', time.localtime(t)),
                                   ago=lambda t: dur(time.time() - t) if t else '?')
 
@@ -430,6 +456,26 @@ def downloads_done():
         r['drive'] = r['drive'].split('/')[3] if r['drive'].startswith('/media/') else r['drive']
     return render_template_string(LIST_PAGE, title='Videos downloaded', rows=rows, note=note,
                                   cols=['time', 'video', 'title', 'GB', 'source', 'drive'])
+
+
+@app.route('/inventory/<problem>')
+def inventory_list(problem):
+    """The video files with this problem in the last inventory (read from its machine when opened)."""
+    if problem not in PROBLEMS:  # it goes into a command line
+        return 'unknown problem', 404
+    host, path = INVENTORY
+    try:
+        text = sw.ssh(host, f"awk -F, '{{sub(/\\r$/, \"\")}} NR == 1 || index(\" \" $8 \" \", \" {problem} \")' "
+                            + path.replace('.json', '.csv'))
+        rows, note = list(csv.DictReader(io.StringIO(text))), PROBLEMS[problem]
+    except Exception as e:
+        rows, note = [], str(e)[-200:]
+    for r in rows:
+        r['GB'] = f"{int(r['mb'] or 0) / 1000:.1f}"
+        r['drive'] = r['folder'].split('/')[3] if r['folder'].startswith('/media/') else r['folder']
+        r['length'] = dur(float(r['duration'])) if r['duration'] else ''
+    return render_template_string(LIST_PAGE, title=f'Video files: {problem}', rows=rows, note=note,
+                                  cols=['video', 'drive', 'GB', 'length', 'height', 'problem'])
 
 
 @app.route('/status.json')
