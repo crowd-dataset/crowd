@@ -5491,7 +5491,8 @@ background:#fff;color:#222;font-size:13px;cursor:pointer}
       <span id="vid-copied"></span></div>
     <div class="clock">Time: <span id="clock" title="click to copy">0:00</span> <span id="copied"></span></div>
     <div class="keys">Keys for the outlined segment (the one clicked last): <b>A</b> start here · <b>S</b> end here ·
-      <b>D</b> whole video · <b>Q</b> day · <b>W</b> night · <b>F</b> split time here · <b>C</b> copy the time</div>
+      <b>D</b> whole video · <b>Q</b> day · <b>W</b> night · <b>F</b> split time here · <b>C</b> copy the time ·
+      in a time box <b>↑↓</b> ±1 s, <b>←→</b> ±10 s</div>
     <div id="status"></div>
     {% if waiting > open_videos | length %}<div class="keys">Showing {{ open_videos | length }} of {{ waiting }}
       videos left to decide; the next appear as you finish these.</div>{% endif %}
@@ -5830,13 +5831,15 @@ function editTimes(input) {
 }
 let stepSave;
 document.addEventListener('keydown', e => {
-  // up/down arrows in a time box step it by a second, show that moment, and save once the stepping pauses
+  // up/down arrows in a time box step it by a second, right/left by ten (user, 2026-10-17), show that moment, and
+  // save once the stepping pauses
   const input = e.target;
-  if (!['ArrowUp', 'ArrowDown'].includes(e.key) || !input.matches('input.t-start, input.t-end, input.at')) return;
+  const STEP = { ArrowUp: 1, ArrowDown: -1, ArrowRight: 10, ArrowLeft: -10 };
+  if (!(e.key in STEP) || !input.matches('input.t-start, input.t-end, input.at')) return;
   const t = parseTime(input.value);
   if (!Number.isFinite(t)) return;
   e.preventDefault();
-  const next = Math.max(0, t + (e.key === 'ArrowUp' ? 1 : -1));
+  const next = Math.max(0, t + STEP[e.key]);
   input.value = fmt(next);
   const row = input.closest('tr');
   if (ytReady && playingVideo() === row.dataset.video) ytPlayer.seekTo(next, true);
