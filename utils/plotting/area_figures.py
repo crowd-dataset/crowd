@@ -19,6 +19,7 @@ import time
 import urllib.parse
 
 import numpy as np
+import plotly.colors
 import plotly.graph_objects as go
 import polars as pl
 import requests
@@ -276,9 +277,9 @@ def _area_maps(seg: pl.DataFrame, df_mapping: pl.DataFrame, flags: dict):
                   note="Population: US Census Bureau estimates, 2024" if us else
                   "Population: Eurostat, each region's latest year (UK: 2019); Russia, Ukraine, Belarus and Bosnia "
                   "and Herzegovina: Wikidata, latest figure; whole countries: their population")
-        # not white-blue: pale regions would look like water
+        # muted purples without the palest step: near-white regions would look like water
         _area_map(table.filter(pl.col("hours") >= MIN_HOURS_AREA), feats, pop, "night", "Night footage (%)",
-                  "Viridis_r", f"{prefix}_night_share", False, ".0f", us,
+                  plotly.colors.sequential.Purp[1:], f"{prefix}_night_share", False, ".0f", us,
                   note=f"Each {what} with at least {MIN_HOURS_AREA} hour of footage")
 
 
