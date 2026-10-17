@@ -2936,6 +2936,10 @@ def guess_locality(title, country, df):
     # "by Red Hook in Brooklyn, New York": only what comes after "in" says where (the Red Hook in the mapping is
     # upstate); a place there that is no mapping locality (Brooklyn) is looked up later
     inside = IN_PLACE.search(title or '')
+    # ... unless that is only a state or a country: "Downtown Lincoln After Dark | ... in Nebraska" is Lincoln, NE
+    # (NJfeoNreNIM; user, 2026-10-17)
+    if inside and (inside.group(1).lower() in add_video.US_STATE_CODES or inside.group(1) in COUNTRIES):
+        inside = None
     loc = _title_locality(title[inside.start(1):] if inside else title, df)
     # ... in a state the whole title names: "Broadway Virginia Scenic Drive | Hidden Gem in the Shenandoah Valley" is
     # no Shenandoah, PA (30bJBAaRl8M)
