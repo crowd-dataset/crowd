@@ -3207,6 +3207,11 @@ def _ends_a_name(title, at):
     return bool(m and m.group(1)[0].isupper() and m.group(1).lower() not in LEAD_WORDS)
 
 
+# after a town and a street word, these make the street word part of a description, not a street name
+# (not "drive": "Cornwall Street Drive" is a street of Vancouver)
+AMBIENCE_WORDS = 'ambiences?|ambiances?|sounds?|noise|asmr|tours?|driving|trips?|walks?'
+
+
 def _title_locality(title, df, exact_case=False, word_needs_state=False):
     title = english_states(title)
     found = set()
@@ -3227,7 +3232,10 @@ def _title_locality(title, df, exact_case=False, word_needs_state=False):
             # Morris (i5kaJ7ePcpQ), and "Upstate New York" the state (VhIUTVhXa2U)
             pattern = (rf'(?<!\w)(?<![Nn]ew\s)(?<!Mt\.\s)(?<!Mt\s)(?<!Mount\s)(?<!Ft\.\s)(?<!Fort\s)(?<!St\.\s)'
                        rf'(?<!Saint\s)(?<!Port\s)(?<![Uu]pstate\s){re.escape(name)}(?!\w)'
-                       rf'(?!\.?\s+(?:{STREETS}|St|Inn|Park)\b)')
+                       rf'(?!\.?\s+(?:{STREETS}|St|Inn|Park)\b(?!\s+(?:{AMBIENCE_WORDS})\b))'
+                       # ... nor "White Noise" White, GA (rL6jIS8yhMI, 0SYdMalf8Yo, c3m1ExoLevo: "Nashville Road
+                       # Ambience | White Noise ASMR" is Nashville; user, 2026-10-17)
+                       rf'(?!\s+noise\b)')
             if (word_needs_state and name.lower() in COMMON_WORDS) or name.lower() in DEMONYMS:
                 if not isinstance(row['state'], str):
                     continue
