@@ -19,12 +19,13 @@ from concurrent.futures import ThreadPoolExecutor
 
 from pathlib import Path
 
-from flask import Flask, jsonify, render_template_string
+from flask import Flask, jsonify, render_template_string, request
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # run_channels and sync_workers: the repo's top folder
 import run_channels as rc  # noqa: E402
 import sync_workers as sw  # noqa: E402
 
+import short_videos  # noqa: E402
 from globe import globe_data  # noqa: E402
 
 PORT, REFRESH_S, TAIL = 8771, 120, 600
@@ -359,7 +360,8 @@ border-radius:16px;background:var(--bg);color:var(--fg);font-size:13px;cursor:po
  {% for p, what in problems.items() %}{% set n = v.problems.get(p, {}) %}<tr>
   <td>{% if n.files %}<a href="inventory/{{ p }}">{{ p }}</a>{% else %}{{ p }}{% endif %}</td>
   <td class="n">{{ n.files or 0 }}</td><td class="n">{{ n.gb or 0 }}</td>
-  <td class="muted">{{ what }}</td></tr>{% endfor %}
+  <td class="muted">{{ what }}{% if p == 'short' and n.files %} ·
+  <a href="short">check them one by one</a>{% endif %}</td></tr>{% endfor %}
  </table>{% endif %}</div>{% endif %}
 {% if s.batches %}<h2>Batches waiting for review</h2><div class="card"><table>
 <tr><th>channel</th><th>fetched on</th><th class="n">to review</th><th class="n">proposed</th></tr>
@@ -476,6 +478,26 @@ def inventory_list(problem):
         r['length'] = dur(float(r['duration'])) if r['duration'] else ''
     return render_template_string(LIST_PAGE, title=f'Video files: {problem}', rows=rows, note=note,
                                   cols=['video', 'drive', 'GB', 'length', 'height', 'problem'])
+
+
+@app.route('/short')
+def short_page():
+    """A form to check the videos shorter than their last segment (dashboards/short_videos.py)."""
+    data = short_videos.load()
+    return render_template_string(short_videos.PAGE, cases=data['cases'], built=data['built'], t=short_videos.t,
+                                  decisions=short_videos.DECISIONS, theme=PAGE[PAGE.index('<script>'):
+                                                                               PAGE.index('</script>') + 9],
+                                  hm=lambda t: time.strftime('%d %b %H:%M', time.localtime(t)))
+
+
+@app.route('/short/decide', methods=['POST'])
+def short_decide():
+    d = request.get_json(force=True)
+    try:
+        ok = short_videos.decide(str(d.get('video')), d.get('decision'), d.get('note'))
+    except ValueError:
+        return 'unknown decision', 400
+    return (jsonify(ok=True), 200) if ok else ('unknown video', 404)
 
 
 @app.route('/status.json')
