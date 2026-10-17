@@ -2537,6 +2537,10 @@ NOT_DRIVING_TITLE = re.compile(r'\b(?:walk(?:s|ing|around|about)?|wa(?:king|ling
                                # bare "boat" ("Studley boat park")
                                r'|yachts?|yatch|sail(?:ing|boat)|catamaran|speedboat|kayak\w*|canoe\w*|gondolas?'
                                r'|water taxi|cruise ship|(?:on|from) (?:a|the) boat|boat (?:trip|tour)'
+                               # ... and from the water (XWN7bkaz4Zs: "Exploring Venice from the Water"; user,
+                               # 2026-10-17); not a bare "canal" (Canal Street) or "ship" (Ship Bottom, NJ)
+                               r'|(?:from|on) the water|vaporetto|water ?bus|(?:on|from) a ship|by (?:boat|ship)'
+                               r'|canal (?:tour|cruise|ride)'
                                # a passenger on a bus, high up and often sideways
                                # (qEhvYWiNsX0: "Sight Seeing In Toronto
                                # ... On A Bus"; of 9 such titles reviewed or left out, none approved; user, 2026-10-13)
