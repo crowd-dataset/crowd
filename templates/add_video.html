@@ -328,6 +328,35 @@
 
         });
     </script>
+    <style>
+html[data-theme=dark]{filter:invert(.9) hue-rotate(180deg);background:#fff}
+html[data-theme=dark] img,html[data-theme=dark] iframe,html[data-theme=dark] video,
+html[data-theme=dark] .leaflet-container,html[data-theme=dark] .locmap,html[data-theme=dark] .routemap
+{filter:invert(1) hue-rotate(180deg)}
+#theme{position:fixed;right:12px;bottom:12px;z-index:9999;padding:6px 10px;border:1px solid #bbb;border-radius:16px;
+background:#fff;color:#222;font-size:13px;cursor:pointer}
+    </style>
+    <script>
+// dark unless switched to light; a cookie, not localStorage: the hub and each review page run on their own port,
+// and cookies are shared across the ports of a host
+(function () {
+  const m = document.cookie.match(/(?:^|; )theme=(dark|light)/);
+  document.documentElement.dataset.theme = m ? m[1] : 'dark';
+  addEventListener('DOMContentLoaded', () => {
+    const b = document.createElement('button');
+    b.id = 'theme';
+    const label = () => { b.textContent = document.documentElement.dataset.theme === 'dark' ? '☀️ Light' : '🌙 Dark'; };
+    b.onclick = () => {
+      const t = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+      document.documentElement.dataset.theme = t;
+      document.cookie = `theme=${t}; path=/; max-age=31536000; SameSite=Lax`;
+      label();
+    };
+    label();
+    document.body.appendChild(b);
+  });
+})();
+</script>
 </head>
 <body>
     <div class="container">
