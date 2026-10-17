@@ -284,6 +284,26 @@ STEP_BOB_WALK, STEP_BOB_HINT = 0.65, 0.6
 
 
 BOB_EVERY_S = 45  # step_bob_track: one 15-s reading this often through the video
+# BOB_WALK_RUN step-bob readings in a row at BOB_WALK or more are a walk, cut (6swqoWE057Y from 42:32: 0.78-0.91, the
+# drive before under 0.65; user, 2026-10-17). In 753 reviewed videos such runs cover 4830 s, none of it approved (3 in
+# a row: 8715 s, none either)
+BOB_WALK, BOB_WALK_RUN = 0.75, 4
+
+
+def bob_walks(sig):
+    """[(start s, end s)] of BOB_WALK_RUN or more bob_track readings in a row at BOB_WALK or more."""
+    bt = np.asarray(sig.get('bob_track', np.zeros((0, 2)))).reshape(-1, 2)
+    out, i = [], 0
+    while i < len(bt):
+        j = i
+        while j < len(bt) and bt[j, 1] >= BOB_WALK and (j == i or bt[j, 0] - bt[j - 1, 0] <= 1.5 * BOB_EVERY_S):
+            j += 1
+        if j - i >= BOB_WALK_RUN:
+            out.append((float(bt[i, 0]), float(bt[j - 1, 0]) + 15))
+        i = max(j, i + 1)
+    return out
+
+
 # a town's streets by sight (user, 2026-10-13: y0VgKTLKsp4's quiet Washington neighbourhood cut as highway): on 44
 # stretches the highway and rural checks cut, CLIP's middle score on 3 frames was 0.95 or more for 10 of the 21 the
 # reviewer approved anyway and 2 of the 23 they left cut
@@ -1090,6 +1110,9 @@ def propose(sig, p=PARAMS):
                     continue
             keep[a:b] = False
             notes.append(f'{label} {a / FPS:.0f}-{b / FPS:.0f}s')
+    for a, b in bob_walks(sig):
+        keep[int(a * FPS):int(b * FPS)] = False
+        notes.append(f"walking {a:.0f}-{b:.0f}s (the camera bobs at a walker's step rate)")
     for a, b, r in clock_speedups(sig):
         keep[int(a * FPS):int(b * FPS)] = False
         notes.append(f'sped up {a:.0f}-{b:.0f}s: the time stamp in the picture runs {r:.1f}x faster than the video')
