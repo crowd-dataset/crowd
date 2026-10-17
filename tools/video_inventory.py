@@ -9,9 +9,13 @@ and what is wrong with it:
 
     python -m tools.video_inventory --config ~/Documents/GitHub/pedestrians-in-youtube/config
 
-The folders are the "videos" of that config (the downloader's), or given as arguments. Writes
-_output/video_inventory.csv (one row per file) and _output/video_inventory.json (counts per folder and problem). Only
-new or changed files are probed again (size and time against the last inventory), so a nightly run takes minutes.
+The folders are the "videos" of that config (the downloader's) but the last one, or given as arguments: with
+"external_ssd" main.py copies each video into the last folder while it processes it and deletes the copy
+afterwards.
+
+Writes _output/video_inventory.csv (one row per file) and _output/video_inventory.json (counts per folder and
+problem). Only new or changed files are probed again (size and time against the last inventory), so a nightly run
+takes minutes.
 Standard library only, and ffprobe. Nightly on lin4080, in the checkout ~/crowd-counts:
 
     0 3 * * * cd $HOME/crowd-counts && /usr/bin/flock -n /tmp/crowd-counts.lock bash -c 'git pull -q --ff-only;
@@ -86,11 +90,11 @@ def problems(files, ends):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split('\n\n')[0])
-    ap.add_argument('folders', nargs='*', help='video folders (default: "videos" of --config)')
+    ap.add_argument('folders', nargs='*', help='video folders (default: "videos" of --config but the last)')
     ap.add_argument('--config', default='config', help='a config with "videos" (default: ./config)')
     ap.add_argument('--threads', type=int, default=8)
     args = ap.parse_args()
-    folders = args.folders or json.load(open(os.path.expanduser(args.config)))['videos']
+    folders = args.folders or json.load(open(os.path.expanduser(args.config)))['videos'][:-1]
     old = {}
     if os.path.exists(OUT_CSV):
         with open(OUT_CSV) as f:
