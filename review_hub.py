@@ -236,7 +236,9 @@ def commit_to_github(files, message):
     env = {**os.environ, 'GIT_INDEX_FILE': index}
     git('read-tree', 'origin/main', env=env)
     for f, b in blobs.items():
-        git('update-index', '--add', '--cacheinfo', f'100644,{b},{f}', env=env)
+        # the mode GitHub has for it (README.md is 100755: 0fe339a9 made it 100644, 2026-10-17); a new file 100644
+        mode = (git('ls-tree', 'origin/main', '--', f).split() or ['100644'])[0]
+        git('update-index', '--add', '--cacheinfo', f'{mode},{b},{f}', env=env)
     tree = git('write-tree', env=env)
     os.remove(index)
     commit = git('commit-tree', tree, '-p', 'origin/main', '-m', message)
