@@ -26,6 +26,9 @@ REPEAT_H = 6
 NEW_BATCHES = False  # post "new batch to review" (off for now, user 2026-10-13: may turn it on later)
 ROOT_MIN_GB, ANY_MIN_GB = 100, 50  # free space below which a disk is reported: root/system disks, any disk
 ROOTS = ('/', 'C:\\')
+# the video downloader's drives on lin4080: it fills each down to 50 GB free (download_reserve_gb) and starts a
+# video only above 55 GB, so its largest videos (22 GB so far) can take one to about 33 GB; below this, something else
+DOWNLOAD_DRIVE, DOWNLOAD_DRIVE_MIN_GB = '/media/salam/crowd-tue-', 25
 DOWNLOAD_H = 2  # the window for the video downloader's alerts (download_problems)
 
 
@@ -44,7 +47,8 @@ def problems():
                 continue
             for d in m.get('disks', []):
                 gb = d['free'] / 1e9
-                if gb < ANY_MIN_GB or (d['mount'] in ROOTS and gb < ROOT_MIN_GB):
+                least = DOWNLOAD_DRIVE_MIN_GB if d['mount'].startswith(DOWNLOAD_DRIVE) else ANY_MIN_GB
+                if gb < least or (d['mount'] in ROOTS and gb < ROOT_MIN_GB):
                     out[f'disk:{m["name"]}:{d["mount"]}'] = (f'**{m["name"]}** disk `{d["mount"]}` has only '
                                                              f'{gb:.0f} GB free of {d["total"] / 1e12:.1f} TB')
     except Exception as e:
