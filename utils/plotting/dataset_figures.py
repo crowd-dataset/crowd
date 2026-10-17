@@ -931,6 +931,7 @@ def _widget_globe():
                 hours=round(sum(p[2] for p in points)), **totals, points=points)
     built_in = "<script>window.GLOBE = " + json.dumps(data, ensure_ascii=False, separators=(",", ":")) + ";</script>\n"
     html = (html.replace("__REFRESH__", "3600").replace("__DATASET__", README_URL)
+                .replace('<script src="dock.js"></script>', "")  # the widget server's window placement
                 .replace("<script>\nconst LAPTOP", built_in + "<script>\nconst LAPTOP", 1))
     with open(os.path.join(folder, "globe_localities_widget.html"), "w", encoding="utf-8") as f:
         f.write(html)

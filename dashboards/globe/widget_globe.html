@@ -17,7 +17,7 @@ canvas { display:block; margin:0 auto; cursor:grab } canvas:active { cursor:grab
 .leg b { display:inline-block; width:7px; height:7px; border-radius:50%; margin-right:4px; vertical-align:0 }
 #tip { position:fixed; pointer-events:none; display:none; background:var(--bg); border:1px solid var(--line); border-radius:6px;
   padding:4px 7px; font-size:11.5px; box-shadow:0 2px 10px rgba(0,0,0,.25); max-width:240px }
-#tip .n { font-weight:600 } #tip .r { color:var(--recent) } #tip .d { color:var(--day) }
+#tip .n { font-weight:600 } #tip .m { opacity:.7 } #tip .r { color:var(--recent) } #tip .d { color:var(--day) }
 </style></head><body>
 <div class="h"><a href="__DATASET__" target="_blank">🚌 Localities ↗</a><span><button id="pp" title="Pause or resume turning (remembered)">⏸ pause</button><span id="stamp">loading…</span></span></div>
 <canvas id="g"></canvas>
@@ -29,6 +29,9 @@ canvas { display:block; margin:0 auto; cursor:grab } canvas:active { cursor:grab
 <script>
 const LAPTOP = __REFRESH__ > 60;          // the laptop: fewer frames and hourly data (battery)
 const FIGURE = window.GLOBE;              // the README figure: its data built in, no widget server
+// the figure's data, fresher than its own: the globe on bazilinskyy.github.io, rebuilt every night from the mapping on
+// GitHub (each place with its longest segment, played on a click)
+const LIVE = 'https://bazilinskyy.github.io/js/crowd-globe.json';
 const FPS = LAPTOP ? 8 : 10, SPEED = 5;   // frames per second, degrees per second (the mini's worker shares its CPU)
 const cv = document.getElementById('g'), ctx = cv.getContext('2d'), tip = document.getElementById('tip');
 const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
@@ -108,15 +111,25 @@ async function check() {
   start();
 }
 
+async function live() {  // the website's data in the widget's form, or the figure's own if the website is down
+  try {
+    const d = await (await fetch(LIVE, {cache: 'no-cache'})).json();
+    return {date: d.built.slice(0, 10), localities: d.localities, hours: d.hours, recent: d.month, day: d.week,
+            recent_places: d.month_places, day_places: d.week_places,
+            points: d.points.map(([lat, lon, h, videos, month, week, name, video, start]) =>
+              [lat, lon, h, month, week, name, video, start])};
+  } catch (e) { return FIGURE; }
+}
+
 async function load() {
   try {
-    data = FIGURE || await (await fetch('globe.json', {cache: 'no-store'})).json();
+    data = FIGURE ? await live() : await (await fetch('globe.json', {cache: 'no-store'})).json();
     if (data.error) throw new Error(data.error);
   } catch (e) { document.getElementById('stamp').textContent = 'unreachable (TU/e only)'; return; }
   tiers = [[], [], []];
-  for (const [lat, lon, h, rec, day, name] of data.points)
+  for (const [lat, lon, h, rec, day, name, video, start] of data.points)
     tiers[day ? 2 : rec ? 1 : 0].push({lon: lon * Math.PI / 180, s: Math.sin(lat * Math.PI / 180),
-      k: Math.cos(lat * Math.PI / 180), r: 0.6 + Math.min(1.9, Math.sqrt(h) / 10), h, rec, day, name});
+      k: Math.cos(lat * Math.PI / 180), r: 0.6 + Math.min(1.9, Math.sqrt(h) / 10), h, rec, day, name, video, start});
   const [dayLabel, recentLabel] = periods();
   document.getElementById('leg').innerHTML =
     `<span><b style="background:var(--day)"></b>${dayLabel}: ${fmt(data.day_places)} places, +${fmt(data.day)} segments</span>` +
@@ -137,16 +150,26 @@ function fit() {
   if (Math.abs(outerHeight - height) > 1) resizeTo(outerWidth, height);
 }
 
-cv.addEventListener('mousemove', e => {
+function nearest(e) {  // the place within 8 px of the pointer; ties: the newer (drawn later)
   const b = cv.getBoundingClientRect(), mx = e.clientX - b.left, my = e.clientY - b.top;
   let best = null, bd = 64;
-  for (const [x, y, p] of shown) { const d = (x - mx) ** 2 + (y - my) ** 2; if (d <= bd) { bd = d; best = p; } }  // ties: the newer (drawn later)
+  for (const [x, y, p] of shown) { const d = (x - mx) ** 2 + (y - my) ** 2; if (d <= bd) { bd = d; best = p; } }
+  return best;
+}
+cv.addEventListener('click', e => {  // the figure: a place's longest segment on YouTube (d3.drag swallows a drag's click)
+  const p = nearest(e);
+  if (p && p.video) open(`https://www.youtube.com/watch?v=${encodeURIComponent(p.video)}&t=${p.start}s`, '_blank', 'noopener');
+});
+cv.addEventListener('mousemove', e => {
+  const best = nearest(e);
   hover = true;
+  cv.style.cursor = best && best.video ? 'pointer' : '';
   if (!best) { tip.style.display = 'none'; return; }
   const [dayLabel, recentLabel] = periods();
   tip.innerHTML = `<div class="n">${best.name}</div>${fmt(best.h)} h of footage` +
     (best.rec ? `<div class="r">+${fmt(best.rec)} segments in ${FIGURE ? 'the ' : ''}${recentLabel}</div>` : '') +
-    (best.day ? `<div class="d">+${fmt(best.day)} ${FIGURE ? 'in the ' : ''}${dayLabel}</div>` : '');
+    (best.day ? `<div class="d">+${fmt(best.day)} ${FIGURE ? 'in the ' : ''}${dayLabel}</div>` : '') +
+    (best.video ? '<div class="m">Click to watch its footage on YouTube</div>' : '');
   tip.style.display = 'block';
   tip.style.left = Math.min(e.clientX + 12, innerWidth - tip.offsetWidth - 4) + 'px';
   tip.style.top = Math.min(e.clientY + 12, innerHeight - tip.offsetHeight - 4) + 'px';
