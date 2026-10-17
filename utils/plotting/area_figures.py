@@ -36,10 +36,23 @@ SOURCES = {
                                 "co-est2024-alldata.csv",
     "nuts2.json": "https://gisco-services.ec.europa.eu/distribution/v2/nuts/geojson/"
                   "NUTS_RG_20M_2021_4326_LEVL_2.geojson",
-    "nuts2_population.json": "https://ec.europa.eu/eurostat/api/dissemination/statistics/1.0/data/demo_r_d2jan"
-                             "?sex=T&age=TOTAL&lastTimePeriod=1&format=JSON&lang=EN",
+    # every year since 2014: each region's latest (the UK's is 2019; some countries report the latest year late)
+    "nuts2_population_since2014.json": "https://ec.europa.eu/eurostat/api/dissemination/statistics/1.0/data/"
+                                       "demo_r_d2jan?sex=T&age=TOTAL&sinceTimePeriod=2014&format=JSON&lang=EN",
 }
-EUROPE_VIEW = dict(projection_type="natural earth", lonaxis_range=[-25, 45], lataxis_range=[34, 71.5])
+# European countries without NUTS regions, from geoBoundaries (CC BY 4.0): first-level regions where they are about
+# the size of NUTS 2 regions, the whole country where the first level is much finer (Moldova, Kosovo) or the country
+# is small; Russia's regions west of the Urals only (centre west of 60° E)
+GEOBOUNDARIES = {"RUS": "ADM1", "UKR": "ADM1", "BLR": "ADM1", "BIH": "ADM1", "MDA": "ADM0", "XKX": "ADM0",
+                 "FRO": "ADM0", "GGY": "ADM0", "IMN": "ADM0", "AND": "ADM0", "SMR": "ADM0", "MCO": "ADM0",
+                 "GIB": "ADM0"}
+SOURCES |= {f"gb_{iso3}_{level}.json": f"https://github.com/wmgeolab/geoBoundaries/raw/9469f09/releaseData/gbOpen/"
+                                       f"{iso3}/{level}/geoBoundaries-{iso3}-{level}_simplified.geojson"
+            for iso3, level in GEOBOUNDARIES.items()}
+EUROPE_SEL = (pl.col("continent") == "Europe") | pl.col("iso3").is_in(["RUS", "TUR"])  # their European regions
+EUROPE_NOTE = ("Regions: Eurostat NUTS 2 (EU, EFTA, UK and candidate countries); geoBoundaries for European Russia, "
+               "Ukraine, Belarus and Bosnia and Herzegovina, and whole countries for Moldova, Kosovo and small ones")
+EUROPE_VIEW = dict(projection_type="natural earth", lonaxis_range=[-25, 62], lataxis_range=[34, 71.5])
 # (lon min, lon max, lat min, lat max) of the spike maps
 SPIKE_BOXES = {"USA": (-125, -66.5, 24, 49.5), "RUS": (19, 180, 41, 78), "JPN": (128.5, 146, 30, 46)}
 MIN_HOURS_AREA = 1  # areas with less footage (or analysed footage) are left out of share and rate maps
@@ -71,6 +84,18 @@ def _rings(geometry: dict) -> list:
     return [[tuple(p) for p in polygon[0]] for polygon in geometry["coordinates"]]
 
 
+def _clockwise(geometry: dict) -> dict:
+    """The polygon(s) with clockwise outer rings, as in the NUTS file: plotly's maps fill a counter-clockwise ring as
+    the whole globe except it (geoBoundaries draws them counter-clockwise)."""
+    def fix(polygon):
+        r = polygon[0]
+        ccw = sum(x1 * y2 - x2 * y1 for (x1, y1, *_), (x2, y2, *_) in zip(r, r[1:])) > 0
+        return [ring[::-1] for ring in polygon] if ccw else polygon
+    coords = geometry["coordinates"]
+    return dict(type=geometry["type"],
+                coordinates=fix(coords) if geometry["type"] == "Polygon" else [fix(p) for p in coords])
+
+
 def _areas(kind: str) -> tuple | None:
     """(features as {id: dict(name, rings, geometry)}, population by id) of US counties ("us") or NUTS-2 regions
     ("eu"); None when the outlines cannot be downloaded."""
@@ -92,7 +117,7 @@ def _areas(kind: str) -> tuple | None:
                                + (f", {state[g['id']]}" if g["id"] in state else ""),
                                rings=_rings(g["geometry"]), geometry=g["geometry"]) for g in geo["features"]}
         return feats, pop
-    path, pop_path = _fetch("nuts2.json"), _fetch("nuts2_population.json")
+    path, pop_path = _fetch("nuts2.json"), _fetch("nuts2_population_since2014.json")
     if not path:
         return None
     with open(path, encoding="utf-8") as f:
@@ -101,11 +126,27 @@ def _areas(kind: str) -> tuple | None:
     if pop_path:
         with open(pop_path, encoding="utf-8") as f:
             d = json.load(f)
-        index = d["dimension"]["geo"]["category"]["index"]
-        pop = {code: d["value"].get(str(i)) for code, i in index.items() if d["value"].get(str(i))}
+        years, values = d["size"][-1], d["value"]  # JSON-stat: geo, then time, are the last dimensions
+        for code, i in d["dimension"]["geo"]["category"]["index"].items():
+            latest = [values[k] for k in (str(i * years + t) for t in range(years)) if values.get(k)]
+            if latest:
+                pop[code] = float(latest[-1])
     feats = {g["properties"]["NUTS_ID"]: dict(name=f"{g['properties']['NAME_LATN']} ({g['properties']['CNTR_CODE']})",
                                               rings=_rings(g["geometry"]), geometry=g["geometry"])
              for g in geo["features"]}
+    for iso3, level in GEOBOUNDARIES.items():
+        gb = _fetch(f"gb_{iso3}_{level}.json")
+        if not gb:
+            continue
+        with open(gb, encoding="utf-8") as f:
+            for g in json.load(f)["features"]:
+                rings = _rings(g["geometry"])
+                if iso3 == "RUS" and np.mean([min(x for x, _ in r) + max(x for x, _ in r) for r in rings]) / 2 >= 60:
+                    continue  # east of the Urals
+                # whole countries by their ISO3 code (their population comes from the mapping)
+                area = iso3 if level == "ADM0" else f"{iso3}-{g['properties']['shapeName']}"
+                feats[area] = dict(name=f"{g['properties']['shapeName']} ({iso3})", rings=rings,
+                                   geometry=_clockwise(g["geometry"]))
     return feats, pop
 
 
@@ -185,18 +226,26 @@ def _area_map(table: pl.DataFrame, feats: dict, pop: dict, value: str, title: st
     fig.update_geos(domain=dict(x=[0, 1], y=[0, MAP_TOP_SHARE]), showframe=False)
     if note:
         fig.add_annotation(text=note, x=0.01, y=0.01, xref="paper", yref="paper", showarrow=False,
-                           font=dict(size=14, color="#666666"), xanchor="left")
+                           font=dict(size=14, color="#666666"), xanchor="left", bgcolor="rgba(255,255,255,0.85)")
     dfig._save(dfig._style(fig, margin=dict(l=0, r=0, t=10, b=0)), name)
 
 
+def _country_population(pop: dict, df_mapping: pl.DataFrame) -> dict:
+    """`pop` with the mapping's population of the countries that are one area (GEOBOUNDARIES at ADM0)."""
+    whole = [iso3 for iso3, level in GEOBOUNDARIES.items() if level == "ADM0"]
+    return pop | dict(df_mapping.filter(pl.col("iso3").is_in(whole), pl.col("population_country").cast(pl.Float64) > 0)
+                      .group_by("iso3").agg(pl.col("population_country").cast(pl.Float64).first()).iter_rows())
+
+
 def _area_maps(seg: pl.DataFrame, df_mapping: pl.DataFrame, flags: dict):
-    """Footage, footage per million people and night share per US county and per European NUTS-2 region."""
+    """Footage, footage per million people and night share per US county and per European region."""
     for kind, prefix, sel in [("us", "map_us_counties", pl.col("iso3") == "USA"),
-                              ("eu", "map_eu_regions", pl.col("continent") == "Europe")]:
+                              ("eu", "map_eu_regions", EUROPE_SEL)]:
         areas = _areas(kind)
         if areas is None:
             continue
         feats, pop = areas
+        pop = pop if kind == "us" else _country_population(pop, df_mapping)
         pts = df_mapping.filter(sel).drop_nulls(["lat", "lon"])
         area_of = dict(zip(pts["id"], _assign(pts["lon"].to_numpy(), pts["lat"].to_numpy(), feats)))
         table = _area_table(seg, {k: v for k, v in area_of.items() if v}, df_mapping, flags)
@@ -205,13 +254,13 @@ def _area_maps(seg: pl.DataFrame, df_mapping: pl.DataFrame, flags: dict):
         table = table.with_columns((pl.col("hours") / pl.col("population") * 1e6).alias("per_million"))
         us = kind == "us"
         what = "county" if us else "region"
-        uk = "" if us else ("Regions: Eurostat NUTS 2 (EU, EFTA and candidate countries; not the United Kingdom, "
-                            "Ukraine or Russia)")
         _area_map(table, feats, pop, "hours", "Footage (hours)", "YlOrRd", f"{prefix}_footage", True, ",.1f", us,
-                  note=uk)
+                  note="" if us else EUROPE_NOTE)
         _area_map(table, feats, pop, "per_million", "Hours per million people", "YlGnBu",
                   f"{prefix}_footage_per_capita", True, ",.1f", us,
-                  note=f"Population: {'US Census Bureau estimates, 2024' if us else 'Eurostat, latest year'}")
+                  note="Population: US Census Bureau estimates, 2024" if us else
+                  "Population: Eurostat, each region's latest year (UK: 2019); whole countries: their population. "
+                  "No population for the regions of Russia, Ukraine, Belarus and Bosnia and Herzegovina")
         _area_map(table.filter(pl.col("hours") >= MIN_HOURS_AREA), feats, pop, "night", "Night footage (%)", "Blues",
                   f"{prefix}_night_share", False, ".0f", us,
                   note=f"Each {what} with at least {MIN_HOURS_AREA} hour of footage")
@@ -222,12 +271,13 @@ def _detection_area_maps(d: pl.DataFrame, df_mapping: pl.DataFrame, flags: dict,
     (`d`: one row per analysed segment with `id`, `minutes` and a count column per class)."""
     person = classes[0]
     for kind, prefix, sel, cols in [("us", "map_us_counties", pl.col("iso3") == "USA", [person]),
-                                    ("eu", "map_eu_regions", pl.col("continent") == "Europe",
+                                    ("eu", "map_eu_regions", EUROPE_SEL,
                                      [person] + (["Bicycles"] if "Bicycles" in classes else []))]:
         areas = _areas(kind)
         if areas is None:
             continue
         feats, pop = areas
+        pop = pop if kind == "us" else _country_population(pop, df_mapping)
         pts = df_mapping.filter(sel).drop_nulls(["lat", "lon"])
         area_of = {k: v for k, v in zip(pts["id"], _assign(pts["lon"].to_numpy(), pts["lat"].to_numpy(), feats)) if v}
         dd = d.with_columns(pl.col("id").replace_strict(area_of, default=None, return_dtype=pl.Utf8).alias("area"))

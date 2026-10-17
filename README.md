@@ -949,10 +949,10 @@ Hours of footage per million people per US county (population: US Census Bureau 
 Share of footage recorded at night per US county (counties with at least an hour of footage).
 
 [![Footage per European region](figures/map_eu_regions_footage.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/map_eu_regions_footage.html)
-Footage per European region (Eurostat NUTS 2: EU, EFTA and candidate countries; not the United Kingdom, Ukraine or Russia).
+Footage per European region: Eurostat NUTS 2 regions for the EU, EFTA, the United Kingdom and candidate countries, and [geoBoundaries](https://www.geoboundaries.org) regions for European Russia (west of the Urals), Ukraine, Belarus and Bosnia and Herzegovina; Moldova, Kosovo and small countries as a whole.
 
 [![Footage per million people per European region](figures/map_eu_regions_footage_per_capita.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/map_eu_regions_footage_per_capita.html)
-Hours of footage per million people per European region (population: Eurostat).
+Hours of footage per million people per European region (population: Eurostat, each region's latest year; no population for the regions of Russia, Ukraine, Belarus and Bosnia and Herzegovina).
 
 [![Share of night footage per European region](figures/map_eu_regions_night_share.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/map_eu_regions_night_share.html)
 Share of footage recorded at night per European region (regions with at least an hour of footage).
@@ -1231,11 +1231,11 @@ Pedestrian road deaths per 100,000 people (road deaths times the WHO's pedestria
 [![Pedestrians per minute per US county (counties with at least an hour of analysed footage).](figures/map_us_counties_pedestrians.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/map_us_counties_pedestrians.html)
 Pedestrians per minute per US county (counties with at least an hour of analysed footage).
 
-[![Pedestrians per minute per European region (NUTS 2; regions with at least an hour of analysed footage).](figures/map_eu_regions_pedestrians.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/map_eu_regions_pedestrians.html)
-Pedestrians per minute per European region (NUTS 2; regions with at least an hour of analysed footage).
+[![Pedestrians per minute per European region (NUTS 2, and first-level regions of European Russia, Ukraine, Belarus and Bosnia and Herzegovina; regions with at least an hour of analysed footage).](figures/map_eu_regions_pedestrians.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/map_eu_regions_pedestrians.html)
+Pedestrians per minute per European region (NUTS 2, and first-level regions of European Russia, Ukraine, Belarus and Bosnia and Herzegovina; regions with at least an hour of analysed footage).
 
-[![Bicycles per minute per European region (NUTS 2): cycling regions stand out.](figures/map_eu_regions_bicycles.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/map_eu_regions_bicycles.html)
-Bicycles per minute per European region (NUTS 2): cycling regions stand out.
+[![Bicycles per minute per European region: cycling regions stand out.](figures/map_eu_regions_bicycles.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/map_eu_regions_bicycles.html)
+Bicycles per minute per European region: cycling regions stand out.
 
 [![Pedestrians per minute in Europe, smoothed over about 50 km; grey where there is less than an analysed hour within 100 km.](figures/map_pedestrians_smoothed_europe.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/map_pedestrians_smoothed_europe.html)
 Pedestrians per minute in Europe, smoothed over about 50 km; grey where there is less than an analysed hour within 100 km.

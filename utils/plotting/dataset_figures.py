@@ -1077,9 +1077,10 @@ DETECTION_FIGURES = {
                                                "pedestrians on the street predicts.",
     "map_us_counties_pedestrians": "Pedestrians per minute per US county (counties with at least an hour of "
                                    "analysed footage).",
-    "map_eu_regions_pedestrians": "Pedestrians per minute per European region (NUTS 2; regions with at least an "
-                                  "hour of analysed footage).",
-    "map_eu_regions_bicycles": "Bicycles per minute per European region (NUTS 2): cycling regions stand out.",
+    "map_eu_regions_pedestrians": "Pedestrians per minute per European region (NUTS 2, and first-level regions of "
+                                  "European Russia, Ukraine, Belarus and Bosnia and Herzegovina; regions with at "
+                                  "least an hour of analysed footage).",
+    "map_eu_regions_bicycles": "Bicycles per minute per European region: cycling regions stand out.",
     "map_pedestrians_smoothed_europe": "Pedestrians per minute in Europe, smoothed over about 50 km; grey where there "
                                        "is less than an analysed hour within 100 km.",
     "map_walkable_minutes_europe": "Walkable street minutes in Europe: the share of analysed minutes with at least 2 "
