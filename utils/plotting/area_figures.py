@@ -16,6 +16,7 @@ import json
 import math
 import os
 import time
+import urllib.parse
 
 import numpy as np
 import plotly.graph_objects as go
@@ -49,6 +50,12 @@ GEOBOUNDARIES = {"RUS": "ADM1", "UKR": "ADM1", "BLR": "ADM1", "BIH": "ADM1", "MD
 SOURCES |= {f"gb_{iso3}_{level}.json": f"https://github.com/wmgeolab/geoBoundaries/raw/9469f09/releaseData/gbOpen/"
                                        f"{iso3}/{level}/geoBoundaries-{iso3}-{level}_simplified.geojson"
             for iso3, level in GEOBOUNDARIES.items()}
+# their regions' populations, by ISO 3166-2 code (each region's latest figure)
+WIKIDATA_POPULATION = """SELECT ?code ?pop ?date WHERE { ?item wdt:P300 ?code; p:P1082 ?st. ?st ps:P1082 ?pop.
+OPTIONAL { ?st pq:P585 ?date. } FILTER(STRSTARTS(?code, "RU-") || STRSTARTS(?code, "UA-") || STRSTARTS(?code, "BY-")
+|| STRSTARTS(?code, "BA-")) }"""
+SOURCES["region_population_wikidata.json"] = ("https://query.wikidata.org/sparql?format=json&query="
+                                              + urllib.parse.quote(WIKIDATA_POPULATION))
 EUROPE_SEL = (pl.col("continent") == "Europe") | pl.col("iso3").is_in(["RUS", "TUR"])  # their European regions
 EUROPE_NOTE = ("Regions: Eurostat NUTS 2 (EU, EFTA, UK and candidate countries); geoBoundaries for European Russia, "
                "Ukraine, Belarus and Bosnia and Herzegovina, and whole countries for Moldova, Kosovo and small ones")
@@ -134,6 +141,12 @@ def _areas(kind: str) -> tuple | None:
     feats = {g["properties"]["NUTS_ID"]: dict(name=f"{g['properties']['NAME_LATN']} ({g['properties']['CNTR_CODE']})",
                                               rings=_rings(g["geometry"]), geometry=g["geometry"])
              for g in geo["features"]}
+    latest = {}  # ISO 3166-2 code -> (date, population)
+    if wd := _fetch("region_population_wikidata.json"):
+        with open(wd, encoding="utf-8") as f:
+            for b in json.load(f)["results"]["bindings"]:
+                row = (b.get("date", {}).get("value", ""), float(b["pop"]["value"]))
+                latest[b["code"]["value"]] = max(latest.get(b["code"]["value"], row), row)
     for iso3, level in GEOBOUNDARIES.items():
         gb = _fetch(f"gb_{iso3}_{level}.json")
         if not gb:
@@ -147,6 +160,8 @@ def _areas(kind: str) -> tuple | None:
                 area = iso3 if level == "ADM0" else f"{iso3}-{g['properties']['shapeName']}"
                 feats[area] = dict(name=f"{g['properties']['shapeName']} ({iso3})", rings=rings,
                                    geometry=_clockwise(g["geometry"]))
+                if g["properties"].get("shapeISO") in latest:
+                    pop[area] = latest[g["properties"]["shapeISO"]][1]
     return feats, pop
 
 
@@ -259,10 +274,11 @@ def _area_maps(seg: pl.DataFrame, df_mapping: pl.DataFrame, flags: dict):
         _area_map(table, feats, pop, "per_million", "Hours per million people", "YlGnBu",
                   f"{prefix}_footage_per_capita", True, ",.1f", us,
                   note="Population: US Census Bureau estimates, 2024" if us else
-                  "Population: Eurostat, each region's latest year (UK: 2019); whole countries: their population. "
-                  "No population for the regions of Russia, Ukraine, Belarus and Bosnia and Herzegovina")
-        _area_map(table.filter(pl.col("hours") >= MIN_HOURS_AREA), feats, pop, "night", "Night footage (%)", "Blues",
-                  f"{prefix}_night_share", False, ".0f", us,
+                  "Population: Eurostat, each region's latest year (UK: 2019); Russia, Ukraine, Belarus and Bosnia "
+                  "and Herzegovina: Wikidata, latest figure; whole countries: their population")
+        # not white-blue: pale regions would look like water
+        _area_map(table.filter(pl.col("hours") >= MIN_HOURS_AREA), feats, pop, "night", "Night footage (%)",
+                  "Viridis_r", f"{prefix}_night_share", False, ".0f", us,
                   note=f"Each {what} with at least {MIN_HOURS_AREA} hour of footage")
 
 

@@ -952,7 +952,7 @@ Share of footage recorded at night per US county (counties with at least an hour
 Footage per European region: Eurostat NUTS 2 regions for the EU, EFTA, the United Kingdom and candidate countries, and [geoBoundaries](https://www.geoboundaries.org) regions for European Russia (west of the Urals), Ukraine, Belarus and Bosnia and Herzegovina; Moldova, Kosovo and small countries as a whole.
 
 [![Footage per million people per European region](figures/map_eu_regions_footage_per_capita.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/map_eu_regions_footage_per_capita.html)
-Hours of footage per million people per European region (population: Eurostat, each region's latest year; no population for the regions of Russia, Ukraine, Belarus and Bosnia and Herzegovina).
+Hours of footage per million people per European region (population: Eurostat, each region's latest year; for Russia, Ukraine, Belarus and Bosnia and Herzegovina, Wikidata's latest figure).
 
 [![Share of night footage per European region](figures/map_eu_regions_night_share.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/map_eu_regions_night_share.html)
 Share of footage recorded at night per European region (regions with at least an hour of footage).
