@@ -901,9 +901,14 @@ def propose(sig, p=PARAMS):
         ref = np.median(sky[max(0, i - 10 * FPS):max(1, i - FPS)])
         # ... and sun glare: a brief bright spike with the light as before after it (px5Fob6umxw 44:24, _maBKxVgQI4,
         # XZcQC5inyBc; user, 2026-10-16). Of 699 cuts shown in reviewed stretches: 26 false and 7 real are such
-        high = sky[max(0, i - 8):i + 9].max() >= p['glare_spike'] * max(before.mean(), after.mean())
-        if (i + 10 * FPS <= len(sky) and high
-                and 0 < (sky[max(0, i - 2 * FPS):i + 4 * FPS] > 1.15 * ref).sum() / FPS <= p['short_dip_s']
+        spike = sky[max(0, i - 8):i + 9].max() / max(1e-6, max(before.mean(), after.mean()))
+        # ... also a strong one of up to 5 s, 1.4 times the light before it (Eac0h_zX9es 18:24: 1.42 for 5 s, two cuts
+        # 2 s apart; user, 2026-10-17): of the reviewed cuts such, 31 false and 9 real (the brief ones: 20 and 4)
+        brief = 0 < (sky[max(0, i - 2 * FPS):i + 4 * FPS] > 1.15 * ref).sum() / FPS <= p['short_dip_s']
+        around = sky[max(0, i - 4 * FPS):i + 6 * FPS]
+        long_glare = around.max() >= 1.4 * ref and 0 < (around > 1.15 * ref).sum() / FPS <= 5
+        if (i + 10 * FPS <= len(sky)
+                and ((spike >= p['glare_spike'] and brief) or long_glare)
                 and abs(np.median(sky[i + 3 * FPS:i + 10 * FPS]) - ref) <= 0.15 * ref):
             cut[i] = False
             continue
