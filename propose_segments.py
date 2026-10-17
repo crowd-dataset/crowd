@@ -4849,6 +4849,8 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
                 continue
             if download and not os.path.exists(sig_path):
                 print(f'[{n}/{len(ids)}] analysing {vid} {meta["title"][:60]}')
+                if (meta.get('duration') or 0) > 2 * 3600:  # run_channels.py waits longer for its silence
+                    print(f'  long video: {int(meta["duration"]) // 60} min')
                 analyse_video(vid, out_dir, meta)
                 time.sleep(pause_s)  # spacing requests keeps YouTube's bot check away for longer
             failures_in_a_row = 0
