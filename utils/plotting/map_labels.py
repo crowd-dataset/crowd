@@ -74,10 +74,25 @@ def country_shapes() -> dict:
         if not rings:
             continue
         if "id" in g and "properties" in g:
-            shapes[g["id"]] = dict(ct=tuple(g["properties"]["ct"]), rings=rings)
+            # a country can be several geometries (the UN map has Spain and Portugal apart from their islands, Ecuador
+            # from Galápagos): all their rings, and the label point of the largest
+            size = sum(abs(_area(r)) for r in rings)
+            old = shapes.get(g["id"])
+            if old is None or size > old["size"]:
+                shapes[g["id"]] = dict(ct=tuple(g["properties"]["ct"]), rings=rings + (old["rings"] if old else []),
+                                       size=size)
+            else:
+                old["rings"] += rings
         else:  # a few shapes without an ISO code (e.g., Kosovo); kept so territory_ring() can find them
             shapes[f"_unnamed{n}"] = dict(ct=None, rings=rings)
+    for shape in shapes.values():
+        shape.pop("size", None)
     return shapes
+
+
+def _area(ring) -> float:
+    """Signed area of a ring in square degrees (shoelace)."""
+    return sum(x1 * y2 - x2 * y1 for (x1, y1), (x2, y2) in zip(ring, ring[1:])) / 2
 
 
 def territory_ring(anchor, shapes: dict, owner_points: dict):
