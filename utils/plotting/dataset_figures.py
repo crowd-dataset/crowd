@@ -189,18 +189,21 @@ def _country_indicators(df_mapping: pl.DataFrame) -> pl.DataFrame:
                       .with_columns(pl.col("population_country").log10()))
 
 
-def _vs_indicators(df: pl.DataFrame, value: str, value_title: str, name: str, log_y: bool):
-    """Scatter of `value` per country against each indicator, one panel per indicator, each with its Spearman rank
-    correlation, the number of countries and a least-squares trend line (on the log scale when `log_y`)."""
-    cols = 3
-    rows = math.ceil(len(INDICATORS) / cols)
+def _vs_indicators(df: pl.DataFrame, value: str, value_title: str, name: str, log_y: bool,
+                   indicators: dict = INDICATORS):
+    """Scatter of `value` per country against each indicator (column -> title), one panel per indicator, each with its
+    Spearman rank correlation, the number of countries and a least-squares trend line (on the log scale when
+    `log_y`)."""
+    cols = 3 if len(indicators) <= 9 else 4
+    rows = math.ceil(len(indicators) / cols)
     titles = []
-    for col in INDICATORS:
+    for col in indicators:
         d = df.select(col, value).drop_nulls().filter(pl.col(value) > 0)
         rho = d.select(pl.corr(col, value, method="spearman")).item() if d.height > 2 else float("nan")
-        titles.append(f"{INDICATORS[col]}<br><sup>Spearman ρ = {rho:.2f}, n = {d.height}</sup>")
-    fig = make_subplots(rows=rows, cols=cols, subplot_titles=titles, horizontal_spacing=0.07, vertical_spacing=0.16)
-    for i, col in enumerate(INDICATORS):
+        titles.append(f"{indicators[col]}<br><sup>Spearman ρ = {rho:.2f}, n = {d.height}</sup>")
+    fig = make_subplots(rows=rows, cols=cols, subplot_titles=titles, horizontal_spacing=0.07,
+                        vertical_spacing=0.32 / rows)
+    for i, col in enumerate(indicators):
         r, c = i // cols + 1, i % cols + 1
         d = df.select("country", "continent", "hover", col, value).drop_nulls([col, value]).filter(pl.col(value) > 0)
         for continent in CONTINENT_ORDER:
@@ -208,7 +211,7 @@ def _vs_indicators(df: pl.DataFrame, value: str, value_title: str, name: str, lo
             fig.add_trace(go.Scatter(x=dc[col], y=dc[value], mode="markers", name=continent,
                                      legendgroup=continent, showlegend=i == 0,
                                      marker=dict(color=CONTINENT_COLORS[continent], size=7, opacity=0.8),
-                                     **_hover_args(dc, f"{INDICATORS[col]}: %{{x:,.1f}} · {value_title}: "
+                                     **_hover_args(dc, f"{indicators[col]}: %{{x:,.1f}} · {value_title}: "
                                                        "%{y:,.2f}")), row=r, col=c)
         if d.height > 2:
             x = d[col].to_numpy()
@@ -222,7 +225,7 @@ def _vs_indicators(df: pl.DataFrame, value: str, value_title: str, name: str, lo
     if log_y:
         fig.update_yaxes(type="log")
     fig.update_yaxes(title_text=value_title, col=1)
-    _save(_style(fig, legend_title_text=""), name)
+    _save(_style(fig, legend_title_text="", height=max(900, 300 * rows)), name)
 
 
 MIN_HOURS = 10  # countries with less footage are greyed out on share maps: a share of a few minutes is noise
@@ -289,20 +292,80 @@ def gdp_per_capita(max_age_days: int = 30) -> pl.DataFrame | None:
                          if r.get("value") and r.get("countryiso3code")])
 
 
+def _world_bank(code: str, max_age_days: int = 30) -> dict:
+    """ISO3 -> a World Bank indicator in each country's latest year ({} when it cannot be downloaded)."""
+    data = _cached_json(code, f"https://api.worldbank.org/v2/country/all/indicator/{code}",
+                        {"format": "json", "mrnev": 1, "per_page": 1000}, max_age_days)
+    return {r["countryiso3code"]: r["value"] for r in (data or [None, []])[1]
+            if r.get("value") is not None and r.get("countryiso3code")}
+
+
+def _who(code: str, dim1: str | None = None, max_age_days: int = 180) -> dict:
+    """ISO3 -> a WHO Global Health Observatory indicator in each country's latest year (with `dim1`, only that
+    breakdown, e.g. both sexes); {} when it cannot be downloaded."""
+    data = _cached_json(f"who_{code}" + (f"_{dim1}" if dim1 else ""), f"https://ghoapi.azureedge.net/api/{code}",
+                        {"$filter": f"Dim1 eq '{dim1}'"} if dim1 else {}, max_age_days)
+    latest = {}
+    for r in (data or {}).get("value", []):
+        if r.get("SpatialDimType") == "COUNTRY" and r.get("NumericValue") is not None:
+            latest[r["SpatialDim"]] = max(latest.get(r["SpatialDim"], (0, 0)), (r["TimeDim"], r["NumericValue"]))
+    return {k: v for k, (_, v) in latest.items()}
+
+
+def _mean_temperature(max_age_days: int = 365) -> dict:
+    """ISO3 -> mean annual temperature 1991-2020 (°C, ERA5), from the World Bank's Climate Change Knowledge Portal."""
+    data = _cached_json("cckp_tas_1991-2020", "https://cckpapi.worldbank.org/cckp/v1/era5-x0.25_climatology_tas_"
+                        "climatology_annual_1991-2020_mean_historical_era5_x0.25_mean/all_countries",
+                        {"_format": "json"}, max_age_days)
+    return {iso3: next(iter(v.values())) for iso3, v in (data or {}).get("data", {}).items() if v}
+
+
+# indicators of the pedestrians figure beyond the mapping's own (public sources, cached in .wb_cache)
+PEDESTRIAN_INDICATORS = INDICATORS | {
+    "gdp_log": "GDP per person ($'000 PPP, log10)",
+    "pedestrian_share": "Pedestrians among road deaths (%)",
+    "traffic_index": "TomTom traffic index (footage-weighted)",
+    "vehicles": "Registered vehicles per 1,000 people",
+    "urban": "Urban population (%)",
+    "density_log": "People per km² (log10)",
+    "inactive": "Adults with too little physical activity (%)",
+    "obese": "Adults with obesity (%)",
+    "temperature": "Mean temperature, 1991-2020 (°C)",
+}
+
+
+def _public_indicators(df_mapping: pl.DataFrame, seg: pl.DataFrame) -> pl.DataFrame:
+    """One row per country of the mapping with the PEDESTRIAN_INDICATORS that are not mapping columns: World Bank
+    (GDP per person, urban population, density), WHO (pedestrians among road deaths, 2016; registered vehicles, 2016,
+    per 1,000 of the mapping's population; physical inactivity; obesity) and ERA5 temperature; and the localities'
+    TomTom traffic index averaged over the country, weighted by their footage."""
+    gdp, urban, density = (_world_bank(c) for c in (GDP_PER_CAPITA, "SP.URB.TOTL.IN.ZS", "EN.POP.DNST"))
+    share, vehicles = _who(WHO_ROAD_USER_DEATHS, "ROADUSERTYPE_RS-DDC-PEDESTRIANS"), _who("RS_194")
+    inactive, obese = _who("NCD_PAA", "SEX_BTSX"), _who("NCD_BMI_30A", "SEX_BTSX")
+    temperature = _mean_temperature()
+    pop = df_mapping.group_by("iso3").agg(pl.col("population_country").filter(pl.col("population_country") > 0)
+                                          .first())
+    traffic = (seg.group_by("id").agg(pl.sum("seconds"))
+                  .join(df_mapping.select("id", "iso3", "traffic_index").filter(pl.col("traffic_index") > 0), on="id")
+                  .group_by("iso3").agg(((pl.col("traffic_index") * pl.col("seconds")).sum() / pl.sum("seconds"))
+                                        .alias("traffic_index")))
+    lookup = {"gdp_log": gdp, "pedestrian_share": share, "urban": urban, "density_log": density,
+              "inactive": inactive, "obese": obese, "temperature": temperature, "vehicles": vehicles}
+    out = pop.with_columns(pl.col("iso3").replace_strict(d, default=None, return_dtype=pl.Float64).alias(k)
+                           for k, d in lookup.items())
+    return (out.with_columns((pl.col("gdp_log") / 1000).log10(), pl.col("density_log").log10(),
+                             (pl.col("vehicles") / pl.col("population_country") * 1000).alias("vehicles"))
+               .join(traffic, on="iso3", how="left").drop("population_country"))
+
+
 WHO_ROAD_USER_DEATHS = "RS_246"  # WHO: distribution of road traffic deaths by type of road user (%), 2016
 
 
 def pedestrian_death_share(max_age_days: int = 180) -> pl.DataFrame | None:
     """Share of each country's road traffic deaths that are pedestrians (%), latest year, from the WHO's Global Health
     Observatory; None when it cannot be downloaded."""
-    data = _cached_json(WHO_ROAD_USER_DEATHS, f"https://ghoapi.azureedge.net/api/{WHO_ROAD_USER_DEATHS}",
-                        {"$filter": "Dim1 eq 'ROADUSERTYPE_RS-DDC-PEDESTRIANS'"}, max_age_days)
-    if data is None:
-        return None
-    rows = [r for r in data["value"] if r.get("NumericValue") is not None and r.get("SpatialDimType") == "COUNTRY"]
-    return (pl.DataFrame([{"iso3": r["SpatialDim"], "year": r["TimeDim"], "pedestrian_share": r["NumericValue"]}
-                          for r in rows])
-              .sort("year").group_by("iso3").agg(pl.last("pedestrian_share")))
+    share = _who(WHO_ROAD_USER_DEATHS, "ROADUSERTYPE_RS-DDC-PEDESTRIANS", max_age_days)
+    return pl.DataFrame({"iso3": list(share), "pedestrian_share": list(share.values())}) if share else None
 
 
 def _vs_trend(df: pl.DataFrame, x_col: str, x_title: str, value: str, title: str, name: str, ratio: float,
@@ -1153,7 +1216,11 @@ DETECTION_FIGURES = {
                                     "viewpoint changes what the detector sees.",
     "line_road_users_upload_year": "Detected road users per minute by year of upload (years with at least 10 analysed "
                                    "hours): newer cameras and higher resolutions can change what the detector sees.",
-    "scatter_indicators_pedestrians": "Pedestrians per minute of footage per country against country indicators.",
+    "scatter_indicators_pedestrians": "Pedestrians per minute of footage per country against country indicators: "
+                                      "the mapping's, GDP per person, urban population and density (World Bank), "
+                                      "pedestrians among road deaths, registered vehicles, physical inactivity and "
+                                      "obesity (WHO), mean temperature (ERA5, World Bank climate portal) and the "
+                                      "footage-weighted TomTom traffic index.",
     "bubble_pedestrians_gdp": "Pedestrians per minute of footage against GDP per person (countries with at least 10 "
                               "analysed hours; circle size: population), coloured by whether a country has more "
                               "than 1.5 times, about, or less than two-thirds of the pedestrians its wealth "
@@ -1489,8 +1556,10 @@ def detection_figures(df_mapping: pl.DataFrame, det: pl.DataFrame, classes: list
     fig.update_xaxes(dtick=1)
     _save(_style(fig), "line_road_users_upload_year")
 
-    rates_ind = country.join(_country_indicators(df_mapping), on="iso3", how="left")
-    _vs_indicators(rates_ind, person, "Pedestrians per minute", "scatter_indicators_pedestrians", log_y=False)
+    rates_ind = (country.join(_country_indicators(df_mapping), on="iso3", how="left")
+                        .join(_public_indicators(df_mapping, seg), on="iso3", how="left"))
+    _vs_indicators(rates_ind, person, "Pedestrians per minute", "scatter_indicators_pedestrians", log_y=False,
+                   indicators=PEDESTRIAN_INDICATORS)
 
     # road users against wealth and road safety, as The Economist's charts: more or fewer than predicted (countries
     # with at least MIN_HOURS of analysed footage)
