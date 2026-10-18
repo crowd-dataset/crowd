@@ -103,12 +103,21 @@ def worker(host):
     log = f'{sw.REMOTE}/_output/proposals/runner.log'
     try:
         raw = sw.ssh(host, f'tail -n {TAIL} {log}; echo @@; '
-                           f'stat -c %Y {log} 2>/dev/null || stat -f %m {log}; date +%s')
+                           f'stat -c %Y {log} 2>/dev/null || stat -f %m {log}; date +%s; '
+                           'echo @@Y; cat ~/.wsl_yield.json 2>/dev/null || true')  # jobs paused for Windows
     except Exception as e:
         return dict(host=host, state='offline', error=str(e)[-200:], role=sw.WORKERS[host])
     body, _, tail = raw.rpartition('@@\n')
+    tail, _, paused = tail.partition('@@Y\n')
     mtime, now = map(float, tail.split()[:2])
-    return dict(parse_log(body.splitlines(), mtime, now), host=host, role=sw.WORKERS[host], clock=now)
+    w = dict(parse_log(body.splitlines(), mtime, now), host=host, role=sw.WORKERS[host], clock=now)
+    try:
+        y = json.loads(paused)
+    except ValueError:
+        y = {}
+    if y.get('paused'):  # wsl_yield.py made way for someone using the Windows PC: not stalled (and no alert)
+        w.update(state='paused', paused=dict(why=y.get('why', ''), since=y.get('since')))
+    return w
 
 
 def downloads():
@@ -266,7 +275,7 @@ h2{font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--mute
 .head{display:flex;justify-content:space-between;align-items:baseline;gap:8px}.head h3{margin:0;font-size:16px}
 .st{font-size:12px;font-weight:600;border-radius:6px;padding:1px 8px;background:var(--track)}
 .st.working{color:var(--ok)}.st.idle{color:var(--muted)}
-.st.blocked,.st.stalled{color:var(--warn)}.st.offline{color:var(--bad)}
+.st.blocked,.st.stalled{color:var(--warn)}.st.paused{color:var(--link)}.st.offline{color:var(--bad)}
 .bar{height:6px;background:var(--track);border-radius:3px;overflow:hidden;margin:6px 0 4px}
 .bar i{display:block;height:100%;background:var(--bar)}
 .row{margin:3px 0}.ell{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -345,6 +354,9 @@ border-radius:16px;background:var(--bg);color:var(--fg);font-size:13px;cursor:po
   <span class="muted">(since {{ ago(w.since) }})</span></div>{% endif %}
  {% if w.batch %}<div class="small muted">last batch {{ ago(w.batch.at) }} ago:
   {{ w.batch.proposed }} proposed, {{ w.batch.excluded }} excluded</div>{% endif %}
+ {% if w.paused %}<div class="small" style="color:var(--link)">paused{% if w.paused.since %} since
+  {{ hm(w.paused.since) }}{% endif %} to make way: {{ w.paused.why }}
+  (it resumes 10 min after that stops)</div>{% endif %}
  <div class="small muted">log written {{ ago(w.clock - w.log_age) }} ago</div>
  {% for p in w.problems %}<div class="prob {{ '' if p.current else 'old' }}">{{ p.text }}</div>{% endfor %}
  {% endif %}</div>{% endfor %}
