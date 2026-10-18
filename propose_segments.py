@@ -21,10 +21,12 @@ import re
 import shutil
 import subprocess
 import tempfile
+import threading
 import time
 import unicodedata
 import webbrowser
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache, wraps
 from threading import Timer
 from urllib.parse import parse_qs, unquote, urlparse
@@ -267,11 +269,9 @@ def sheet_scores(sheet_path, scenes, prefix='', bottom=False):
             for c in range(0, sheet.shape[1], 320):
                 tiles.append(os.path.join(work_dir, f'tile{len(tiles)}.jpg'))
                 cv2.imwrite(tiles[-1], sheet[r + (90 if bottom else 0):r + 180, c:c + 320])
-        ask = json.dumps({'scenes': scenes[0], 'k': scenes[1], 'prefix': prefix})
-        r = subprocess.run([YOLO_PYTHON, '-c', SCENE_CODE, ask, *tiles], capture_output=True, text=True, cwd=HERE)
-        scores = [float(x) for x in r.stdout.split()]
-        if r.returncode or len(scores) != len(tiles):
-            print(f'  CLIP failed, no contact sheet check: {r.stderr.strip()[-300:]}', flush=True)
+        scores = _clip_run({'scenes': scenes[0], 'k': scenes[1], 'prefix': prefix}, tiles)
+        if scores is None:
+            print('  CLIP failed, no contact sheet check', flush=True)
             return []
         return scores
     finally:
@@ -339,14 +339,37 @@ AERIAL_SCENES = (['an aerial view from a drone', "a bird's-eye view of a city", 
                   'a person walking on a sidewalk',
                   'the inside of a car', 'a person talking to the camera', 'a parking lot'], 3, 'a photo of ')
 AERIAL_FRAMES, AERIAL_SHARE = 8, 0.5
+# ... and drone stretches inside a drive (uu8KYvG9-qA 3:45-11:25, udRDUzRn4xU, JqWsGfeYQQg; user, 2026-10-18: "a lot
+# of drone footage offered as driving"): a reading every AERIAL_EVERY_S, AERIAL_RUN or more in a row at AERIAL_SURE
+# or more are drone footage. Those three videos' drone stretches read 0.9+ throughout; of 46,418 frames of approved
+# segments (250 videos) 24 did, in a row only in mdfLX6NEvXA, a still view of a bay from a balcony
+AERIAL_EVERY_S, AERIAL_SURE, AERIAL_RUN = 10, 0.9, 2
 
 
 def aerial_track(path, duration, work_dir):
-    """[(second, CLIP score of AERIAL_SCENES)] of AERIAL_FRAMES frames from 5% to 95% of the video."""
+    """[(second, CLIP score of AERIAL_SCENES)] every AERIAL_EVERY_S s of the video."""
     if not duration:
         return []
-    times = [float(duration * q) for q in np.linspace(0.05, 0.95, AERIAL_FRAMES)]
+    times = [float(t) for t in np.arange(AERIAL_EVERY_S / 2, duration, AERIAL_EVERY_S)]
     return sorted(_clip_scores(path, times, work_dir, AERIAL_SCENES).items())
+
+
+def aerial_runs(sig):
+    """[(start s, end s)] of AERIAL_RUN or more aerial readings in a row at AERIAL_SURE or more: drone footage.
+    Signals saved before readings came every AERIAL_EVERY_S have them minutes apart: never a run."""
+    a = np.asarray(sig.get('aerial', np.zeros((0, 2)))).reshape(-1, 2)
+    out, run = [], []
+    for t, score in a:
+        if score >= AERIAL_SURE and (not run or t - run[-1] <= 1.5 * AERIAL_EVERY_S):
+            run.append(t)
+            continue
+        if len(run) >= AERIAL_RUN:
+            out.append(run)
+        run = [t] if score >= AERIAL_SURE else []
+    if len(run) >= AERIAL_RUN:
+        out.append(run)
+    half = AERIAL_EVERY_S / 2
+    return [(max(0.0, r[0] - half), r[-1] + half) for r in out]
 
 
 # a camera facing the driver, seen by CLIP (user, 2026-10-16: jykQR2dKANc, AlCduyvTAxI, 1MDz3XJ82Oc; the Haar face
@@ -1115,12 +1138,21 @@ def propose(sig, p=PARAMS):
                     continue
             keep[a:b] = False
             notes.append(f'{label} {a / FPS:.0f}-{b / FPS:.0f}s')
+    for a, b in aerial_runs(sig):
+        keep[int(a * FPS):int(b * FPS)] = False
+        notes.append(f'drone footage {a:.0f}-{b:.0f}s')
     for a, b in bob_walks(sig):
         keep[int(a * FPS):int(b * FPS)] = False
         notes.append(f"walking {a:.0f}-{b:.0f}s (the camera bobs at a walker's step rate)")
     for a, b, r in clock_speedups(sig):
         keep[int(a * FPS):int(b * FPS)] = False
         notes.append(f'sped up {a:.0f}-{b:.0f}s: the time stamp in the picture runs {r:.1f}x faster than the video')
+    # ... and where the GPS overlay moves faster than a car (user, 2026-10-18: "add the speed and jump checks")
+    for a, b, v in gps_speedups(sig):
+        keep[int(a * FPS):int(b * FPS)] = False
+        notes.append(f'sped up {a:.0f}-{b:.0f}s: the GPS overlay moves at {v:.0f} km/h')
+    for t, d in gps_jumps(sig):
+        notes.append(f'the GPS overlay jumps {d:.1f} km at {int(t) // 60}:{int(t) % 60:02d}: footage cut out? check')
     if 'std' in sig:
         for a, b in photo_inserts(sig):
             keep[a:b] = False
@@ -1715,20 +1747,58 @@ def dark_edges(sig, max_s=240, min_s=8):
     return out
 
 
-SCENE_CODE = """
+# CLIP in a process of its own that stays: it loaded its model anew for each of a video's 7 checks (a quarter of
+# a minute each time on a CPU) and read one frame at a time; now it reads JSON lines {ask, paths}, answers each
+# with a line of scores, keeps each ask's prompts and scores frames in batches, on the GPU where there is one
+# (user, 2026-10-18: "run multiple tools over those frames in a pipeline fashion")
+SCENE_SERVER = """
 import json, sys, open_clip, torch
 from PIL import Image
-ask = json.loads(sys.argv[1])
-model, _, prep = open_clip.create_model_and_transforms('ViT-B-32', pretrained='laion2b_s34b_b79k')
+dev = 'cuda' if torch.cuda.is_available() else 'cpu'
+model, _, prep = open_clip.create_model_and_transforms('ViT-B-32', pretrained='laion2b_s34b_b79k', device=dev)
+model.eval()
 tok = open_clip.get_tokenizer('ViT-B-32')
-with torch.no_grad():
-    text = model.encode_text(tok([ask.get('prefix', 'a dashcam photo of ') + s for s in ask['scenes']]))
-    text /= text.norm(dim=-1, keepdim=True)
-    for path in sys.argv[2:]:
-        img = model.encode_image(prep(Image.open(path)).unsqueeze(0))
-        img /= img.norm(dim=-1, keepdim=True)
-        print(float((100 * img @ text.T).softmax(-1)[0, :ask['k']].sum()), flush=True)
+texts = {}
+for line in sys.stdin:
+    q = json.loads(line)
+    ask, key = q['ask'], json.dumps(q['ask'], sort_keys=True)
+    with torch.no_grad():
+        if key not in texts:
+            t = model.encode_text(tok([ask.get('prefix', 'a dashcam photo of ') + s for s in ask['scenes']]).to(dev))
+            texts[key] = t / t.norm(dim=-1, keepdim=True)
+        out = []
+        for i in range(0, len(q['paths']), 64):
+            img = model.encode_image(torch.stack([prep(Image.open(p)) for p in q['paths'][i:i + 64]]).to(dev))
+            img = img / img.norm(dim=-1, keepdim=True)
+            out += (100 * img @ texts[key].T).softmax(-1)[:, :ask['k']].sum(-1).tolist()
+    print(json.dumps(out), flush=True)
 """
+_CLIP = {'lock': threading.Lock()}
+
+
+def _clip_run(ask, paths):
+    """CLIP's score of each image file for an ask ({'scenes', 'k' first ones that count, 'prefix'}) from the
+    SCENE_SERVER process, started on first use; None when CLIP is missing or fails."""
+    if not paths or not os.path.exists(YOLO_PYTHON):
+        return None
+    with _CLIP['lock']:
+        proc = _CLIP.get('proc')
+        if proc is None or proc.poll() is not None:
+            log = open(os.path.join(tempfile.gettempdir(), 'crowd_clip.log'), 'a')
+            proc = _CLIP['proc'] = subprocess.Popen([YOLO_PYTHON, '-c', SCENE_SERVER], stdin=subprocess.PIPE,
+                                                    stdout=subprocess.PIPE, stderr=log, text=True, cwd=HERE)
+        try:
+            proc.stdin.write(json.dumps({'ask': ask, 'paths': list(paths)}) + '\n')
+            proc.stdin.flush()
+            out = json.loads(proc.stdout.readline() or 'null')
+        except (OSError, ValueError):
+            out = None
+        if not isinstance(out, list) or len(out) != len(paths):
+            proc.kill()  # started afresh next time
+            return None
+        return [float(x) for x in out]
+
+
 # (scenes CLIP chooses between, how many of the first ones count as a yes)
 GARAGE_SCENES = (['the inside of a parking garage', 'a road tunnel', 'a street under an elevated railway',
                   'a road at dusk', 'a road at night', 'a city street', 'a road through a forest', 'a highway'], 1)
@@ -1827,24 +1897,23 @@ def _clip_scores(path, times, work_dir, scenes):
     ffmpeg could not take is left out; {} when CLIP is missing or fails."""
     if not times or not os.path.exists(YOLO_PYTHON):
         return {}
-    shots = []
-    for i, t in enumerate(times):
+
+    def grab(it):
+        i, t = it
         shot = os.path.join(work_dir, f'clip{i}.jpg')
         subprocess.run(['ffmpeg', '-v', 'error', '-y', '-ss', f'{t:.1f}', '-i', path, '-frames:v', '1', shot],
                        capture_output=True, timeout=120)
-        if os.path.exists(shot):
-            shots.append((t, shot))
+        return (t, shot) if os.path.exists(shot) else None
+    with ThreadPoolExecutor(8) as pool:  # the frames side by side: one ffmpeg each, a seek apiece
+        shots = [x for x in pool.map(grab, enumerate(times)) if x]
     if not shots:
         return {}
-    ask = json.dumps({'scenes': scenes[0], 'k': scenes[1],
-                      'prefix': scenes[2] if len(scenes) > 2 else 'a dashcam photo of '})
-    r = subprocess.run([YOLO_PYTHON, '-c', SCENE_CODE, ask, *(f for _, f in shots)], capture_output=True, text=True,
-                       cwd=HERE)
+    scores = _clip_run({'scenes': scenes[0], 'k': scenes[1],
+                        'prefix': scenes[2] if len(scenes) > 2 else 'a dashcam photo of '}, [f for _, f in shots])
     for _, shot in shots:
         os.remove(shot)
-    scores = [float(x) for x in r.stdout.split()]
-    if r.returncode or len(scores) != len(shots):
-        print(f'  CLIP failed, no scene check: {r.stderr.strip()[-300:]}', flush=True)
+    if scores is None:
+        print('  CLIP failed, no scene check', flush=True)
         return {}
     return {t: score for (t, _), score in zip(shots, scores)}
 
@@ -2293,6 +2362,50 @@ def opening_texts(video_id, start=1, upto=61, step=None):
         shutil.rmtree(work_dir, ignore_errors=True)
 
 
+SIGN_STEP_S = 3  # road signs read every this many seconds of a drive between towns
+
+
+@lru_cache(maxsize=None)
+def ocr_gpu():
+    """Whether the OCR environment has a GPU: a CPU takes ~2 s a frame, hours for a drive read every 3 s."""
+    return bool(OCR_PYTHON) and subprocess.run(
+        [OCR_PYTHON, '-c', 'import torch; print(torch.cuda.is_available())'], capture_output=True, text=True,
+        timeout=300).stdout.strip() == 'True'
+
+
+def read_signs(video_id, step=SIGN_STEP_S):
+    """{second: [texts]} EasyOCR reads on the 720p video every `step` seconds, for the road signs of a drive
+    between towns ("Yale University" at 95:06 and "Welcome to the City of New Haven" at 97:15 in OkEXG95VyKk, where
+    the reviewer's New Haven starts; user, 2026-10-18: "reading traffic signs ... could have helped"). None without
+    the OCR environment on a GPU, or when the video is not read."""
+    if not ocr_gpu():
+        return None
+    work_dir = tempfile.mkdtemp(prefix='crowd_signs_')
+    try:
+        _yt_dlp('-q', '-f', 'bv*[height<=720][ext=mp4]/bv*[height<=720]', '-o', os.path.join(work_dir, 'v.%(ext)s'),
+                _url(video_id))
+        path = next(os.path.join(work_dir, n) for n in os.listdir(work_dir) if n.startswith('v.'))
+        subprocess.run(['ffmpeg', '-v', 'error', '-i', path, '-vf', f'fps=1/{step}', '-q:v', '3',
+                        os.path.join(work_dir, 's%05d.jpg')], capture_output=True, timeout=4 * 3600)
+        os.remove(path)
+        shots = sorted(n for n in os.listdir(work_dir) if n.startswith('s'))
+        r = subprocess.run([OCR_PYTHON, '-c', OCR_CODE, *(os.path.join(work_dir, n) for n in shots)],
+                           capture_output=True, text=True, timeout=4 * 3600)
+        lines = [json.loads(x) for x in r.stdout.splitlines() if x.startswith('[')]
+        if r.returncode or len(lines) != len(shots):
+            print(f'  signs not read: {r.stderr.strip()[-300:]}', flush=True)
+            return None
+        print(f'  signs read in {len(shots)} frames', flush=True)
+        return {k * step: texts for k, texts in enumerate(lines) if texts}
+    except BotCheck:
+        raise
+    except (RuntimeError, StopIteration, OSError, subprocess.TimeoutExpired, ValueError) as e:
+        print(f'  signs not read: {e}', flush=True)
+        return None
+    finally:
+        shutil.rmtree(work_dir, ignore_errors=True)
+
+
 def screen_locality(texts, df):
     """([locality, state, country], second) of the mapping locality a label in the opening names most often
     (QcYf2VZqS-Y: "Sacramento" at 0:26; _DpauJdKxV0: "LOS ANGELES 4K"), else None."""
@@ -2455,17 +2568,48 @@ def split_gps(p, df, out_dir):
         return False
     countries = {common.get_iso2_country_code(common.correct_country(c)): c for c in df['country'].dropna().unique()}
     countries.pop(None, None)
-    track = sig['gps'].tolist()
-    stretches = []
-    for i, (t, lat, lon) in enumerate(track):
+    track = gps_clean(sig['gps'].tolist())
+    lats, lons = np.radians(df['lat'].astype(float).values), np.radians(df['lon'].astype(float).values)
+    stretches, town, locs = [], None, []
+    for t, lat, lon in track:
         h = _osm_reverse(round(lat, 3), round(lon, 3))
-        loc = (_hit_locality(h, df, countries, (lat, lon)) if h else None) if _urban(lat, lon) else None
+        town = _hit_locality(h, df, countries, (lat, lon)) if h else None
+        # in a town by GeoNames' places, or inside the town's boundary on OpenStreetMap (user, 2026-10-18: "fetch
+        # geofences of localities ... and limit segments based on that"): a town too small for GeoNames' list. Not
+        # only inside it: Saanich and Oak Bay count for Victoria (BecCeTiyTxY), whose own boundary leaves them out
+        fence = geofence(town, df) if town and not _urban(lat, lon) else []
+        loc = town if _urban(lat, lon) or in_fence(fence, lat, lon) else None
+        if loc is None and _urban(lat, lon) and len(df):
+            # a town's edge whose address names no town is the mapping locality nearest it, within 15 km
+            # (sLlVKNBtgYY: Katherine's outskirts at 4:00-6:00 were rural; user, 2026-10-18)
+            km = 6371 * np.hypot(lats - np.radians(lat), (lons - np.radians(lon)) * np.cos(np.radians(lat)))
+            if km.min() <= 15:
+                r = df.iloc[int(km.argmin())]
+                loc = [r['locality'], None if pd.isna(r['state']) else r['state'], r['country']]
+        locs.append(loc)
+    # a little rural driving at a town's edge counts for it: within GPS_EDGE_KM of its boundary (user, 2026-10-18:
+    # "some small sections on the edges of localities of rural driving can be okay")
+    for i, (t, lat, lon) in enumerate(track):
+        near = [x for x in (locs[i - 1] if i else None, locs[i + 1] if i + 1 < len(locs) else None) if x]
+        if locs[i] is None and near:
+            locs[i] = next((x for x in near if (f := geofence(x, df)) and fence_km(f, lat, lon) <= GPS_EDGE_KM), None)
+    for i, ((t, lat, lon), loc) in enumerate(zip(track, locs)):
         a = 0 if i == 0 else (track[i - 1][0] + t) / 2  # a border half way between two readings
         if stretches and stretches[-1][2] == loc:
             continue
         if stretches:
             stretches[-1] = (stretches[-1][0], a, stretches[-1][2])
         stretches.append((a, float('inf'), loc))
+    # after the last reading (the overlay not read to the end) the drive is in the town that reading is in, small
+    # or not (sLlVKNBtgYY: read until 80:30 by Mataranka, 890 people, which the reviewer has at 85:09-86:48)
+    end_note = ''
+    anchor = _locality_anchor(town, df)
+    if (track and stretches and stretches[-1][2] is None and town
+            and (not anchor or _km(track[-1][1], track[-1][2], anchor[3], anchor[4]) <= 10)):
+        last = track[-1][0]
+        stretches[-1] = (stretches[-1][0], last, None)
+        stretches.append((last, float('inf'), town))
+        end_note = f' (after the last reading, at {int(last) // 60}:{int(last) % 60:02d}: check)'
     if all(loc is None for _, _, loc in stretches):  # 1ei5X-4UvIo: country roads by Port Townsend, WA
         p.pop('entries')
         p['exclude'] = 'rural driving: the GPS overlay passes no town'
@@ -2478,8 +2622,125 @@ def split_gps(p, df, out_dir):
     p['entries'] = entries
     p['note'] = (f"{p.get('note') or ''}; localities from the GPS overlay: "
                  + ', '.join(f"{loc[0] if loc else 'rural (left out)'} from {int(a) // 60}:{int(a) % 60:02d}"
-                             for a, _, loc in stretches)).lstrip('; ')
+                             for a, _, loc in stretches) + end_note).lstrip('; ')
     return True
+
+
+GPS_EDGE_KM = 2  # rural driving this close to a town's boundary still counts for the town
+GEOFENCES = os.path.join('_output', 'proposals', 'geofences.json')  # locality -> its boundary, kept per machine
+GEOFENCE_MAX_KM = 80  # a boundary wider than this is a district or a county, not a town's
+
+
+def geofence(loc, df):
+    """[[(lat, lon), ...] rings] of a locality's boundary on OpenStreetMap, [] when it has none (a town mapped as a
+    point, or only an area far wider than a town). The one around the mapping's coordinates of it, when the
+    mapping has it (not a namesake's). Kept in GEOFENCES."""
+    key = json.dumps(list(loc))
+    with contextlib.suppress(OSError, ValueError), open(GEOFENCES) as f:
+        known = json.load(f)
+        if key in known:
+            return known[key]
+    anchor = _locality_anchor(loc, df)
+    try:
+        hits = _nominatim('geocode', ', '.join(x for x in loc if x), exactly_one=False, limit=5, geometry='geojson',
+                          language='en', timeout=30) or []
+    except Exception as e:  # noqa: BLE001  network errors and the like: no boundary this time, asked again later
+        print(f'  no boundary for {loc[0]}: {e}', flush=True)
+        return []
+    rings = []
+    for h in hits:
+        g = h.raw.get('geojson') or {}
+        if g.get('type') not in ('Polygon', 'MultiPolygon'):
+            continue
+        polys = [g['coordinates']] if g['type'] == 'Polygon' else g['coordinates']
+        rings = [[(lat, lon) for lon, lat in ring[::max(1, len(ring) // 500)]] for poly in polys for ring in poly]
+        pts = np.array([x for r in rings for x in r])
+        wide = _km(pts[:, 0].min(), pts[:, 1].min(), pts[:, 0].max(), pts[:, 1].max()) > GEOFENCE_MAX_KM
+        if not wide and (not anchor or in_fence(rings, *anchor[3:5]) or fence_km(rings, *anchor[3:5]) <= 5):
+            break
+        rings = []
+    with plan_lock(GEOFENCES):
+        try:
+            with open(GEOFENCES) as f:
+                known = json.load(f)
+        except (OSError, ValueError):
+            known = {}
+        known[key] = rings
+        with open(GEOFENCES + '.tmp', 'w') as f:
+            json.dump(known, f)
+        os.replace(GEOFENCES + '.tmp', GEOFENCES)
+    return rings
+
+
+def in_fence(rings, lat, lon):
+    """Whether a point lies inside a boundary's rings (even-odd: a hole's ring takes it out again)."""
+    inside = False
+    for ring in rings:
+        r = np.asarray(ring, float)
+        if len(r) < 3:
+            continue
+        y1, x1, y2, x2 = r[:, 0], r[:, 1], np.roll(r[:, 0], -1), np.roll(r[:, 1], -1)
+        cross = (y1 > lat) != (y2 > lat)
+        xs = x1 + (lat - y1) * (x2 - x1) / np.where(y2 == y1, 1e-12, y2 - y1)
+        inside ^= bool(np.sum(cross & (lon < xs)) % 2)
+    return inside
+
+
+def fence_km(rings, lat, lon):
+    """km from a point to the nearest corner of a boundary (its rings are dense enough for a town's edge)."""
+    pts = np.radians(np.array([x for r in rings for x in r], float).reshape(-1, 2))
+    if not len(pts):
+        return float('inf')
+    return float(6371 * np.hypot(pts[:, 0] - np.radians(lat),
+                                 (pts[:, 1] - np.radians(lon)) * np.cos(np.radians(lat))).min())
+
+
+GPS_FAST_KMH, GPS_MISREAD_KMH = 180, 1500  # positions moving this fast: sped up; faster: a misread digit
+
+
+def gps_speedups(sig, steps=3):
+    """[(start s, end s, km/h)] where the GPS overlay's positions move GPS_FAST_KMH or faster for `steps` readings
+    in a row, along a road (the way there at most twice as long as straight there): sped-up footage. A misread
+    digit sends a position far off and back (sLlVKNBtgYY: 133.2-133.4 at 54:30-56:00 between readings by 133.0),
+    so the way out and back is long; a single fast step is a jump (gps_jumps). Readings a car could reach from
+    neither neighbour even at GPS_MISREAD_KMH are misreads and left out first."""
+    g = gps_clean(np.asarray(sig.get('gps', np.zeros((0, 3)))).reshape(-1, 3).tolist(), GPS_MISREAD_KMH)
+    if len(g) < steps + 1:
+        return []
+    km = [_km(a[1], a[2], b[1], b[2]) for a, b in zip(g, g[1:])]
+    kmh = np.array([d / max((b[0] - a[0]) / 3600, 1e-6) for d, a, b in zip(km, g, g[1:])])
+    out = []
+    for a, b in _runs((kmh >= GPS_FAST_KMH) & (kmh < GPS_MISREAD_KMH)):
+        if b - a < steps:
+            continue
+        nxt = min(b + 1, len(g) - 1)
+        way, straight = sum(km[a:nxt]), _km(g[a][1], g[a][2], g[nxt][1], g[nxt][2])
+        if way <= 2 * straight + 1:
+            out.append((float(g[a][0]), float(g[b][0]), float(np.median(kmh[a:b]))))
+    return out
+
+
+def gps_jumps(sig, km=2):
+    """[(second, km)] where the GPS overlay's position jumps `km` or more in one step at GPS_FAST_KMH or faster,
+    the steps before and after at a car's speed: footage cut out (or a short sped-up stretch)."""
+    g = gps_clean(np.asarray(sig.get('gps', np.zeros((0, 3)))).reshape(-1, 3).tolist())
+    out = []
+    for i in range(1, len(g) - 2):
+        steps = [(_km(a[1], a[2], b[1], b[2]), max(b[0] - a[0], 1e-6) / 3600)
+                 for a, b in zip(g[i - 1:i + 2], g[i:i + 3])]
+        (d0, h0), (d1, h1), (d2, h2) = steps
+        if d1 >= km and d1 / h1 >= GPS_FAST_KMH and d0 / h0 <= MAX_KMH and d2 / h2 <= MAX_KMH:
+            out.append((float(g[i][0]), d1))
+    return out
+
+
+def gps_clean(track, kmh=None):
+    """The GPS track without misread positions: one a car could reach from neither of its neighbours (sLlVKNBtgYY:
+    132.0812 for 132.4xxx at 13:00, 133.2-133.4 at 54:30-56:00 between readings by 133.0)."""
+    def reach(a, b):
+        return _km(a[1], a[2], b[1], b[2]) <= 1 + abs(b[0] - a[0]) / 3600 * (kmh or MAX_KMH * 1.5)
+    return [x for i, x in enumerate(track)
+            if len(track) < 3 or (i and reach(track[i - 1], x)) or (i + 1 < len(track) and reach(x, track[i + 1]))]
 
 
 def night_from_title(segments, notes, sig, title):
@@ -2493,8 +2754,9 @@ def night_from_title(segments, notes, sig, title):
     return segments, notes
 
 
-def analyse_video(video_id, out_dir, meta=None):
-    """Download a low resolution copy, propose segments, write a contact sheet; the copy is deleted."""
+def analyse_video(video_id, out_dir, meta=None, signs=False):
+    """Download a low resolution copy, propose segments, write a contact sheet; the copy is deleted. signs: also
+    read the road signs (read_signs), for a drive between towns."""
     meta = meta or fetch_metadata(video_id)
     work_dir = tempfile.mkdtemp(prefix='crowd_')
     path = download_low_res(video_id, work_dir)
@@ -2534,6 +2796,8 @@ def analyse_video(video_id, out_dir, meta=None):
         sig['screen_text'] = np.array(json.dumps({f'{t:.0f}': x for t, x in (texts or {}).items()}))
         sig['labelled_montage'] = np.array(caption_end(video_id, sig, texts) or (
             end if end is not None and montage_label(video_id, end) else 0), float)
+        if signs and (read := read_signs(video_id)):
+            sig['signs'] = np.array(json.dumps({str(t): x for t, x in read.items()}))
         gps, clock, stamp = gps_track(video_id, meta['duration'])
         if gps:
             sig['gps'] = np.array(gps, float)
@@ -4393,6 +4657,11 @@ def split_route(p, df, home=None, sig_path=None):
     t0 = 0
     stretches = [(t0 + a * (t1 - t0), t0 + b * (t1 - t0), loc) for a, b, loc in shares]
     stretches = ends_in_towns(stretches, segs, p.get('title'), df, home)
+    # a road sign welcoming the drive to a town on the way is where that town starts (OkEXG95VyKk: "Welcome to
+    # the City of New Haven" at 97:15; user, 2026-10-18); every town a sign names is noted for the reviewer
+    signs = sign_towns(sig_path, [loc for _, _, loc in stretches if loc], df, (route or {}).get('path'))
+    for t, loc, _ in [x for x in signs if x[2]]:
+        stretches = pin_town(stretches, t, loc)
     p['entries'] = split_by_stretches(segs, stretches)
     # a town on the way is offered only where the picture can show it is town driving: without object counts or
     # town scenes no highway is cut, and its share of the route is highway as often as not (user, 2026-10-14:
@@ -4411,11 +4680,77 @@ def split_route(p, df, home=None, sig_path=None):
         p['exclude'] = 'rural driving: the footage is between towns'
         return True
     p['route'] = route
+    note_signs(p, signs)
     p['note'] = (f"{p.get('note') or ''}; localities along the route, borders estimated from driving time "
                  "(check them): " + ', '.join(f"{loc[0] if loc else 'rural (left out)'} from "
                                               f'{int(a) // 60}:{int(a) % 60:02d}'
                                               for a, _, loc in stretches)).lstrip('; ')
     return True
+
+
+# "Welcome to (the City of) X", as OCR reads it ("WELCOHE To | THE City OF | NEW HAVEN": OkEXG95VyKk at 97:15)
+WELCOME_SIGN = re.compile(r'\bwel\w{2,4}[\s|]+to\b[\s|]*(?:the[\s|]+)?(?:(?:city|town|village|borough)[\s|]+of[\s|]+)?'
+                          r'(.{3,40})', re.I)
+SIGN_REACH_KM = 250  # without a route, a sign names a town this close to the video's localities
+
+
+def sign_towns(sig_path, towns, df, path):
+    """[(second, locality, welcome)] of the road signs read in a video (read_signs) that name a town of its route or
+    a mapping locality within 10 km of the route's path; welcome: a "Welcome to (the City of) X" sign."""
+    if not (sig_path and os.path.exists(sig_path)) or 'signs' not in np.load(sig_path).files:
+        return []
+    read = json.loads(str(np.load(sig_path)['signs']))
+    # no route: the towns within SIGN_REACH_KM of the video's localities (OkEXG95VyKk read "Mobile" on an ad and a
+    # "Cedar" somewhere: Mobile, AL and Cedar City, UT)
+    reach = 10 if path else SIGN_REACH_KM
+    path = path or [a[3:5] for loc in towns if (a := _locality_anchor(loc, df))]
+    pts = np.radians(np.array(path or [], float).reshape(-1, 2))
+    near = []
+    if len(pts):
+        lat, lon = np.radians(df['lat'].astype(float).values), np.radians(df['lon'].astype(float).values)
+        d = 6371 * np.hypot((lat[:, None] - pts[None, :, 0]),
+                            (lon[:, None] - pts[None, :, 1]) * np.cos(pts[None, :, 0])).min(axis=1)
+        near = [[r.locality, None if pd.isna(r.state) else r.state, r.country] for r, km in zip(df.itertuples(), d)
+                if km <= reach]
+    names = {}
+    for loc in list(towns) + near:  # a town on several signs: the longest name read wins ("West Haven" over "Haven")
+        if len(_name_key(loc[0])) >= 4:
+            names.setdefault(_name_key(loc[0]), list(loc))
+    out = []
+    for t, texts in sorted(read.items(), key=lambda kv: int(kv[0])):
+        text = _name_key(' '.join(texts))
+        welcome = WELCOME_SIGN.search(' '.join(texts))
+        hits = [k for k in names if re.search(rf'\b{re.escape(k)}\b', text)]
+        hits = [k for k in hits if not any(k != o and k in o for o in hits)]
+        if len(hits) >= 4:  # a map or a list of places (OkEXG95VyKk's opening), no sign on the road
+            continue
+        for k in hits:
+            out.append((int(t), names[k], bool(welcome and k in _name_key(welcome.group(1)))))
+    return out
+
+
+def note_signs(p, signs):
+    """Add the towns road signs name (sign_towns), each at its first sign, to a proposal's note, once."""
+    if not signs or 'road signs:' in (p.get('note') or ''):
+        return
+    first = {}
+    for t, loc, welcome in signs:
+        first.setdefault((loc[0], welcome), t)
+    p['note'] = (f"{p.get('note') or ''}; road signs: " + ', '.join(
+        f"{'welcome to ' if w else ''}{name} {t // 60}:{t % 60:02d}"
+        for (name, w), t in sorted(first.items(), key=lambda kv: kv[1])[:15])).lstrip('; ')
+
+
+def pin_town(stretches, t, loc):
+    """The stretches with a town's own moved to start at t, where a sign welcomes the drive to it: until its
+    estimated end, or as long as estimated from t when that end is past; the time before is no longer its."""
+    old = next(((a, b) for a, b, x in stretches if x and tuple(x) == tuple(loc)), None)
+    if not old:
+        return stretches
+    end = old[1] if old[1] > t else t + (old[1] - old[0])
+    out = [(lo, hi, x) for a, b, x in stretches if not (x and tuple(x) == tuple(loc))
+           for lo, hi in ((a, min(b, t)), (max(a, end), b)) if hi > lo]
+    return sorted(out + [(t, end, loc)], key=lambda s: s[0])
 
 
 def ends_in_towns(stretches, segs, title, df, home=None):
@@ -4991,7 +5326,8 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
                 print(f'[{n}/{len(ids)}] analysing {vid} {meta["title"][:60]}')
                 if (meta.get('duration') or 0) > 2 * 3600:  # run_channels.py waits longer for its silence
                     print(f'  long video: {int(meta["duration"]) // 60} min')
-                analyse_video(vid, out_dir, meta)
+                analyse_video(vid, out_dir, meta, signs=any(r.search(english_states(meta['title'] or ''))
+                                                            for r in FROM_TO))
                 time.sleep(pause_s)  # spacing requests keeps YouTube's bot check away for longer
             failures_in_a_row = 0
         except BotCheck as e:
@@ -5276,8 +5612,11 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
                              '(nothing in the title or description names a place: check)').lstrip('; ')
     # a drive "from A to B" without chapters passes through A, B and the towns between: split it along its route
     for p in new:
-        split_gps(p, df, out_dir) or split_route(p, df[title_reach(df, in_reach, p['title'])], home,
-                                                 os.path.join(out_dir, f"{p['video']}_signals.npz"))
+        sig_path = os.path.join(out_dir, f"{p['video']}_signals.npz")
+        split_gps(p, df, out_dir) or split_route(p, df[title_reach(df, in_reach, p['title'])], home, sig_path)
+        if 'entries' in p:  # road signs read (a drive between towns): their towns noted, with a route or not
+            note_signs(p, sign_towns(sig_path, [e['locality'] for e in p['entries'] if e.get('locality')],
+                                     df[title_reach(df, in_reach, p['title'])], (p.get('route') or {}).get('path')))
     if home:
         iso2 = common.get_iso2_country_code(common.correct_country(home[2]))
         # a route's towns come from its points on the map, so none is a namesake of a place near home
