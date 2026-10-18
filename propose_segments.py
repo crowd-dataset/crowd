@@ -4127,8 +4127,18 @@ def drive_ends(title, df, home=None):
     # Mulholland by Dublin to a Hollywood by Tracy: Hollywood is Los Angeles, and Mulholland Drive a road there that
     # OpenStreetMap gives no town for); the other end is looked for near it, else the drive is not split; not for a
     # famous namesake far from the channel (Paris, France for a Texas channel's Paris)
-    for i, phrase in enumerate((first, last)) if not named else ():
-        chosen, big = (a, b)[i], place(phrase)
+    # both ends major places by their names alone: a drive between those two cities, not one end's namesake road
+    # by the other ("The Drive From Louisville to Nashville", HYrIf1J_fKc: Louisville Hwy in Millersville, TN, 60 km
+    # from Nashville, made it Millersville; user, 2026-10-18)
+    bigs = [place(first), place(last)] if not named else [None, None]
+    # (cities and towns only: "Bondi Beach to Kings Cross" in Sydney is no drive to Singleton, ZamKWTw78ck)
+    both = (all(x and x[6] >= MAJOR_PLACE and x[7] in ('city', 'town') for x in bigs)
+            and _km(bigs[0][4], bigs[0][5], bigs[1][4], bigs[1][5]) > 30
+            and not (home and min(_km(home[3], home[4], x[4], x[5]) for x in bigs) > ABROAD_KM))
+    if both:
+        a, b = bigs
+    for i, phrase in enumerate((first, last)) if not named and not both else ():
+        chosen, big = (a, b)[i], bigs[i]
         if (big and big[6] >= MAJOR_PLACE and (not chosen or _km(chosen[4], chosen[5], big[4], big[5]) > 30)
                 and not (home and _km(home[3], home[4], big[4], big[5]) > ABROAD_KM)):
             other = place((last, first)[i], big[4:6], 60)
