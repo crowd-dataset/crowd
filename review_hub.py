@@ -18,6 +18,7 @@ import socket
 import subprocess
 import sys
 import time
+import urllib.request
 
 import pandas as pd
 
@@ -94,6 +95,8 @@ background:#fff;color:#222;font-size:13px;cursor:pointer}
 {%- else %}: {{ w.short }}{% endif %}</span>
 {%- endfor %}</p>{% endif %}
 {% for w in health if not w.ok %}<p class="bad">{{ w.host }}: {{ w.what }}</p>{% endfor %}
+{% for c in cookies %}<p class="bad">🍪 {{ c.host }} needs new YouTube cookies: sign in as {{ c.account }} in a new
+ Incognito window, export cookies.txt, close the window, then <code>{{ c.how }}</code></p>{% endfor %}
 {% for b in batches %}
 <a class="b" href="/open/{{ b.name }}" target="_blank"><span><span class="n">{{ b.name }}</span>
  <span class="s">{% if b.row %}· row {{ b.row }} {% endif %}· {{ b.state }}</span></span>
@@ -184,7 +187,12 @@ def index():
         w['kind'], w['pct'] = (m.group(1), int(m.group(2))) if m else (None, None)
         w['level'] = None if not m else 'hi' if w['pct'] >= 60 else 'mid' if w['pct'] >= 30 else 'lo'
         w['short'] = w.get('what', '').split(':')[0]
-    return render_template_string(PAGE, batches=batches, done=done, health=health)
+    try:  # machines YouTube asks to sign in: the pipeline status page works them out (dashboards/pipeline_status.py)
+        with urllib.request.urlopen('http://127.0.0.1:8771/status.json', timeout=3) as r:
+            cookies = json.load(r).get('cookies', [])
+    except (OSError, ValueError):
+        cookies = []
+    return render_template_string(PAGE, batches=batches, done=done, health=health, cookies=cookies)
 
 
 @app.route('/open/<name>')

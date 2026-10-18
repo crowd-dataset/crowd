@@ -57,7 +57,13 @@ def problems():
         p = fetch(PIPELINE)
         if time.time() - p.get('at', 0) > 15 * 60:
             out['page:pipeline-stale'] = 'the pipeline status page has not refreshed for over 15 minutes'
+        cookies = {c['host']: c for c in p.get('cookies', [])}
+        for c in cookies.values():
+            out[f'cookies:{c["host"]}'] = (f'🍪 **{c["host"]}** needs new YouTube cookies: sign in as {c["account"]} '
+                                           f'in a new Incognito window, export cookies.txt, then `{c["how"]}`')
         for w in p.get('workers', []):
+            if w['host'] in cookies:  # said above, with what to do
+                continue
             if w['state'] in ('blocked', 'stalled', 'offline'):
                 detail = (w.get('problems') or [{}])[-1].get('text') or w.get('error') or (
                     f'no new log line for {w.get("log_age", 0) / 60:.0f} min')

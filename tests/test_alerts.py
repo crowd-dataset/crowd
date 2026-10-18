@@ -1,5 +1,6 @@
 """dashboards/alerts.py: when the video downloader is reported."""
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'dashboards'))
@@ -20,3 +21,11 @@ def test_download_alerts():
     assert 'downloads:failing' in alerts.download_problems(status([600] * 4, [60] * 12), NOW)
     assert alerts.download_problems(status([600] * 20, [60] * 12), NOW) == {}  # more downloaded than failed
     assert alerts.download_problems(dict(error='ssh failed', queue=5), NOW) == {}
+
+
+def test_cookie_alert_replaces_blocked(monkeypatch):
+    pipeline = dict(at=time.time(), workers=[dict(host='lin5080', state='blocked', problems=[dict(text='sign in')])],
+                    cookies=[dict(host='lin5080', account='olena.b…@gmail.com', how='scp …')])
+    monkeypatch.setattr(alerts, 'fetch', lambda url: [] if url == alerts.MACHINES else pipeline)
+    out, _ = alerts.problems()
+    assert list(out) == ['cookies:lin5080'] and 'olena.b…@gmail.com' in out['cookies:lin5080'], out

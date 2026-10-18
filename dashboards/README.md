@@ -28,7 +28,11 @@ machine's `_output/proposals` state; the page shows that snapshot, so opening it
 quiet for an hour, *idle* when it has no channel left. Estimates: each worker's channel and the download queue at
 their recent pace; the refresh queue (channels not started) and the review backlog (batches the workers finish and you
 review) at the pace of the last 7 days, from an hourly history it keeps in `_output/proposals/status_history.jsonl`; and
-whether the download drives have room for the queue. It also serves the globe widget (`/globe`) and its data
+whether the download drives have room for the queue. When YouTube asks a worker to sign in (or the downloader is paused
+for two hours), a banner says which machine needs new cookies, the account to sign in with and the command to send
+the file; the review hub and the Discord alerts show the same. The accounts come from
+`_output/proposals/cookie_accounts.json` on this machine (`{"host": "email"}`, never committed) and are shown
+shortened (`olena.b…@gmail.com`). It also serves the globe widget (`/globe`) and its data
 (`/globe.json`).
 
 ## Globe widget (`globe/widget_globe.html`, `globe/globe_data.py`)

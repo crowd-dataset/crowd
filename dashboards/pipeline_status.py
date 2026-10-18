@@ -37,6 +37,9 @@ PROBLEMS = {'duplicate': 'also in an earlier folder', 'unreadable': 'no video st
             'short': "over 5 s shorter than its last segment's end", 'unused': 'in no mapping'}
 HOST = os.environ.get('REVIEW_HOST', '127.0.0.1')
 STUCK_MIN = sw.STUCK_MIN
+# the Google account each machine's YouTube cookies come from, {host: email}: on this machine only, never in the repo
+ACCOUNTS = os.path.join(rc.ROOT, 'cookie_accounts.json')
+SIGN_IN = re.compile(r'sign in|not a bot', re.I)
 HISTORY = os.path.join(rc.ROOT, 'status_history.jsonl')  # hourly: refresh channels not started, batches to review
 app = Flask(__name__)
 snapshot = {}
@@ -137,6 +140,33 @@ def inventory():
         return dict(host=host, error=str(e)[-200:])
 
 
+def masked(email):
+    """olena.bazilinska@gmail.com -> olena.b…@gmail.com: enough to tell the accounts apart on an open page."""
+    name, _, domain = (email or '').partition('@')
+    return f'{name[:7]}…@{domain}' if domain else (email or 'its account')
+
+
+def cookies_needed(workers, downloads):
+    """[{host, account, how}] of the machines YouTube asks to sign in now: a worker blocked by the sign-in check
+    (it waits for a fresh cookies.txt), the downloader paused and nothing downloaded for 2 h (its Chrome login)."""
+    try:
+        with open(ACCOUNTS) as f:
+            accounts = json.load(f)
+    except (OSError, ValueError):
+        accounts = {}
+    out = []
+    for w in workers:
+        if w.get('state') == 'blocked' and w['problems'] and SIGN_IN.search(w['problems'][-1]['text']):
+            out.append(dict(host=w['host'], account=masked(accounts.get(w['host'])),
+                            how=f'scp ~/Downloads/cookies.txt {w["host"]}:{sw.REMOTE}/cookies.txt && '
+                                f'ssh {w["host"]} chmod 600 {sw.REMOTE}/cookies.txt'))
+    last = max((r['t'] for r in downloads.get('recent', [])), default=downloads.get('started', time.time()))
+    if str(downloads.get('state', '')).startswith('paused') and time.time() - last > 2 * 3600:
+        out.append(dict(host=downloads['host'], account=masked(accounts.get(downloads['host'])),
+                        how=f'sign in to YouTube in Chrome on {downloads["host"]} (its downloader uses that login)'))
+    return out
+
+
 def history(entry):
     """Adds entry to HISTORY when the last one is an hour old; returns the last 8 days."""
     rows = []
@@ -195,7 +225,7 @@ def collect():
     order = ['processing', 'to review', 'reviewed', 'marked', 'rejected', 'duplicate', 'error']
     names = sorted({s for _, s in statuses}, key=lambda s: order.index(s) if s in order else 99)
     return dict(
-        at=time.time(), workers=workers, downloads=dl, inventory=inv,
+        at=time.time(), workers=workers, downloads=dl, inventory=inv, cookies=cookies_needed(workers, dl),
         batches=sorted(batches, key=lambda b: -b['waiting']),
         sheet_todo=len(todo), queue=len(queue), left=left, pace=pace,
         queue_phases=sorted(collections.Counter(q.get('phase') for q in queue).items(), key=lambda x: str(x[0])),
@@ -241,6 +271,7 @@ h2{font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--mute
 .row{margin:3px 0}.ell{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .prob{font:12px ui-monospace,Menlo,monospace;color:var(--warn);margin:3px 0;overflow-wrap:anywhere}
 .prob.old{color:var(--muted)}
+.card.cookie{border-color:var(--warn);margin-top:12px}.cookie code{font-size:12px;overflow-wrap:anywhere}
 table{border-collapse:collapse;width:100%;font-size:13px}
 td,th{padding:4px 8px;border-top:1px solid var(--line);text-align:left}
 th{color:var(--muted);font-weight:500}td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
@@ -277,6 +308,9 @@ border-radius:16px;background:var(--bg);color:var(--fg);font-size:13px;cursor:po
  <a href="#" onclick="location.port=8770;return false">review hub</a>
  · <a href="#" onclick="location.port=8090;return false">machines</a>
  {% if s.error %} · <span style="color:var(--bad)">{{ s.error }}</span>{% endif %}</div>
+{% for c in s.cookies %}<div class="card cookie">🍪 <b>{{ c.host }} needs new YouTube cookies</b>: in a new
+ Incognito window sign in to YouTube as <b>{{ c.account }}</b>, export cookies.txt, close the window, then
+ <code>{{ c.how }}</code></div>{% endfor %}
 <div class="tiles">
  <a class="tile" href="#" onclick="location.port=8770;return false"><span class="muted small">Batches to review</span>
   <b>{{ s.batches|length }}</b>
@@ -531,6 +565,16 @@ def _check_parse_log():
     assert parse_log(lines[:-1], now - 2 * 3600, now)['state'] == 'stalled'
 
 
+def _check_cookies():
+    w = parse_log(['08:00   Stopped early: YouTube asks to sign in (ERROR: Sign in to confirm you’re not a bot)'],
+                  1_000_000.0, 1_000_000.0)
+    assert w['state'] == 'blocked'
+    c = cookies_needed([dict(w, host='lin5080')], {})
+    assert [x['host'] for x in c] == ['lin5080'] and 'lin5080:crowd-routine/cookies.txt' in c[0]['how'], c
+    assert masked('olena.bazilinska@gmail.com') == 'olena.b…@gmail.com'
+    assert cookies_needed([dict(w, problems=[dict(text='quota exceeded')], host='x')], {}) == []
+
+
 def _check_paces():
     h = [dict(t=0, left=100, to_review=['a', 'b']), dict(t=43200, left=99, to_review=['b', 'c']),
          dict(t=86400, left=96, to_review=['c', 'd', 'e'])]
@@ -542,5 +586,6 @@ def _check_paces():
 if __name__ == '__main__':
     _check_parse_log()
     _check_paces()
+    _check_cookies()
     threading.Thread(target=refresher, daemon=True).start()
     app.run(host=HOST, port=PORT, debug=False)
