@@ -2774,7 +2774,9 @@ def english(text):
     try:
         r = requests.get('https://translate.googleapis.com/translate_a/single', timeout=15,
                          params={'client': 'gtx', 'sl': 'auto', 'tl': 'en', 'dt': 't', 'q': text[:1000]})
-        out = ''.join(part[0] for part in r.json()[0] if part and part[0]) if r.ok else ''
+        if not r.ok:  # refused (429: too many asks): asked again next time, not kept as English
+            return ''
+        out = ''.join(part[0] for part in r.json()[0] if part and part[0])
     except (requests.RequestException, ValueError, IndexError, TypeError):
         return ''
     known[text] = out = '' if out.strip().lower() == text.lower() else out
@@ -3361,7 +3363,8 @@ def place_phrases(text, limit=4):
     # in English when written in another language: every capitalised Vietnamese word is no town ("THÁNG", the
     # month, was Thắng: dFeQ32cS3WM; "Chung Cư", apartments, was Chung), and "Hà Nội" reads as Hanoi
     # ponytail: english() translates the first 1000 characters only; enough for titles and a description's top lines
-    text = english(text) or text
+    written, translated = text, english(text)
+    text = translated or text
     text = english_states(text)
     text = re.sub(r'#\w+|https?://\S+|www\.\S+', ' ', text or '')
     text = re.sub(r'\b(New York|Washington) State\b', r'\1', text)  # no "York State" (Albany, New York State)
@@ -3416,7 +3419,17 @@ def place_phrases(text, limit=4):
         if region:
             with_state += [x, region]
     unique = list(dict.fromkeys(p for p in phrases if len(p.split()) <= 5))
-    return list(dict.fromkeys(with_state + sorted(unique, key=lambda p: -len(p.split()))))[:limit]
+    out = list(dict.fromkeys(with_state + sorted(unique, key=lambda p: -len(p.split()))))[:limit]
+    # ... but a town's one-word name the translation renamed is looked for as written: the town of Lipsko in
+    # "[CABVIEW] Sandomierz - Lipsko dk 79" became Leipzig, Polish for it (mqNSUmRnHog; user, 2026-10-18), and
+    # OpenStreetMap knows a city by its names in other languages too
+    if translated:
+        w, t = written.split(), translated.split()
+        for op, i1, i2, j1, j2 in difflib.SequenceMatcher(None, w, t).get_opcodes():
+            name, renamed = (' '.join(x).strip(',.:;!?()[]') for x in (w[i1:i2], t[j1:j2]))
+            if op == 'replace' and i2 - i1 == j2 - j1 == 1 and renamed in out and name[:1].isupper():
+                out[out.index(renamed)] = name
+    return list(dict.fromkeys(out))
 
 
 @lru_cache(maxsize=1)
@@ -3940,6 +3953,8 @@ def _metro_city(town, at, rows, state=None):
 # "Desde Sabana Grande a Ponce", "Ponce a Juana Diaz,Puerto Rico", "de San Juan hacia Carolina": in Spanish too,
 # tried in this order
 _END = r"\s*(?:,|\||\(|\s-\s|\s–\s|\bin\b|\ben\b|\bvia\b|\bpor\b|$)"
+# a town in a cab-view title, with a note in brackets maybe ("Sokołów Małopolski(podkarpackie)")
+_DASH_TOWN = r"([A-ZÀ-ÞŁŚŻŹĆŃ][\w'’.-]*(?: [A-ZÀ-ÞŁŚŻŹĆŃ][\w'’.-]*){0,3})(?:\s*\([^)]*\))?"
 FROM_TO = (re.compile(r"\bfrom\s+(.+?)\s+to\s+(.+?)" + _END, re.I),
            # without "from": "Driving Lincoln to Hickman, Nebraska" (yQbYiSKgB-I), "Ashland to Waterloo Drive Tour"
            # ... also "4K POV Drive: Fremont to Downtown Omaha, Nebraska" (iSMg2dH2uuA: a colon after the word)
@@ -3974,6 +3989,10 @@ FROM_TO = (re.compile(r"\bfrom\s+(.+?)\s+to\s+(.+?)" + _END, re.I),
                       r"([A-ZÀ-Þ][\w'’.-]*(?: [A-ZÀ-Þ][\w'’.-]*){0,3})"),
            re.compile(r"\b(?:[Dd]rive|[Dd]riving|[Rr]oute)\s+([A-ZÀ-Þ][\w'’.-]*(?: [A-ZÀ-Þ][\w'’.-]*){0,3})\s+[–—]\s+"
                       r"([A-ZÀ-Þ][\w'’.-]*(?: [A-ZÀ-Þ][\w'’.-]*){0,3})"),
+           # a dash between two towns in a cab-view title or before the road's number: "[CABVIEW] Sandomierz - Lipsko
+           # dk 79" (pawel314; user, 2026-10-18)
+           re.compile(r"^\[CABVIEW\]\s*" + _DASH_TOWN + r"\s+[-–—]\s+" + _DASH_TOWN + r"(?:\s|$)"),
+           re.compile(_DASH_TOWN + r"\s+[-–—]\s+" + _DASH_TOWN + r"\s+(?:dk|dw|DK|DW)\s*\d"),
            re.compile(r"\b(?:[Dd]esde|de)\s+(?:el |la )?(.+?)\s+(?:hasta|hacia|a|al)\s+(?:el |la )?(.+?)" + _END),
            re.compile(r"^(?:el |la )?(.+?)\s+(?:hasta|hacia|a|al)\s+(?:el |la )?(.+?)" + _END))
 MAJOR_TOWN_KM = 10    # a small place counts for the nearest bigger one this close
@@ -7029,6 +7048,20 @@ def review(plan_path, port=None):
         save(plan)
         return jsonify(log=log or ['nothing to add'])
 
+    def near_others(p, e):
+        """(lat, lon) of the place of a new locality's name OpenStreetMap finds nearest the video's other
+        localities, within 60 km, else None: "Zwoleń - Radom" (g_Pu48rf_pA) went through the Gózd between them,
+        not the one 45 km north that the lookup by name took (user, 2026-10-18)."""
+        df = add_video.load_csv(add_video.FILE_PATH)
+        if add_video.get_existing_locality_row(df, *e['locality'])[1] is not None:
+            return None
+        rows = [r for x in p['entries'] if x is not e and x.get('locality')
+                and (r := add_video.get_existing_locality_row(df, *x['locality'])[1]) is not None]
+        code = common.get_iso2_country_code(common.correct_country(e['locality'][2]))
+        at = rows and (float(rows[0]['lat']), float(rows[0]['lon']))
+        hit = at and code and _osm_place(e['locality'][0], (code,), at, 60)
+        return (hit[4], hit[5]) if hit else None
+
     def _apply(plan, log):
         for p in plan:
             for e in p.get('entries', []):
@@ -7044,6 +7077,7 @@ def review(plan_path, port=None):
                         # where the route put this locality: a new locality is located there, not at a namesake
                         near = next(((lat, lon) for lat, lon, name in (p.get('route') or {}).get('stops', [])
                                      if name == e['locality'][0]), None)
+                        near = near or (None if e.get('at') else near_others(p, e))
                         apply_segments(p['video'], *e['locality'], [s], p['vehicle_type'],
                                        p['upload_date'], p['channel_id'], near, e.get('at'))
                     except Exception as ex:
