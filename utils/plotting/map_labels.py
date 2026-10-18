@@ -193,6 +193,9 @@ def _inside(x, y, rings):
     return hit
 
 
+LONG_LINE = 100  # px: a leader line longer than this sends its label to the front of the next placement round
+
+
 def place_labels(items: list, proj: Projection, shapes: dict, stack_clusters: bool = True,
                  drop_unplaced: bool = False) -> dict:
     """
@@ -360,8 +363,9 @@ def place_labels(items: list, proj: Projection, shapes: dict, stack_clusters: bo
     todo.sort(key=lambda item: (free_spots(item), order[item["code"]]))
 
     def place_rest(todo):
-        """Place labels next to dots or with leader lines; returns the codes that found no free spot."""
-        failed = []
+        """Place labels next to dots or with leader lines; returns the codes that found no free spot, and those whose
+        leader line is longer than LONG_LINE px (code -> length)."""
+        failed, long_lines = [], {}
         for item in todo:
             x, y = points[item["code"]]
             o = out[item["code"]]
@@ -393,22 +397,31 @@ def place_labels(items: list, proj: Projection, shapes: dict, stack_clusters: bo
                             labels.append(box)
                             lines.append(((x, y), (lx, ly), pts))
                             result[item["code"]] = ("line", item["anchor"], proj.invert(lx, ly), position)
+                            if r > LONG_LINE:
+                                long_lines[item["code"]] = r
                             break
                     if item["code"] in result:
                         break
                 else:  # nowhere free: keep the label next to its dot
                     failed.append(item["code"])
-        return failed
+        return failed, long_lines
 
-    # rip-up and retry: labels that found no spot go first in the next round
+    # rip-up and retry: labels that found no spot, then those far from their dot (Ghana's ran past Nigeria while its
+    # neighbours took the spots near it), go first in the next round; the round with the fewest failures and the
+    # shortest long leader lines is kept
     state = (labels[:], lines[:], dict(result))
-    for attempt in range(5):
-        if attempt:
-            labels[:], lines[:], result = state[0][:], state[1][:], dict(state[2])
-        failed = place_rest(todo)
-        if not failed:
+    best = None
+    for attempt in range(8):
+        labels[:], lines[:], result = state[0][:], state[1][:], dict(state[2])
+        failed, long_lines = place_rest(todo)
+        score = (len(failed), sum(long_lines.values()))
+        if best is None or score < best[0]:
+            best = (score, labels[:], lines[:], dict(result), failed)
+        if not failed and not long_lines:
             break
-        todo = sorted(todo, key=lambda item: item["code"] not in failed)
+        first = set(failed) | set(long_lines)
+        todo = sorted(todo, key=lambda item: (item["code"] not in failed, item["code"] not in first))
+    _, labels[:], lines[:], result, failed = best
     for code in [] if drop_unplaced else failed:  # nowhere free even so: keep the label next to its dot
         logger.warning(f"No free spot for the label of {code}; it may overlap other labels.")
         result[code] = ("dot", next(i["anchor"] for i in todo if i["code"] == code), "middle right", False)
