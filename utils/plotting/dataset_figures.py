@@ -312,10 +312,11 @@ def _who(code: str, dim1: str | None = None, max_age_days: int = 180) -> dict:
     return {k: v for k, (_, v) in latest.items()}
 
 
-def _mean_temperature(max_age_days: int = 365) -> dict:
-    """ISO3 -> mean annual temperature 1991-2020 (°C, ERA5), from the World Bank's Climate Change Knowledge Portal."""
-    data = _cached_json("cckp_tas_1991-2020", "https://cckpapi.worldbank.org/cckp/v1/era5-x0.25_climatology_tas_"
-                        "climatology_annual_1991-2020_mean_historical_era5_x0.25_mean/all_countries",
+def _climate(variable: str, max_age_days: int = 365) -> dict:
+    """ISO3 -> a 1991-2020 annual climatology (ERA5) from the World Bank's Climate Change Knowledge Portal: "tas" mean
+    temperature (°C), "pr" precipitation (mm a year)."""
+    data = _cached_json(f"cckp_{variable}_1991-2020", "https://cckpapi.worldbank.org/cckp/v1/era5-x0.25_climatology_"
+                        f"{variable}_climatology_annual_1991-2020_mean_historical_era5_x0.25_mean/all_countries",
                         {"_format": "json"}, max_age_days)
     return {iso3: next(iter(v.values())) for iso3, v in (data or {}).get("data", {}).items() if v}
 
@@ -331,18 +332,22 @@ PEDESTRIAN_INDICATORS = INDICATORS | {
     "inactive": "Adults with too little physical activity (%)",
     "obese": "Adults with obesity (%)",
     "temperature": "Mean temperature, 1991-2020 (°C)",
+    "rainfall": "Rainfall, 1991-2020 (mm a year)",
+    "agriculture": "Jobs in agriculture (%)",
 }
 
 
 def _public_indicators(df_mapping: pl.DataFrame, seg: pl.DataFrame) -> pl.DataFrame:
     """One row per country of the mapping with the PEDESTRIAN_INDICATORS that are not mapping columns: World Bank
-    (GDP per person, urban population, density), WHO (pedestrians among road deaths, 2016; registered vehicles, 2016,
-    per 1,000 of the mapping's population; physical inactivity; obesity) and ERA5 temperature; and the localities'
-    TomTom traffic index averaged over the country, weighted by their footage."""
-    gdp, urban, density = (_world_bank(c) for c in (GDP_PER_CAPITA, "SP.URB.TOTL.IN.ZS", "EN.POP.DNST"))
+    (GDP per person, urban population, density, jobs in agriculture), WHO (pedestrians among road deaths, 2016;
+    registered vehicles, 2016, per 1,000 of the mapping's population; physical inactivity; obesity) and ERA5
+    temperature and rainfall; and the localities' TomTom traffic index averaged over the country, weighted by their
+    footage."""
+    gdp, urban, density, agriculture = (_world_bank(c) for c in (GDP_PER_CAPITA, "SP.URB.TOTL.IN.ZS", "EN.POP.DNST",
+                                                                 "SL.AGR.EMPL.ZS"))
     share, vehicles = _who(WHO_ROAD_USER_DEATHS, "ROADUSERTYPE_RS-DDC-PEDESTRIANS"), _who("RS_194")
     inactive, obese = _who("NCD_PAA", "SEX_BTSX"), _who("NCD_BMI_30A", "SEX_BTSX")
-    temperature = _mean_temperature()
+    temperature, rainfall = _climate("tas"), _climate("pr")
     pop = df_mapping.group_by("iso3").agg(pl.col("population_country").filter(pl.col("population_country") > 0)
                                           .first())
     traffic = (seg.group_by("id").agg(pl.sum("seconds"))
@@ -350,7 +355,8 @@ def _public_indicators(df_mapping: pl.DataFrame, seg: pl.DataFrame) -> pl.DataFr
                   .group_by("iso3").agg(((pl.col("traffic_index") * pl.col("seconds")).sum() / pl.sum("seconds"))
                                         .alias("traffic_index")))
     lookup = {"gdp_log": gdp, "pedestrian_share": share, "urban": urban, "density_log": density,
-              "inactive": inactive, "obese": obese, "temperature": temperature, "vehicles": vehicles}
+              "inactive": inactive, "obese": obese, "temperature": temperature, "rainfall": rainfall,
+              "agriculture": agriculture, "vehicles": vehicles}
     out = pop.with_columns(pl.col("iso3").replace_strict(d, default=None, return_dtype=pl.Float64).alias(k)
                            for k, d in lookup.items())
     return (out.with_columns((pl.col("gdp_log") / 1000).log10(), pl.col("density_log").log10(),
@@ -1217,10 +1223,10 @@ DETECTION_FIGURES = {
     "line_road_users_upload_year": "Detected road users per minute by year of upload (years with at least 10 analysed "
                                    "hours): newer cameras and higher resolutions can change what the detector sees.",
     "scatter_indicators_pedestrians": "Pedestrians per minute of footage per country against country indicators: "
-                                      "the mapping's, GDP per person, urban population and density (World Bank), "
-                                      "pedestrians among road deaths, registered vehicles, physical inactivity and "
-                                      "obesity (WHO), mean temperature (ERA5, World Bank climate portal) and the "
-                                      "footage-weighted TomTom traffic index.",
+                                      "the mapping's, GDP per person, urban population, density and jobs in "
+                                      "agriculture (World Bank), pedestrians among road deaths, registered vehicles, "
+                                      "physical inactivity and obesity (WHO), mean temperature and rainfall (ERA5, "
+                                      "World Bank climate portal) and the footage-weighted TomTom traffic index.",
     "bubble_pedestrians_gdp": "Pedestrians per minute of footage against GDP per person (countries with at least 10 "
                               "analysed hours; circle size: population), coloured by whether a country has more "
                               "than 1.5 times, about, or less than two-thirds of the pedestrians its wealth "
