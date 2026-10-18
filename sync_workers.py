@@ -118,6 +118,13 @@ def check_workers():
         report = []
     for host in WORKERS if machines else []:
         alias, rem = place(host)
+        try:  # paused by wsl_yield.py while someone uses the Windows PC (wsl5090): no fault
+            y = json.loads(ssh(host, 'cat ~/.wsl_yield.json 2>/dev/null || echo "{}"'))
+        except (subprocess.CalledProcessError, ValueError):
+            y = {}
+        if y.get('paused'):
+            report.append({'host': host, 'ok': True, 'what': f'paused: {y.get("why", "")[:120]}'})
+            continue
         m = machines.get(alias) or {}
         recent = [x for x in m.get('hist', []) if x[0] >= time.time() - LOW_FOR * 60]
         gpu = bool(m.get('gpus'))
