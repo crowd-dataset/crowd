@@ -7043,8 +7043,9 @@ def review(plan_path, port=None):
                     done += 1
                     save(plan)  # after every segment, so a failure part way never re-applies one
                 if done:
-                    # city, state and country (user, 2026-10-17)
-                    log.append(f"{p['video']}: {done} segment(s) added to {', '.join(x for x in e['locality'] if x)}")
+                    # city, state and country (user, 2026-10-17), and the vehicle (user, 2026-10-18)
+                    log.append(f"{p['video']}: {done} segment(s) added to {', '.join(x for x in e['locality'] if x)} "
+                               f"({VEHICLE_TYPES.get(p['vehicle_type'], p['vehicle_type'])})")
 
     port = port or 5000 + random.randint(0, 999)
     Timer(1.25, lambda: webbrowser.open(f'http://127.0.0.1:{port}')).start()
