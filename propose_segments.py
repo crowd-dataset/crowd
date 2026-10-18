@@ -1177,7 +1177,7 @@ def propose(sig, p=PARAMS):
                          f'{1 - moving_inner.mean():.0%} of the time): waits at lights cut out (ghosts)? check an '
                          'intersection')
     vanished = [t for t in np.asarray(sig.get('ghost', [])).ravel() if SKIP_INTRO_S < t < n / FPS - SKIP_OUTRO_S]
-    if vanished:  # a hint only, see ghost_vanishes
+    if vanished:  # a hint only, see ghost_and_urban
         notes.append('possible ghost (a person or car vanished mid-picture: an edit?) at '
                      + ', '.join(f'{int(t) // 60}:{int(t) % 60:02d}' for t in vanished[:5])
                      + (f' and {len(vanished) - 5} more' if len(vanished) > 5 else ''))
@@ -1360,9 +1360,20 @@ def channel_vehicle_type(channel_id, df=None):
 URBAN_EVERY_S = 5  # one YOLO frame this often
 HERE = os.path.dirname(os.path.abspath(__file__))
 YOLO_PYTHON = os.path.join(HERE, '.venv', 'bin', 'python')
+URBAN_COUNT = """
+def urban_line(model, img, device):
+    boxes = model(img, imgsz=448, conf=0.25, device=device, verbose=False)[0].boxes
+    cls = boxes.cls.tolist()
+    # where road users sit in the picture (per mille of its height, -1 for none): a camera tilted up sees them
+    # only at the bottom edge (KgEL7td3JK0 from 16:42: 950 against 620-660 looking ahead)
+    road = [(y1 + y2) / 2 for c, (_, y1, _, y2) in zip(cls, boxes.xyxy.tolist()) if c in (0, 1, 2, 3, 5, 7)]
+    height = int(1000 * sorted(road)[len(road) // 2] / img.shape[0]) if road else -1
+    return f'{sum(c in (0, 1, 2, 3, 5, 9, 10, 11) for c in cls)} {sum(c in (0, 1, 9, 10, 11) for c in cls)} {height}'
+"""
 URBAN_CODE = """
 import sys, cv2, torch
 from ultralytics import YOLO
+""" + URBAN_COUNT + """
 model, cap = YOLO('yolo11x.pt'), cv2.VideoCapture(sys.argv[1])
 device = 'mps' if torch.backends.mps.is_available() else 'cpu'  # the Mac's GPU: 3x faster, far less battery
 step = max(1, round(cap.get(cv2.CAP_PROP_FPS) * float(sys.argv[2])))
@@ -1371,14 +1382,7 @@ for f in range(0, int(cap.get(cv2.CAP_PROP_FRAME_COUNT)), step):
     ok, img = cap.read()
     if not ok:
         break
-    boxes = model(img, imgsz=448, conf=0.25, device=device, verbose=False)[0].boxes
-    cls = boxes.cls.tolist()
-    # where road users sit in the picture (per mille of its height, -1 for none): a camera tilted up sees them
-    # only at the bottom edge (KgEL7td3JK0 from 16:42: 950 against 620-660 looking ahead)
-    road = [(y1 + y2) / 2 for c, (_, y1, _, y2) in zip(cls, boxes.xyxy.tolist()) if c in (0, 1, 2, 3, 5, 7)]
-    height = int(1000 * sorted(road)[len(road) // 2] / img.shape[0]) if road else -1
-    print(sum(c in (0, 1, 2, 3, 5, 9, 10, 11) for c in cls), sum(c in (0, 1, 9, 10, 11) for c in cls), height,
-          flush=True)
+    print(urban_line(model, img, device), flush=True)
 """
 
 
@@ -1459,21 +1463,33 @@ def cross_traffic(path, sig, p=PARAMS):
     return np.array(rows, float).reshape(-1, 3)
 
 
+# the ghosts' tracking and the counts every URBAN_EVERY_S (urban_objects' own settings, a model of their own) in
+# one pass over the decoded frames, lines "G second" and "U counts" (user, 2026-10-18: "run multiple tools over
+# those frames in a pipeline fashion"); after the ghosts' first 45 min, on to the counts' frames by seeking
 GHOST_CODE = """
 import sys, cv2, numpy as np, torch
 from ultralytics import YOLO
 if not torch.cuda.is_available():  # 15 frames a second of a whole video: only a CUDA GPU does it in minutes
     sys.exit(0)
-model, cap = YOLO('yolo11x.pt'), cv2.VideoCapture(sys.argv[1])
+""" + URBAN_COUNT + """
+model, cap, counter = YOLO('yolo11x.pt'), cv2.VideoCapture(sys.argv[1]), YOLO('yolo11x.pt')
 fps = cap.get(cv2.CAP_PROP_FPS) or 30
 W, H = cap.get(cv2.CAP_PROP_FRAME_WIDTH), cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
 step = max(1, round(fps / 15))  # at 5 a second ByteTrack loses people between frames: misses and false alarms
+ustep, frames = max(1, round(fps * float(sys.argv[2]))), int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 tracks, f, end = {}, 0, 0
-while f < fps * 2700:  # the first 45 min: a whole 3-hour road trip would print nothing for half an hour
+while True:
+    if f >= fps * 2700:  # the first 45 min: a whole 3-hour road trip would print nothing for half an hour
+        f = -(-f // ustep) * ustep
+        if f >= frames:
+            break
+        cap.set(cv2.CAP_PROP_POS_FRAMES, f)
     ok, img = cap.read()
     if not ok:
         break
-    if f % step == 0:
+    if f % ustep == 0 and f < frames:
+        print('U', urban_line(counter, img, 'cuda'), flush=True)
+    if f < fps * 2700 and f % step == 0:
         # in half precision: a third faster, the same vanishes (205 of 206 on 5 videos; user, 2026-10-18: optimise)
         r = model.track(img, persist=True, imgsz=640, conf=0.3, classes=[0, 1, 2, 3, 5, 7], device='cuda',
                         half=True, verbose=False, tracker='bytetrack.yaml')[0]
@@ -1496,22 +1512,26 @@ for i, tr in tracks.items():
         continue  # something passed in front: hidden, not gone
     if any(j != i and t < s <= t + 1 and abs(sx - cx) < 0.1 and abs(sy - cy) < 0.1 for s, sx, sy, j in starts):
         continue  # picked up again nearby under a new id
-    print(round(t, 1), flush=True)
+    print('G', round(t, 1), flush=True)
 """
 
 
-def ghost_vanishes(path):
-    """Times (s) a road user vanished mid-picture: a sure detection, big and well inside the frame, nothing passing
-    in front of it and not found again nearby. A dissolve between two scenes fades people out where they stand
-    (Q8iFS6Szcfc at 8:08: a woman on a crossing); one false alarm in 6 minutes of approved drives and far ones
-    missed (5ki0IEvsSQI), so a hint only (user, 2026-10-11). On a CUDA GPU only (wsl5090, lin5080); empty
-    elsewhere."""
+def ghost_and_urban(path):
+    """(ghost times, urban_objects' counts) of one pass over the video. Ghosts: times (s) a road user vanished
+    mid-picture: a sure detection, big and well inside the frame, nothing passing in front of it and not found
+    again nearby. A dissolve between two scenes fades people out where they stand (Q8iFS6Szcfc at 8:08: a woman on
+    a crossing); one false alarm in 6 minutes of approved drives and far ones missed (5ki0IEvsSQI), so a hint only
+    (user, 2026-10-11). On a CUDA GPU only (wsl5090, lin5080): elsewhere no ghosts, and urban_objects counts."""
     if not os.path.exists(YOLO_PYTHON):
-        return np.zeros(0)
-    r = subprocess.run([YOLO_PYTHON, '-c', GHOST_CODE, path], capture_output=True, text=True, cwd=HERE)
+        return np.zeros(0), None
+    r = subprocess.run([YOLO_PYTHON, '-c', GHOST_CODE, path, str(URBAN_EVERY_S)], capture_output=True, text=True,
+                       cwd=HERE)
     if r.returncode:
         print(f'  YOLO tracking failed, no ghost check: {r.stderr.strip()[-300:]}', flush=True)
-    return np.array([float(x) for x in r.stdout.split()], float)
+    lines = [x.split() for x in r.stdout.splitlines()]
+    counts = [[int(v) for v in x[1:]] for x in lines if x[:1] == ['U']]
+    return (np.array([float(x[1]) for x in lines if x[:1] == ['G']], float),
+            np.array(counts, float) if counts and not r.returncode else urban_objects(path))
 
 
 def skip_events(path):
@@ -2323,12 +2343,38 @@ def _caption_text(stream, t):
 # reads badly ("CAPITAL OF CALIFORNIA / Sacramento" in QcYf2VZqS-Y: tesseract nothing, EasyOCR both at 0:26)
 OCR_PYTHON = next((x for x in (os.path.expanduser('~/ocr-venv/bin/python'),
                                os.path.expanduser('~/micromamba/envs/ocr/bin/python')) if os.path.exists(x)), None)
-OCR_CODE = """
+# ... in a process of its own that stays, like CLIP's (SCENE_SERVER): a JSON line of image paths in, a line of
+# their texts out; the opening, more of it for a caption and a drive's road signs share its model
+OCR_SERVER = """
 import json, sys, easyocr, torch
 reader = easyocr.Reader(['en'], gpu=torch.cuda.is_available(), verbose=False)
-for path in sys.argv[1:]:
-    print(json.dumps([text for _, text, conf in reader.readtext(path) if conf >= 0.4]), flush=True)
+for line in sys.stdin:
+    print(json.dumps([[text for _, text, conf in reader.readtext(p) if conf >= 0.4] for p in json.loads(line)]),
+          flush=True)
 """
+_OCR = {'lock': threading.Lock()}
+
+
+def _ocr_run(paths):
+    """[[texts]] EasyOCR reads in each image file (OCR_SERVER, started on first use), None when it fails."""
+    if not paths or not OCR_PYTHON:
+        return None
+    with _OCR['lock']:
+        proc = _OCR.get('proc')
+        if proc is None or proc.poll() is not None:
+            log = open(os.path.join(tempfile.gettempdir(), 'crowd_ocr.log'), 'a')
+            proc = _OCR['proc'] = subprocess.Popen([OCR_PYTHON, '-c', OCR_SERVER], stdin=subprocess.PIPE,
+                                                   stdout=subprocess.PIPE, stderr=log, text=True)
+        try:
+            proc.stdin.write(json.dumps(list(paths)) + '\n')
+            proc.stdin.flush()
+            out = json.loads(proc.stdout.readline() or 'null')
+        except (OSError, ValueError):
+            out = None
+        if not isinstance(out, list) or len(out) != len(paths):
+            proc.kill()  # started afresh next time
+            return None
+        return out
 
 
 def opening_texts(video_id, start=1, upto=61, step=None):
@@ -2340,20 +2386,19 @@ def opening_texts(video_id, start=1, upto=61, step=None):
     work_dir = tempfile.mkdtemp(prefix='crowd_ocr_')
     try:
         url, headers = _stream(video_id)
-        shots = []
-        for t in np.arange(start, upto, step):
+
+        def grab(t):
             shot = os.path.join(work_dir, f'{t:.0f}.png')
             _stream_ffmpeg(['ffmpeg', '-v', 'error', '-y', '-headers', headers, '-ss', f'{t:.1f}', '-i', url,
                             '-frames:v', '1', shot])
-            if os.path.exists(shot):
-                shots.append((float(t), shot))
+            return (float(t), shot) if os.path.exists(shot) else None
+        with ThreadPoolExecutor(3) as pool:  # the frames side by side from the stream (3: YouTube is slow at times)
+            shots = [x for x in pool.map(grab, np.arange(start, upto, step)) if x]
         if not shots:
             return None
-        r = subprocess.run([OCR_PYTHON, '-c', OCR_CODE, *(x for _, x in shots)], capture_output=True, text=True,
-                           timeout=1800)
-        lines = [json.loads(x) for x in r.stdout.splitlines() if x.startswith('[')]
-        if r.returncode or len(lines) != len(shots):
-            print(f'  EasyOCR failed: {r.stderr.strip()[-300:]}', flush=True)
+        lines = _ocr_run([x for _, x in shots])
+        if lines is None:
+            print('  EasyOCR failed', flush=True)
             return None
         return {t: texts for (t, _), texts in zip(shots, lines)}
     except (RuntimeError, subprocess.TimeoutExpired, KeyError, ValueError) as e:
@@ -2390,11 +2435,9 @@ def read_signs(video_id, step=SIGN_STEP_S):
                         os.path.join(work_dir, 's%05d.jpg')], capture_output=True, timeout=4 * 3600)
         os.remove(path)
         shots = sorted(n for n in os.listdir(work_dir) if n.startswith('s'))
-        r = subprocess.run([OCR_PYTHON, '-c', OCR_CODE, *(os.path.join(work_dir, n) for n in shots)],
-                           capture_output=True, text=True, timeout=4 * 3600)
-        lines = [json.loads(x) for x in r.stdout.splitlines() if x.startswith('[')]
-        if r.returncode or len(lines) != len(shots):
-            print(f'  signs not read: {r.stderr.strip()[-300:]}', flush=True)
+        lines = _ocr_run([os.path.join(work_dir, n) for n in shots])
+        if lines is None:
+            print('  signs not read: EasyOCR failed', flush=True)
             return None
         print(f'  signs read in {len(shots)} frames', flush=True)
         return {k * step: texts for k, texts in enumerate(lines) if texts}
@@ -2767,7 +2810,7 @@ def analyse_video(video_id, out_dir, meta=None, signs=False):
         sig['skip_norm'] = np.array(skip_norm(path, sig), float).reshape(-1, 2)
         sig['fades'] = fade_events(path)
         sig['saturation'], sig['lamps'] = dusk_colours(path)
-        urban = urban_objects(path)
+        ghost, urban = ghost_and_urban(path)
         if urban is not None:
             sig['urban'], sig['street'] = urban[:, 0], urban[:, 1]
             if urban.shape[1] > 2:  # where road users sit (0 top, 1 bottom; NaN with none): see camera_tilt
@@ -2777,7 +2820,7 @@ def analyse_video(video_id, out_dir, meta=None, signs=False):
         sig['lots'] = np.array(parking_lots(path, sig, work_dir), float).reshape(-1, 2)
         sig['kerb'] = np.array(kerb_stops(path, sig, work_dir), float).reshape(-1, 2)
         sig['cross'] = cross_traffic(path, sig)
-        sig['ghost'] = ghost_vanishes(path)
+        sig['ghost'] = ghost
         sig['intro_end'] = np.array(clip_intro(path, meta.get('duration'), work_dir) or 0, float)
         sig['outro_start'] = np.array(clip_outro(path, meta.get('duration'), work_dir) or 0, float)
         sig['chapter_cuts'] = np.array(chapter_cuts(meta), float).reshape(-1, 2)
