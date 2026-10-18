@@ -14,7 +14,7 @@ git pull -q --rebase
 ~/.local/bin/uv run --no-project --python 3.12 -q --with polars --with pyarrow --with pandas==2.2.3 \
     --with plotly==5.24.1 --with kaleido==0.2.1 --with pillow --with tqdm --with numpy --with pycountry \
     --with requests python count_detections.py --data "$data" 2>&1 | tr '\r' '\n' | grep -v '%|'
-git add detection_counts.csv.gz
+git add analysis_data/detection_counts.csv.gz
 if git diff --staged --quiet; then
     echo "Counts unchanged."
 else

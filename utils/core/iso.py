@@ -1,5 +1,4 @@
 import common
-import os
 import pandas as pd
 import pycountry
 from custom_logger import CustomLogger
@@ -36,7 +35,7 @@ class ISO:
         iso2 = iso2.upper()
 
         # Load the CSV - ideally, you should cache this in self.flag_data!
-        flag_data = pd.read_csv(os.path.join(common.root_dir, 'countries.csv'), dtype=str)
+        flag_data = pd.read_csv(common.data_path('countries.csv'), dtype=str)
 
         # Ensure column names are stripped of whitespace
         flag_data.columns = flag_data.columns.str.strip()

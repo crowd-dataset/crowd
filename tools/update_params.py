@@ -9,8 +9,8 @@ import requests
 os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # top folder: mapping.csv, ...
 
 mapping_path = "mapping.csv"
-height_path = "height_data.csv"
-countries_path = "countries.csv"
+height_path = os.path.join("analysis_data", "height_data.csv")
+countries_path = os.path.join("analysis_data", "countries.csv")
 OUT_PATH = "mapping_updated.csv"
 
 WB_INDICATORS = {

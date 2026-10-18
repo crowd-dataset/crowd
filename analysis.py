@@ -2099,7 +2099,7 @@ README_DETECTIONS = {
 
 # per-segment counts of the bbox CSVs, committed so that runs without the CSVs (the GitHub Action) make the detection
 # figures and README counts too; written by count_detections.py (see its docstring)
-DETECTION_SNAPSHOT = "detection_counts.csv.gz"
+DETECTION_SNAPSHOT = common.data_path("detection_counts.csv.gz")
 DETECTION_CACHE = os.path.join("_output", "detection_cache.json.gz")  # per-file counts, not committed
 
 

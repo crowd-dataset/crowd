@@ -35,9 +35,9 @@ FILE_PATH = common.get_configs("mapping")     # mapping file
 COUNTRY_CACHE_FILE = os.path.join(os.path.join(common.root_dir, 'cache_countries.json'))
 
 # average height data from kaggle
-height_data = pd.read_csv(os.path.join(common.root_dir, 'height_data.csv'))
+height_data = pd.read_csv(common.data_path('height_data.csv'))
 # average age data from https://simplemaps.com/data/countries
-age_data = pd.read_csv(os.path.join(common.root_dir, 'countries.csv'))
+age_data = pd.read_csv(common.data_path('countries.csv'))
 
 
 def _load_cache() -> dict:

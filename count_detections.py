@@ -1,4 +1,4 @@
-"""Count the YOLO detections in the bbox CSVs and save the per-segment counts as detection_counts.csv.gz.
+"""Count the YOLO detections in the bbox CSVs and save the per-segment counts as analysis_data/detection_counts.csv.gz.
 
 Only this step of analysis.py: no figures and none of the other analyses of the detections, which read the CSVs in
 far more detail. Run it where the bbox CSVs are (for example on the machine their drive is plugged into), then

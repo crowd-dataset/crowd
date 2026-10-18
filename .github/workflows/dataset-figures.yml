@@ -5,9 +5,9 @@
 # every push of the mapping). The mapping-NAME.csv files play no part: they
 # neither start a run nor go into it.
 # Runs analysis.py without the YOLO bbox CSVs (no data folders). The object
-# counts and detection figures come from the committed detection_counts.csv.gz,
-# which count_detections.py writes where the bbox CSVs are; a new version of it
-# also means a run.
+# counts and detection figures come from the committed
+# analysis_data/detection_counts.csv.gz, which count_detections.py writes where
+# the bbox CSVs are; a new version of it also means a run.
 ############################
 name: Dataset figures
 
@@ -45,7 +45,7 @@ jobs:
             --grep='^Update README statistics and dataset figures$')
           if [ -z "$last" ] || \
               [ -n "$(git log --format=%H "$last"..HEAD -- mapping.csv \
-                detection_counts.csv.gz)" ]; then
+                analysis_data/detection_counts.csv.gz)" ]; then
             echo "run=true" >> "$GITHUB_OUTPUT"
           else
             echo "No change to mapping.csv or the detection counts since $last."
@@ -109,7 +109,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email \
             "41898283+github-actions[bot]@users.noreply.github.com"
-          git add README.md figures video_contributors.csv
+          git add README.md figures analysis_data/video_contributors.csv
           if git diff --staged --quiet; then
             echo "Nothing changed."
           else

@@ -23,8 +23,18 @@ root_dir = os.path.dirname(__file__)
 cache_dir = os.path.join(root_dir, '_cache')
 log_dir = os.path.join(root_dir, '_logs')
 output_dir = os.path.join(root_dir, '_output')
+# the data files the analysis reads and writes (not the mapping and metadata files, which stay in the top folder)
+data_dir = os.path.join(root_dir, 'analysis_data')
 
 logger = CustomLogger(__name__)  # use custom logger
+
+
+def data_path(name: str) -> str:
+    """Path of a data file of the analysis: in data_dir, or in the top folder where it still is there (copies of the
+    code from before data_dir, e.g. the workers, which get only the .py files on a sync)."""
+    path = os.path.join(data_dir, name)
+    old = os.path.join(root_dir, name)
+    return old if not os.path.exists(path) and os.path.exists(old) else path
 
 
 def get_secrets(entry_name: str, secret_file_name: str = 'secret') -> Dict[str, str]:

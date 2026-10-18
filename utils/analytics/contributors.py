@@ -26,7 +26,7 @@ from datetime import datetime, timezone
 
 import common
 
-FILE = os.path.join(common.root_dir, "video_contributors.csv")
+FILE = common.data_path("video_contributors.csv")
 MAIN = "Pavlo"  # contributor of mapping.csv
 # a bracketed, comma-separated list of 11-character YouTube video IDs, e.g. [abcdEFGH123,ZYXW-_98765]
 VIDEO_LIST = re.compile(r"\[((?:[A-Za-z0-9_-]{11},?)+)\]")

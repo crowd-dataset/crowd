@@ -10,7 +10,7 @@ REPO=$(cd "$(dirname "$0")/.." && pwd)
 W=$HOME/dataset-page/work; mkdir -p $W
 rsync -a --delete --exclude .git --exclude _output --exclude videos --exclude '*.pt' --exclude secret \
   --exclude cookies.txt --exclude config --exclude '__pycache__' --exclude 'mapping-*.csv' "$REPO/" $W/ || exit 1
-# the code, README and detection counts (detection_counts.csv.gz: the YOLO tables and figures) from GitHub's main,
+# the code, README and detection counts (analysis_data/detection_counts.csv.gz: the YOLO tables and figures) from GitHub's main,
 # which the review repo does not pull; only the mapping stays the review repo's (the Action ignores mapping-NAME too)
 git -C "$REPO" fetch -q origin && git -C "$REPO" archive origin/main | \
   tar -xf - -C $W --exclude mapping.csv --exclude 'mapping-*.csv' || exit 1
