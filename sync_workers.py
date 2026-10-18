@@ -20,14 +20,18 @@ import run_channels as rc
 # ssh alias: the sheet rows and refresh-queue share it takes (run_channels.py --rows, --queue-rows); the laptop
 # takes rows 2/3 and queue 2/4
 # mini ('sheet rows 1/2, no queue') is out until its new account is set up (2026-10-11)
-WORKERS = {'lin5080': 'queue phase 5 (highway videos to redo), then 2 (new uploads of processed channels)',
+WORKERS = {'lin5080': 'queue phase 5 (highway videos to redo), then 2 (new uploads of processed channels): '
+                      'every other channel (--queue-rows 0/2)',
            'wsl5090': 'sheet rows 0/2, then queue phase 4 (UCxbv63aE7sg8_HzYz5KFPeA highway videos), 1 and 3',
            # account pavlo since 2026-10-12 (shadab before): ~/crowd-routine, started by cron with start_worker.sh
            'mini': 'sheet rows 1/2 (weirdlifenow, row 861)',
            # a second worker on lin5080 (user, 2026-10-18: its GPU had room), in its own folder
-           'lin5080b': 'queue phase 6 (new uploads of the channels added from the mapping)'}
+           'lin5080b': 'queue phase 6 (new uploads of the channels added from the mapping)',
+           # and one on wsl5090 (user, 2026-10-18), paused with the first while someone uses win5090 (wsl_yield.py)
+           'wsl5090b': 'queue phase 5, then 2: the other half of lin5080\'s (--queue-rows 1/2)'}
 REMOTE = 'crowd-routine'       # the repository on each worker, relative to its home
-PLACES = {'lin5080b': ('lin5080', 'crowd-routine-2')}  # a worker that is not REMOTE on the machine of its name
+# a worker that is not REMOTE on the machine of its name: (ssh alias, folder)
+PLACES = {'lin5080b': ('lin5080', 'crowd-routine-2'), 'wsl5090b': ('wsl5090', 'crowd-routine-2')}
 
 
 def place(host):
