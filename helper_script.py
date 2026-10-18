@@ -541,6 +541,16 @@ class Youtube_Helper:
         browser, _, keyring = setting.partition("+")
         return (browser, None, keyring.upper() or None, None)
 
+    @staticmethod
+    def _video_seconds(path):
+        """A video file's length in s (ffprobe), None when it cannot be read."""
+        try:
+            out = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0",
+                                  path], capture_output=True, text=True, timeout=60).stdout
+            return float(out.strip())
+        except (OSError, ValueError, subprocess.SubprocessError):
+            return None
+
     def _finish_download(self, temp_path, final_path, vid, resolution):
         """Move the finished download into place: (final_path, vid, resolution, fps)."""
         os.replace(temp_path, final_path)
@@ -629,6 +639,13 @@ class Youtube_Helper:
                 try:
                     with yt_dlp.YoutubeDL({**ydl_opts, **login}) as ydl:  # pyright: ignore[reportArgumentType]
                         info = ydl.extract_info(youtube_url, download=True)
+                    # an HLS (m3u8) stream can stop early and yt-dlp still reports success: 61 videos were cut off,
+                    # one to 10 s of 43 min (2026-10-17); a file over 5 s shorter than YouTube says is a failure
+                    want = info.get("duration") if isinstance(info, dict) else None
+                    got = self._video_seconds(temp_path) if want else None
+                    if want and got is not None and got < want - 5:
+                        os.remove(temp_path)
+                        raise yt_dlp.utils.DownloadError(f"cut off: {got:.0f} s of {want:.0f} s")
                     break
                 except yt_dlp.utils.DownloadError as e:
                     if i == len(logins) - 1:

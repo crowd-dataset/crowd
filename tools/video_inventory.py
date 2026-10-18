@@ -55,9 +55,12 @@ def probe(path):
 
 
 def segment_ends(mapping_files):
-    """{video: end of its last segment in s} over these mappings."""
-    ends = {}
+    """{video: end of its last segment in s} over these mappings. A video of the first (mapping.csv) takes its times
+    from there only: a mapping-NAME.csv is an older copy of the mapping plus its new videos, and merging it keeps the
+    mapping's times for the videos the mapping has (review_hub.merge_mapping_files)."""
+    ends, first = {}, None
     for path in mapping_files:
+        file_ends = {}
         with open(path, encoding='utf-8') as f:
             for row in csv.DictReader(f):
                 vids = [v.strip() for v in row['videos'].strip('"[] ').split(',') if v.strip()]
@@ -67,7 +70,10 @@ def segment_ends(mapping_files):
                     end_times = []
                 for i, v in enumerate(vids):
                     seg = end_times[i] if i < len(end_times) and isinstance(end_times[i], list) else []
-                    ends[v] = max([ends.get(v, 0), *[t for t in seg if isinstance(t, (int, float))]])
+                    file_ends[v] = max([file_ends.get(v, 0), *[t for t in seg if isinstance(t, (int, float))]])
+        if first is None:
+            first = set(file_ends)
+        ends.update({v: e for v, e in file_ends.items() if v not in first or path == mapping_files[0]})
     return ends
 
 
@@ -146,6 +152,13 @@ def main():
     print(json.dumps({k: v for k, v in summary.items() if k != 'folders'}))
 
 
+def _check_segment_ends(tmp):
+    head = 'videos,end_time\n'
+    open(f'{tmp}/m.csv', 'w').write(head + '"[a,b]","[[50],[90]]"\n')
+    open(f'{tmp}/m-x.csv', 'w').write(head + '"[a,c]","[[80],[30]]"\n')  # a: an old end time; c: new
+    assert segment_ends([f'{tmp}/m.csv', f'{tmp}/m-x.csv']) == {'a': 50, 'b': 90, 'c': 30}
+
+
 def _check():
     rows = [dict(video='a', duration='100.0'), dict(video='b', duration=''), dict(video='c', duration='50.0'),
             dict(video='a', duration='100.0'), dict(video='z', duration='9.0')]
@@ -155,4 +168,7 @@ def _check():
 
 if __name__ == '__main__':
     _check()
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        _check_segment_ends(tmp)
     main()
