@@ -10,6 +10,7 @@ network only. The workstations themselves (CPU, GPU, disks of the worker machine
 | 🚚 Pipeline status | 8771 | `pipeline_status.py` | What each worker does (channel, progress, videos per hour, problems in its log), batches waiting for review, sheet updates waiting, the last worker sync, the refresh queue, channels by state; `/status.json` |
 | 🚐 Dataset page | 8772 | `dataset_page.py`, `build_dataset_page.sh` | The README's dataset sections and figures, rebuilt nightly from the review mapping (reviews not pushed yet included) |
 | 🚌 Globe widget | (8771) | `globe/widget_globe.html`, `globe/globe_data.py` | A turning globe of all localities: segments added in the last 24 h pulse red, in the last 3 days amber |
+| Short videos | (8771) | `short_videos.py` | A form for the videos shorter than their last segment (`/short`), rebuilt every morning after the nightly inventory: download again, or trim the segments |
 | Alerts | | `alerts.py` | Posts to a Discord channel when a worker is blocked, stalled or offline, a machine is down or a disk runs low |
 
 The review hub (`review_hub.py`, port 8770) links to the pipeline status page.

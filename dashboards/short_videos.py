@@ -1,6 +1,6 @@
 """Videos shorter than their last segment (the inventory's "short"), to check one by one on the status page (/short).
 
-    python dashboards/short_videos.py           # (re)build _output/proposals/short_videos.json
+    python dashboards/short_videos.py           # (re)build _output/proposals/short_videos.json (cron, 04:30)
     python dashboards/short_videos.py --apply   # carry out the decisions not applied yet
 
 Run from the repo's top folder.
@@ -16,6 +16,7 @@ the file's end in mapping.csv (under the review pages' lock), dropping a segment
 video from a row where it has no segment left, then pushes the mapping as the hub's "Push mapping" does.
 """
 import collections
+import contextlib
 import csv
 import fcntl
 import io
@@ -38,6 +39,14 @@ INVENTORY = ('lin4080', '~/crowd-counts/_output/video_inventory.csv')
 DECISIONS = {'redownload': 'download it again', 'trim': "trim the segments to the video's end", 'keep': 'keep as is'}
 SLACK_S = 5  # as the inventory: shorter than the last segment's end by more than this
 _lock = threading.Lock()
+
+
+@contextlib.contextmanager
+def locked():
+    """One writer at a time: the page (decide), a build (cron, every morning) and --apply run in separate processes."""
+    with _lock, open(FILE + '.lock', 'w') as f:
+        fcntl.flock(f, fcntl.LOCK_EX)
+        yield
 
 
 def load():
@@ -73,6 +82,14 @@ def suggest(case):
     return 'trim', 'the file is complete: the end times run past the end of the video'
 
 
+def carried(old_case, mtime):
+    """What a build keeps of a video's case from the last one: all of it, but only its YouTube length when the case
+    was applied and the file is newer (downloaded again since, and still short: a new case to decide)."""
+    if old_case.get('applied') and mtime > old_case['applied']:
+        return dict(youtube_s=old_case.get('youtube_s'))
+    return old_case
+
+
 def build():
     host, path = INVENTORY
     files = [r for r in csv.DictReader(io.StringIO(sw.ssh(host, f'cat {path}'))) if 'short' in r['problem'].split()]
@@ -102,14 +119,19 @@ def build():
         v = r['video']
         if v not in rows:  # left the mapping since the inventory
             continue
-        o = old.get(v, {})
+        o = carried(old.get(v, {}), int(r['mtime']))
         c = dict(video=v, drive=r['folder'], file_s=length[v], height=r['height'], title=titles.get(v, ''),
                  rows=rows[v], youtube_s=yt[v] if v in yt else o.get('youtube_s'),
-                 decision=o.get('decision'), note=o.get('note', ''))
+                 decision=o.get('decision'), note=o.get('note', ''), applied=o.get('applied'))
         c['suggestion'], c['why'] = suggest(c)
         cases.append(c)
     cases.sort(key=lambda c: (c['suggestion'], c['video']))
-    with _lock:
+    with locked():  # the YouTube lookups take minutes: keep a decision made on the page meanwhile
+        latest = {c['video']: c for c in load()['cases']}
+        for c in cases:
+            now, then = latest.get(c['video'], {}), old.get(c['video'], {})
+            if (now.get('decision'), now.get('note')) != (then.get('decision'), then.get('note')):
+                c['decision'], c['note'] = now.get('decision'), now.get('note', '')
         save(dict(built=time.time(), cases=cases))
     return cases
 
@@ -118,7 +140,7 @@ def decide(video, decision, note):
     """Saves the decision (or None to undo it) and note for one video."""
     if decision not in DECISIONS and decision is not None:
         raise ValueError(decision)
-    with _lock:
+    with locked():
         data = load()
         for c in data['cases']:
             if c['video'] == video:
@@ -194,11 +216,18 @@ def apply():
             c['note'] = 'not applied: it is the only video of its row, which would be left without videos'
         else:
             c['applied'] = time.time()
-    with _lock:
+    with locked():
         save(data)
     msg = review_hub.push_mapping() if trims else ''
     return (f'{len(moves)} files moved to be downloaded again, {changed} rows trimmed'
             + (f', left for a person: {", ".join(left)}' if left else '') + f'. {msg}')
+
+
+def _check_carried():
+    c = dict(youtube_s=99, decision='redownload', applied=1000)
+    assert carried(c, 900) == c  # the file it was applied to
+    assert carried(c, 1100) == dict(youtube_s=99)  # a newer file, still short
+    assert carried(dict(decision='trim'), 5000) == dict(decision='trim')  # not applied yet
 
 
 def _check():
@@ -291,6 +320,7 @@ def t(sec):
 
 if __name__ == '__main__':
     _check()
+    _check_carried()
     if '--apply' in sys.argv:
         print(apply())
     else:

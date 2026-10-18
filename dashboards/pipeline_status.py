@@ -226,6 +226,7 @@ def collect():
     names = sorted({s for _, s in statuses}, key=lambda s: order.index(s) if s in order else 99)
     return dict(
         at=time.time(), workers=workers, downloads=dl, inventory=inv, cookies=cookies_needed(workers, dl),
+        short_open=sum(not c.get('decision') for c in short_videos.load()['cases']),
         batches=sorted(batches, key=lambda b: -b['waiting']),
         sheet_todo=len(todo), queue=len(queue), left=left, pace=pace,
         queue_phases=sorted(collections.Counter(q.get('phase') for q in queue).items(), key=lambda x: str(x[0])),
@@ -395,7 +396,8 @@ border-radius:16px;background:var(--bg);color:var(--fg);font-size:13px;cursor:po
   <td>{% if n.files %}<a href="inventory/{{ p }}">{{ p }}</a>{% else %}{{ p }}{% endif %}</td>
   <td class="n">{{ n.files or 0 }}</td><td class="n">{{ n.gb or 0 }}</td>
   <td class="muted">{{ what }}{% if p == 'short' and n.files %} ·
-  <a href="short">check them one by one</a>{% endif %}</td></tr>{% endfor %}
+  <a href="short">check them one by one</a>{% if s.short_open %} <b>({{ s.short_open }} to decide)</b>{% endif %}
+  {% endif %}</td></tr>{% endfor %}
  </table>{% endif %}</div>{% endif %}
 {% if s.batches %}<h2>Batches waiting for review</h2><div class="card"><table>
 <tr><th>channel</th><th>fetched on</th><th class="n">to review</th><th class="n">proposed</th></tr>
