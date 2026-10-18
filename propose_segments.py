@@ -1474,8 +1474,9 @@ while f < fps * 2700:  # the first 45 min: a whole 3-hour road trip would print 
     if not ok:
         break
     if f % step == 0:
+        # in half precision: a third faster, the same vanishes (205 of 206 on 5 videos; user, 2026-10-18: optimise)
         r = model.track(img, persist=True, imgsz=640, conf=0.3, classes=[0, 1, 2, 3, 5, 7], device='cuda',
-                        verbose=False, tracker='bytetrack.yaml')[0]
+                        half=True, verbose=False, tracker='bytetrack.yaml')[0]
         if r.boxes.id is not None:
             for (x1, y1, x2, y2), i, c in zip(r.boxes.xyxy.tolist(), r.boxes.id.tolist(), r.boxes.conf.tolist()):
                 tracks.setdefault(int(i), []).append((f / fps, x1 / W, y1 / H, x2 / W, y2 / H, c))
