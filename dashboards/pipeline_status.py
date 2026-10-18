@@ -110,7 +110,10 @@ def worker(host):
         return dict(host=host, state='offline', error=str(e)[-200:], role=sw.WORKERS[host])
     body, _, tail = raw.rpartition('@@\n')
     tail, _, paused = tail.partition('@@Y\n')
-    mtime, now = map(float, tail.split()[:2])
+    try:
+        mtime, now = map(float, tail.split()[:2])
+    except ValueError:  # no runner.log there (yet): a new worker before its first line
+        return dict(host=host, state='offline', error='no runner.log yet', role=sw.WORKERS[host])
     w = dict(parse_log(body.splitlines(), mtime, now), host=host, role=sw.WORKERS[host], clock=now)
     try:
         y = json.loads(paused)
