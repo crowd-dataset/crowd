@@ -23,12 +23,20 @@ import run_channels as rc
 WORKERS = {'lin5080': 'queue phase 5 (highway videos to redo), then 2 (new uploads of processed channels)',
            'wsl5090': 'sheet rows 0/2, then queue phase 4 (UCxbv63aE7sg8_HzYz5KFPeA highway videos), 1 and 3',
            # account pavlo since 2026-10-12 (shadab before): ~/crowd-routine, started by cron with start_worker.sh
-           'mini': 'sheet rows 1/2 (weirdlifenow, row 861)'}
+           'mini': 'sheet rows 1/2 (weirdlifenow, row 861)',
+           # a second worker on lin5080 (user, 2026-10-18: its GPU had room), in its own folder
+           'lin5080b': 'queue phase 6 (new uploads of the channels added from the mapping)'}
 REMOTE = 'crowd-routine'       # the repository on each worker, relative to its home
+PLACES = {'lin5080b': ('lin5080', 'crowd-routine-2')}  # a worker that is not REMOTE on the machine of its name
+
+
+def place(host):
+    """(ssh alias, folder) of a worker."""
+    return PLACES.get(host, (host, REMOTE))
 
 
 def ssh(host, command):
-    return subprocess.run(['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=15', host, command],
+    return subprocess.run(['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=15', place(host)[0], command],
                           capture_output=True, text=True, check=True).stdout
 
 
@@ -109,7 +117,8 @@ def check_workers():
     else:
         report = []
     for host in WORKERS if machines else []:
-        m = machines.get(host) or {}
+        alias, rem = place(host)
+        m = machines.get(alias) or {}
         recent = [x for x in m.get('hist', []) if x[0] >= time.time() - LOW_FOR * 60]
         gpu = bool(m.get('gpus'))
         load = [x[2] if gpu else x[1] for x in recent if (x[2] if gpu else x[1]) is not None]
@@ -118,7 +127,7 @@ def check_workers():
             report.append({'host': host, 'ok': True, 'what': f'{"GPU" if gpu else "CPU"} {mean:.0f}%'})
             continue
         try:
-            last, runners, downloads, now = ssh(host, f'tail -1 {REMOTE}/_output/proposals/runner.log; '
+            last, runners, downloads, now = ssh(host, f'tail -1 {rem}/_output/proposals/runner.log; '
                                                       'pgrep -f run_channels.py | wc -l; pgrep -f yt-dlp | wc -l; '
                                                       'date +%H:%M').strip().rsplit('\n', 3)
         except (subprocess.CalledProcessError, ValueError) as e:
@@ -157,40 +166,42 @@ def check_workers():
 def push_code(host):
     """The code as it is here, to a worker: [files that changed there]. Each batch runs propose_segments.py
     afresh and run_channels.py restarts by itself, so a worker takes it up with its next batch."""
+    alias, rem = place(host)
     code = sorted(f for f in os.listdir('.') if f.endswith('.py'))
-    return subprocess.run(['rsync', '-c', '--timeout=60', '--out-format=%n', *code, f'{host}:{REMOTE}/'],
+    return subprocess.run(['rsync', '-c', '--timeout=60', '--out-format=%n', *code, f'{alias}:{rem}/'],
                           check=True, capture_output=True, text=True, timeout=300).stdout.split()
 
 
 def sync(host):
+    alias, rem = place(host)
     pushed = push_code(host)
     if pushed:
         print(f'{host}: updated {", ".join(pushed)}')
-    remote_state = json.loads(ssh(host, f'cat {REMOTE}/_output/proposals/channels.json 2>/dev/null || echo "{{}}"'))
+    remote_state = json.loads(ssh(host, f'cat {rem}/_output/proposals/channels.json 2>/dev/null || echo "{{}}"'))
     state = rc.load_state()
     for url, c in remote_state.items():
         name = c['name']
         r = subprocess.run(['rsync', '-az', '--exclude', 'plan.json', '--exclude', '*.tmp',
-                            f'{host}:{REMOTE}/_output/proposals/{name}/', os.path.join(rc.ROOT, name) + '/'],
+                            f'{alias}:{rem}/_output/proposals/{name}/', os.path.join(rc.ROOT, name) + '/'],
                            capture_output=True)
         # 23/24: a file the worker was writing went away while copied (its batch running): the next sync has it
         if r.returncode not in (0, 23, 24):
             raise subprocess.CalledProcessError(r.returncode, r.args, r.stdout, r.stderr)
-        plan = json.loads(ssh(host, f'cat {REMOTE}/_output/proposals/{name}/plan.json 2>/dev/null || echo "[]"'))
+        plan = json.loads(ssh(host, f'cat {rem}/_output/proposals/{name}/plan.json 2>/dev/null || echo "[]"'))
         added = merge_plan(name, plan)
         mine_plan = os.path.join(rc.ROOT, name, 'plan.json')
         local = json.load(open(mine_plan)) if os.path.exists(mine_plan) else []
         # the whole channel rejected in review here: the worker stops it too
         if os.path.exists(os.path.join(rc.ROOT, name, ps.CHANNEL_REJECTED)):
-            ssh(host, f'touch {REMOTE}/_output/proposals/{name}/{ps.CHANNEL_REJECTED}')
+            ssh(host, f'touch {rem}/_output/proposals/{name}/{ps.CHANNEL_REJECTED}')
         # the reviews here say the channel opens with highlights: the worker starts its videos after them
         if local and ps.montage_channel({q['video']: q for q in local}, os.path.join(rc.ROOT, name)):
-            ssh(host, f'touch {REMOTE}/_output/proposals/{name}/{ps.MONTAGE_MARK}')
+            ssh(host, f'touch {rem}/_output/proposals/{name}/{ps.MONTAGE_MARK}')
         # videos marked sped up or with ghosts in review here go back to the worker: two reject the channel there
         for key in ps.REVIEW_MARKS:
             marked = sorted(q['video'] for q in local if q.get(key))
             if marked and not set(marked) <= {q['video'] for q in plan if q.get(key)}:
-                ssh(host, f"cd {REMOTE} && .venv/bin/python -c \"import json, propose_segments as ps\n"
+                ssh(host, f"cd {rem} && .venv/bin/python -c \"import json, propose_segments as ps\n"
                           f"path = '_output/proposals/{name}/plan.json'\n"
                           f"with ps.plan_lock(path):\n"
                           f"    plan = json.load(open(path))\n"
@@ -207,26 +218,26 @@ def sync(host):
         print(f'{host}: {name} ({c.get("status")}): {added} new or updated videos')
     rc.save_state(state)
     # the mapping as reviewed here, swapped in whole so a running batch never reads half a file
-    subprocess.run(['scp', '-q', '-o', 'BatchMode=yes', 'mapping.csv', f'{host}:{REMOTE}/mapping.csv.tmp'],
+    subprocess.run(['scp', '-q', '-o', 'BatchMode=yes', 'mapping.csv', f'{alias}:{rem}/mapping.csv.tmp'],
                    check=True, capture_output=True)
-    ssh(host, f'mv {REMOTE}/mapping.csv.tmp {REMOTE}/mapping.csv')
+    ssh(host, f'mv {rem}/mapping.csv.tmp {rem}/mapping.csv')
     with open(rc.TAKEN + '.tmp', 'w') as f:  # what every machine works on: a worker skips a channel listed twice
         json.dump(sorted({x for k, c in rc.load_state().items() for x in (k, c.get('url') or k)}), f)
-    subprocess.run(['scp', '-q', '-o', 'BatchMode=yes', rc.TAKEN + '.tmp', f'{host}:{REMOTE}/{rc.TAKEN}'],
+    subprocess.run(['scp', '-q', '-o', 'BatchMode=yes', rc.TAKEN + '.tmp', f'{alias}:{rem}/{rc.TAKEN}'],
                    check=True, capture_output=True)
     if os.path.exists(rc.CHANNEL_IDS):  # the sheet's channels by id: a worker skips a channel listed twice
-        ssh(host, f'mkdir -p {REMOTE}/{os.path.dirname(rc.CHANNEL_IDS)}')
-        subprocess.run(['scp', '-q', '-o', 'BatchMode=yes', rc.CHANNEL_IDS, f'{host}:{REMOTE}/{rc.CHANNEL_IDS}'],
+        ssh(host, f'mkdir -p {rem}/{os.path.dirname(rc.CHANNEL_IDS)}')
+        subprocess.run(['scp', '-q', '-o', 'BatchMode=yes', rc.CHANNEL_IDS, f'{alias}:{rem}/{rc.CHANNEL_IDS}'],
                        check=True, capture_output=True)
     if os.path.exists(ps.MERGES):  # towns the reviewer counts in a bigger city nearby: the worker suggests that city
-        subprocess.run(['scp', '-q', '-o', 'BatchMode=yes', ps.MERGES, f'{host}:{REMOTE}/{ps.MERGES}.tmp'],
+        subprocess.run(['scp', '-q', '-o', 'BatchMode=yes', ps.MERGES, f'{alias}:{rem}/{ps.MERGES}.tmp'],
                        check=True, capture_output=True)
-        ssh(host, f'mv {REMOTE}/{ps.MERGES}.tmp {REMOTE}/{ps.MERGES}')
+        ssh(host, f'mv {rem}/{ps.MERGES}.tmp {rem}/{ps.MERGES}')
     if os.path.exists(rc.REFRESH_QUEUE):  # the channels done before whose new uploads come next
         subprocess.run(['scp', '-q', '-o', 'BatchMode=yes', rc.REFRESH_QUEUE,
-                        f'{host}:{REMOTE}/{rc.REFRESH_QUEUE}.tmp'],
+                        f'{alias}:{rem}/{rc.REFRESH_QUEUE}.tmp'],
                        check=True, capture_output=True)
-        ssh(host, f'mv {REMOTE}/{rc.REFRESH_QUEUE}.tmp {REMOTE}/{rc.REFRESH_QUEUE}')
+        ssh(host, f'mv {rem}/{rc.REFRESH_QUEUE}.tmp {rem}/{rc.REFRESH_QUEUE}')
 
 
 SYNC_LOCK = '/tmp/crowd-sync.lock'  # one sync at a time: the hourly one and the review hub's button

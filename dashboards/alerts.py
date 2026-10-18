@@ -60,7 +60,8 @@ def problems():
         cookies = {c['host']: c for c in p.get('cookies', [])}
         for c in cookies.values():
             out[f'cookies:{c["host"]}'] = (f'🍪 **{c["host"]}** needs new YouTube cookies: sign in as {c["account"]} '
-                                           f'in a new Incognito window, export cookies.txt, then `{c["how"]}`')
+                                           f'in a new Incognito window, export the cookies as '
+                                           f'{c.get("file", "cookies.txt")}, then `{c["how"]}`')
         for w in p.get('workers', []):
             if w['host'] in cookies:  # said above, with what to do
                 continue

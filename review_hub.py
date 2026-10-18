@@ -96,7 +96,8 @@ background:#fff;color:#222;font-size:13px;cursor:pointer}
 {%- endfor %}</p>{% endif %}
 {% for w in health if not w.ok %}<p class="bad">{{ w.host }}: {{ w.what }}</p>{% endfor %}
 {% for c in cookies %}<p class="bad">🍪 {{ c.host }} needs new YouTube cookies: sign in as {{ c.account }} in a new
- Incognito window, export cookies.txt, close the window, then <code>{{ c.how }}</code></p>{% endfor %}
+ Incognito window, export the cookies as {{ c.file or 'cookies.txt' }}, close the window, then <code>{{ c.how }}</code>
+ </p>{% endfor %}
 {% for b in batches %}
 <a class="b" href="/open/{{ b.name }}" target="_blank"><span><span class="n">{{ b.name }}</span>
  <span class="s">{% if b.row %}· row {{ b.row }} {% endif %}· {{ b.state }}</span></span>

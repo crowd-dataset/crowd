@@ -37,7 +37,8 @@ PROBLEMS = {'duplicate': 'also in an earlier folder', 'unreadable': 'no video st
             'short': "over 5 s shorter than its last segment's end", 'unused': 'in no mapping'}
 HOST = os.environ.get('REVIEW_HOST', '127.0.0.1')
 STUCK_MIN = sw.STUCK_MIN
-# the Google account each machine's YouTube cookies come from, {host: email}: on this machine only, never in the repo
+# each machine's YouTube cookies, {host: {email, file, dir}} (file: cookies-NAME.txt in dir, cookies.txt a link to it):
+# on this machine only, never in the repo
 ACCOUNTS = os.path.join(rc.ROOT, 'cookie_accounts.json')
 SIGN_IN = re.compile(r'sign in|not a bot', re.I)
 HISTORY = os.path.join(rc.ROOT, 'status_history.jsonl')  # hourly: refresh channels not started, batches to review
@@ -100,7 +101,7 @@ def parse_log(lines, mtime, now):
 
 
 def worker(host):
-    log = f'{sw.REMOTE}/_output/proposals/runner.log'
+    log = f'{sw.place(host)[1]}/_output/proposals/runner.log'
     try:
         raw = sw.ssh(host, f'tail -n {TAIL} {log}; echo @@; '
                            f'stat -c %Y {log} 2>/dev/null || stat -f %m {log}; date +%s; '
@@ -163,16 +164,21 @@ def cookies_needed(workers, downloads):
             accounts = json.load(f)
     except (OSError, ValueError):
         accounts = {}
+
+    def need(host, alias):
+        a = accounts.get(alias) or {}
+        a = a if isinstance(a, dict) else dict(email=a)
+        f, d = a.get('file', 'cookies.txt'), a.get('dir', sw.REMOTE)
+        link = f' && ln -sf {f} {d}/cookies.txt' if f != 'cookies.txt' else ''
+        return dict(host=host, account=masked(a.get('email')), file=f,
+                    how=f"scp ~/Downloads/{f} {alias}:{d}/ && ssh {alias} 'chmod 600 {d}/{f}{link}'")
     out = []
     for w in workers:
         if w.get('state') == 'blocked' and w['problems'] and SIGN_IN.search(w['problems'][-1]['text']):
-            out.append(dict(host=w['host'], account=masked(accounts.get(w['host'])),
-                            how=f'scp ~/Downloads/cookies.txt {w["host"]}:{sw.REMOTE}/cookies.txt && '
-                                f'ssh {w["host"]} chmod 600 {sw.REMOTE}/cookies.txt'))
+            out.append(need(w['host'], sw.place(w['host'])[0]))  # a second worker on a machine shares its cookies
     last = max((r['t'] for r in downloads.get('recent', [])), default=downloads.get('started', time.time()))
     if str(downloads.get('state', '')).startswith('paused') and time.time() - last > 2 * 3600:
-        out.append(dict(host=downloads['host'], account=masked(accounts.get(downloads['host'])),
-                        how=f'sign in to YouTube in Chrome on {downloads["host"]} (its downloader uses that login)'))
+        out.append(need(downloads['host'], downloads['host']))  # its cookies file, then its Chrome login
     return out
 
 
@@ -319,7 +325,8 @@ border-radius:16px;background:var(--bg);color:var(--fg);font-size:13px;cursor:po
  · <a href="#" onclick="location.port=8090;return false">machines</a>
  {% if s.error %} · <span style="color:var(--bad)">{{ s.error }}</span>{% endif %}</div>
 {% for c in s.cookies %}<div class="card cookie">🍪 <b>{{ c.host }} needs new YouTube cookies</b>: in a new
- Incognito window sign in to YouTube as <b>{{ c.account }}</b>, export cookies.txt, close the window, then
+ Incognito window sign in to YouTube as <b>{{ c.account }}</b>, export the cookies as {{ c.file }}, close the window,
+ then
  <code>{{ c.how }}</code></div>{% endfor %}
 <div class="tiles">
  <a class="tile" href="#" onclick="location.port=8770;return false"><span class="muted small">Batches to review</span>
@@ -584,7 +591,7 @@ def _check_cookies():
                   1_000_000.0, 1_000_000.0)
     assert w['state'] == 'blocked'
     c = cookies_needed([dict(w, host='lin5080')], {})
-    assert [x['host'] for x in c] == ['lin5080'] and 'lin5080:crowd-routine/cookies.txt' in c[0]['how'], c
+    assert [x['host'] for x in c] == ['lin5080'] and 'lin5080:crowd-routine/' in c[0]['how'], c
     assert masked('olena.bazilinska@gmail.com') == 'olena.b…@gmail.com'
     assert cookies_needed([dict(w, problems=[dict(text='quota exceeded')], host='x')], {}) == []
 
