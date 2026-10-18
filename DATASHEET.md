@@ -47,7 +47,7 @@ This datasheet follows the structure of *Datasheets for Datasets* (Gebru et al.,
 |---|---|---|
 | Geographic | North America 31.7% of footage, Asia 29.0%, Europe 27.0%, Oceania 5.4%, South America 3.8%, Africa 3.0%. The USA alone is 27.4%. | per-continent maps in the README, `dumbbell_footage_population_share` |
 | Time of day | 14.5% of footage is at night, varying strongly by country. | `map_night_share` |
-| Vehicle | 92.0% is filmed from cars, 2.7% from bicycles, 2.7% from buses and 1.6% from two-wheelers. | `bar_vehicle_type_time_of_day` |
+| Vehicle | 92.0% is filmed from cars, 2.7% from bicycles, 2.7% from buses and 1.6% from motorcycles. | `bar_vehicle_type_time_of_day` |
 | Upload date | 91.3% of footage was uploaded in 2020 or later. | `hist_months` |
 | Channels | The 10 largest channels supply 18.6% of footage and the 100 largest 57.8%. A channel's route, camera and style can dominate a city's footage. | `line_channel_concentration`, `map_effective_channels` |
 | Coverage vs wealth | Footage per person grows with GDP per person; several of the most populous countries (China, India, Nigeria, Egypt, Mexico) have less than half the footage their wealth predicts. | `bubble_footage_per_capita_gdp` |

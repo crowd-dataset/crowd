@@ -31,6 +31,23 @@ from utils.plotting.constants import MAP_TOP_SHARE, colorbar_top
 
 logger = CustomLogger(__name__)
 
+
+def visible_scale(scale):
+    """A plotly sequential colour scale (by name) without its near-white steps: the lowest values would look like the
+    white sea or background, or like an area without data. Scales that start dark (Viridis) and lists are kept."""
+    import plotly.express as px
+    if not isinstance(scale, str) or not hasattr(px.colors.sequential, scale):
+        return scale
+    colours = getattr(px.colors.sequential, scale)
+
+    def light(c):
+        rgb = px.colors.hex_to_rgb(c) if c.startswith("#") else px.colors.unlabel_rgb(c)
+        return sum(rgb) / 3 > 225
+    while len(colours) > 3 and light(colours[0]):
+        colours = colours[1:]
+    return colours
+
+
 CACHE = os.path.join(common.output_dir, "geo_cache")
 SOURCES = {
     "us_counties.json": "https://raw.githubusercontent.com/plotly/datasets/master/geojson-counties-fips.json",
@@ -60,8 +77,9 @@ SOURCES["region_population_wikidata.json"] = ("https://query.wikidata.org/sparql
 EUROPE_SEL = (pl.col("continent") == "Europe") | pl.col("iso3").is_in(["RUS", "TUR"])  # their European regions
 EUROPE_NOTE = ("Regions: Eurostat NUTS 2 (EU, EFTA, UK and candidate countries); geoBoundaries for European Russia, "
                "Ukraine, Belarus and Bosnia and Herzegovina, and whole countries for Moldova, Kosovo and small ones")
-EUROPE_VIEW = dict(projection_type="natural earth", lonaxis_range=[-25, 62], lataxis_range=[34, 71.5])
+EUROPE_VIEW = dict(projection_type="natural earth", lonaxis_range=[-25, 62], lataxis_range=[33, 71.5])
 # (lon min, lon max, lat min, lat max) of the spike maps
+SPIKE_DISTANCE = {"JPN": 1.65}  # camera distance of the spike maps (default 1.35): Japan's tall frame needs more
 SPIKE_BOXES = {"USA": (-125, -66.5, 24, 49.5), "RUS": (19, 180, 41, 78), "JPN": (128.5, 146, 30, 46)}
 MIN_HOURS_AREA = 1  # areas with less footage (or analysed footage) are left out of share and rate maps
 
@@ -232,7 +250,7 @@ def _area_map(table: pl.DataFrame, feats: dict, pop: dict, value: str, title: st
                  if z.min() <= math.log10(m * 10 ** p) <= z.max()]
         colorbar.update(tickvals=np.log10(ticks).tolist(), ticktext=[f"{t_:,g}" for t_ in ticks])
     fig = go.Figure(go.Choropleth(geojson=_geojson(feats, t["area"]), locations=t["area"], z=z, featureidkey="id",
-                                  colorscale=scale, marker_line_width=0.2, marker_line_color="#888888",
+                                  colorscale=visible_scale(scale), marker_line_width=0.2, marker_line_color="#888888",
                                   colorbar=colorbar, hovertext=text, hovertemplate="%{hovertext}<extra></extra>"))
     if us:
         fig.update_geos(scope="usa", showsubunits=True, subunitcolor="#999999", showland=True, landcolor="#f2f2f2")
@@ -388,17 +406,31 @@ def _spike_map(locs: pl.DataFrame, iso3: str, name: str, country: str):
         go.Scatter3d(x=x, y=y, z=z, mode="lines", hoverinfo="skip", showlegend=False,
                      line=dict(color=c, colorscale="YlOrRd", cmin=0, cmax=1, width=3, showscale=True,
                                colorbar=dict(title=dict(text="Footage (hours)", side="top"), orientation="h", x=0.5,
-                                             y=0.93, len=0.4, thickness=14,
+                                             y=0.9, len=0.4, thickness=14,
                                              tickvals=[(math.log10(t) - lo) / (top - lo) for t in ticks],
-                                             ticktext=[f"{t:g}" for t in ticks]))),
+                                             ticktext=[f"{t:,g}" for t in ticks]))),
         go.Scatter3d(x=p["lon"], y=p["lat"], z=h, mode="markers", showlegend=False,
                      marker=dict(size=2, color=h, colorscale="YlOrRd", cmin=0, cmax=1),
                      text=p["hover"], hovertemplate=hover.GL_TEMPLATE)])
     big = p.sort("hours", descending=True).head(10)
-    fig.add_trace(go.Scatter3d(x=big["lon"], y=big["lat"], z=(np.log10(big["hours"].to_numpy()) - lo) / (top - lo)
-                               + 0.04, mode="text", text=big["name"], textfont=dict(size=12, color="#222222"),
+    # in the tilted view, places far apart can have their labels at the same spot (Los Angeles and Sacramento):
+    # neighbouring labels stack from south to north, each a step above the ones south of it (further north is also
+    # further back, so it shows higher still)
+    w, hgt = (box[1] - box[0]) / 15, (box[3] - box[2]) / 4
+    lons_, lats_ = big["lon"].to_list(), big["lat"].to_list()
+    tips = (np.log10(big["hours"].to_numpy()) - lo) / (top - lo) + 0.04
+    zs = list(tips)
+    for i in sorted(range(len(lons_)), key=lambda k: lats_[k]):
+        south = [zs[k] for k in range(len(lons_)) if lats_[k] < lats_[i]
+                 and abs(lons_[i] - lons_[k]) < w and lats_[i] - lats_[k] < hgt]
+        zs[i] = max([tips[i]] + [z + 0.16 for z in south])
+    fig.add_trace(go.Scatter3d(x=big["lon"], y=big["lat"], z=zs, mode="text", text=big["locality"],
+                               textfont=dict(size=12, color="#222222"),
                                hoverinfo="skip", showlegend=False))
-    fig.update_layout(scene=_scene(box, 1.0))
+    # the scene below the colour bar (its labels went over the bar), seen from further away (the US and Russian
+    # views cut off their western ends)
+    fig.update_layout(scene=_scene(box, max(1.0, max(zs) + 0.04), distance=SPIKE_DISTANCE.get(iso3, 1.35))
+                      | dict(domain=dict(x=[0, 1], y=[0, 0.84])))
     fig.add_annotation(text=f"{country}: one spike per locality, height and colour the hours of footage (log scale)",
                        x=0.01, y=0.01, xref="paper", yref="paper", showarrow=False, xanchor="left",
                        font=dict(size=15, color="#555555"))
@@ -411,7 +443,7 @@ def _spike_map(locs: pl.DataFrame, iso3: str, name: str, country: str):
 # footage; elsewhere the land is grey rather than filled in from distant localities.
 
 FIELD_CELL = {"Europe": 0.2, "North America": 0.3, "Asia": 0.35}
-FIELD_BOXES = {"Europe": (-25, 45, 34, 71.5), "North America": (-128, -60, 14, 58), "Asia": (60, 150, -10, 55)}
+FIELD_BOXES = {"Europe": (-25, 45, 34, 71.5), "North America": (-128, -60, 7, 58), "Asia": (34, 150, -10, 55)}
 LAND_GREY = "#d9d9d9"
 
 
@@ -446,24 +478,44 @@ def _distance_grid(lons, lats, pts_lon, pts_lat) -> np.ndarray:
     return (6371 * np.arccos(np.clip(best, -1, 1))).reshape(gx.shape)
 
 
-def _country_names(box) -> tuple:
-    """Names and label points of the larger countries inside the box."""
+SHORT_NAMES = {"Bosnia and Herzegovina": "Bosnia & Herz.", "Dominican Republic": "Dominican Rep.",
+               "United Arab Emirates": "UAE", "Central African Republic": "C. African Rep."}
+
+
+def _country_names(box, deg_per_char: float, deg_per_line: float) -> tuple:
+    """Names and label points of the larger countries inside the box, largest first, leaving out a name that would
+    overlap a larger country's (its box estimated from `deg_per_char` and `deg_per_line`, in degrees of longitude and
+    latitude). A country whose own label point is outside the box (Canada in North America) is labelled at the middle
+    of its part inside the box."""
     import pycountry
-    names, xs, ys = [], [], []
+    found = []
     for iso3, shape in map_labels.country_shapes().items():
-        ct = shape.get("ct")
-        if not ct or not (box[0] + 1 < ct[0] < box[1] - 1 and box[2] + 1 < ct[1] < box[3] - 1):
-            continue
         ring_pts = [p for r in shape["rings"] for p in r]
         span = max(p[0] for p in ring_pts) - min(p[0] for p in ring_pts)
         if span < (box[1] - box[0]) / 25:  # too small for a name at this scale
             continue
+        ct = shape.get("ct")
+        if not ct or not (box[0] + 1 < ct[0] < box[1] - 1 and box[2] + 1 < ct[1] < box[3] - 1):
+            inside = [p for p in ring_pts if box[0] + 2 < p[0] < box[1] - 2 and box[2] + 2 < p[1] < box[3] - 2]
+            if len(inside) < 10:
+                continue
+            ct = (float(np.median([p[0] for p in inside])), float(np.median([p[1] for p in inside])))
         c = pycountry.countries.get(alpha_3=iso3)
         if c:
-            names.append(getattr(c, "common_name", None) or c.name)
-            xs.append(ct[0])
-            ys.append(ct[1])
-    return names, xs, ys
+            name = getattr(c, "common_name", None) or c.name
+            found.append((span, SHORT_NAMES.get(name, name), ct))
+    names, xs, ys, boxes = [], [], [], []
+    for _, name, (x, y) in sorted(found, reverse=True):
+        w, h = len(name) * deg_per_char / 2, deg_per_line / 2
+        for dy in (0, 1.2 * deg_per_line, -1.2 * deg_per_line, 2.2 * deg_per_line, -2.2 * deg_per_line):
+            b = (x - w, y + dy - h, x + w, y + dy + h)
+            if not any(b[0] < o[2] and o[0] < b[2] and b[1] < o[3] and o[1] < b[3] for o in boxes):
+                names.append(name)
+                xs.append(x)
+                ys.append(y + dy)
+                boxes.append(b)
+                break  # no free spot: the larger countries' names win
+    return names, xs, ys, boxes
 
 
 def _field_map(lons, lats, grid, shown, land, box, title: str, colorscale, name: str, note: str, callouts: list,
@@ -481,6 +533,7 @@ def _field_map(lons, lats, grid, shown, land, box, title: str, colorscale, name:
                  if lo <= math.log10(m * 10 ** p) <= hi]
         colorbar.update(tickvals=np.log10(ticks).tolist(), ticktext=[f"{t:,g}" for t in ticks])
     customdata = np.where(shown, grid, np.nan)
+    colorscale = visible_scale(colorscale)
     fig = go.Figure([
         go.Heatmap(x=lons, y=lats, z=grey, colorscale=[[0, LAND_GREY], [1, LAND_GREY]], showscale=False,
                    hoverinfo="skip"),
@@ -490,11 +543,16 @@ def _field_map(lons, lats, grid, shown, land, box, title: str, colorscale, name:
     bx, by = _borders(box)
     fig.add_trace(go.Scatter(x=bx, y=by, mode="lines", line=dict(color="#555555", width=0.6), hoverinfo="skip",
                              showlegend=False))
-    names, xs, ys = _country_names(box)
+    mid = math.cos(math.radians((box[2] + box[3]) / 2))
+    width, height = 1400 - 20, 1200 - 160  # the plot area in pixels
+    sx = min(width / (box[1] - box[0]), height / ((box[3] - box[2]) / mid))  # pixels per degree of longitude
+    names, xs, ys, name_boxes = _country_names(box, 6.5 / sx, 14 * mid / sx)  # 11 px text
     fig.add_trace(go.Scatter(x=xs, y=ys, mode="text", text=names, hoverinfo="skip", showlegend=False,
                              textfont=dict(size=11, color="#222222")))
-    mid = math.cos(math.radians((box[2] + box[3]) / 2))
-    for lon, lat, text, ax, ay in _place_callouts(callouts, box, mid, width=1400 - 20, height=1200 - 160):
+    # the names' boxes in pixels from the map's top-left corner: callouts keep clear of them
+    to_px = [((b[0] - box[0]) * sx, (box[3] - b[3]) * sx / mid, (b[2] - box[0]) * sx, (box[3] - b[1]) * sx / mid)
+             for b in name_boxes]
+    for lon, lat, text, ax, ay in _place_callouts(callouts, box, mid, width, height, obstacles=to_px):
         fig.add_annotation(x=lon, y=lat, text=text, showarrow=True, arrowhead=2, arrowwidth=1.2, arrowcolor="#333333",
                            ax=ax, ay=ay, font=dict(size=12, color="#111111"),
                            bgcolor="rgba(255,255,255,0.85)", bordercolor="#888888", borderwidth=0.5, borderpad=3)
@@ -507,15 +565,16 @@ def _field_map(lons, lats, grid, shown, land, box, title: str, colorscale, name:
                            margin=dict(l=10, r=10, t=110, b=50)), name, save_eps=False)
 
 
-def _place_callouts(callouts: list, box, mid: float, width: int, height: int) -> list:
+def _place_callouts(callouts: list, box, mid: float, width: int, height: int, obstacles=()) -> list:
     """(lon, lat, text, ax, ay) for each callout (lon, lat, text): the arrow's offset in pixels, pointing inwards
     (clear of the colour bar and the edges) where its box fits there, else the nearest other direction where the box
     stays on the map and clear of the boxes placed before. `width` x `height`: the plot area in pixels; `mid`: the
-    cosine of the middle latitude (the map's aspect ratio)."""
+    cosine of the middle latitude (the map's aspect ratio); `obstacles`: boxes (pixels from the map's top-left
+    corner) to keep clear of too, e.g. country names."""
     sx = min(width / (box[1] - box[0]), height / ((box[3] - box[2]) / mid))  # pixels per degree of longitude
     sy = sx / mid
     map_w, map_h = (box[1] - box[0]) * sx, (box[3] - box[2]) * sy
-    placed, out = [], []
+    placed, out = list(obstacles), []
     for lon, lat, text in callouts:
         px, py = (lon - box[0]) * sx, (box[3] - lat) * sy  # pixels from the map's top-left corner
         w, h = 7 * len(text) + 12, 24  # the box, estimated from 12 px text
@@ -541,6 +600,11 @@ def _extremes(lons, lats, grid, shown, pts: pl.DataFrame, n_high: int, n_low: in
     """Callouts at the highest and lowest cells that are shown, at least `min_sep` degrees apart, each named after
     the locality with the most footage within ~100 km."""
     out, used = [], []
+    # not at the frame's edge: there the place may be cut off (and the real extreme outside the map)
+    edge = np.zeros(grid.shape, bool)
+    m = max(3, round(2 / abs(lons[1] - lons[0])))  # 2 degrees
+    edge[:m], edge[-m:], edge[:, :m], edge[:, -m:] = True, True, True, True
+    shown = shown & ~edge
     order = np.argsort(np.where(shown, grid, np.nan), axis=None)
     valid = order[~np.isnan(np.where(shown, grid, np.nan).ravel()[order])]
     for idx_list, n, word in ((valid[::-1], n_high, "high"), (valid, n_low, "low")):
@@ -549,6 +613,8 @@ def _extremes(lons, lats, grid, shown, pts: pl.DataFrame, n_high: int, n_low: in
             if found >= n:
                 break
             i, j = np.unravel_index(idx, grid.shape)
+            if word == "low" and grid[i, j] <= 0:  # 0 in many places: naming one would mislead
+                break
             lon, lat = lons[j], lats[i]
             if any(abs(lon - u) < min_sep and abs(lat - v) < min_sep / 2 for u, v in used):
                 continue
@@ -600,6 +666,8 @@ def _field_maps(locs: pl.DataFrame):
         if with_footage.height:
             dist = _distance_grid(lons, lats, with_footage["lon"], with_footage["lat"])
             far = np.where(land, dist, -1)
+            m = max(3, round(2 / cell))  # not within 2 degrees of the frame (cut-off land, e.g. Svalbard)
+            far[:m], far[-m:], far[:, :m], far[:, -m:] = -1, -1, -1, -1
             calls = []
             for _ in range(3):  # the furthest places from any footage, one per area
                 i, j = np.unravel_index(np.argmax(far), far.shape)
@@ -667,8 +735,11 @@ def _detection_field_maps(d: pl.DataFrame, df_mapping: pl.DataFrame, flags: dict
         land = _land_mask(box, cell)
         shown &= land
         calls = _extremes(lons, lats, mean, shown, p, 2, 2, fmt)
+        # colours capped at the 98th percentile: one hotspot would otherwise leave the rest of Europe one pale colour
+        top = float(np.nanpercentile(mean[shown], 98))
         _field_map(lons, lats, mean, shown, land, box, f"{title}, smoothed over ~50 km", scale, name,
-                   "Europe: grey where there is too little analysed footage nearby", calls, fmt=".2f")
+                   "Europe: grey where there is too little analysed footage nearby; colours capped at the highest 2%",
+                   calls, fmt=".2f", zrange=(0, top))
 
 
 # --- entry points ---------------------------------------------------------------------------------------------------

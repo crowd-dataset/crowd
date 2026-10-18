@@ -352,7 +352,7 @@ class Analysis():
         0: "Car",
         1: "Bus",
         2: "Truck",
-        3: "Two-wheeler",
+        3: "Motorcycle",  # "Two-wheeler" in the released files (crowd_index.jsonl)
         4: "Bicycle",
         5: "Automated car",
         6: "Electric scooter",
@@ -360,7 +360,7 @@ class Analysis():
         8: "Emergency vehicle",
         9: "Automated bus",
         10: "Automated truck",
-        11: "Automated two-wheeler",
+        11: "Automated motorcycle",
         12: "Non-electric scooter",
         13: "Pedestrian"
     }
@@ -2594,9 +2594,12 @@ if __name__ == "__main__":
         split_countries = (df.group_by("iso3").agg(pl.col("continent").n_unique())
                              .filter(pl.col("continent") > 1)["iso3"].to_list())
         # one colour scale for all continents, so a colour means the same amount of footage on each map
+        # countries on two continents are coloured by their whole footage on both maps: the map colours the whole
+        # country, and a continent's part alone (Türkiye's 1.9 h in Europe) would be wrong for the rest of it
+        whole = df.group_by("iso3").agg((pl.sum("total_time") / 3600).alias("whole_h"))
         per_country = df.group_by(["continent", "iso3"]).agg((pl.sum("total_time") / 3600).alias("h"))
         per_country = per_country.filter(pl.col("h") > 0)
-        continent_range = (per_country["h"].min(), per_country["h"].max())
+        continent_range = (per_country["h"].min(), max(per_country["h"].max(), whole["whole_h"].max()))
         owner_points = {}
         for iso3, lon, lat in df.select("iso3", "lon", "lat").iter_rows():
             owner_points.setdefault(iso3, []).append((lon, lat))
@@ -2605,6 +2608,13 @@ if __name__ == "__main__":
                                   .group_by(["iso3", "flag_country"])
                                   .agg((pl.sum("total_time") / 3600).alias("footage_h"),
                                        pl.mean("lat"), pl.mean("lon"))  # anchors for outside labels
+                                  .join(whole, on="iso3")
+                                  .with_columns(
+                                      pl.when(pl.col("iso3").is_in(split_countries)).then(pl.col("whole_h"))
+                                        .otherwise(pl.col("footage_h")).alias("footage_h"),
+                                      pl.when(pl.col("iso3").is_in(split_countries))
+                                        .then(pl.col("flag_country") + " (whole country)")
+                                        .otherwise(pl.col("flag_country")).alias("flag_country"))
                                   .join(country_hover, on="iso3", how="left")
                                   .to_pandas(),
                              location_col="iso3",

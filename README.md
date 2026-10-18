@@ -920,22 +920,22 @@ Locations of cities with footage in dataset with a density overlay of the number
 Locations of cities with footage in dataset with a density overlay of the total number of seconds of footage in the dataset. *Note:* continents are based on geography, i.e., the cities in Russia east from Ural mountains are shown as Asia.
 
 [![Amount of footage per country in Africa](figures/map_footage_africa.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/map_footage_africa.html)
-Amount of footage (hours) per country in Africa. *Note:* the colour scale is logarithmic; countries are grouped by the continent of their cities in the dataset.
+Amount of footage (hours) per country in Africa. *Note:* the colour scale is logarithmic; countries are grouped by the continent of their cities in the dataset; a country with cities on two continents (Russia, Türkiye) is coloured and labelled with its whole footage on both maps.
 
 [![Amount of footage per country in Asia](figures/map_footage_asia.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/map_footage_asia.html)
-Amount of footage (hours) per country in Asia. *Note:* the colour scale is logarithmic; countries are grouped by the continent of their cities in the dataset.
+Amount of footage (hours) per country in Asia. *Note:* the colour scale is logarithmic; countries are grouped by the continent of their cities in the dataset; a country with cities on two continents (Russia, Türkiye) is coloured and labelled with its whole footage on both maps.
 
 [![Amount of footage per country in Europe](figures/map_footage_europe.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/map_footage_europe.html)
-Amount of footage (hours) per country in Europe. *Note:* the colour scale is logarithmic; countries are grouped by the continent of their cities in the dataset.
+Amount of footage (hours) per country in Europe. *Note:* the colour scale is logarithmic; countries are grouped by the continent of their cities in the dataset; a country with cities on two continents (Russia, Türkiye) is coloured and labelled with its whole footage on both maps.
 
 [![Amount of footage per country in North America](figures/map_footage_north_america.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/map_footage_north_america.html)
-Amount of footage (hours) per country in North America. *Note:* the colour scale is logarithmic; countries are grouped by the continent of their cities in the dataset.
+Amount of footage (hours) per country in North America. *Note:* the colour scale is logarithmic; countries are grouped by the continent of their cities in the dataset; a country with cities on two continents (Russia, Türkiye) is coloured and labelled with its whole footage on both maps.
 
 [![Amount of footage per country in Oceania](figures/map_footage_oceania.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/map_footage_oceania.html)
-Amount of footage (hours) per country in Oceania. *Note:* the colour scale is logarithmic; countries are grouped by the continent of their cities in the dataset.
+Amount of footage (hours) per country in Oceania. *Note:* the colour scale is logarithmic; countries are grouped by the continent of their cities in the dataset; a country with cities on two continents (Russia, Türkiye) is coloured and labelled with its whole footage on both maps.
 
 [![Amount of footage per country in South America](figures/map_footage_south_america.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/map_footage_south_america.html)
-Amount of footage (hours) per country in South America. *Note:* the colour scale is logarithmic; countries are grouped by the continent of their cities in the dataset.
+Amount of footage (hours) per country in South America. *Note:* the colour scale is logarithmic; countries are grouped by the continent of their cities in the dataset; a country with cities on two continents (Russia, Türkiye) is coloured and labelled with its whole footage on both maps.
 
 [![Amount of footage per US state](figures/map_us_states_footage.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/map_us_states_footage.html)
 Amount of footage (hours) per US state. *Note:* the colour scale is logarithmic.
@@ -959,10 +959,10 @@ Hours of footage per million people per European region (population: Eurostat, e
 Share of footage recorded at night per European region (regions with at least an hour of footage).
 
 [![Footage per locality in the United States as spikes](figures/spikes_footage_usa.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/spikes_footage_usa.html)
-One spike per locality in the United States; height and colour show its hours of footage (log scale).
+One spike per locality in the contiguous United States (Alaska and Hawaii are not in the view); height and colour show its hours of footage (log scale).
 
 [![Footage per locality in Russia as spikes](figures/spikes_footage_rus.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/spikes_footage_rus.html)
-One spike per locality in Russia.
+One spike per locality in Russia; height and colour show its hours of footage (log scale).
 
 [![Footage per locality in Japan as spikes](figures/spikes_footage_jpn.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/spikes_footage_jpn.html)
 One spike per locality in Japan.
@@ -992,25 +992,25 @@ Share of footage recorded at night in Europe, smoothed over about 50 km and weig
 Average year of upload of the footage in Europe (weighted by footage): where the footage is recent and where it is older.
 
 [![Number of videos against the amount of footage per locality, log scales](figures/scatter_all_total_time-video_count.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/scatter_all_total_time-video_count.html)
-Number of videos against the amount of footage per locality (log scales), coloured by continent, with every country and its flag in the legend on the right, in alphabetical order (scroll it in the HTML version; click a country to hide or show it); hover over a point for its details. The 40 localities with the most footage are labelled, the top 12 in larger black text; in the HTML version, zoom in to label every point.
+Number of videos against the amount of footage per locality (log scales), coloured by continent, with every country and its flag in the legend on the right, in alphabetical order (scroll it in the HTML version; click a country to hide or show it); hover over a point for its details. The 40 localities with the most footage are labelled where there is room, the top 12 in larger black text; in the HTML version, zoom in to label every point.
 
 [![Number of videos against the amount of footage per locality, linear scales](figures/scatter_all_total_time-video_count_linear.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/scatter_all_total_time-video_count_linear.html)
-The same on linear scales, which show how far the localities with the most footage lead, with the same country legend. The 40 localities with the most footage are labelled, the top 12 in larger black text; in the HTML version, zoom in to label every point.
+The same on linear scales, which show how far the localities with the most footage lead, with the same country legend. The 40 localities with the most footage are labelled where there is room, the top 12 in larger black text; in the HTML version, zoom in to label every point.
 
 [![Number of videos against the amount of footage per country, log scales](figures/scatter_all_country_total_time-video_count.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/scatter_all_country_total_time-video_count.html)
 Number of videos against the amount of footage per country (log scales), coloured by continent; hover over a point for its details. Countries are labelled with their flag and ISO3 code, the 30 with the most footage in larger black text; in the HTML version, zoom in to label every point.
 
 [![Number of videos against the amount of footage per country, linear scales](figures/scatter_all_country_total_time-video_count_linear.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/scatter_all_country_total_time-video_count_linear.html)
-The same on linear scales, which show how far the countries with the most footage lead. The 30 countries with the most footage are labelled with their flag and ISO3 code; in the HTML version, zoom in to label every point.
+The same on linear scales, which show how far the countries with the most footage lead. The 30 countries with the most footage are labelled with their flag and ISO3 code where there is room; in the HTML version, zoom in to label every point.
 
 [![Distribution by continent](figures/bar_continent_time_of_day.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/bar_continent_time_of_day.html)
-Distribution of videos by continent. *Note:* continents are based on geography, i.e., the cities in Russia east from Ural mountains are shown as Asia.
+Footage (hours) by continent, by day and by night. *Note:* continents are based on geography, i.e., the cities in Russia east from Ural mountains are shown as Asia.
 
 [![Time of upload of videos](figures/hist_months.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/hist_months.html)
 Number of videos by quarter of upload and continent. The current quarter (hatched) is not complete yet.
 
 [![Distribution by type of vehicle](figures/bar_vehicle_type_time_of_day.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/bar_vehicle_type_time_of_day.html)
-Distribution of segments (parts of videos included in dataset) by type of vehicle.
+Footage by the type of vehicle it is filmed from (log scale), with each type's share of the footage and of its footage at night.
 
 [![Amount of footage per locality against its population](figures/scatter_population_footage.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/scatter_population_footage.html)
 Amount of footage per locality against its population. Large localities with little footage are candidates for adding videos.
@@ -1019,7 +1019,7 @@ Amount of footage per locality against its population. Large localities with lit
 Footage per locality against its population (log scales), coloured by whether a locality has more than three times, about, or less than a third of the footage its size predicts (the dotted least-squares line). Labelled: the most populous localities, those with the most footage, and the most under-covered cities of over a million people, which are the next ones to collect.
 
 [![Amount of footage per locality against its gross metropolitan product](figures/scatter_gmp_footage.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/scatter_gmp_footage.html)
-Amount of footage per locality against its gross metropolitan product (GMP, known for about 200 large cities), with the Spearman rank correlation: whether economically large cities dominate the data.
+Amount of footage per locality against its gross metropolitan product (GMP of the metropolitan area: localities in one metropolitan area share its GMP), with the Spearman rank correlation: whether economically large cities dominate the data.
 
 [![Amount of footage per locality against its traffic index](figures/scatter_traffic_index_footage.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/scatter_traffic_index_footage.html)
 Amount of footage per locality against its traffic index (how much slower than free flow traffic is, from one TomTom reading per locality), for localities with a reading above 0, with the Spearman rank correlation.
@@ -1031,7 +1031,7 @@ Amount of footage per country against country indicators, with the Spearman rank
 Share of footage recorded at night per country. Countries with less than 10 hours of footage are grey, as their share is not reliable.
 
 [![Footage per million inhabitants per country](figures/map_footage_per_capita.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/map_footage_per_capita.html)
-Hours of footage per million inhabitants per country: coverage relative to country size (log scale).
+Hours of footage per million inhabitants per country: coverage relative to country size (log scale; countries with less than 10 hours of footage are grey).
 
 [![Footage per million people against GDP per person per country](figures/bubble_footage_per_capita_gdp.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/bubble_footage_per_capita_gdp.html)
 Hours of footage per million people against GDP per person (both log scales; circle size: population), coloured by whether a country has more than twice, about, or less than half the footage its wealth predicts (the dotted least-squares line). GDP per person at purchasing-power parity is the World Bank's latest value.
@@ -1061,10 +1061,10 @@ The localities on a 3D satellite globe (NASA Blue Marble), with a spike for each
 The spinning globe of the CROWD dashboards: every locality as a square that grows with its hours of footage, and the places with segments added in the last week (red) and month (amber). The HTML version loads the latest data when it opens (from the globe on [bazilinskyy.github.io](https://bazilinskyy.github.io), rebuilt every night) and turns until you grab it; drag to turn it, hover over a place for its footage and new segments, and click it to watch its longest segment on YouTube.
 
 [![Footage by continent, country and locality](figures/treemap_footage.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/treemap_footage.html)
-Footage by continent, country and locality, coloured by the share recorded at night. In the HTML version, click a box to zoom in down to the localities.
+Footage by continent, country and locality, coloured by the share recorded at night. A country with localities on two continents (Russia, Türkiye) has a box in each. In the HTML version, click a box to zoom in down to the localities.
 
 [![Share of footage against share of population per country](figures/dumbbell_footage_population_share.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/dumbbell_footage_population_share.html)
-Share of footage against share of population (of all countries in the dataset) for the 25 largest countries by either share (log scale). Where the orange dot is left of the blue one, the country is under-represented.
+Share of footage against share of population (of all countries in the dataset) for the countries among the 25 largest by footage or the 25 largest by population (log scale). Where the orange dot is left of the blue one, the country is under-represented.
 
 [![Footage by population of locality per continent](figures/bar_footage_population_band.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/bar_footage_population_band.html)
 Share of footage by population of the locality, per continent and overall: what "urban" means in each part of the dataset.

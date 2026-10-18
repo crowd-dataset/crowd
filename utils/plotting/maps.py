@@ -1978,7 +1978,9 @@ class Maps:
         # Save the figure if requested (static images drop the basemap's place labels, see IO._static_basemap)
         fig.update_layout(map_style="carto-positron")
         self._apply_carto_key(fig)
-        io_class.save_plotly_figure(fig, file_name, save_final=save_final)
+        # the world is 512 * 2 ** 1.3 = 1,260 px wide at zoom 1.3: a wider image shows Japan, Australia and
+        # Alaska twice
+        io_class.save_plotly_figure(fig, file_name, width=1260, save_final=save_final)
 
     # State -> ((lon, lat) inside the state, (lon, lat) of its label off the coast),
     # for states whose label does not fit inside the state
