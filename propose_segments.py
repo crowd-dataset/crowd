@@ -2830,7 +2830,19 @@ def us_title(title):
 # South Wales, New England)
 COUNTRY_ALIASES = {'Turkey': 'Türkiye', 'Czech Republic': 'Czechia', 'Ivory Coast': "Côte d'Ivoire",
                    'Swaziland': 'Eswatini', 'Burma': 'Myanmar', 'East Timor': 'Timor-Leste',
-                   'Cape Verde': 'Cabo Verde', 'UAE': 'United Arab Emirates'}
+                   'Cape Verde': 'Cabo Verde', 'UAE': 'United Arab Emirates',
+                   # German and Swedish names (FEMFiA4SJF4: "Bratislava Slovakien"; user, 2026-10-17)
+                   'Deutschland': 'Germany', 'Tyskland': 'Germany', 'Österreich': 'Austria', 'Österrike': 'Austria',
+                   'Schweiz': 'Switzerland', 'Italien': 'Italy', 'Frankreich': 'France', 'Frankrike': 'France',
+                   'Spanien': 'Spain', 'Kroatien': 'Croatia', 'Ungarn': 'Hungary', 'Ungern': 'Hungary',
+                   'Tschechien': 'Czechia', 'Tjeckien': 'Czechia', 'Polen': 'Poland', 'Slowakei': 'Slovakia',
+                   'Slovakien': 'Slovakia', 'Slowenien': 'Slovenia', 'Slovenien': 'Slovenia', 'Serbien': 'Serbia',
+                   'Rumänien': 'Romania', 'Bulgarien': 'Bulgaria', 'Griechenland': 'Greece', 'Grekland': 'Greece',
+                   'Türkei': 'Türkiye', 'Turkiet': 'Türkiye', 'Niederlande': 'Netherlands',
+                   'Nederländerna': 'Netherlands', 'Belgien': 'Belgium', 'Dänemark': 'Denmark', 'Danmark': 'Denmark',
+                   'Schweden': 'Sweden', 'Sverige': 'Sweden', 'Norwegen': 'Norway', 'Norge': 'Norway',
+                   'Finnland': 'Finland', 'Russland': 'Russia', 'Ryssland': 'Russia', 'Litauen': 'Lithuania',
+                   'Lettland': 'Latvia', 'Estland': 'Estonia', 'Bosnien': 'Bosnia and Herzegovina'}
 
 
 def title_countries(title):
