@@ -493,20 +493,47 @@ def _field_map(lons, lats, grid, shown, land, box, title: str, colorscale, name:
     names, xs, ys = _country_names(box)
     fig.add_trace(go.Scatter(x=xs, y=ys, mode="text", text=names, hoverinfo="skip", showlegend=False,
                              textfont=dict(size=11, color="#222222")))
-    for lon, lat, text in callouts:  # the box points inwards, so it stays clear of the colour bar and the edges
+    mid = math.cos(math.radians((box[2] + box[3]) / 2))
+    for lon, lat, text, ax, ay in _place_callouts(callouts, box, mid, width=1400 - 20, height=1200 - 160):
         fig.add_annotation(x=lon, y=lat, text=text, showarrow=True, arrowhead=2, arrowwidth=1.2, arrowcolor="#333333",
-                           ax=70 if lon < (box[0] + box[1]) / 2 else -70,
-                           ay=50 if lat > box[2] + 0.7 * (box[3] - box[2]) else -50,
-                           font=dict(size=12, color="#111111"),
+                           ax=ax, ay=ay, font=dict(size=12, color="#111111"),
                            bgcolor="rgba(255,255,255,0.85)", bordercolor="#888888", borderwidth=0.5, borderpad=3)
     if note:
         fig.add_annotation(text=note, x=0.0, y=-0.02, xref="paper", yref="paper", showarrow=False, xanchor="left",
                            yanchor="top", font=dict(size=13, color="#666666"))
-    mid = math.cos(math.radians((box[2] + box[3]) / 2))
     fig.update_xaxes(range=box[:2], visible=False, constrain="domain")
     fig.update_yaxes(range=box[2:], visible=False, scaleanchor="x", scaleratio=1 / mid, constrain="domain")
     dfig._save(dfig._style(fig, width=1400, height=1200, plot_bgcolor="white", paper_bgcolor="white",
                            margin=dict(l=10, r=10, t=110, b=50)), name, save_eps=False)
+
+
+def _place_callouts(callouts: list, box, mid: float, width: int, height: int) -> list:
+    """(lon, lat, text, ax, ay) for each callout (lon, lat, text): the arrow's offset in pixels, pointing inwards
+    (clear of the colour bar and the edges) where its box fits there, else the nearest other direction where the box
+    stays on the map and clear of the boxes placed before. `width` x `height`: the plot area in pixels; `mid`: the
+    cosine of the middle latitude (the map's aspect ratio)."""
+    sx = min(width / (box[1] - box[0]), height / ((box[3] - box[2]) / mid))  # pixels per degree of longitude
+    sy = sx / mid
+    map_w, map_h = (box[1] - box[0]) * sx, (box[3] - box[2]) * sy
+    placed, out = [], []
+    for lon, lat, text in callouts:
+        px, py = (lon - box[0]) * sx, (box[3] - lat) * sy  # pixels from the map's top-left corner
+        w, h = 7 * len(text) + 12, 24  # the box, estimated from 12 px text
+        kx = 1 if lon < (box[0] + box[1]) / 2 else -1
+        ky = 1 if lat > box[2] + 0.7 * (box[3] - box[2]) else -1
+        tries = [(70 * f * dx, 50 * f * dy) for f in (1, 1.6, 2.3)
+                 for dx, dy in ((kx, ky), (kx, -ky), (-kx, ky), (-kx, -ky), (0, ky), (0, -ky))]
+        for ax, ay in tries:
+            b = (px + ax - w / 2, py + ay - h / 2, px + ax + w / 2, py + ay + h / 2)  # the box centres on the tail
+            if (b[0] >= 0 and b[1] >= 0 and b[2] <= map_w and b[3] <= map_h
+                    and not any(b[0] < o[2] and o[0] < b[2] and b[1] < o[3] and o[1] < b[3] for o in placed)):
+                break
+        else:  # nowhere free: the usual direction
+            ax, ay = tries[0]
+            b = (px + ax - w / 2, py + ay - h / 2, px + ax + w / 2, py + ay + h / 2)
+        placed.append(b)
+        out.append((lon, lat, text, ax, ay))
+    return out
 
 
 def _extremes(lons, lats, grid, shown, pts: pl.DataFrame, n_high: int, n_low: int, fmt, min_sep: float = 6,
@@ -674,3 +701,14 @@ def detection_area_figures(df_mapping: pl.DataFrame, d: pl.DataFrame, classes: l
     segment with id, seconds, minutes, night and a count column per class)."""
     _detection_area_maps(d, df_mapping, flags, classes)
     _detection_field_maps(d, df_mapping, flags, classes)
+
+
+if __name__ == "__main__":
+    # self-check of the callout placement: two callouts 7 degrees apart in southern Greece and Türkiye (as on the
+    # walkable map) get boxes that do not overlap
+    box = FIELD_BOXES["Europe"]
+    mid = math.cos(math.radians((box[2] + box[3]) / 2))
+    a, b = _place_callouts([(22.1, 37.0, "Highest around 🇬🇷 Kalamata: 25%"),
+                            (29.1, 36.6, "Lowest around 🇹🇷 Fethiye: 0%")], box, mid, 1380, 1040)
+    assert (a[3], a[4]) != (b[3], b[4]), (a, b)
+    print("ok")
