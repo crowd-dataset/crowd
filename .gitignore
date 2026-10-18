@@ -80,8 +80,10 @@ crowd_index.jsonl
 # Claude Code local settings (preview servers)
 .claude/
 
-# YouTube login cookies for yt-dlp (YT_DLP_COOKIES), never committed
+# YouTube login cookies for yt-dlp (YT_DLP_COOKIES), never committed: cookies.txt, or a link to the machine's
+# own cookies-NAME.txt (NAME: its Google account)
 cookies.txt
+cookies-*.txt
 
 # lock taken while the mapping is written (propose_segments.py, fix_coords.py)
 mapping.csv.lock
