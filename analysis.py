@@ -2260,6 +2260,8 @@ def _now() -> str:
 def _md_table(df: pl.DataFrame) -> str:
     """Render a DataFrame as a numbered Markdown table, formatting numbers with thousands separators."""
     def fmt(v):
+        if v is None:  # e.g. detections of footage that is not analysed yet
+            return "–"
         return f"{v:,.1f}" if isinstance(v, float) else f"{v:,}" if isinstance(v, int) else str(v)
     lines = ["| # | " + " | ".join(df.columns) + " |", "|" + "---|" * (len(df.columns) + 1)]
     lines += [f"| {i} | " + " | ".join(fmt(v) for v in row) + " |" for i, row in enumerate(df.iter_rows(), 1)]
@@ -2288,20 +2290,24 @@ def build_readme_stats(df_mapping: pl.DataFrame, detections: tuple[pl.DataFrame,
     if detections is not None:
         df_det, n_csv = detections
         det_cols = list(README_DETECTIONS)
-        per_row = df_det.group_by("id").agg(pl.col(det_cols).sum())  # counts are per segment
-        df = df.join(per_row, on="id", how="left").with_columns(pl.col(det_cols).fill_null(0))
+        per_row = df_det.group_by("id").agg(pl.col(det_cols).sum(), pl.sum("detected_seconds"))  # per segment
+        df = df.join(per_row, on="id", how="left").with_columns(pl.col([*det_cols, "detected_seconds"]).fill_null(0))
 
     hours = (pl.col("seconds") / 3600).round(1).alias("Footage (h)")
+    # how much of it YOLO has analysed; the counts of places with nothing analysed yet are "–", not 0
+    analysed = [(pl.col("detected_seconds") / 3600).round(1).alias("Analysed (h)")] if det_cols else []
+    unknown = [pl.when(pl.col("detected_seconds") > 0).then(pl.col(c)).alias(c) for c in det_cols]
     countries = (
         df.group_by("Country")
-          .agg(pl.len().alias("Cities"), pl.sum("Videos"), pl.sum("seconds"), *[pl.sum(c) for c in det_cols])
+          .agg(pl.len().alias("Cities"), pl.sum("Videos"), pl.sum("seconds"),
+               *[pl.sum(c) for c in [*det_cols, *(["detected_seconds"] if det_cols else [])]])
           .sort("seconds", descending=True)
-          .select("Country", "Cities", "Videos", hours, *det_cols)
+          .select("Country", "Cities", "Videos", hours, *analysed, *unknown)
     )
     city = pl.concat_str([pl.col("locality"), pl.lit(", ") + pl.col("state")], ignore_nulls=True)
     cities = (
         df.sort("seconds", descending=True).head(README_TOP_CITIES)
-          .select(city.alias("City"), "Country", "Videos", hours, *det_cols)
+          .select(city.alias("City"), "Country", "Videos", hours, *analysed, *unknown)
     )
 
     total_s = int(df["seconds"].sum())
