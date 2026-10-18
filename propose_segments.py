@@ -2065,12 +2065,20 @@ def parse_gps(text):
     return (lat, lon) if abs(lat) <= 90 and abs(lon) <= 180 and (lat, lon) != (0, 0) else None
 
 
+def _stream_ffmpeg(cmd):
+    """ffmpeg reading frames of YouTube's stream, once more when it times out: YouTube is slow for a while at times
+    (lin5080, 2026-10-17: the opening, its caption and the GPS overlay lost on several videos; user: retry once)."""
+    try:
+        return subprocess.run(cmd, capture_output=True, timeout=120)
+    except subprocess.TimeoutExpired:
+        return subprocess.run(cmd, capture_output=True, timeout=120)
+
+
 def _frame_text(stream, t):
     """What tesseract reads in the frame at t seconds of a stream (url, HTTP headers) ('' when nothing)."""
     url, headers = stream
-    png = subprocess.run(['ffmpeg', '-v', 'error', '-headers', headers, '-ss', str(t), '-i', url, '-frames:v', '1',
-                          '-vf', 'format=gray', '-f', 'image2pipe', '-vcodec', 'png', '-'],
-                         capture_output=True, timeout=120).stdout
+    png = _stream_ffmpeg(['ffmpeg', '-v', 'error', '-headers', headers, '-ss', str(t), '-i', url, '-frames:v', '1',
+                          '-vf', 'format=gray', '-f', 'image2pipe', '-vcodec', 'png', '-']).stdout
     if not png:
         return ''
     text = subprocess.run(['tesseract', 'stdin', 'stdout', '--psm', '11'], input=png, capture_output=True,
@@ -2224,8 +2232,8 @@ CAPTION_CORNERS = ('iw*0.25:ih*0.12:0:ih*0.86', 'iw*0.25:ih*0.12:iw*0.75:ih*0.86
 def _caption_text(stream, t):
     """_frame_text of the frame at t plus what tesseract reads in each of CAPTION_CORNERS."""
     url, headers = stream
-    png = subprocess.run(['ffmpeg', '-v', 'error', '-headers', headers, '-ss', str(t), '-i', url, '-frames:v', '1',
-                          '-f', 'image2pipe', '-vcodec', 'png', '-'], capture_output=True, timeout=120).stdout
+    png = _stream_ffmpeg(['ffmpeg', '-v', 'error', '-headers', headers, '-ss', str(t), '-i', url, '-frames:v', '1',
+                          '-f', 'image2pipe', '-vcodec', 'png', '-']).stdout
     if not png:
         return ''
     text = subprocess.run(['tesseract', 'stdin', 'stdout', '--psm', '11'], input=png, capture_output=True,
@@ -2265,8 +2273,8 @@ def opening_texts(video_id, start=1, upto=61, step=None):
         shots = []
         for t in np.arange(start, upto, step):
             shot = os.path.join(work_dir, f'{t:.0f}.png')
-            subprocess.run(['ffmpeg', '-v', 'error', '-y', '-headers', headers, '-ss', f'{t:.1f}', '-i', url,
-                            '-frames:v', '1', shot], capture_output=True, timeout=120)
+            _stream_ffmpeg(['ffmpeg', '-v', 'error', '-y', '-headers', headers, '-ss', f'{t:.1f}', '-i', url,
+                            '-frames:v', '1', shot])
             if os.path.exists(shot):
                 shots.append((float(t), shot))
         if not shots:
