@@ -3474,12 +3474,17 @@ def title_city(title, loc, df):
 
 
 def _common_words():
-    """Lower-case English words (the system word list), for place names that are also ordinary words."""
-    try:
-        with open('/usr/share/dict/words') as f:
-            return {w.strip() for w in f if w[:1].islower()}
-    except OSError:
-        return set()
+    """Lower-case English words, for place names that are also ordinary words: common_words.txt next to this file
+    (the same on every machine: wsl5090 had no system word list, so "Experience" in a description was a place in
+    Amsterdam, ZDkIlYLtPhA; user, 2026-10-19), else the system's."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    for path in (os.path.join(here, 'common_words.txt'), '/usr/share/dict/words'):
+        try:
+            with open(path) as f:
+                return {w.strip() for w in f if w[:1].islower()}
+        except OSError:
+            continue
+    return set()
 
 
 COMMON_WORDS = _common_words()

@@ -178,7 +178,7 @@ def push_code(host):
     """The code as it is here, to a worker: [files that changed there]. Each batch runs propose_segments.py
     afresh and run_channels.py restarts by itself, so a worker takes it up with its next batch."""
     alias, rem = place(host)
-    code = sorted(f for f in os.listdir('.') if f.endswith('.py'))
+    code = sorted(f for f in os.listdir('.') if f.endswith('.py') or f == 'common_words.txt')
     return subprocess.run(['rsync', '-c', '--timeout=60', '--out-format=%n', *code, f'{alias}:{rem}/'],
                           check=True, capture_output=True, text=True, timeout=300).stdout.split()
 
