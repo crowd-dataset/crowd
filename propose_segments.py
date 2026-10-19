@@ -282,6 +282,19 @@ def sheet_scores(sheet_path, scenes, prefix='', bottom=False):
 # step_bob: left out as a walk (not offered for review: user, 2026-10-16; of 649 reviewed videos, 0.65+ in 16
 # rejected and no approved one, whose highest is 0.62) / a note to check
 STEP_BOB_WALK, STEP_BOB_HINT = 0.65, 0.6
+# ... and from STEP_BOB_NO_STOP with no stop of NO_STOP_S in a video over 5 min: a walker never waits like a car
+# (z6ISi3CrjsY at 0.63; user, 2026-10-19): 19 of 54 reported walks, no approved car drive
+STEP_BOB_NO_STOP, NO_STOP_S = 0.6, 10
+
+
+def walk_no_stop(sig, p=None):
+    """Whether a video bobs like a walk (STEP_BOB_NO_STOP or more) and never stands NO_STOP_S s on end."""
+    p = p or PARAMS
+    if float(sig.get('step_bob', 0)) < STEP_BOB_NO_STOP or len(sig.get('motion', [])) < 300 * FPS:
+        return False
+    sm = _rolling_median(sig['motion'], p['smooth_s'] * FPS)
+    stops = [(b - a) / FPS for a, b in _runs(sm <= p['moving_flow']) if a > 0 and b < len(sm)]
+    return max(stops, default=0) < NO_STOP_S
 
 
 BOB_EVERY_S = 45  # step_bob_track: one 15-s reading this often through the video
@@ -5729,6 +5742,9 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
             elif float(np.load(sig_path).get('step_bob', 0)) >= STEP_BOB_WALK:
                 reason = (f"a walk, not a drive: the camera bobs at a walker's step rate "
                           f"({float(np.load(sig_path)['step_bob']):.0%} of its shake)")
+            elif walk_no_stop(dict(np.load(sig_path))):
+                reason = (f"a walk, not a drive: the camera bobs at a walker's step rate "
+                          f"({float(np.load(sig_path)['step_bob']):.0%} of its shake) and never stands {NO_STOP_S} s")
             elif dashboard_view(os.path.join(out_dir, f'{vid}.jpg')):
                 reason = 'filmed from inside the car: the dashboard fills the picture, not a dashcam view'
             elif fast := overlay_speedup(dict(np.load(sig_path))):  # the cross traffic is a note: see below
