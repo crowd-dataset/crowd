@@ -6213,8 +6213,8 @@ background:#fff;color:#222;font-size:13px;cursor:pointer}
     <div class="clock">Time: <span id="clock" title="click to copy">0:00</span> <span id="copied"></span></div>
     <div class="keys">Keys for the outlined segment (the one clicked last): <b>A</b> start here · <b>S</b> end here ·
       <b>D</b> whole video · <b>Q</b> day · <b>W</b> night · <b>F</b> split time here · <b>C</b> copy the time ·
-      <b>E</b> approve · <b>R</b> reject (both then on to the next) ·
-      in a time box <b>↑↓</b> ±1 s, <b>←→</b> ±10 s</div>
+      <b>E</b> approve · <b>R</b> reject (both then on to the next) · <b>T</b> approve rest · <b>Y</b> reject rest
+      (of its video) · in a time box <b>↑↓</b> ±1 s, <b>←→</b> ±10 s</div>
     <div id="status"></div>
     {% if waiting > open_videos | length %}<div class="keys">Showing {{ open_videos | length }} of {{ waiting }}
       videos left to decide; the next appear as you finish these.</div>{% endif %}
@@ -6336,7 +6336,7 @@ background:#fff;color:#222;font-size:13px;cursor:pointer}
     + add a locality</button>
   <button class="small go approve-rest" onclick="approveRest(this)"
           title="approve every undecided segment of this video">Approve rest</button>
-  <button class="small stop" onclick="rejectRest(this)"
+  <button class="small stop reject-rest" onclick="rejectRest(this)"
           title="reject every undecided segment of this video">Reject rest</button>
   <button class="small stop" onclick="rejectVideo(this)"
           title="reject every segment of this video">Reject video</button>
@@ -6575,7 +6575,7 @@ document.addEventListener('keydown', e => {
   if (e.metaKey || e.ctrlKey || e.altKey) return;
   let key = e.key.toLowerCase();
   if (!/^[a-z]$/.test(key) && /^Key[A-Z]$/.test(e.code)) key = e.code.slice(3).toLowerCase();  // Cyrillic layouts
-  if (!['a', 's', 'd', 'q', 'w', 'f', 'c', 'e', 'r'].includes(key)) return;
+  if (!['a', 's', 'd', 'q', 'w', 'f', 'c', 'e', 'r', 't', 'y'].includes(key)) return;
   if (key === 'c') {  // the current time to the clipboard, as a click on it does (user, 2026-10-16)
     e.preventDefault();
     document.getElementById('clock').click();
@@ -6586,6 +6586,10 @@ document.addEventListener('keydown', e => {
   e.preventDefault();
   if (key === 'e' || key === 'r') {  // its Approve or Reject button, then on to the next (user, 2026-10-19)
     row.querySelector(key === 'e' ? 'button.yes' : 'button.no')?.click();
+    return;
+  }
+  if (key === 't' || key === 'y') {  // its video's Approve rest or Reject rest button (user, 2026-10-19)
+    row.closest('.video').querySelector(key === 't' ? 'button.approve-rest' : 'button.reject-rest')?.click();
     return;
   }
   const t = Math.floor(ytPlayer.getCurrentTime());
