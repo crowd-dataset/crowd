@@ -20,6 +20,7 @@ import random
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -5635,6 +5636,9 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
                 touched.append(vid)
                 commit([vid])
                 continue
+            if os.path.exists(os.path.join(out_dir, CHANNEL_REJECTED)):  # rejected in review while this batch runs
+                stopped = 'the whole channel was rejected in review'
+                break
             if download and not os.path.exists(sig_path):
                 print(f'[{n}/{len(ids)}] analysing {vid} {meta["title"][:60]}')
                 if (meta.get('duration') or 0) > 2 * 3600:  # run_channels.py waits longer for its silence
@@ -6051,6 +6055,16 @@ REVIEW_PAGE = 50  # videos with something left to decide shown at once in the re
 MAX_MERGE_GAP_S = 2  # wider gaps are excluded footage (stops, freeway), not suggested splits
 CHANNEL_DONE = 'Every video of this channel is proposed or in the mapping.'
 CHANNEL_REJECTED = 'channel_rejected'  # a file in a channel's folder: the reviewer rejected the whole channel
+REJECT_ON_WORKERS = """
+import sys, sync_workers as s
+name, mark = sys.argv[1:3]
+for host in s.WORKERS:
+    try:
+        s.ssh(host, f'mkdir -p {s.place(host)[1]}/_output/proposals/{name} && '
+                    f'touch {s.place(host)[1]}/_output/proposals/{name}/{mark}')
+    except Exception:  # a worker down hears at the next sync
+        pass
+"""
 
 
 def reject_undecided(plan):
@@ -7592,6 +7606,10 @@ def review(plan_path, port=None):
         save(plan)
         with open(os.path.join(plan_dir, CHANNEL_REJECTED), 'w') as f:
             f.write(f'rejected in review on {time.strftime("%Y-%m-%d")}')
+        # every worker hears at once, not at the next hourly sync: it stops before its next video (user, 2026-10-19:
+        # "stop workers from processing videos of a channel that has been rejected")
+        subprocess.Popen([sys.executable, '-c', REJECT_ON_WORKERS, os.path.basename(plan_dir.rstrip('/')),
+                          CHANNEL_REJECTED], cwd=HERE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         return jsonify(ok=True, rejected=n)
 
     @app.route('/mark', methods=['POST'])
