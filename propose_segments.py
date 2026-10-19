@@ -5866,6 +5866,12 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
             # of Lead, SD (UCLgFDrgDENPf7a59tsj8d_A; user, 2026-10-16)
             if (usual := usual_locality(plan)) and re.search(rf'\b{re.escape(usual[0])}\b', p['title'] or '', re.I):
                 in_title = {tuple(usual): usual[0]}
+            # ... and a worker's copy of the plan has no reviews to count: then the channel's home (from the mapping)
+            # named in a title that names no other place (WqIQf-JUdSY, "Historic Nashville Street Cruise", and
+            # ZGvpLGNIPOA, yt9wvzJ7IWA were proposed with no locality; user, 2026-10-19). Of 2,339 reviewed titles
+            # naming their channel's home 2,222 are there; the others name a more particular place too
+            elif not in_title and home and re.search(rf'\b{re.escape(home[0])}\b', p['title'] or '', re.I):
+                in_title = {tuple(home[:3]): home[0]}
             area = DRIVE_AREA.search(p['title'])
             if len(in_title) > 1 and area:
                 # "Driving from Longwood to West Farms in the Bronx, New York": the drive is in the Bronx
