@@ -2986,7 +2986,10 @@ EXCLUDE_TITLE = re.compile(r'walking tour|walk tour|city walk|time[- ]?lapse|hyp
                            r'|\bcrash|\baccident|multi[- ]?angle', re.I)  # multi-angle: 5k8awa6rpmA
 # highway driving and road trips ("highways 160/191" too: nor-caldashcams); "via I-5" only passes along it on
 # an otherwise urban drive
-HIGHWAY_TITLE = re.compile(r'(?i:road ?trip|\bhighways?\b|\bfreeways?\b|\bhwy\b|\bmotorways?\b|\bautobahn\b)'
+# ... "Interstate" alone too: "Open Tennessee Interstate With Natural Road Noise" (JvkVpSHG5Bg and the series; user,
+# 2026-10-19: highway driving without any urban built-up areas, never to be offered)
+HIGHWAY_TITLE = re.compile(r'(?i:road ?trip|\bhighways?\b|\bfreeways?\b|\bhwy\b|\bmotorways?\b|\bautobahn\b'
+                           r'|(?<!via )\binterstates?\b)'
                            r'|(?<![Vv]ia )(?:\b[Ii]nterstate[- ]?|\bI[- ]?|\bi[- ])\d{1,3}\b'
                            r'|\bU\.?S\.?(?:\s?Route|\s?Rte\.?)?[- ]?\d{1,3}\b')  # US Route 9 (KD6ylENdMzA), US-101
 # walks and rides on boats are no vehicle type the dataset takes; a title that also says drive keeps the video.
