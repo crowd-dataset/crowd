@@ -5143,6 +5143,37 @@ def record_merge(old, new, video):
     os.replace(MERGES + '.tmp', MERGES)
 
 
+# "West/East/North/South X" next to X is one city with it, under the bigger one's name (user, 2026-10-19: West
+# Vancouver is Vancouver): within COMPASS_KM of each other, or a locality new to the mapping in X's state
+COMPASS = re.compile(r'(?:(?:West|East|North|South)\s+(.+)|(.+?)\s+(?:West|East|North|South))')
+COMPASS_KM = 10
+
+
+def compass_city(loc, df, depth=3):
+    """[locality, state, country] of the bigger of a locality and its West/East/North/South twin in df (COMPASS),
+    when that is the other one, and on to that one's bigger twin (South Orange, Orange, East Orange); else None."""
+    name, state, country = loc
+    m = COMPASS.fullmatch(name)
+    sides = ('west', 'east', 'north', 'south')
+    twins = ({(m.group(1) or m.group(2)).lower()} if m
+             else {f'{d} {name}'.lower() for d in sides} | {f'{name} {d}'.lower() for d in sides})
+    rows = df[(df['country'] == country) & (df['state'].fillna('') == (state or ''))
+              & df['locality'].str.lower().isin(twins)]
+    if rows.empty:
+        return None
+    _, mine = add_video.get_existing_locality_row(df, name, state, country)
+
+    def pop(r):
+        return float(pd.to_numeric(r['population_locality'], errors='coerce') or 0)
+    for _, r in rows.iterrows():
+        if mine is not None and (_km(float(mine['lat']), float(mine['lon']), float(r['lat']), float(r['lon']))
+                                 > COMPASS_KM or pop(mine) >= pop(r)):
+            continue
+        to = [r['locality'], None if pd.isna(r['state']) else r['state'], r['country']]
+        return (compass_city(to, df, depth - 1) if depth > 1 else None) or to
+    return None
+
+
 def merged_locality(loc, merges=None):
     """The bigger city the reviewer counts loc in (load_merges), else None."""
     m = (merges if merges is not None else load_merges()).get(_merge_key(loc))
@@ -5705,7 +5736,8 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
     merges = load_merges()
     for p in new:  # a town the reviewer counts in a bigger city nearby (merged_locality): that city
         for e in p.get('entries', []):
-            if e.get('locality') and e.get('guessed') and (to := merged_locality(e['locality'], merges)):
+            if (e.get('locality') and e.get('guessed')
+                    and (to := merged_locality(e['locality'], merges) or compass_city(e['locality'], df))):
                 p['note'] = (f"{p.get('note') or ''}; {e['locality'][0]} counts as {to[0]} (as in your reviews)"
                              ).lstrip('; ')
                 e['locality'] = list(to)
