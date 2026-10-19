@@ -5741,6 +5741,15 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
             if at := clock_jump(dict(np.load(sig_path))):
                 notes_skip.append(f'the video skips footage at {at} (the time stamp in the picture jumps): check')
             skip_note = '; '.join(notes_skip) or None
+            # ... but many cuts with many ghosts are an edited drive, left out (mJ6OELXr9bc: 13 cuts, 69 ghosts an
+            # hour; user, 2026-10-19): of reviewed videos with EDITED_CUTS+ cuts and EDITED_GHOSTS_H+ ghosts an hour,
+            # 13 rejected and 1 approved
+            sig = dict(np.load(sig_path))
+            n_cuts = len(re.findall(r'\d+:\d\d', footage_skip(sig) or ''))
+            hours = max(len(sig.get('motion', [])) / FPS / 3600, 0.1)
+            ghosts_h = len(np.asarray(sig.get('ghost', [])).ravel()) / hours
+            if not reason and n_cuts >= EDITED_CUTS and ghosts_h >= EDITED_GHOSTS_H:
+                reason = f'an edited drive: {n_cuts} edit cuts and {ghosts_h:.0f} ghosts an hour'
             if 'skips' in np.load(sig_path):  # only videos analysed for skips count towards the streak
                 skips_in_a_row = skips_in_a_row + 1 if skip_note and not reason else 0
             if skips_in_a_row >= SKIP_STREAK and only is None:  # videos proposed again do not judge the channel
@@ -6099,6 +6108,7 @@ with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'templates', 
 REVIEW_PAGE = 50  # videos with something left to decide shown at once in the review page
 MAX_MERGE_GAP_S = 2  # wider gaps are excluded footage (stops, freeway), not suggested splits
 CHANNEL_DONE = 'Every video of this channel is proposed or in the mapping.'
+EDITED_CUTS, EDITED_GHOSTS_H = 8, 40  # this many edit cuts with this many ghosts an hour: an edited drive, left out
 CHANNEL_REJECTED = 'channel_rejected'  # a file in a channel's folder: the reviewer rejected the whole channel
 REJECT_ON_WORKERS = """
 import sys, sync_workers as s
