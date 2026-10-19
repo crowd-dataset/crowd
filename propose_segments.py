@@ -819,6 +819,11 @@ def camera_tilt(sig, n, p=PARAMS):
     dashboard). Looking ahead it is 0.62-0.66; KgEL7td3JK0 tilted up from 16:42 to the end: 0.95."""
     y = np.repeat(sig['object_y'], URBAN_EVERY_S * FPS)[:n]
     y = np.pad(y, (0, n - len(y)), mode='edge') if len(y) else np.full(n, np.nan)
+    # not while the car stands: the car ahead in a queue sits low in the picture (QItJWr8fsR4 166-255s, stopped in
+    # Dublin traffic; user, 2026-10-19)
+    if 'motion' in sig:
+        y = np.where(_rolling_median(np.asarray(sig['motion'][:n], float), p['smooth_s'] * FPS)[:n]
+                     <= p['moving_flow'], np.nan, y[:len(sig['motion'][:n])]) if len(sig['motion']) >= n else y
     half = 30 * FPS
     med = np.array([np.nanmedian(w) if np.isfinite(w := y[max(0, i - half):i + half]).sum() >= 4 else np.nan
                     for i in range(0, n, FPS)])
