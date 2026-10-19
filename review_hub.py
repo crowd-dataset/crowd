@@ -359,6 +359,16 @@ def mapping_changes():
                           for name, counts in sorted(by_channel.items(), key=lambda x: -sum(x[1].values())))
 
 
+def renumber_ids(df):
+    """Each row's id its place again, 1..n, when removed rows left gaps (user, 2026-10-19: 4190 ids did not match);
+    returns how many changed."""
+    want = list(range(1, len(df) + 1))
+    changed = sum(int(a) != b for a, b in zip(df['id'], want))
+    if changed:
+        df['id'] = want
+    return changed
+
+
 def push_mapping():
     """mapping.csv as it is here, pushed to GitHub. Returns a message."""
     with ps.plan_lock(add_video.FILE_PATH):  # not halfway through an Apply
@@ -366,7 +376,7 @@ def push_mapping():
         df = add_video.load_csv(add_video.FILE_PATH)
         have = {v for cell in df['videos'] for v in add_video._parse_flat_list_cell(cell)}
         df, pulled = pull_github_mapping(df, have)
-        if pulled:
+        if pulled or renumber_ids(df):
             add_video.save_csv(df, add_video.FILE_PATH)
         body = mapping_changes()
         commit = commit_to_github([MAPPING], 'Update mapping.csv: reviewed batches' + (f'\n\n{body}' if body else ''))
@@ -393,7 +403,7 @@ def merge_mapping_files():
             added += more
         if pulled:
             add_video.save_csv(df, add_video.FILE_PATH)
-        if added:
+        if added or renumber_ids(df):
             add_video.save_csv(df, add_video.FILE_PATH)
         for name in names:
             shutil.copyfile(add_video.FILE_PATH, name)
