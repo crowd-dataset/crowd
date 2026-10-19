@@ -292,6 +292,20 @@ STEP_BOB_NO_STOP, NO_STOP_S = 0.6, 20  # 20 s as clean as 10 on reviewed videos 
 # approved car drives none, a big person (over 35% of the picture's height) in WALK_PERSON_SHARE of frames and a
 # vehicle ahead (centre 38-62% across, bottom below 55%) in under WALK_AHEAD_SHARE
 WALK_PERSON_SHARE, WALK_AHEAD_SHARE = 0.03, 0.3
+# a batch whose long videos are mostly left out as walks (capturedexperiences: 34 of 41, its 7 others walks too that
+# no rule caught; user, 2026-10-19): the rest get a note. Not left out, as such channels also hold approved drives
+# (OaxacaTravel 66 of 72 walks, 4 approved drives with walk-like bob): at least WALK_BATCH_N walks, WALK_BATCH_SHARE
+WALK_BATCH_N, WALK_BATCH_SHARE = 8, 0.6
+
+
+def walk_batch(plan):
+    """'N of M long videos of this batch were left out as walks' when most were, else None."""
+    ex = [str(q.get('exclude') or '') for q in plan.values()]
+    walks = sum(bool(re.search(r'walk', e, re.I)) and 'min minimum' not in e for e in ex)
+    long_ = walks + sum('entries' in q for q in plan.values())
+    if walks >= WALK_BATCH_N and walks / long_ >= WALK_BATCH_SHARE:
+        return f'{walks} of {long_} long videos of this batch were left out as walks: a walk too? check'
+    return None
 
 
 def walk_view(sig):
@@ -6013,7 +6027,7 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
             **({'drive_via': stops[1:-1]} if (stops := place_list(meta['title'])) and len(stops) > 2 else {}),
             'entries': [{'locality': locality, 'guessed': locality is not None, 'segments': segments}],
             'vehicle_type': 0 if vt is None else vt, 'upload_date': meta['upload_date'], 'channel_id': ch,
-            'note': '; '.join(filter(None, ['; '.join(notes), vehicle_note])),
+            'note': '; '.join(filter(None, ['; '.join(notes), walk_batch(plan), vehicle_note])),
         })
         try:  # its locality at once, before it shows in an open review page (the full step follows after the batch)
             if early is None:
