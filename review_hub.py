@@ -27,6 +27,7 @@ from flask import Flask, jsonify, redirect, render_template_string, request
 import add_video
 import propose_segments as ps
 import run_channels as rc
+import sync_workers
 
 PORT = 8770
 HOST = os.environ.get('REVIEW_HOST', '127.0.0.1')  # 0.0.0.0: reachable from other machines (the review pages too)
@@ -90,7 +91,8 @@ background:#fff;color:#222;font-size:13px;cursor:pointer}
  what each worker does, queues, channels</p>
 {% if health | selectattr('ok') | list %}
 <p class="load" title="load over the last 30 min: green busy, amber medium, red low">
-{%- for w in health if w.ok %}{% if not loop.first %} · {% endif %}<span title="{{ w.what }}">{{ w.host }}
+{%- for w in health if w.ok and not w.same %}{% if not loop.first %} · {% endif %}<span title="{{ w.what }}">
+{{- w.machine if w.pct is not none else w.host }}
 {%- if w.pct is not none %} {{ w.kind }} <b class="{{ w.level }}">{{ w.pct }}%</b>
 {%- else %}: {{ w.short }}{% endif %}</span>
 {%- endfor %}</p>{% endif %}
@@ -183,9 +185,16 @@ def index():
     except (OSError, ValueError):
         health = []
     # "GPU 34%" -> one short coloured figure (user, 2026-10-13: on one line, high and low at a glance)
+    loaded = set()
     for w in health:
         m = re.match(r'(GPU|CPU) (\d+)%$', w.get('what', ''))
         w['kind'], w['pct'] = (m.group(1), int(m.group(2))) if m else (None, None)
+        # a load is the machine's: shown once, under its name, not again for its second worker (lin5080b; user,
+        # 2026-10-19)
+        w['machine'] = sync_workers.place(w['host'])[0]
+        w['same'] = m is not None and w['machine'] in loaded
+        if m:
+            loaded.add(w['machine'])
         w['level'] = None if not m else 'hi' if w['pct'] >= 60 else 'mid' if w['pct'] >= 30 else 'lo'
         w['short'] = w.get('what', '').split(':')[0]
     try:  # machines YouTube asks to sign in: the pipeline status page works them out (dashboards/pipeline_status.py)
