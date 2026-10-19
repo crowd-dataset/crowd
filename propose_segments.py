@@ -287,6 +287,22 @@ STEP_BOB_WALK, STEP_BOB_HINT = 0.65, 0.6
 STEP_BOB_NO_STOP, NO_STOP_S = 0.6, 20  # 20 s as clean as 10 on reviewed videos (aegJGfYgRJY stood 15 s once)
 
 
+# from the pavement: people close by and seldom a vehicle ahead in the lane (Y5lUFqcTw20; user, 2026-10-19: "maybe
+# yolo can help with the location of car/bus etc objects relative to the camera"): of 40 reported walks 24, of 299
+# approved car drives none, a big person (over 35% of the picture's height) in WALK_PERSON_SHARE of frames and a
+# vehicle ahead (centre 38-62% across, bottom below 55%) in under WALK_AHEAD_SHARE
+WALK_PERSON_SHARE, WALK_AHEAD_SHARE = 0.03, 0.3
+
+
+def walk_view(sig):
+    """(share of frames with a big person close by, with a vehicle ahead) when it says a walk, else None."""
+    wv = np.asarray(sig.get('walk_view', np.zeros((0, 2)))).reshape(-1, 2)
+    if len(wv) < 20:
+        return None
+    person, ahead = float(wv[:, 0].mean()), float(wv[:, 1].mean())
+    return (person, ahead) if person >= WALK_PERSON_SHARE and ahead < WALK_AHEAD_SHARE else None
+
+
 def walk_no_stop(sig, p=None):
     """Whether a video bobs like a walk (STEP_BOB_NO_STOP or more) and never stands NO_STOP_S s on end."""
     p = p or PARAMS
@@ -1387,7 +1403,14 @@ def urban_line(model, img, device):
     # only at the bottom edge (KgEL7td3JK0 from 16:42: 950 against 620-660 looking ahead)
     road = [(y1 + y2) / 2 for c, (_, y1, _, y2) in zip(cls, boxes.xyxy.tolist()) if c in (0, 1, 2, 3, 5, 7)]
     height = int(1000 * sorted(road)[len(road) // 2] / img.shape[0]) if road else -1
-    return f'{sum(c in (0, 1, 2, 3, 5, 9, 10, 11) for c in cls)} {sum(c in (0, 1, 9, 10, 11) for c in cls)} {height}'
+    # a big person close by and a vehicle ahead in the middle (walk_view)
+    H, W = img.shape[:2]
+    xyxy = boxes.xyxy.tolist()
+    person = int(any(c == 0 and (y2 - y1) / H > 0.35 for c, (_, y1, _, y2) in zip(cls, xyxy)))
+    ahead = int(any(c in (2, 3, 5, 7) and 0.38 <= (x1 + x2) / 2 / W <= 0.62 and y2 / H > 0.55
+                    for c, (x1, _, x2, y2) in zip(cls, xyxy)))
+    return (f'{sum(c in (0, 1, 2, 3, 5, 9, 10, 11) for c in cls)} {sum(c in (0, 1, 9, 10, 11) for c in cls)} {height} '
+            f'{person} {ahead}')
 """
 URBAN_CODE = """
 import sys, cv2, torch
@@ -2958,6 +2981,8 @@ def analyse_video(video_id, out_dir, meta=None, signs=False):
             sig['urban'], sig['street'] = urban[:, 0], urban[:, 1]
             if urban.shape[1] > 2:  # where road users sit (0 top, 1 bottom; NaN with none): see camera_tilt
                 sig['object_y'] = np.where(urban[:, 2] >= 0, urban[:, 2] / 1000, np.nan)
+            if urban.shape[1] > 4:  # a big person close by, a vehicle ahead (see walk_view)
+                sig['walk_view'] = urban[:, 3:5]
         sig['garage'] = np.array([(a, b) for a, b, _ in garage_edges(path, sig, work_dir)], float).reshape(-1, 2)
         sig['parked'] = np.array(parked_edges(path, sig, work_dir), float).reshape(-1, 2)
         sig['lots'] = np.array(parking_lots(path, sig, work_dir), float).reshape(-1, 2)
@@ -5874,6 +5899,9 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
             elif float(np.load(sig_path).get('step_bob', 0)) >= STEP_BOB_WALK:
                 reason = (f"a walk, not a drive: the camera bobs at a walker's step rate "
                           f"({float(np.load(sig_path)['step_bob']):.0%} of its shake)")
+            elif seen := walk_view(dict(np.load(sig_path))):
+                reason = (f'a walk, not a drive: people close by in {seen[0]:.0%} of the frames, a vehicle ahead in '
+                          f'only {seen[1]:.0%}')
             elif walk_no_stop(dict(np.load(sig_path))):
                 reason = (f"a walk, not a drive: the camera bobs at a walker's step rate "
                           f"({float(np.load(sig_path)['step_bob']):.0%} of its shake) and never stands {NO_STOP_S} s")
