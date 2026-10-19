@@ -6213,6 +6213,7 @@ background:#fff;color:#222;font-size:13px;cursor:pointer}
     <div class="clock">Time: <span id="clock" title="click to copy">0:00</span> <span id="copied"></span></div>
     <div class="keys">Keys for the outlined segment (the one clicked last): <b>A</b> start here · <b>S</b> end here ·
       <b>D</b> whole video · <b>Q</b> day · <b>W</b> night · <b>F</b> split time here · <b>C</b> copy the time ·
+      <b>E</b> approve · <b>R</b> reject (both then on to the next) ·
       in a time box <b>↑↓</b> ±1 s, <b>←→</b> ±10 s</div>
     <div id="status"></div>
     {% if waiting > open_videos | length %}<div class="keys">Showing {{ open_videos | length }} of {{ waiting }}
@@ -6574,7 +6575,7 @@ document.addEventListener('keydown', e => {
   if (e.metaKey || e.ctrlKey || e.altKey) return;
   let key = e.key.toLowerCase();
   if (!/^[a-z]$/.test(key) && /^Key[A-Z]$/.test(e.code)) key = e.code.slice(3).toLowerCase();  // Cyrillic layouts
-  if (!['a', 's', 'd', 'q', 'w', 'f', 'c'].includes(key)) return;
+  if (!['a', 's', 'd', 'q', 'w', 'f', 'c', 'e', 'r'].includes(key)) return;
   if (key === 'c') {  // the current time to the clipboard, as a click on it does (user, 2026-10-16)
     e.preventDefault();
     document.getElementById('clock').click();
@@ -6583,6 +6584,10 @@ document.addEventListener('keydown', e => {
   const row = keyRow();
   if (!row) return;
   e.preventDefault();
+  if (key === 'e' || key === 'r') {  // its Approve or Reject button, then on to the next (user, 2026-10-19)
+    row.querySelector(key === 'e' ? 'button.yes' : 'button.no')?.click();
+    return;
+  }
   const t = Math.floor(ytPlayer.getCurrentTime());
   if (key === 'f') {  // current time into the Split box of the segment it falls in, and to the clipboard
     row.querySelector('input.at').value = fmt(t);
