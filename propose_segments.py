@@ -4482,8 +4482,9 @@ def _road_via(number, start, end):
 @_remembered
 def _route(start, end, via=None):
     """([(lat, lon) every 1/ROUTE_SAMPLES of the driving time], the route's path thinned to at most 300 points)
-    of the OSRM car route between two points, by via=(lat, lon) when given."""
-    stops = ';'.join(f'{x[1]},{x[0]}' for x in (start, via, end) if x)
+    of the OSRM car route between two points, by via=(lat, lon) or a tuple of such points, in order, when given."""
+    vias = list(via) if via and isinstance(via[0], (tuple, list)) else [via] if via else []
+    stops = ';'.join(f'{x[1]},{x[0]}' for x in [start, *vias, end])
     r = requests.get(f'https://router.project-osrm.org/route/v1/driving/{stops}',
                      params={'overview': 'full', 'geometries': 'geojson', 'annotations': 'duration'}, timeout=30)
     r.raise_for_status()
@@ -4697,6 +4698,35 @@ def _generic_end(name):
             or bool(re.match(r'(?:downtown|scenic|visit|flying|sunny|sunset|night|morning)\b', name, re.I)))
 
 
+# a title listing the drive's stops: "Czech Roads (167.) Veleslavín - Dejvice - Holešovice - Líbeznice - Kostelec nad
+# Labem" (duen969; user, 2026-10-19: Lm_iKofJeZg, mbmIaHfiARc "Kostelec na Labem - ... - Libeň" was Vimy, France):
+# three or more places joined by dashes, a town's name with its "nad", "am", "de" and the like
+_LIST_WORD = r"[A-ZÀ-ÞŁŚŻŹĆŃČŘŠŽĚŮ][\w'’.]*"
+_LIST_PLACE = (rf"{_LIST_WORD}(?:\s+(?:nad|na|pod|u|am|an|der|de|del|la|le|sur|sous|en|im|bei|ob)\s+{_LIST_WORD}"
+               rf"|\s+{_LIST_WORD}){{0,3}}")
+PLACE_LIST = re.compile(rf"{_LIST_PLACE}(?:\s+[-–—]\s+{_LIST_PLACE}){{2,}}")
+
+
+def place_list(title):
+    """[places] a title lists as a drive's stops (PLACE_LIST), else None: no season, word or country among them."""
+    m = PLACE_LIST.search(title or '')
+    if not m:
+        return None
+    items = [x.strip() for x in re.split(r'\s+[-–—]\s+', m.group(0))]
+    # a region or country is no stop ("Omaha - Nebraska - USA"), a code no place ("Tijuana - Oaxaca - VOI3140")
+    items = [x for x in items if _name_key(x) not in _region_and_country_keys()]
+    if len(items) < 3 or any(re.search(r'\d', x) or x.split()[0].lower() in COMMON_WORDS for x in items):
+        return None
+    return items
+
+
+@lru_cache(maxsize=None)
+def _region_and_country_keys():
+    """_name_key of every country (and its everyday names) and every country's first-level regions."""
+    return ({_name_key(c) for c in COUNTRIES} | {_name_key(c) for c in COUNTRY_ALIASES} | {'usa', 'uae', 'uk'}
+            | {_name_key(sub.name) for sub in pycountry.subdivisions})
+
+
 DRIVE_LINES = 10  # a description's first lines that may name the drive
 # ... in a line of its own that is only that: "Location: Minokamo to Yaotsu,Gifu,Japan" (a sentence like "Take a ride
 # down International Drive to ..." or "Make a one time donation" is none)
@@ -4712,6 +4742,8 @@ def drive_title(title, description):
     title = title or ''
     if any(r.search(english_states(title)) for r in FROM_TO):
         return title
+    if stops := place_list(title):  # the first stop to the last (drive_via: the ones between)
+        return f'from {stops[0]} to {stops[-1]}'
     for line in (description or '').splitlines()[:DRIVE_LINES]:
         if (len(line) <= 150 and (m := DESC_DRIVE.match(line.strip()))  # no "Welcome to", "Talk to Me"
                 and not {m.group(1).split()[0].lower(), m.group(2).split()[0].lower()} & COMMON_WORDS):
@@ -4769,7 +4801,7 @@ def _along(path, n):
     return [tuple(p[min(int(np.searchsorted(d, f)), len(p) - 1)]) for f in np.linspace(0, d[-1], n + 1)]
 
 
-def route_localities(title, df, home=None, max_km=None, map_path=None):
+def route_localities(title, df, home=None, max_km=None, map_path=None, via_names=None):
     """([(share of the drive where it starts, where it ends, locality)], the route for a map) along the car route
     of a drive "from A to B" through two different towns, else ([], None). The towns on the way are looked up on
     OpenStreetMap every 1/ROUTE_SAMPLES of the driving time, so the borders are an estimate that assumes the video
@@ -4795,6 +4827,15 @@ def route_localities(title, df, home=None, max_km=None, map_path=None):
         max_km = None  # the map's own route: no namesake far off
     if city := area_city(title, df, home, (b or a)[4:6] if (b or a) else None):
         return [(0.0, 1.0, city)], None  # "… in the Bronx": all in New York, no route (upstate has a Longwood too)
+    # a listed stop OpenStreetMap does not find ("Kostelec na Labem", mbmIaHfiARc): the drive from the next one
+    vias = list(via_names or [])
+    while vias and not (a and start):
+        if h := _osm_place(vias.pop(0), tuple(sorted(countries))):
+            a, start = h, _hit_locality(h, df, countries)
+    while vias and not (b and end):
+        if h := _osm_place(vias.pop(), tuple(sorted(countries))):
+            b, end = h, _hit_locality(h, df, countries)
+    via_names = vias
     if not (start and end) or max_km and _km(a[4], a[5], b[4], b[5]) > max_km:
         return [], None
     if start == end:  # a drive within one locality (between its neighbourhoods): one stretch, no route needed
@@ -4804,7 +4845,10 @@ def route_localities(title, df, home=None, max_km=None, map_path=None):
         path = [[round(x, 5), round(y, 5)] for x, y in map_path[::max(1, len(map_path) // 300)]]
     else:
         via = _road_via(road, tuple(a[4:6]), tuple(b[4:6])) if (road := named_road(title)) else None
-        points, path = _route(a[4:6], b[4:6], via) or ([], None)
+        # the stops a title lists between its ends (place_list), each found within 100 km of the start, in order
+        codes = tuple(sorted(countries))
+        stops = tuple(h[4:6] for name in via_names or () if (h := _osm_place(name, codes, tuple(a[4:6]), 100)))
+        points, path = _route(a[4:6], b[4:6], ((via,) if via else ()) + stops or None) or ([], None)
     locs = [start] + [_hit_locality(h, df, countries, (lat, lon))
                       if (h := _osm_reverse(round(lat, 4), round(lon, 4))) else None
                       for lat, lon in points[1:-1]] + [end]
@@ -4888,7 +4932,7 @@ def split_route(p, df, home=None, sig_path=None):
     t1 = max(s['end'] for s in segs)
     sig = np.load(sig_path) if sig_path and os.path.exists(sig_path) else {}
     shares, route = route_localities(p.get('drive_title') or p.get('title'), df, home, max_km=t1 / 3600 * MAX_KMH,
-                                     map_path=map_route(sig, df))
+                                     map_path=map_route(sig, df), via_names=p.get('drive_via'))
     if not shares:
         return False
     if all(loc is None for _, _, loc in shares):
@@ -4897,7 +4941,7 @@ def split_route(p, df, home=None, sig_path=None):
         return True
     if len(shares) == 1:  # the whole drive is in one locality: set it unless one is known already
         e = p['entries'][0]
-        if e.get('locality'):
+        if e.get('locality') and not e.get('guessed'):  # set in review; a guess gives way (mbmIaHfiARc: Vimy)
             return False
         e['locality'], e['guessed'] = shares[0][2], True
         p['note'] = f"{p.get('note') or ''}; locality {shares[0][2][0]}: the drive starts and ends in it".lstrip('; ')
@@ -5776,6 +5820,7 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
             'video': vid, 'title': meta['title'], 'analysed': analysed,
             **({'drive_title': dt} if (dt := drive_title(meta['title'], meta.get('description'))) != meta['title']
                else {}),
+            **({'drive_via': stops[1:-1]} if (stops := place_list(meta['title'])) and len(stops) > 2 else {}),
             'entries': [{'locality': locality, 'guessed': locality is not None, 'segments': segments}],
             'vehicle_type': 0 if vt is None else vt, 'upload_date': meta['upload_date'], 'channel_id': ch,
             'note': '; '.join(filter(None, ['; '.join(notes), vehicle_note])),
