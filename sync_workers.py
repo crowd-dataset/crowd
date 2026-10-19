@@ -146,6 +146,7 @@ def check_workers():
             continue
         low = f'{"GPU" if gpu else "CPU"} {mean or 0:.0f}% for {LOW_FOR} min'
         hm = re.match(r'(\d\d):(\d\d)', last)
+        long = rc.LONG_VIDEO.search(last)  # a long video being analysed may stay silent part of its length
         nh, nm = (int(x) for x in now.strip().split(':'))
         age = (nh * 60 + nm - int(hm[1]) * 60 - int(hm[2])) % 1440 if hm else None
         if int(runners) == 0:
@@ -154,7 +155,7 @@ def check_workers():
             what, ok = f'{low}: {last.strip()[:160]}', False
         elif IDLE.search(last):
             what, ok = f'idle: {last.strip()[:160]}', True
-        elif age is not None and age >= STUCK_MIN:
+        elif age is not None and age >= max(STUCK_MIN, int(long[1]) * rc.SILENT_SHARE if long else 0):
             what, ok = (f'{low}, no progress for {age} min{" (a download running)" if int(downloads) else ""}: '
                         f'{last.strip()[:120]}'), False
         else:

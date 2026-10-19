@@ -72,11 +72,14 @@ def parse_log(lines, mtime, now):
         return None if s is None or last is None else mtime - (last - s) * 60
     out = dict(state='working', channel=None, row=None, country=None, i=None, n=None, video=None, title=None,
                since=None, batch=None, rate=None, problems=[], log_age=now - mtime)
-    progress = []
+    progress, long = [], None  # long: the minutes of a long video being analysed now (it may stay silent a while)
     for line, s in zip(lines, stamps):
+        if m := rc.LONG_VIDEO.search(line):
+            long = int(m[1])
         if m := NEXT.match(line):
             out.update(channel=m[4], row=m[3], country=m[5], batch=None)
         elif m := ANALYSING.match(line):
+            long = None
             out.update(i=int(m[3]), n=int(m[4]), video=m[5], title=m[6].strip(), since=when(s))
             progress.append(when(s))
         elif m := BATCH.match(line):
@@ -91,7 +94,7 @@ def parse_log(lines, mtime, now):
     tail = next((ln for ln in reversed(lines) if ln.strip()), '')
     if 'no channel left' in tail:
         out['state'] = 'idle'
-    elif out['log_age'] > STUCK_MIN * 60:
+    elif out['log_age'] > max(STUCK_MIN * 60, (long or 0) * 60 * rc.SILENT_SHARE):  # as run_channels allows
         out['state'] = 'stalled'
     elif out['problems'] and (last_progress is None or (out['problems'][-1]['at'] or 0) > last_progress):
         out['state'] = 'blocked'
@@ -587,6 +590,9 @@ def _check_parse_log():
     assert w['state'] == 'blocked' and w['problems'][0]['current']
     assert parse_log(lines[:-1] + ['00:30 no channel left to process'], now, now)['state'] == 'idle'
     assert parse_log(lines[:-1], now - 2 * 3600, now)['state'] == 'stalled'
+    long_video = lines[:-1] + ['00:16     long video: 600 min']  # 300 min of silence allowed
+    assert parse_log(long_video, now - 2 * 3600, now)['state'] == 'working'
+    assert parse_log(long_video, now - 6 * 3600, now)['state'] == 'stalled'
 
 
 def _check_cookies():
