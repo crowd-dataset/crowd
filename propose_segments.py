@@ -6228,7 +6228,10 @@ REVIEW_HTML = """<!doctype html>
 body { font-family: Arial, sans-serif; margin: 0; background: #f6f6f6; color: #222; }
 header { position: sticky; top: 0; z-index: 1; background: #fff; border-bottom: 1px solid #ddd;
          display: flex; gap: 20px; padding: 10px 20px; align-items: center; }
-#player { width: 480px; height: 270px; border: 0; background: #000; }
+/* the player keeps its size: a longer keys line beside it squeezed it (user, 2026-10-19) */
+#player { width: clamp(480px, 42vw, 960px); height: auto; aspect-ratio: 16 / 9; border: 0; background: #000;
+          flex: 0 0 auto; }
+header > div { min-width: 0; }
 #status { font-size: 15px; line-height: 1.6; }
 #apply { padding: 10px 18px; font-size: 15px; border: 0; border-radius: 4px;
          background: #007bff; color: #fff; cursor: pointer; }
