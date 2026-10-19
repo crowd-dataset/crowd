@@ -3902,7 +3902,8 @@ def place_phrases(text, limit=4):
             run.pop()
         # a word that is also a common one names a place next to "downtown" ("Buffalo Downtown", PhIhzm_NmlQ)
         near_downtown = bool({word, start_after} & {'downtown', 'uptown', 'midtown'})
-        if len(run) > 1 or run and len(run[0]) > 3 and (run[0].lower() not in COMMON_WORDS or near_downtown):
+        # (a town of a word, Reading, is no ordinary word: ordinary)
+        if len(run) > 1 or run and len(run[0]) > 3 and (not ordinary(run[0]) or near_downtown):
             phrases.append(' '.join(run))
         run = []
     # a name written with its state ("Cutler,Ca", "Dorado,Puerto Rico") is a place even when it is also a word,
