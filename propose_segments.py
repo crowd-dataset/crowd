@@ -4696,11 +4696,33 @@ def _generic_end(name):
             or bool(re.match(r'(?:downtown|scenic|visit|flying|sunny|sunset|night|morning)\b', name, re.I)))
 
 
+DRIVE_LINES = 10  # a description's first lines that may name the drive
+# ... in a line of its own that is only that: "Location: Minokamo to Yaotsu,Gifu,Japan" (a sentence like "Take a ride
+# down International Drive to ..." or "Make a one time donation" is none)
+_DESC_PLACE = r"[A-ZÀ-ÞŁŚŻŹĆŃ][\w'’.-]*(?: [A-ZÀ-ÞŁŚŻŹĆŃ][\w'’.-]*){0,3}"
+DESC_DRIVE = re.compile(rf"(?i:(?:location|route|drive|driving|road ?trip)\s*:?\s*)?(?i:from\s+)?({_DESC_PLACE})"
+                        rf"(?:\s*\([^)]*\))?\s+(?i:to)\s+({_DESC_PLACE})(?:\s*\([^)]*\))?\s*(,.*)?$")
+
+
+def drive_title(title, description):
+    """What names a drive "from A to B": the title, else the first of the description's first DRIVE_LINES lines that
+    does ("Location: Minokamo to Yaotsu,Gifu,Japan" under "Drive in Japan | Rain Sounds Therapy", qBRUPhoFeTQ;
+    "Driving from Kani to Shintabisokobashi (Yaotsu),Gifu,Japan", UtxD2cN4iTo; user, 2026-10-19)."""
+    title = title or ''
+    if any(r.search(english_states(title)) for r in FROM_TO):
+        return title
+    for line in (description or '').splitlines()[:DRIVE_LINES]:
+        if (len(line) <= 150 and (m := DESC_DRIVE.match(line.strip()))  # no "Welcome to", "Talk to Me"
+                and not {m.group(1).split()[0].lower(), m.group(2).split()[0].lower()} & COMMON_WORDS):
+            return f'from {m.group(1)} to {m.group(2)}{m.group(3) or ""}'
+    return title
+
+
 def multi_city(meta, df, home=None):
     """Why a video, by its title or chapters, drives through more than one locality, else None: a drive from one
     town to another, to or away from a town, or chapters naming two or more localities (user, 2026-10-13: single
     cities first, these after everything else)."""
-    title = meta.get('title') or ''
+    title = drive_title(meta.get('title'), meta.get('description'))
     if between_towns(title, df, home):
         return 'a drive from one town to another'
     # ... also with one end not found: held back is only later, not left out (wfq-d9YMXgI "Mzuzu to Nkhatabay",
@@ -4821,7 +4843,7 @@ def split_routes(plan_path):
     done = 0
     for vid in list(plan):
         p = json.loads(json.dumps(plan[vid]))
-        if not split_route(p, df[title_reach(df, in_reach, p.get('title'))], home):
+        if not split_route(p, df[title_reach(df, in_reach, p.get('drive_title') or p.get('title'))], home):
             continue
         with plan_lock(plan_path):  # write only if the video is still untouched in the plan on disk
             with open(plan_path) as f:
@@ -4864,7 +4886,7 @@ def split_route(p, df, home=None, sig_path=None):
         return False
     t1 = max(s['end'] for s in segs)
     sig = np.load(sig_path) if sig_path and os.path.exists(sig_path) else {}
-    shares, route = route_localities(p.get('title'), df, home, max_km=t1 / 3600 * MAX_KMH,
+    shares, route = route_localities(p.get('drive_title') or p.get('title'), df, home, max_km=t1 / 3600 * MAX_KMH,
                                      map_path=map_route(sig, df))
     if not shares:
         return False
@@ -4885,7 +4907,7 @@ def split_route(p, df, home=None, sig_path=None):
     signs = sign_towns(sig_path, [loc for _, _, loc in shares if loc], df, (route or {}).get('path'))
     when = sign_clock(signs, (route or {}).get('path'), df, t0, t1)
     stretches = [(when(a), when(b), loc) for a, b, loc in shares]
-    stretches = ends_in_towns(stretches, segs, p.get('title'), df, home)
+    stretches = ends_in_towns(stretches, segs, p.get('drive_title') or p.get('title'), df, home)
     # a road sign welcoming the drive to a town on the way is where that town starts (OkEXG95VyKk: "Welcome to
     # the City of New Haven" at 97:15; user, 2026-10-18); every town a sign names is noted for the reviewer
     for t, loc, _ in [x for x in signs if x[2]]:
@@ -5246,7 +5268,7 @@ def locate_now(p, df, home, sig_path=None, meta=None, boilerplate=frozenset()):
             return
     # a drive between two towns goes by its route, also when the title's guess named one of them (iWbS0H_Prdc:
     # "Lilongwe to Mponela - …" was all Lilongwe)
-    elif (e.get('guessed') and any(r.search(p.get('title') or '') for r in FROM_TO)
+    elif (e.get('guessed') and any(r.search(p.get('drive_title') or p.get('title') or '') for r in FROM_TO)
           and split_route(p, df, home, sig_path)):
         pass
     elif not e.get('locality') and not split_route(p, df, home, sig_path):
@@ -5748,6 +5770,8 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
         touched.append(vid)
         plan[vid] = ({
             'video': vid, 'title': meta['title'], 'analysed': analysed,
+            **({'drive_title': dt} if (dt := drive_title(meta['title'], meta.get('description'))) != meta['title']
+               else {}),
             'entries': [{'locality': locality, 'guessed': locality is not None, 'segments': segments}],
             'vehicle_type': 0 if vt is None else vt, 'upload_date': meta['upload_date'], 'channel_id': ch,
             'note': '; '.join(filter(None, ['; '.join(notes), vehicle_note])),
@@ -5827,7 +5851,7 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
         # chapters before the first that names a place are in the title's (5Du7Q0t-8Ns: Los Angeles until "Malibu"
         # at 16:09; user, 2026-10-13), and those of a drive "from A to B" in A, its chapters naming the towns on
         # the way however far (PvQnDdF145Q: San Francisco to Los Angeles, 11 h by Santa Cruz and Morro Bay)
-        ends = drive_ends(p['title'], df[in_reach], home)
+        ends = drive_ends(p.get('drive_title') or p['title'], df[in_reach], home)
         start = ends[0][1] if ends else None
         reach, at = in_reach, None if ends else _locality_anchor(titled, df)
         if ends and start and start[1]:  # in the states of its ends: no Venice, FL on a drive along the coast of LA
@@ -5866,6 +5890,12 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
             # of Lead, SD (UCLgFDrgDENPf7a59tsj8d_A; user, 2026-10-16)
             if (usual := usual_locality(plan)) and re.search(rf'\b{re.escape(usual[0])}\b', p['title'] or '', re.I):
                 in_title = {tuple(usual): usual[0]}
+            # ... and a worker's copy of the plan has no reviews to count: then the channel's home (from the mapping)
+            # named in a title that names no other place (WqIQf-JUdSY, "Historic Nashville Street Cruise", and
+            # ZGvpLGNIPOA, yt9wvzJ7IWA were proposed with no locality; user, 2026-10-19). Of 2,339 reviewed titles
+            # naming their channel's home 2,222 are there; the others name a more particular place too
+            elif not in_title and home and re.search(rf'\b{re.escape(home[0])}\b', p['title'] or '', re.I):
+                in_title = {tuple(home[:3]): home[0]}
             area = DRIVE_AREA.search(p['title'])
             if len(in_title) > 1 and area:
                 # "Driving from Longwood to West Farms in the Bronx, New York": the drive is in the Bronx
@@ -5904,7 +5934,8 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
     # a drive "from A to B" without chapters passes through A, B and the towns between: split it along its route
     for p in new:
         sig_path = os.path.join(out_dir, f"{p['video']}_signals.npz")
-        split_gps(p, df, out_dir) or split_route(p, df[title_reach(df, in_reach, p['title'])], home, sig_path)
+        split_gps(p, df, out_dir) or split_route(p, df[title_reach(df, in_reach, p.get('drive_title') or p['title'])],
+                                                 home, sig_path)
         if 'entries' in p:  # road signs read (a drive between towns): their towns noted, with a route or not
             note_signs(p, sign_towns(sig_path, [e['locality'] for e in p['entries'] if e.get('locality')],
                                      df[title_reach(df, in_reach, p['title'])], (p.get('route') or {}).get('path')))
