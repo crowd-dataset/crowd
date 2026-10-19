@@ -118,7 +118,8 @@ background:#fff;color:#222;font-size:13px;cursor:pointer}
 <button class="g" title="bring the workers' new proposals here now, instead of waiting for the hourly sync"
  onclick="act(this, '/fetch_batches')">Fetch new batches</button>
 </div>
-{% if done %}<p class="done">All decided: {{ done|join(', ') }}</p>{% endif %}
+{% if done %}<details class="done"><summary>All decided ({{ done|length }})</summary>{{ done|join(', ') }}</details>
+{%- endif %}
 <div id="pop"><span id="popmsg"></span>
 <button onclick="this.parentNode.style.display='none'" title="close">&times;</button></div>
 <script>
