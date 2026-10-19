@@ -284,7 +284,7 @@ def sheet_scores(sheet_path, scenes, prefix='', bottom=False):
 STEP_BOB_WALK, STEP_BOB_HINT = 0.65, 0.6
 # ... and from STEP_BOB_NO_STOP with no stop of NO_STOP_S in a video over 5 min: a walker never waits like a car
 # (z6ISi3CrjsY at 0.63; user, 2026-10-19): 19 of 54 reported walks, no approved car drive
-STEP_BOB_NO_STOP, NO_STOP_S = 0.6, 10
+STEP_BOB_NO_STOP, NO_STOP_S = 0.6, 20  # 20 s as clean as 10 on reviewed videos (aegJGfYgRJY stood 15 s once)
 
 
 def walk_no_stop(sig, p=None):
@@ -3052,6 +3052,17 @@ NOT_DRIVING_TITLE = re.compile(r'\b(?:walk(?:s|ing|around|about)?|wa(?:king|ling
 NATURE_TITLE = re.compile(r'\b(?:national|state|provincial|regional) (?:park|forest|monument|seashore|recreation area'
                           r'|preserve)s?\b|\bnational parks?\b|\bwilderness\b|\bscenic byway\b', re.I)
 DRIVING_TITLE = re.compile(r'\bdriv(?:e|es|ing)\b|\bdashcam\b', re.I)
+# ... but a street's name is no drive: "Walking in Heavy Rain at Marine Drive, Mumbai", "Rodeo Drive" (aegJGfYgRJY;
+# user, 2026-10-19), unless the word before says how one drives ("Highway Drive", "Night Drive")
+STREET_DRIVE = re.compile(r"\b([A-Z][\w'’]+) (?:Drive|Dr)\b\.?")
+
+
+def says_drive(title):
+    """Whether a title says it is a drive (DRIVING_TITLE), a street named "... Drive" aside."""
+    return bool(DRIVING_TITLE.search(STREET_DRIVE.sub(
+        lambda m: m.group(0) if m.group(1).lower() in NOT_PLACE | {'highway', 'freeway', 'motorway', 'nigh', 'country',
+                                                                   'coastal', 'scenic', 'city', 'day', 'test', 'long'}
+        else ' ', title or '')))
 
 
 def usual_locality(plan, share=0.5, min_videos=5):
@@ -3261,7 +3272,7 @@ def exclusion_reason(meta):
     if hit:
         return f"title mentions '{hit.group(0)}'"
     hit = NOT_DRIVING_TITLE.search(title)
-    if hit and not DRIVING_TITLE.search(title):
+    if hit and not says_drive(title):
         return f"not a drive (title mentions '{hit.group(0)}')"
     hit = NATURE_TITLE.search(title)
     if hit:
