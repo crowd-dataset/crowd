@@ -3493,6 +3493,53 @@ def _common_words():
 
 
 COMMON_WORDS = _common_words()
+
+
+@lru_cache(maxsize=None)
+def _mapping_names():
+    """The one-word names of the mapping's localities of 20,000 people or more, lower case: a town known by a word
+    (Reading, Bath, Mobile), not an alias ("st", "china")."""
+    df = add_video.load_csv(add_video.FILE_PATH)
+    big = pd.to_numeric(df['population_locality'], errors='coerce').fillna(0) >= 20000
+    return {str(x).lower() for x in df.loc[big, 'locality'].dropna() if len(str(x)) >= 4 and ' ' not in str(x)}
+
+
+def ordinary(word):
+    """Whether a word is an ordinary English one and no locality of the mapping: "reading" is Reading, UK (user,
+    2026-10-19: be careful with common English words), "welcome" is none."""
+    w = word.lower()
+    return w in COMMON_WORDS and w not in _mapping_names()
+
+
+FLAG = re.compile('[\U0001F1E6-\U0001F1FF]')
+
+
+def names_nothing(text):
+    """Whether a title or description names no place: no flag, no country, no capitalised word but the first and
+    no word of four letters or more that is not ordinary (hashtags and links aside)."""
+    text = re.sub(r'#\w+|https?://\S+', ' ', text or '')
+    if FLAG.search(text) or title_countries(text):
+        return False
+    words = re.findall(r"[^\W\d_][\w'’-]*", text)
+    return not any((k and w[:1].isupper()) or (len(w) > 3 and not ordinary(w)) for k, w in enumerate(words))
+
+
+CHANNEL_CITY_SHARE = 0.7  # a channel with this share of its mapped videos in one locality films there
+
+
+def channel_city(channel_id, df):
+    """([locality, state, country], share) of the locality most of a channel's mapped videos are in, else None."""
+    counts = Counter()
+    for r in df.itertuples():
+        n = sum(str(c).strip() == channel_id for c in add_video._parse_flat_list_cell(r.channel))
+        if n:
+            counts[(r.locality, None if pd.isna(r.state) else r.state, r.country)] += n
+    if not counts:
+        return None
+    loc, n = counts.most_common(1)[0]
+    return list(loc), n / sum(counts.values())
+
+
 ADDRESS_LINE = re.compile(r',\s*[A-Z]{2}\s+\d{5}\b|https?://|www\.|\b(?:P\.?\s?O\.? Box|Ste\.?|Suite)\b', re.I)
 
 
@@ -4743,7 +4790,7 @@ def place_list(title):
     items = [x.strip() for x in re.split(r'\s+[-–—]\s+', m.group(0))]
     # a region or country is no stop ("Omaha - Nebraska - USA"), a code no place ("Tijuana - Oaxaca - VOI3140")
     items = [x for x in items if _name_key(x) not in _region_and_country_keys()]
-    if len(items) < 3 or any(re.search(r'\d', x) or x.split()[0].lower() in COMMON_WORDS for x in items):
+    if len(items) < 3 or any(re.search(r'\d', x) or ordinary(x.split()[0]) for x in items):
         return None
     return items
 
@@ -4774,7 +4821,7 @@ def drive_title(title, description):
         return f'from {stops[0]} to {stops[-1]}'
     for line in (description or '').splitlines()[:DRIVE_LINES]:
         if (len(line) <= 150 and (m := DESC_DRIVE.match(line.strip()))  # no "Welcome to", "Talk to Me"
-                and not {m.group(1).split()[0].lower(), m.group(2).split()[0].lower()} & COMMON_WORDS):
+                and not ordinary(m.group(1).split()[0]) and not ordinary(m.group(2).split()[0])):
             return f'from {m.group(1)} to {m.group(2)}{m.group(3) or ""}'
     return title
 
@@ -6069,6 +6116,29 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
                 continue
             es[0]['segments'] = propose(dict(np.load(sig_path)), ONE_PLACE)[0]
             p['note'] = re.sub(r'; (?:rural|highway) driving \d+-\d+s', '', p.get('note') or '')
+    # nothing names a place, neither title, description, chapters nor GPS (iHwHqW98IRQ, "Driving tour view with my
+    # friends on the holiday"; user, 2026-10-19: no way to learn its locality): the channel's city when it mostly
+    # films in one, else left out. Of 38 reviewed such videos, the 4 of channels spread wider all rejected
+    cities = {}
+    for p in new:
+        es, meta = p.get('entries') or [], metas.get(p['video'], {})
+        sig_path = os.path.join(out_dir, f"{p['video']}_signals.npz")
+        if (not es or any(e.get('locality') for e in es) or p.get('route') or meta.get('chapters')
+                or not names_nothing(p.get('title')) or not names_nothing(meta.get('description'))
+                or (os.path.exists(sig_path) and 'gps' in np.load(sig_path).files)):
+            continue
+        ch = p.get('channel_id')
+        if ch not in cities:
+            cities[ch] = channel_city(ch, df)
+        if cities[ch] and cities[ch][1] >= CHANNEL_CITY_SHARE:
+            for e in es:
+                e['locality'], e['guessed'] = list(cities[ch][0]), True
+            p['note'] = (f"{p.get('note') or ''}; locality {cities[ch][0][0]}: nothing names a place, and "
+                         f"{cities[ch][1]:.0%} of the channel's videos are there (check)").lstrip('; ')
+        else:
+            p.pop('entries')
+            p['exclude'] = ('nothing names a place (title, description, chapters, GPS) and the channel films in no '
+                            'one city: no locality to give it')
     merges = load_merges()
     for p in new:  # a town the reviewer counts in a bigger city nearby (merged_locality): that city
         for e in p.get('entries', []):
