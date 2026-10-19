@@ -2349,14 +2349,19 @@ OCR_SERVER = """
 import json, sys, easyocr, torch
 reader = easyocr.Reader(['en'], gpu=torch.cuda.is_available(), verbose=False)
 for line in sys.stdin:
-    print(json.dumps([[text for _, text, conf in reader.readtext(p) if conf >= 0.4] for p in json.loads(line)]),
-          flush=True)
+    q = json.loads(line)
+    if isinstance(q, dict):  # with where each text is in the picture: [x, y, text, confidence]
+        print(json.dumps([[[float(sum(c[0] for c in b) / 4), float(sum(c[1] for c in b) / 4), t, float(conf)]
+                           for b, t, conf in reader.readtext(p)] for p in q['boxes']]), flush=True)
+    else:
+        print(json.dumps([[text for _, text, conf in reader.readtext(p) if conf >= 0.4] for p in q]), flush=True)
 """
 _OCR = {'lock': threading.Lock()}
 
 
-def _ocr_run(paths):
-    """[[texts]] EasyOCR reads in each image file (OCR_SERVER, started on first use), None when it fails."""
+def _ocr_run(paths, boxes=False):
+    """[[texts]] EasyOCR reads in each image file (OCR_SERVER, started on first use), None when it fails; boxes:
+    [[x, y, text, confidence]] each, with the middle of each text in the picture."""
     if not paths or not OCR_PYTHON:
         return None
     with _OCR['lock']:
@@ -2366,7 +2371,7 @@ def _ocr_run(paths):
             proc = _OCR['proc'] = subprocess.Popen([OCR_PYTHON, '-c', OCR_SERVER], stdin=subprocess.PIPE,
                                                    stdout=subprocess.PIPE, stderr=log, text=True)
         try:
-            proc.stdin.write(json.dumps(list(paths)) + '\n')
+            proc.stdin.write(json.dumps({'boxes': list(paths)} if boxes else list(paths)) + '\n')
             proc.stdin.flush()
             out = json.loads(proc.stdout.readline() or 'null')
         except (OSError, ValueError):
@@ -2448,6 +2453,119 @@ def read_signs(video_id, step=SIGN_STEP_S):
         return None
     finally:
         shutil.rmtree(work_dir, ignore_errors=True)
+
+
+# a map of the drive in the opening (OkEXG95VyKk at 0:06: Google My Maps, Newport to New York along I-95; user,
+# 2026-10-19: "map at Time: 0:06 helps to also understand the exact route that was taken"): the opening frame with
+# MAP_LABELS or more texts, its texts with their places in the picture and the route, the longest line of one strong
+# colour, in order along it. Where those texts are on the map (map_route) makes the line the drive's route
+MAP_LABELS = 15
+MAP_FIT_LABELS, MAP_FIT_PX = 6, 12  # a map's fit: this many labels within this many pixels of their place
+
+
+def route_line(img):
+    """[(x, y)] the longest line of one strong colour in a picture, end to end along it (every 6th pixel), else []."""
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    best = None
+    for h0 in range(0, 180, 6):
+        mask = ((((hsv[:, :, 0].astype(int) - h0) % 180) < 8) & (hsv[:, :, 1] > 140) & (hsv[:, :, 2] > 90))
+        n, lab, st, _ = cv2.connectedComponentsWithStats(mask.astype(np.uint8), 8)
+        for i in range(1, n):
+            span = float(np.hypot(st[i, 2], st[i, 3]))
+            if st[i, 4] > 500 and (best is None or span > best[0]):
+                best = (span, lab == i)
+    if best is None or best[0] < 0.25 * float(np.hypot(*img.shape[:2])):
+        return []
+    ys, xs = np.nonzero(best[1])
+    cells = np.unique(np.c_[xs // 6, ys // 6], axis=0)
+    idx = {tuple(c): k for k, c in enumerate(cells)}
+
+    def far(k0):  # steps along the line from cell k0 to every cell
+        d = np.full(len(cells), -1)
+        d[k0], todo = 0, [k0]
+        for k in todo:
+            for dx in (-1, 0, 1):
+                for dy in (-1, 0, 1):
+                    j = idx.get((cells[k][0] + dx, cells[k][1] + dy))
+                    if j is not None and d[j] < 0:
+                        d[j] = d[k] + 1
+                        todo.append(j)
+        return d
+    d = far(int(np.argmax(far(0))))
+    return [(int(x) * 6 + 3, int(y) * 6 + 3) for x, y in cells[np.argsort(d)][d[np.argsort(d)] >= 0]]
+
+
+def map_frame(video_id, texts):
+    """(labels [[x, y, text, confidence]], route line [[x, y]]) of a map in the opening (texts: opening_texts), else
+    None."""
+    if not texts:
+        return None
+    t, most = max(texts.items(), key=lambda kv: len(kv[1]))
+    if len(most) < MAP_LABELS:
+        return None
+    work_dir = tempfile.mkdtemp(prefix='crowd_map_')
+    try:
+        url, headers = _stream(video_id)
+        shot = os.path.join(work_dir, 'map.png')
+        _stream_ffmpeg(['ffmpeg', '-v', 'error', '-y', '-headers', headers, '-ss', f'{t:.1f}', '-i', url,
+                        '-frames:v', '1', shot])
+        img = cv2.imread(shot)
+        line = route_line(img) if img is not None else []
+        labels = (_ocr_run([shot], boxes=True) or [None])[0] if line else None
+        if not labels:
+            return None
+        print(f'  a map at {t:.0f}s: {len(labels)} labels, a route of {len(line)} points', flush=True)
+        return labels, line
+    except (RuntimeError, subprocess.TimeoutExpired, KeyError, ValueError) as e:
+        print(f'  map not read: {e}', flush=True)
+        return None
+    finally:
+        shutil.rmtree(work_dir, ignore_errors=True)
+
+
+def map_route(sig, df):
+    """[(lat, lon)] along the route of the map in a video's signals (map_frame): its labels placed at the mapping's
+    localities or OpenStreetMap's places of their names in df's countries, a north-up Mercator map fitted to the
+    places most labels agree with (two fix it: namesakes far off drop out); None without a map or a fit."""
+    if 'map_labels' not in sig or 'map_line' not in sig:
+        return None
+    labels = [x for x in json.loads(str(sig['map_labels'])) if x[3] >= 0.5 and len(x[2]) >= 4
+              and not x[2][:1].isdigit()][:40]
+    line = np.asarray(sig['map_line'], float).reshape(-1, 2)
+    codes = tuple(sorted({c for c in (common.get_iso2_country_code(common.correct_country(x))
+                                      for x in df['country'].dropna().unique()) if c}))
+    by_name = {}
+    for r in df.itertuples():
+        by_name.setdefault(_name_key(r.locality), []).append((float(r.lat), float(r.lon)))
+    cand = []
+    for x, y, t, _ in labels:
+        opts = list(by_name.get(_name_key(t), []))
+        if (h := _osm_place(t, codes)) and h[7] in ('city', 'town', 'village', 'suburb', 'hamlet'):
+            opts.append((h[4], h[5]))
+        cand += [(x, y, la, lo, t) for la, lo in opts]
+    if len({c[4] for c in cand}) < MAP_FIT_LABELS or len(line) < 2:
+        return None
+    c = np.array([x[:4] for x in cand], float)
+    px, py, mx = c[:, 0], c[:, 1], np.radians(c[:, 3])
+    my = np.log(np.tan(np.pi / 4 + np.radians(c[:, 2]) / 2))
+    rng, best = np.random.default_rng(0), (0, None)
+    for _ in range(4000):
+        i, j = rng.choice(len(c), 2, replace=False)
+        if cand[i][4] == cand[j][4] or mx[i] == mx[j] or (sx := (px[i] - px[j]) / (mx[i] - mx[j])) <= 0:
+            continue
+        fit = (sx, px[i] - sx * mx[i], py[i] + sx * my[i])
+        near = np.hypot(fit[0] * mx + fit[1] - px, -fit[0] * my + fit[2] - py) < MAP_FIT_PX
+        if (n := len({cand[k][4] for k in np.flatnonzero(near)})) > best[0]:
+            best = (n, near)
+    if best[0] < MAP_FIT_LABELS:
+        return None
+    k = best[1]
+    sx, bx, by = np.linalg.lstsq(np.c_[np.r_[mx[k], -my[k]], np.r_[np.ones(k.sum()), np.zeros(k.sum())],
+                                       np.r_[np.zeros(k.sum()), np.ones(k.sum())]], np.r_[px[k], py[k]],
+                                 rcond=None)[0]
+    lon = np.degrees((line[:, 0] - bx) / sx)
+    lat = np.degrees(2 * np.arctan(np.exp(-(line[:, 1] - by) / sx)) - np.pi / 2)
+    return [(float(a), float(b)) for a, b in zip(lat, lon)]
 
 
 def screen_locality(texts, df):
@@ -2840,6 +2958,8 @@ def analyse_video(video_id, out_dir, meta=None, signs=False):
         sig['screen_text'] = np.array(json.dumps({f'{t:.0f}': x for t, x in (texts or {}).items()}))
         sig['labelled_montage'] = np.array(caption_end(video_id, sig, texts) or (
             end if end is not None and montage_label(video_id, end) else 0), float)
+        if signs and (m := map_frame(video_id, texts)):  # a map of the drive in the opening
+            sig['map_labels'], sig['map_line'] = np.array(json.dumps(m[0])), np.array(m[1], float)
         if signs and (read := read_signs(video_id)):
             sig['signs'] = np.array(json.dumps({str(t): x for t, x in read.items()}))
         gps, clock, stamp = gps_track(video_id, meta['duration'])
@@ -4323,11 +4443,44 @@ def _osm_reverse(lat, lon):
     return (town, a.get('state'), _country_code(a), _region_code(a), kind) if a else None
 
 
+# a road the title drives: "Highway 85 Road Trip ... from Denver to Greeley" (uFHmUl5XReM went by I-76 and Hudson,
+# the fastest way; user, 2026-10-19: follow the named highway), "I-76", "US-30", "Route 66", "SR 85"
+ROAD_NUMBER = re.compile(r"\b(?:highway|hwy|route|rte|interstate|state route|I|US|SR)[- ]?(\d{1,3})\b(?![-.,]\d)",
+                         re.I)
+
+
+def named_road(title):
+    """The number of the one road a title names (ROAD_NUMBER), else None."""
+    found = {m.group(1) for m in ROAD_NUMBER.finditer(title or '')}
+    return found.pop() if len(found) == 1 else None
+
+
 @_remembered
-def _route(start, end):
+def _road_via(number, start, end):
+    """(lat, lon) of the point of a numbered main road (OpenStreetMap ref "85", "US 85", "CO 85", ...) nearest
+    the middle of a drive from start to end, within a third of the drive's length of it; None when there is none."""
+    (la1, lo1), (la2, lo2) = start, end
+    mid, km = ((la1 + la2) / 2, (lo1 + lo2) / 2), _km(la1, lo1, la2, lo2)
+    pad = max(0.05, km / 3 / 111)
+    box = f'{min(la1, la2) - pad},{min(lo1, lo2) - pad},{max(la1, la2) + pad},{max(lo1, lo2) + pad}'
+    q = (f'[out:json][timeout:60];way[highway~"^(motorway|trunk|primary|secondary)$"]'
+         f'[ref~"(^|;)([A-Z]+[ -]?)?{number}($|;)"]({box});out geom;')
+    r = requests.post('https://overpass-api.de/api/interpreter', data={'data': q}, timeout=90,
+                      headers={'User-Agent': 'crowd-dataset-propose-segments'})
+    r.raise_for_status()
+    pts = [(g['lat'], g['lon']) for w in r.json().get('elements', []) for g in w.get('geometry', [])]
+    if not pts:
+        return None
+    best = min(pts, key=lambda x: _km(mid[0], mid[1], *x))
+    return best if _km(mid[0], mid[1], *best) <= km / 3 else None
+
+
+@_remembered
+def _route(start, end, via=None):
     """([(lat, lon) every 1/ROUTE_SAMPLES of the driving time], the route's path thinned to at most 300 points)
-    of the OSRM car route between two points."""
-    r = requests.get(f'https://router.project-osrm.org/route/v1/driving/{start[1]},{start[0]};{end[1]},{end[0]}',
+    of the OSRM car route between two points, by via=(lat, lon) when given."""
+    stops = ';'.join(f'{x[1]},{x[0]}' for x in (start, via, end) if x)
+    r = requests.get(f'https://router.project-osrm.org/route/v1/driving/{stops}',
                      params={'overview': 'full', 'geometries': 'geojson', 'annotations': 'duration'}, timeout=30)
     r.raise_for_status()
     route = r.json()['routes'][0]
@@ -4583,25 +4736,49 @@ def between_towns(title, df, home=None):
     return bool(start and end and start != end)
 
 
-def route_localities(title, df, home=None, max_km=None):
+def _along(path, n):
+    """n + 1 points spread evenly by distance along a path [(lat, lon)]."""
+    p = np.asarray(path, float)
+    d = np.r_[0, np.cumsum([_km(*a, *b) for a, b in zip(p, p[1:])])]
+    return [tuple(p[min(int(np.searchsorted(d, f)), len(p) - 1)]) for f in np.linspace(0, d[-1], n + 1)]
+
+
+def route_localities(title, df, home=None, max_km=None, map_path=None):
     """([(share of the drive where it starts, where it ends, locality)], the route for a map) along the car route
     of a drive "from A to B" through two different towns, else ([], None). The towns on the way are looked up on
     OpenStreetMap every 1/ROUTE_SAMPLES of the driving time, so the borders are an estimate that assumes the video
     follows that route at an even pace. max_km: A and B are at most this far apart (as the crow flies); farther
-    means one of them is a namesake (Bear Creek near Baltimore for Bear Creek Village, PA)."""
+    means one of them is a namesake (Bear Creek near Baltimore for Bear Creek Village, PA). map_path: the route a
+    map in the video shows (map_route): followed instead of the fastest one, its ends A and B when the title's are
+    not found (OkEXG95VyKk: Newport to Manhattan, from a channel whose home is Cusco)."""
     ends = drive_ends(title, df, home)
-    if not ends:
+    if not ends and not map_path:
         return [], None
-    (a, start), (b, end) = ends
-    if city := area_city(title, df, home, (b or a)[4:6] if (b or a) else None):
-        return [(0.0, 1.0, city)], None  # "… in the Bronx": all in New York, no route (upstate has a Longwood too)
+    (a, start), (b, end) = ends or ((None, None), (None, None))
     countries = {common.get_iso2_country_code(common.correct_country(c)): c for c in df['country'].dropna().unique()}
     countries.pop(None, None)
+    if map_path:
+        if a and b and _km(*map_path[0], *a[4:6]) > _km(*map_path[0], *b[4:6]):
+            map_path = map_path[::-1]  # drawn from B to A
+        for i, (lat, lon) in ((0, map_path[0]), (1, map_path[-1])):
+            if not (start, end)[i] and (h := _osm_reverse(round(lat, 4), round(lon, 4))):
+                hit = (*h[:4], lat, lon, 0.0, h[4])
+                loc = _hit_locality(h, df, countries, (lat, lon))
+                a, start = (hit, loc) if i == 0 else (a, start)
+                b, end = (hit, loc) if i == 1 else (b, end)
+        max_km = None  # the map's own route: no namesake far off
+    if city := area_city(title, df, home, (b or a)[4:6] if (b or a) else None):
+        return [(0.0, 1.0, city)], None  # "… in the Bronx": all in New York, no route (upstate has a Longwood too)
     if not (start and end) or max_km and _km(a[4], a[5], b[4], b[5]) > max_km:
         return [], None
     if start == end:  # a drive within one locality (between its neighbourhoods): one stretch, no route needed
         return [(0.0, 1.0, start)], None
-    points, path = _route(a[4:6], b[4:6]) or ([], None)
+    if map_path:
+        points = _along(map_path, ROUTE_SAMPLES)
+        path = [[round(x, 5), round(y, 5)] for x, y in map_path[::max(1, len(map_path) // 300)]]
+    else:
+        via = _road_via(road, tuple(a[4:6]), tuple(b[4:6])) if (road := named_road(title)) else None
+        points, path = _route(a[4:6], b[4:6], via) or ([], None)
     locs = [start] + [_hit_locality(h, df, countries, (lat, lon))
                       if (h := _osm_reverse(round(lat, 4), round(lon, 4))) else None
                       for lat, lon in points[1:-1]] + [end]
@@ -4683,7 +4860,9 @@ def split_route(p, df, home=None, sig_path=None):
     if not segs or any(s.get('decision') or s.get('applied') for s in segs):
         return False
     t1 = max(s['end'] for s in segs)
-    shares, route = route_localities(p.get('title'), df, home, max_km=t1 / 3600 * MAX_KMH)
+    sig = np.load(sig_path) if sig_path and os.path.exists(sig_path) else {}
+    shares, route = route_localities(p.get('title'), df, home, max_km=t1 / 3600 * MAX_KMH,
+                                     map_path=map_route(sig, df))
     if not shares:
         return False
     if all(loc is None for _, _, loc in shares):
@@ -4697,13 +4876,15 @@ def split_route(p, df, home=None, sig_path=None):
         e['locality'], e['guessed'] = shares[0][2], True
         p['note'] = f"{p.get('note') or ''}; locality {shares[0][2][0]}: the drive starts and ends in it".lstrip('; ')
         return True
-    # the video is the drive from A: footage left out at its start (a dark or parked opening) is on the way too
+    # the video is the drive from A: footage left out at its start (a dark or parked opening) is on the way too;
+    # where along the route it is at each second: by the towns road signs name on the way (sign_clock), else evenly
     t0 = 0
-    stretches = [(t0 + a * (t1 - t0), t0 + b * (t1 - t0), loc) for a, b, loc in shares]
+    signs = sign_towns(sig_path, [loc for _, _, loc in shares if loc], df, (route or {}).get('path'))
+    when = sign_clock(signs, (route or {}).get('path'), df, t0, t1)
+    stretches = [(when(a), when(b), loc) for a, b, loc in shares]
     stretches = ends_in_towns(stretches, segs, p.get('title'), df, home)
     # a road sign welcoming the drive to a town on the way is where that town starts (OkEXG95VyKk: "Welcome to
     # the City of New Haven" at 97:15; user, 2026-10-18); every town a sign names is noted for the reviewer
-    signs = sign_towns(sig_path, [loc for _, _, loc in stretches if loc], df, (route or {}).get('path'))
     for t, loc, _ in [x for x in signs if x[2]]:
         stretches = pin_town(stretches, t, loc)
     p['entries'] = split_by_stretches(segs, stretches)
@@ -4773,6 +4954,34 @@ def sign_towns(sig_path, towns, df, path):
     return out
 
 
+def sign_clock(signs, path, df, t0, t1):
+    """f(share of the route) -> second of the video: through the towns road signs name along the route (within
+    5 km of it), each at the second of its first sign naming no town nearer on the way, kept where both the share
+    and the second go up; evenly from t0 to t1 between them. A drive keeps no even pace: OkEXG95VyKk takes 3.6 of
+    its 6 hours to New York and spends the rest in the city (user, 2026-10-19: the map's route)."""
+    p = np.asarray(path or [], float).reshape(-1, 2)
+    xs, ys = [0.0], [float(t0)]
+    if len(p) >= 2 and signs:
+        d = np.r_[0, np.cumsum([_km(*a, *b) for a, b in zip(p, p[1:])])]
+        share = {}
+        for _, loc, _ in signs:
+            if tuple(loc) not in share and (a := _locality_anchor(loc, df)):
+                km = [_km(a[3], a[4], *x) for x in p]
+                share[tuple(loc)] = d[int(np.argmin(km))] / d[-1] if min(km) <= 5 else None
+        frames = {}
+        for t, loc, _ in signs:
+            if share.get(tuple(loc)) is not None:
+                frames.setdefault(t, []).append(share[tuple(loc)])
+        for t in sorted(frames):  # the town next on the way of each sign
+            ahead = [f for f in frames[t] if f > xs[-1]]
+            if ahead and t > ys[-1] and min(ahead) < 1:
+                xs.append(min(ahead))
+                ys.append(float(t))
+    xs.append(1.0)
+    ys.append(float(max(t1, ys[-1])))
+    return lambda f: float(np.interp(f, xs, ys))
+
+
 def note_signs(p, signs):
     """Add the towns road signs name (sign_towns), each at its first sign, to a proposal's note, once."""
     if not signs or 'road signs:' in (p.get('note') or ''):
@@ -4787,10 +4996,14 @@ def note_signs(p, signs):
 
 def pin_town(stretches, t, loc):
     """The stretches with a town's own moved to start at t, where a sign welcomes the drive to it: until its
-    estimated end, or as long as estimated from t when that end is past; the time before is no longer its."""
+    estimated end, or as long as estimated from t when that end is past; the time before is no longer its. A town
+    not on the route takes the rest of the town stretch t is in."""
     old = next(((a, b) for a, b, x in stretches if x and tuple(x) == tuple(loc)), None)
-    if not old:
-        return stretches
+    if not old:  # a town the route's points missed (OkEXG95VyKk: New Haven, its points in West Haven): it takes
+        # the town stretch the sign is in from there
+        old = next(((t, b) for a, b, x in stretches if x and a <= t < b), None)
+        if not old:
+            return stretches
     end = old[1] if old[1] > t else t + (old[1] - old[0])
     out = [(lo, hi, x) for a, b, x in stretches if not (x and tuple(x) == tuple(loc))
            for lo, hi in ((a, min(b, t)), (max(a, end), b)) if hi > lo]
