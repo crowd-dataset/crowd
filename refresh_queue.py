@@ -72,7 +72,11 @@ def main():
         # "India, USA", "Europe", "Mix": the country most of its mapped videos are in
         if rc.COUNTRY.get(country, country) not in ps.COUNTRIES:
             country = ''
-        country = country or (countries[cid].most_common(1)[0][0] if countries[cid] else '')
+        if not country and countries[cid]:
+            (top, n), total = countries[cid].most_common(1)[0], sum(countries[cid].values())
+            # ... with a clear majority; a channel spread over many (driveeurope: Japan 4 and France 4 of 16, so
+            # Japan, and its "Basel to Geneva" became Switzerland; user, 2026-10-19) gets its home town's country
+            country = top if 2 * n > total else ((home := ps.channel_home(cid, df, {})) and home[2]) or top
         if country.strip().lower() == 'russia':
             left_out.append((url, "Russia only: Olena's"))
             return
