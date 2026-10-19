@@ -33,6 +33,7 @@ PORT = 8770
 HOST = os.environ.get('REVIEW_HOST', '127.0.0.1')  # 0.0.0.0: reachable from other machines (the review pages too)
 app = Flask(__name__)
 servers = {}  # channel name -> (review process, its port)
+started = {}  # channel name -> when its review page was started
 
 PAGE = """<!doctype html><html><head><meta charset="utf-8"><title>Batches to review</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22>
@@ -211,6 +212,12 @@ def open_batch(name):
     if not os.path.exists(os.path.join(rc.ROOT, name, 'plan.json')):
         return 'unknown batch', 404
     proc, port = servers.get(name, (None, None))
+    # a page started before the review code last changed starts again with it (user, 2026-10-19: the player stayed
+    # small on open pages), under the locks a page writes with, so none stops mid-Apply
+    if proc is not None and proc.poll() is None and started.get(name, 0) < os.path.getmtime(ps.__file__):
+        with ps.plan_lock(add_video.FILE_PATH), ps.plan_lock(os.path.join(rc.ROOT, name, 'plan.json')):
+            proc.terminate()
+            proc.wait()
     if proc is None or proc.poll() is not None:
         with socket.socket() as s:
             s.bind((HOST, 0))
@@ -220,7 +227,7 @@ def open_batch(name):
         code = ('import webbrowser; webbrowser.open = lambda *a, **k: None; import propose_segments as ps; '
                 f'ps.review({plan!r}, {port})')
         proc = subprocess.Popen([sys.executable, '-c', code])
-        servers[name] = proc, port
+        servers[name], started[name] = (proc, port), time.time()
         # on to the page once it answers: it takes 4 s or more to start on a busy mini, and a fixed 3 s wait sent
         # the browser to a page not there yet (user, 2026-10-16)
         return render_template_string(
