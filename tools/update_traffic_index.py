@@ -9,7 +9,10 @@ Americas), Central European time. At most --limit requests per run: TomTom's fre
 Flow segment data) allows 20,000 requests a month.
 
 Each reading is appended to logs/traffic_index_log.csv, which records what is done; mapping.csv gets the new values
-(empty where TomTom has no road data near the point). Run until it reports that nothing is pending.
+(empty where TomTom has no road data near the point). Run until it reports that nothing is pending. The log keys each
+reading by the place's coordinates (its id and name are kept for reading it): locality ids get renumbered when the
+mapping changes, so ids would point at other places later. A place is done when its latest reading is "ok" or "no
+coverage" and its value in the mapping is still that reading; setting a value back to 0 has it read again.
 
 Usage: python update_traffic_index.py [--limit 1200] [--dry-run]
 """
@@ -67,23 +70,38 @@ def query(key: str, lat: float, lon: float) -> tuple:
     return status, None
 
 
+LOG_FIELDS = ["id", "locality", "iso3", "lat", "lon", "queried_utc", "status", "value"]
+
+
 def read_log() -> dict:
-    """id -> status of its latest reading."""
+    """(lat, lon) -> (status, value) of the latest reading at that point."""
     if not os.path.exists(LOG):
         return {}
     with open(LOG, newline="", encoding="utf-8") as f:
-        return {r["id"]: r["status"] for r in csv.DictReader(f)}
+        return {(r["lat"], r["lon"]): (r["status"], r["value"]) for r in csv.DictReader(f)}
+
+
+def matches(reading: tuple, value: str) -> bool:
+    """Whether the mapping's value is this reading (no coverage: empty)."""
+    status, logged = reading
+    if status == "no coverage":
+        return value == ""
+    try:
+        return abs(float(value) - float(logged)) < 0.006
+    except ValueError:
+        return False
 
 
 def pending(rows: list, header: list, log: dict, now: datetime) -> tuple:
     """(pending rows in daytime now, all pending rows)."""
-    i_id, i_t, i_lon = header.index("id"), header.index("traffic_index"), header.index("lon")
+    i_t, i_lat, i_lon = header.index("traffic_index"), header.index("lat"), header.index("lon")
     todo = []
     for r in rows:
-        status = log.get(r[i_id])
-        if status in DONE:
+        reading = log.get((r[i_lat], r[i_lon]))
+        if reading and reading[0] in DONE and matches(reading, r[i_t]):
             continue
-        if status is not None or r[i_t] in ("0", "0.0"):  # zero, or a reading still to be repeated (night, error)
+        # a reading to repeat (night, error), one the mapping no longer holds (set back to 0), or never read (zero)
+        if reading is not None or r[i_t] in ("0", "0.0"):
             todo.append(r)
     day = [r for r in todo if r[i_lon] and DAY[0] <= local_hour(float(r[i_lon]), now) < DAY[1]]
     return day, todo
@@ -109,7 +127,8 @@ def main():
         return
 
     key = common.get_secrets("tomtom_api_key")
-    i_id, i_t, i_lat, i_lon = (header.index(c) for c in ("id", "traffic_index", "lat", "lon"))
+    columns = ("id", "traffic_index", "lat", "lon", "locality", "iso3")
+    i_id, i_t, i_lat, i_lon, i_loc, i_iso = (header.index(c) for c in columns)
     with ThreadPoolExecutor(4) as pool:  # TomTom allows a few requests per second
         results = list(pool.map(lambda r: query(key, r[i_lat], r[i_lon]), batch))
 
@@ -119,22 +138,23 @@ def main():
     with open(LOG, "a", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
         if new_log:
-            w.writerow(["id", "queried_utc", "status", "value"])
+            w.writerow(LOG_FIELDS)
         for r, (status, value) in zip(batch, results):
-            w.writerow([r[i_id], stamp, status, "" if value is None else value])
+            w.writerow([r[i_id], r[i_loc], r[i_iso], r[i_lat], r[i_lon], stamp, status,
+                        "" if value is None else value])
             if status == "ok":
-                new_values[r[i_id]] = str(float(value))
+                new_values[(r[i_lat], r[i_lon])] = str(float(value))
             elif status == "no coverage":
-                new_values[r[i_id]] = ""  # no data, not free-flowing traffic
+                new_values[(r[i_lat], r[i_lon])] = ""  # no data, not free-flowing traffic
 
     # re-read under the mapping lock: other scripts may have saved the mapping while the requests ran
     with open(mapping + ".lock", "w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         raw = open(mapping, newline="", encoding="utf-8").read()
         rows = list(csv.reader(io.StringIO(raw)))
-        for r in rows[1:]:
-            if r[i_id] in new_values:
-                r[i_t] = new_values[r[i_id]]
+        for r in rows[1:]:  # by coordinates: ids may have been renumbered while the requests ran
+            if (r[i_lat], r[i_lon]) in new_values:
+                r[i_t] = new_values[(r[i_lat], r[i_lon])]
         out = io.StringIO()
         csv.writer(out, lineterminator="\r\n" if "\r\n" in raw[:5000] else "\n").writerows(rows)
         with open(mapping + ".tmp", "w", newline="", encoding="utf-8") as f:
