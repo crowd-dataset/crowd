@@ -3016,6 +3016,11 @@ HIGHWAY_TITLE = re.compile(r'(?i:road ?trip|\bhighways?\b|\bfreeways?\b|\bhwy\b|
 # and "Waking Tour", "Waling Tour" are typos of a walk (1pNtxLv45JI, AW7T4eSiVRk)
 NOT_DRIVING_TITLE = re.compile(r'\b(?:walk(?:s|ing|around|about)?|wa(?:king|ling) tour|walk-?through|inside'
                                r'|stroll(?:ing)?|hik(?:e|ing)|on foot'
+                               # "Nightwalk", "#streetwalk" (rYay9j3Qz6g) and rides ("Water Coaster at AquaShow
+                               # Waterpark", 10Ksl7aVmJo; user, 2026-10-19): no approved title has any of them
+                               r'|(?:night|city|evening|morning|sunset|sunrise|rain|street|town|day|virtual)walks?'
+                               r'|(?:roller|water)[- ]?coasters?|coasters?|water[- ]?slides?|water[- ]?parks?'
+                               r'|aqua[- ]?parks?|theme park rides?'
                                r'|(?:boat|ferry) ride'
                                # "Walkaround" (n_fmYiLgcaI; user, 2026-10-17: none of 96 walk-around titles approved)
                                # boats (mcaow4mKo54: "Cruising on a Yatch in Dubai"; user, 2026-10-16); not ferries
