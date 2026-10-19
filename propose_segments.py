@@ -2432,7 +2432,12 @@ def opening_texts(video_id, start=1, upto=61, step=None):
         shutil.rmtree(work_dir, ignore_errors=True)
 
 
-SIGN_STEP_S = 3  # road signs read every this many seconds of a drive between towns
+# road signs read every this many seconds of a drive between towns (every SIGN_STEP_LONG_S over 2 hours): a town's
+# sign is readable for half a second at town speed ("Trer" at 12:59.5 in iTzKa42lapA, nothing at 12:59.0 or 13:00.0;
+# user, 2026-10-19: city border signs are easy to read in rich countries)
+SIGN_STEP_S, SIGN_STEP_LONG_S = 0.5, 1.0
+SIGN_OVERLAY_S = 3  # a town's name read this long in a row is text over the video
+SIGN_FUZZY = 0.85  # a word read this alike a town's one-word name (and starting the same) is it: "Trer" is Trier
 
 
 @lru_cache(maxsize=None)
@@ -2443,13 +2448,14 @@ def ocr_gpu():
         timeout=300).stdout.strip() == 'True'
 
 
-def read_signs(video_id, step=SIGN_STEP_S):
+def read_signs(video_id, step=None, duration=None):
     """{second: [texts]} EasyOCR reads on the 720p video every `step` seconds, for the road signs of a drive
     between towns ("Yale University" at 95:06 and "Welcome to the City of New Haven" at 97:15 in OkEXG95VyKk, where
     the reviewer's New Haven starts; user, 2026-10-18: "reading traffic signs ... could have helped"). None without
     the OCR environment on a GPU, or when the video is not read."""
     if not ocr_gpu():
         return None
+    step = step or (SIGN_STEP_S if (duration or 0) <= 7200 else SIGN_STEP_LONG_S)
     work_dir = tempfile.mkdtemp(prefix='crowd_signs_')
     try:
         _yt_dlp('-q', '-f', 'bv*[height<=720][ext=mp4]/bv*[height<=720]', '-o', os.path.join(work_dir, 'v.%(ext)s'),
@@ -2979,7 +2985,7 @@ def analyse_video(video_id, out_dir, meta=None, signs=False):
             end if end is not None and montage_label(video_id, end) else 0), float)
         if signs and (m := map_frame(video_id, texts)):  # a map of the drive in the opening
             sig['map_labels'], sig['map_line'] = np.array(json.dumps(m[0])), np.array(m[1], float)
-        if signs and (read := read_signs(video_id)):
+        if signs and (read := read_signs(video_id, duration=meta.get('duration'))):
             sig['signs'] = np.array(json.dumps({str(t): x for t, x in read.items()}))
         gps, clock, stamp = gps_track(video_id, meta['duration'])
         if gps:
@@ -3643,6 +3649,10 @@ CHAPTER_PREFIX = re.compile(r'^(?:start(?:ing)? (?:in|at|from)|entering|arriv(?:
                             r'leaving|into|in|to|from|downtown)\s+', re.I)
 
 
+CHAPTER_ASIDE = re.compile(r'\b(?:proximity|close|near(?:by)?|distance|day[- ]trips?|far|away|minutes?|hours?|km)'
+                           r'\b|\bmiles\b', re.I)
+
+
 def chapter_localities(chapters, df, near_home=None, near=None, km=150, first=None):
     """[(start, end, locality)] stretches of a video by the localities its chapters name, or [] when none does.
     A chapter naming none (a road, a sight) is still in the locality before it; leading ones in the first named.
@@ -3658,6 +3668,10 @@ def chapter_localities(chapters, df, near_home=None, near=None, km=150, first=No
         if loc and near and (at := _locality_anchor(loc, df)) and _km(near[0], near[1], at[3], at[4]) > km:
             loc = None
         if loc and part_of_name(name, loc, df):
+            loc = None
+        # a town the chapter only measures from: "Proximity to Barcelona" in a Lloret de Mar video (L_YHO-voiLY; user,
+        # 2026-10-19), "near X", "a day trip to X", "X is 20 minutes away"
+        if loc and CHAPTER_ASIDE.search(name):
             loc = None
         place = CHAPTER_PREFIX.sub('', name.strip(' .!-'))
         # the place written another way: "Driving to Mountaintop" is Mountain Top, PA (user, 2026-10-14: MNpSJ-gIduQ)
@@ -4541,8 +4555,9 @@ ROAD_NUMBER = re.compile(r"\b(?:highway|hwy|route|rte|interstate|state route|I|U
 
 
 def named_road(title):
-    """The number of the one road a title names (ROAD_NUMBER), else None."""
-    found = {m.group(1) for m in ROAD_NUMBER.finditer(title or '')}
+    """The number of the one road a title names (ROAD_NUMBER, or "via M62" as drive_title writes it), else None."""
+    found = {m.group(1) for m in ROAD_NUMBER.finditer(title or '')} | \
+        {m.group(1) for m in re.finditer(r'\bvia [A-Z]{1,2}-?(\d{1,4})\b', title or '')}
     return found.pop() if len(found) == 1 else None
 
 
@@ -4620,6 +4635,9 @@ def drive_ends(title, df, home=None):
     # "el Puerto de San Juan", "Centro de Adjuntas": a sight or part of a town is looked for as that town
     first, last = (re.sub(r"^(?:el |la )?\S.*?\s+(?:de|del)\s+(?=[A-ZÀ-Þ])", '', x) for x in (first, last))
     # a note in brackets is no part of the name ("Kansas City (Legends Outlets)": wAseuJ91-S4), nor "!" ("To Toronto!")
+    # kept to look for when the name is not found ("Shintabisokobashi (Yaotsu)", a bridge in Yaotsu: UtxD2cN4iTo)
+    notes = [(n.group(1) if (n := re.search(r'\(([^)]*)\)', x) or re.match(r'\s*\(([^)]*)\)', title[m.end(k):]))
+              else None) for k, x in ((1, first), (2, last))]
     first, last = (re.sub(r'\s*\([^)]*\)', '', x).strip().rstrip('!?. ') for x in (first, last))
     # nor the picture's quality: "Hollywood to Ventura 4K" ends in Ventura (lKtZ5xqatFo)
     first, last = (re.sub(r'(?:\s+(?:[2-8]K|HDR|UHD|\d+\s?fps|\d{3,4}p))+$', '', x, flags=re.I) for x in (first, last))
@@ -4687,10 +4705,18 @@ def drive_ends(title, df, home=None):
     pairs = [(x, y) for x in (a, b and place(first, b[4:6], 60))
              for y in (b, a and place(last, a[4:6], 60)) if x and y]
 
-    def in_state(hit, o):  # in the end's own state, else in one the title names
-        return hit[1] == o if o else not named or hit[1] in named
+    def in_state(hit, o):  # in the end's own state, else in one the title names; a hit whose address has no state
+        # was looked for in it already (Japan's prefectures: "Minokamo to Yaotsu,Gifu,Japan", qBRUPhoFeTQ; user,
+        # 2026-10-19)
+        return hit[1] == o if o else not named or hit[1] in named or hit[1] is None
     if named or any(own):
         pairs = [(x, y) for x, y in pairs if in_state(x, own[0]) and in_state(y, own[1])]
+    if not b and a and notes[1]:  # the end not found: the place its note in brackets names, near the start
+        b = place(notes[1], a[4:6], 60)
+        pairs = pairs or ([(a, b)] if b else [])
+    if not a and b and notes[0]:
+        a = place(notes[0], b[4:6], 60)
+        pairs = pairs or ([(a, b)] if a else [])
     if pairs:
         a, b = min(pairs, key=lambda xy: _km(xy[0][4], xy[0][5], xy[1][4], xy[1][5]))
     elif named or any(own):  # one end only: it must be in the state named
@@ -4814,12 +4840,20 @@ def _region_and_country_keys():
             | {_name_key(sub.name) for sub in pycountry.subdivisions})
 
 
+_DASH_WORD = r"[A-ZÀ-ÞŁŚŻŹĆŃČŘŠŽĚŮ][a-zà-ÿąćęłńóśźżčďěňřšťůž'’-]+"
+DASH_DRIVE = re.compile(rf"\s*({_DASH_WORD}(?: {_DASH_WORD}){{0,2}})\s+[-–—]\s+({_DASH_WORD}(?: {_DASH_WORD}){{0,2}})"
+                        r"\s+(?i:(?:virtual\s+|real[- ]time\s+)?(?:drive|driving|road ?trip|cruise))\b")
+DASH_NOT_PLACE = NOT_PLACE | STREET_WORDS | {'day', 'time', 'lapse', 'sunny', 'world', 'county', 'highway', 'freeway',
+                                             'motorway', 'raw', 'uncut', 'pov', 'boulevard', 'city', 'town', 'into',
+                                             'to', 'from', 'via'}
+ROAD_PAIR = re.compile(rf"({_DASH_WORD}(?: {_DASH_WORD}){{0,2}})\s*[-–—]\s*([A-Z]{{1,2}}-?\d{{1,4}})\s*[-–—]\s*"
+                       rf"({_DASH_WORD}(?: {_DASH_WORD}){{0,2}})\b")
 DRIVE_LINES = 10  # a description's first lines that may name the drive
 # ... in a line of its own that is only that: "Location: Minokamo to Yaotsu,Gifu,Japan" (a sentence like "Take a ride
 # down International Drive to ..." or "Make a one time donation" is none)
 _DESC_PLACE = r"[A-ZÀ-ÞŁŚŻŹĆŃ][\w'’.-]*(?: [A-ZÀ-ÞŁŚŻŹĆŃ][\w'’.-]*){0,3}"
 DESC_DRIVE = re.compile(rf"(?i:(?:location|route|drive|driving|road ?trip)\s*:?\s*)?(?i:from\s+)?({_DESC_PLACE})"
-                        rf"(?:\s*\([^)]*\))?\s+(?i:to)\s+({_DESC_PLACE})(?:\s*\([^)]*\))?\s*(,.*)?$")
+                        rf"(\s*\([^)]*\))?\s+(?i:to)\s+({_DESC_PLACE})(\s*\([^)]*\))?\s*(,.*)?$")
 
 
 def drive_title(title, description):
@@ -4831,10 +4865,17 @@ def drive_title(title, description):
         return title
     if stops := place_list(title):  # the first stop to the last (drive_via: the ones between)
         return f'from {stops[0]} to {stops[-1]}'
+    # "Grevenmacher  - Trier VIRTUAL DRIVE 4K" (iTzKa42lapA; user, 2026-10-19): two places, no common word in either
+    # ("Sunny Day - Time Lapse Driving" is none), then a drive word
+    if (m := DASH_DRIVE.match(title)) and not {w.lower() for w in f'{m[1]} {m[2]}'.split()} & DASH_NOT_PLACE:
+        return f'from {m[1]} to {m[2]}'
+    # "Manchester-M62-Leeds" (J7_Pm8ec-28; user, 2026-10-19): two places with the road between them
+    if (m := ROAD_PAIR.search(title)) and not {w.lower() for w in f'{m[1]} {m[3]}'.split()} & DASH_NOT_PLACE:
+        return f'from {m[1]} to {m[3]} via {m[2]}'
     for line in (description or '').splitlines()[:DRIVE_LINES]:
         if (len(line) <= 150 and (m := DESC_DRIVE.match(line.strip()))  # no "Welcome to", "Talk to Me"
-                and not ordinary(m.group(1).split()[0]) and not ordinary(m.group(2).split()[0])):
-            return f'from {m.group(1)} to {m.group(2)}{m.group(3) or ""}'
+                and not ordinary(m.group(1).split()[0]) and not ordinary(m.group(3).split()[0])):
+            return f'from {m.group(1)}{m.group(2) or ""} to {m.group(3)}{m.group(4) or ""}{m.group(5) or ""}'
     return title
 
 
@@ -5042,8 +5083,11 @@ def split_route(p, df, home=None, sig_path=None):
     stretches = ends_in_towns(stretches, segs, p.get('drive_title') or p.get('title'), df, home)
     # a road sign welcoming the drive to a town on the way is where that town starts (OkEXG95VyKk: "Welcome to
     # the City of New Haven" at 97:15; user, 2026-10-18); every town a sign names is noted for the reviewer
-    for t, loc, _ in [x for x in signs if x[2]]:
-        stretches = pin_town(stretches, t, loc)
+    welcomed = set()
+    for t, loc, _ in [x for x in signs if x[2]]:  # a town's first such sign: later ones are inside it already
+        if tuple(loc) not in welcomed:
+            welcomed.add(tuple(loc))
+            stretches = pin_town(stretches, t, loc)
     p['entries'] = split_by_stretches(segs, stretches)
     # a town on the way is offered only where the picture can show it is town driving: without object counts or
     # town scenes no highway is cut, and its share of the route is highway as often as not (user, 2026-10-14:
@@ -5099,16 +5143,35 @@ def sign_towns(sig_path, towns, df, path):
         if len(_name_key(loc[0])) >= 4:
             names.setdefault(_name_key(loc[0]), list(loc))
     out = []
-    for t, texts in sorted(read.items(), key=lambda kv: int(kv[0])):
+    for t, texts in sorted(read.items(), key=lambda kv: float(kv[0])):
         text = _name_key(' '.join(texts))
         welcome = WELCOME_SIGN.search(' '.join(texts))
         hits = [k for k in names if re.search(rf'\b{re.escape(k)}\b', text)]
+        words = [w for w in text.split() if len(w) >= 3]
+        hits += [k for k in names if k not in hits and ' ' not in k and any(  # read a letter wrong: "Trer"
+            w[:1] == k[:1] and difflib.SequenceMatcher(None, w, k).ratio() >= SIGN_FUZZY for w in words)]
         hits = [k for k in hits if not any(k != o and k in o for o in hits)]
         if len(hits) >= 4:  # a map or a list of places (OkEXG95VyKk's opening), no sign on the road
             continue
+        # a town's own border sign: its name the only text in the picture (Ortstafel, plaats naambord: no "Welcome")
+        border = len(hits) == 1 and len([x for x in texts if len(x.strip()) > 2]) == 1
         for k in hits:
-            out.append((int(t), names[k], bool(welcome and k in _name_key(welcome.group(1)))))
-    return out
+            out.append((float(t), names[k], bool(border or welcome and k in _name_key(welcome.group(1)))))
+    # a name read on and on is text over the video, not a sign passed by (iTzKa42lapA's title card "GREVENMACHER |
+    # TRIER" over 0:00-0:04, a watermark): runs of SIGN_OVERLAY_S or longer go
+    keep, by = [], {}
+    for x in out:
+        by.setdefault(tuple(x[1]), []).append(x)
+    for xs in by.values():
+        run = [xs[0]]
+        for x in xs[1:] + [None]:
+            if x and x[0] - run[-1][0] <= 1.5:
+                run.append(x)
+                continue
+            if run[-1][0] - run[0][0] < SIGN_OVERLAY_S:
+                keep += run
+            run = [x]
+    return sorted((int(t), loc, w) for t, loc, w in keep)
 
 
 def sign_clock(signs, path, df, t0, t1):
@@ -5774,8 +5837,8 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
                 print(f'[{n}/{len(ids)}] analysing {vid} {meta["title"][:60]}')
                 if (meta.get('duration') or 0) > 2 * 3600:  # run_channels.py waits longer for its silence
                     print(f'  long video: {int(meta["duration"]) // 60} min')
-                analyse_video(vid, out_dir, meta, signs=any(r.search(english_states(meta['title'] or ''))
-                                                            for r in FROM_TO))
+                drive = drive_title(meta['title'], meta.get('description'))
+                analyse_video(vid, out_dir, meta, signs=any(r.search(english_states(drive)) for r in FROM_TO))
                 time.sleep(pause_s)  # spacing requests keeps YouTube's bot check away for longer
             failures_in_a_row = 0
         except BotCheck as e:
