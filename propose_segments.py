@@ -945,6 +945,9 @@ def rear_camera_from(sig, p=PARAMS):
 REAR_SPREAD, FRONT_SPREAD = -0.2, 0.5
 
 
+SHOT_MIN_S, SIDE_SHOT = 20, 'a side view for a whole shot'  # see propose
+
+
 def propose(sig, p=PARAMS):
     """Return proposed segments [{start, end, night}] in seconds, plus the reasons for each cut."""
     n = len(sig['motion'])
@@ -1122,6 +1125,16 @@ def propose(sig, p=PARAMS):
                 ten[a:b] = True
         side_runs = _label_runs(ten)
         problems.append(('camera not facing forward', (share > p['angle_share']) & (moving_share > 0.3)))
+        # ... and a shot between hard cuts judged whole (Y4DXEgzZcuQ: 0:01-1:12 to the side in 65% of its moving
+        # frames, the minute measure 0.55-0.68, never a minute over angle_share; user, 2026-10-20): on reviewed
+        # videos shots of SHOT_MIN_S+ so judged held 56 min the reviewers cut and 2 min they approved
+        edges = [0, *np.flatnonzero(cut), n]
+        shots = np.zeros(n, bool)
+        for a, b in zip(edges, edges[1:]):
+            m = moving[a:b]
+            if (b - a) / FPS >= SHOT_MIN_S and m.mean() >= 0.3 and sideways[a:b][m].mean() >= p['angle_share']:
+                shots[a:b] = True
+        problems.append((SIDE_SHOT, shots))
         # a video that switches between a forward and a side camera (5k8awa6rpmA, "Multi Angle"): its side views
         # are 20-60 s, too short for the minute above, so they are judged over 20 s once a video has many of them
         # (15+ an hour, 4+ in all: 2 of 2,335 approved videos, 10 of 434 others)
@@ -1158,7 +1171,8 @@ def propose(sig, p=PARAMS):
                     for label, bad in problems]
     for label, bad in problems:
         min_s = p['quiet_min_s'] if label in ('highway driving', 'rural driving') else \
-            25 if label.startswith('camera turned to the side') else p['problem_min_s']
+            25 if label.startswith('camera turned to the side') else SHOT_MIN_S if label == SIDE_SHOT else \
+            p['problem_min_s']
         for a, b in _runs(bad):
             if (b - a) / FPS < min_s:
                 continue
@@ -1898,6 +1912,32 @@ def garage_edges(path, sig, work_dir):
     return _clip_stretches(path, edges, work_dir, GARAGE_SCENES, 5)
 
 
+# ... and a lit garage at an end of the video, which dark_edges does not see (Vvb1btuAFPQ drives out of a car park
+# until 4:40; user, 2026-10-20): GARAGE_SCENES every GARAGE_EVERY_S of the first and last GARAGE_EDGE_S, the
+# middle of three readings at GARAGE_SURE or more for GARAGE_RUN readings from the very start or to the very end.
+# On the 256x144 copy that video read so for 0:00-4:10; of the edges of 200 approved videos one did (47 s approved)
+GARAGE_EVERY_S, GARAGE_EDGE_S, GARAGE_RUN, GARAGE_SURE = 10, 300, 6, 0.85
+
+
+def lit_garages(path, duration, work_dir):
+    """[(start s, end s)] of a parking garage CLIP sees at the start or the end of a video, lit or dark."""
+    out = []
+    for lo, hi in sorted({(0, min(GARAGE_EDGE_S, (duration or 0) / 2)),
+                          (max((duration or 0) / 2, (duration or 0) - GARAGE_EDGE_S), duration or 0)}):
+        times = [float(t) for t in np.arange(lo + GARAGE_EVERY_S / 2, hi, GARAGE_EVERY_S)]
+        scores = _clip_scores(path, times, work_dir, GARAGE_SCENES) if len(times) >= GARAGE_RUN else {}
+        ts = sorted(scores)
+        mid = [float(np.median([scores[x] for x in ts[max(0, i - 1):i + 2]])) for i in range(len(ts))]
+        sure = [m >= GARAGE_SURE for m in mid]
+        if lo == 0 and len(sure) >= GARAGE_RUN and all(sure[:GARAGE_RUN]):
+            n = next((i for i, x in enumerate(sure) if not x), len(sure))
+            out.append((0.0, ts[n - 1] + GARAGE_EVERY_S / 2))
+        elif lo > 0 and len(sure) >= GARAGE_RUN and all(sure[-GARAGE_RUN:]):
+            n = next((i for i in range(len(sure) - 1, -1, -1) if not sure[i]), -1)
+            out.append((ts[n + 1] - GARAGE_EVERY_S / 2, float(duration)))
+    return out
+
+
 INTRO_SCENES = (['a map', 'a map with a route drawn on it', 'a title card with text', 'a logo on a plain background',
                  'a dashcam view of a road', 'a view of a street from inside a car'], 4)
 
@@ -2463,9 +2503,10 @@ def _ocr_run(paths, boxes=False):
         return out
 
 
-def opening_texts(video_id, start=1, upto=61, step=None):
+def opening_texts(video_id, start=1, upto=61, step=None, keep_dir=None):
     """{second: [texts]} EasyOCR reads in the frames of the video's 720p stream every `step` (CAPTION_STEP_S)
-    seconds from `start` to `upto`; None without the OCR environment or the stream."""
+    seconds from `start` to `upto`; None without the OCR environment or the stream. keep_dir: the frames with text
+    kept there as SECOND.png (for screen_locality's sign check)."""
     if not OCR_PYTHON:
         return None
     step = step or CAPTION_STEP_S
@@ -2486,6 +2527,11 @@ def opening_texts(video_id, start=1, upto=61, step=None):
         if lines is None:
             print('  EasyOCR failed', flush=True)
             return None
+        if keep_dir:
+            os.makedirs(keep_dir, exist_ok=True)
+            for (t, shot), texts in zip(shots, lines):
+                if texts:
+                    shutil.move(shot, os.path.join(keep_dir, f'{t:.0f}.png'))
         return {t: texts for (t, _), texts in zip(shots, lines)}
     except (RuntimeError, subprocess.TimeoutExpired, KeyError, ValueError) as e:
         print(f'  opening not read: {e}', flush=True)
@@ -2698,17 +2744,49 @@ def map_route(sig, df):
     return [(float(a), float(b)) for a, b in zip(lat, lon)]
 
 
-def screen_locality(texts, df):
+# a label read in the opening names the place when it is on a road sign or a caption over the video, not on a shop,
+# a building or a truck (user, 2026-10-20: "only consider traffic signs": l5I4XT7LgKU and nMAlTuNhrhQ's "MISSION
+# LEAD" was Lead, SD; XwuXL8uRw_I's Wells Fargo bank Fargo): CLIP on 320x180 around the name. The labels reviewers
+# kept (captions "Winnipeg@Channel presents", "Biograd na Moru", Knoxville's interstate sign) scored 0.51-1.0, "MISSION
+# LEAD" 0.08. A direction sign still names where a road goes (-R0HpEnqAOQ: Helsingborg on the E4 at Södertälje)
+LABEL_SCENES = (['a road sign', 'a highway direction sign', 'a town name sign by the road', 'a caption over a video',
+                 'a title text over a video', 'a shop sign', 'a store front', 'a sign on a building',
+                 'lettering on a truck', 'a billboard advertisement', 'a bank logo'], 5, 'a photo of ')
+LABEL_SIGN = 0.4
+
+
+def label_on_sign(frame, name):
+    """Whether the name is read on a road sign or a caption in the frame (LABEL_SCENES), by CLIP around it; True
+    when CLIP or OCR cannot tell."""
+    img = cv2.imread(frame)
+    boxes = (_ocr_run([frame], boxes=True) or [[]])[0]
+    key = _name_key(name)
+    at = [b for b in boxes if key and key[:5] in _name_key(str(b[2]))]
+    if img is None or not at:
+        return True
+    h, w = img.shape[:2]
+    x0 = int(min(max(at[0][0] - 160, 0), max(w - 320, 0)))
+    y0 = int(min(max(at[0][1] - 90, 0), max(h - 180, 0)))
+    crop = frame + '.crop.jpg'
+    cv2.imwrite(crop, img[y0:y0 + 180, x0:x0 + 320])
+    score = _clip_run({'scenes': LABEL_SCENES[0], 'k': LABEL_SCENES[1], 'prefix': LABEL_SCENES[2]}, [crop])
+    os.remove(crop)
+    return score is None or score[0] >= LABEL_SIGN
+
+
+def screen_locality(texts, df, frames_dir=None):
     """([locality, state, country], second) of the mapping locality a label in the opening names most often
-    (QcYf2VZqS-Y: "Sacramento" at 0:26; _DpauJdKxV0: "LOS ANGELES 4K"), else None."""
+    (QcYf2VZqS-Y: "Sacramento" at 0:26; _DpauJdKxV0: "LOS ANGELES 4K"), else None. With the frames (frames_dir:
+    SECOND.png, opening_texts' keep_dir) only labels on a road sign or a caption count (label_on_sign)."""
     seen = {}
     for t in sorted(texts or {}):
         if (loc := _title_locality(' '.join(texts[t]), df)):
             seen.setdefault(tuple(loc), []).append(t)
-    if not seen:
-        return None
-    loc, times = max(seen.items(), key=lambda kv: len(kv[1]))
-    return list(loc), times[0]
+    for loc, times in sorted(seen.items(), key=lambda kv: -len(kv[1])):
+        frames = [p for t in times if frames_dir and os.path.exists(p := os.path.join(frames_dir, f'{t:.0f}.png'))]
+        if not frames or any(label_on_sign(p, loc[0]) for p in frames[:3]):
+            return list(loc), times[0]
+    return None
 
 
 def caption_end(video_id, sig, texts=None):
@@ -3077,7 +3155,8 @@ def analyse_video(video_id, out_dir, meta=None, signs=False):
                 sig['object_y'] = np.where(urban[:, 2] >= 0, urban[:, 2] / 1000, np.nan)
             if urban.shape[1] > 4:  # a big person close by, a vehicle ahead (see walk_view)
                 sig['walk_view'] = urban[:, 3:5]
-        sig['garage'] = np.array([(a, b) for a, b, _ in garage_edges(path, sig, work_dir)], float).reshape(-1, 2)
+        sig['garage'] = np.array([(a, b) for a, b, _ in garage_edges(path, sig, work_dir)]
+                                 + lit_garages(path, meta.get('duration'), work_dir), float).reshape(-1, 2)
         sig['parked'] = np.array(parked_edges(path, sig, work_dir), float).reshape(-1, 2)
         sig['lots'] = np.array(parking_lots(path, sig, work_dir), float).reshape(-1, 2)
         sig['kerb'] = np.array(kerb_stops(path, sig, work_dir), float).reshape(-1, 2)
@@ -3098,7 +3177,8 @@ def analyse_video(video_id, out_dir, meta=None, signs=False):
         sig['bob_track'] = np.array(track, float).reshape(-1, 2)
         sig['step_bob'] = np.array(np.median([x for _, x in track]) if len(track) >= 3 else 0, float)
         end = montage_end(sig)
-        texts = opening_texts(video_id)  # read once: highlight captions and town labels
+        # read once: highlight captions and town labels (their frames kept for screen_locality)
+        texts = opening_texts(video_id, keep_dir=os.path.join(out_dir, f'{video_id}_open.tmp'))
         sig['screen_text'] = np.array(json.dumps({f'{t:.0f}': x for t, x in (texts or {}).items()}))
         sig['labelled_montage'] = np.array(caption_end(video_id, sig, texts) or (
             end if end is not None and montage_label(video_id, end) else 0), float)
@@ -3548,7 +3628,8 @@ def _iso2(country):
 
 # a title saying how the camera travels beats the channel's usual vehicle (OoOwyF8-T24: "Bike Route" from a channel
 # that mostly drives); "motorbike" is no bike
-VEHICLE_TITLE = [(4, re.compile(r'\b(?:bike (?:route|ride|tour|path|lane)s?|cycling|cycle (?:ride|tour)|bicycle'
+# ("biking around": 1xYd7Sb7kmY; user, 2026-10-20)
+VEHICLE_TITLE = [(4, re.compile(r'\b(?:bike (?:route|ride|tour|path|lane)s?|cycling|biking|cycle (?:ride|tour)|bicycle'
                                 r'|by bike|on (?:a|my) bike|e-?bike)\b', re.I)),
                  (3, re.compile(r'\b(?:motorcycle|motorbike|motor bike|moped)s?\b', re.I)),
                  # "bus 22 ride", "bus Z13 ride", "by bus", "bus route" (YdIDmVIjOk4, 9Nr4xAUyJKI were cars from
@@ -3726,6 +3807,10 @@ def _mapping_names():
     df = add_video.load_csv(add_video.FILE_PATH)
     big = pd.to_numeric(df['population_locality'], errors='coerce').fillna(0) >= 20000
     return {str(x).lower() for x in df.loc[big, 'locality'].dropna() if len(str(x)) >= 4 and ' ' not in str(x)}
+
+
+GENERIC_RUN = {'big', 'small', 'busy', 'city', 'town', 'street', 'streets', 'road', 'roads', 'traffic', 'noise',
+               'sleep', 'sleeping', 'minute', 'hour', 'for', 'the', 'local', 'open', 'back', 'rush'}
 
 
 def ordinary(word):
@@ -3973,8 +4058,20 @@ def _ends_a_name(title, at):
 AMBIENCE_WORDS = 'ambiences?|ambiances?|sounds?|noise|asmr|tours?|driving|trips?|walks?'
 
 
+STATE_NAMES = {code: name for name, code in add_video.US_STATE_CODES.items()}
+# a place a distance away is no place of the video: "Bronkhorstspruit The Town 50km East of Pretoria" is in
+# Bronkhorstspruit (bNxmGqJgMWk; user, 2026-10-20), "The Township 10km from Town" in no Town
+DISTANCE_FROM = re.compile(r"(?i:\b\d+(?:[.,]\d+)?\s*(?:km|kms|kilomet(?:er|re)s?|mi|miles?)\s+(?:(?:north|south|east|"
+                           r"west)(?:[- ]?(?:east|west))?\s+)?(?:of|from)\s+)[A-Z][\w'’-]*(?:\s+[A-Z][\w'’-]*)*")
+
+
 def _title_locality(title, df, exact_case=False, word_needs_state=False):
-    title = english_states(title)
+    title = DISTANCE_FROM.sub(' ', english_states(title) or '')
+    # a small town named by an ordinary word (White, GA; Lead, SD; Happy, TX: ordinary) counts only with its state
+    # or its country named too: "White Background Street Noise" (D-96O5mS1m4), "Where Does This Nashville Street
+    # Lead?" (user, 2026-10-20). Of 40 reviewed title guesses of such towns the reviewer changed or rejected 36;
+    # the 4 kept named the country or the state (Bled, Slovenia; Angered, Sweden; Aspen, Colorado)
+    named, low = set(title_countries(title or '')), (title or '').lower()
     found = set()
     for _, row in df.iterrows():
         names = [row['locality']]
@@ -3983,6 +4080,13 @@ def _title_locality(title, df, exact_case=False, word_needs_state=False):
             names += [a.strip() for a in aka[1:-1].split(',') if a.strip()]
         for name in names:
             if not isinstance(name, str) or not name:
+                continue
+            state = row['state'] if isinstance(row['state'], str) else ''
+            # (a short alias, "LA", counts in capitals only: below)
+            if not word_needs_state and len(name) > 3 and ordinary(name) and row['country'] not in named and not (
+                    state and (
+                        re.search(rf'\b{re.escape(state)}\b', title or '')
+                        or re.search(rf"\b{re.escape(STATE_NAMES.get(state, state).lower())}\b", low))):
                 continue
             # short aliases such as "LA" only count in capitals, so "la" in a Spanish title does not match
             flags = 0 if exact_case or len(name) <= 3 else re.I
@@ -4104,7 +4208,7 @@ def place_phrases(text, limit=4):
     # ponytail: english() translates the first 1000 characters only; enough for titles and a description's top lines
     written, translated = text, english(text)
     text = translated or text
-    text = english_states(text)
+    text = DISTANCE_FROM.sub(' ', english_states(text) or '')
     text = re.sub(r'#\w+|https?://\S+|www\.\S+', ' ', text or '')
     text = re.sub(r'\b(New York|Washington) State\b', r'\1', text)  # no "York State" (Albany, New York State)
 
@@ -4135,7 +4239,13 @@ def place_phrases(text, limit=4):
         # a word that is also a common one names a place next to "downtown" ("Buffalo Downtown", PhIhzm_NmlQ)
         near_downtown = bool({word, start_after} & {'downtown', 'uptown', 'midtown'})
         # (a town of a word, Reading, is no ordinary word: ordinary)
-        if len(run) > 1 or run and len(run[0]) > 3 and (not ordinary(run[0]) or near_downtown):
+        # nor a run of generic words only ("Big City" was Big Sandy, TN, where OpenStreetMap knows a "Big City":
+        # hRsq3ZIlutc, F3v0VUnd_LI; "For Sleep", "Minute White Noise", "Busy Streets"; user, 2026-10-20), nor an
+        # ordinary word ("Let's" was San Diego); names of ordinary words stay (Forest Hills, Park Slope, White City)
+        words = [w.lower() for t in run for w in re.split(r"['’]", t) if w]  # "Let's"; "I-80" stays one
+        plain = not near_downtown and bool(words) and (
+            all(ordinary(w) for w in words) if len(run) == 1 else all(w in GENERIC_RUN for w in words))
+        if run and not plain and (len(run) > 1 or len(run[0]) > 3):
             phrases.append(' '.join(run))
         run = []
     # a name written with its state ("Cutler,Ca", "Dorado,Puerto Rico") is a place even when it is also a word,
@@ -4336,11 +4446,19 @@ def _osm_place(phrase, country_codes, near=None, reach_km=None):
     a = r.raw.get('address', {})
     kind = next((k for k in ('city', 'town', 'village', 'municipality', 'hamlet') if a.get(k)), None)
     town = a.get(kind) if kind else None
-    if (not town and r.raw.get('class') == 'boundary'
+    # ... but a boundary named as its state is the state (udVi6qOYvNI: "South Africa, Mpumalanga" is the
+    # province; user, 2026-10-20: offer no regions or provinces)
+    if (not town and r.raw.get('class') == 'boundary' and _osm_name(r.raw) != a.get('state')
             and _osm_type(r.raw) not in ('county', 'state', 'country', 'region')):
         town = _osm_name(r.raw)  # a municipality's own boundary has no town in its address (Little Silver, NJ)
-    if town and re.search(r'\bCounty$', town):  # a county is no locality: "Suffolk" in "Coram in Suffolk"
+    # a county or a municipality is no locality ("Suffolk" in "Coram in Suffolk"), and a place OpenStreetMap files
+    # under no town, or under its municipality only, is the town itself (v7XHCQBdl4w: the suburb Motetema, its
+    # "city" the Elias Motsoaledi Local Municipality; udVi6qOYvNI: Kwaggafontein; user, 2026-10-20)
+    if town and re.search(r'\b(?:County|Municipality)$', town):
         town = None
+    if not town and r.raw.get('class') == 'place' and _name_key(_osm_name(r.raw)) in (
+            wanted, _name_key(phrase.split(',')[0])):  # "Kwaggafontein, Mpumalanga" is Kwaggafontein
+        town = _osm_name(r.raw)
     if not town and _country_code(a) in US_TERRITORIES:  # Puerto Rico's municipios (Guayama) are its counties
         town = re.sub(r' Municipio$', '', a.get('county') or '') or None
     if town:  # OpenStreetMap calls some towns "City of Mount Vernon", "Town of Hempstead"
@@ -5757,7 +5875,7 @@ def locate_now(p, df, home, sig_path=None, meta=None, boilerplate=frozenset()):
         named_states, named_countries = title_states(meta.get('title') or ''), title_countries(meta.get('title') or '')
         where = df if not (named_states or named_countries) else df[
             df['state'].isin(named_states) | df['country'].isin(named_countries)]
-        if (screen := screen_locality(texts, where)):
+        if (screen := screen_locality(texts, where, sig_path[:-len('_signals.npz')] + '_open.tmp')):
             es[0]['locality'], es[0]['guessed'] = screen[0], True
             p['note'] = (f"{p['note']}; locality {screen[0][0]} from a label on the screen at "
                          f"{int(screen[1]) // 60}:{int(screen[1]) % 60:02d}").lstrip('; ')
@@ -6165,6 +6283,12 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
             ghosts_h = len(np.asarray(sig.get('ghost', [])).ravel()) / hours
             if not reason and n_cuts >= EDITED_CUTS and ghosts_h >= EDITED_GHOSTS_H:
                 reason = f'an edited drive: {n_cuts} edit cuts and {ghosts_h:.0f} ghosts an hour'
+            # ... and a video of many hard cuts is a vlog cut together, not a drive (HCIYmkF5kE4: 46 in 16 min, a
+            # typhoon vlog of walks and drives; user, 2026-10-20: "walking"): of 2,572 reviewed videos 2,569 had
+            # under 30 an hour; the one with HARD_CUTS_H+ (and HARD_CUTS+) was rejected
+            hard = sum(x.startswith('cut at ') for x in propose(sig)[1])
+            if not reason and hard >= HARD_CUTS and hard / hours >= HARD_CUTS_H:
+                reason = f'an edited video: {hard} hard cuts ({hard / hours:.0f} an hour)'
             if 'skips' in np.load(sig_path):  # only videos analysed for skips count towards the streak
                 skips_in_a_row = skips_in_a_row + 1 if skip_note and not reason else 0
             if skips_in_a_row >= SKIP_STREAK and only is None:  # videos proposed again do not judge the channel
@@ -6239,6 +6363,20 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
             # naming its home): the one named country that has a town of the title (user, 2026-10-17)
             found = {tuple(g) for c in named if (g := guess_locality(meta['title'], c, df))}
             guess = list(next(iter(found))) if len(found) == 1 else None
+        if not guess and not named and not any(r.search(meta['title']) for r in FROM_TO):
+            # nothing in the batch's country (talkthewalk's batch is in Sri Lanka: "Cycling around Vancouver
+            # Downtown", "... | Winnipeg"; user, 2026-10-20), and a drive between towns goes by its route ("Chicago
+            # to Evanston ... Lincoln Square" is no Lincoln, UK): the one other country the channel has filmed in
+            # with a town of the title (2 of 2 reviewed right), ...
+            found = {tuple(g) for c in sorted(filmed_countries(Counter([ch]), df) - {country}) if ch
+                     if (g := guess_locality(meta['title'], c, df))}
+            guess = list(next(iter(found))) if len(found) == 1 else None
+            # ... else a city of BIG_CITY_ANYWHERE+ people the title names, wherever it is (talkthewalk has only Sri
+            # Lanka in the mapping): of 16 reviewed videos with no locality it would have located, 12 right, 3
+            # rejected, 1 wrong ("Buffalo area, better than NYC")
+            if not guess:
+                pop = pd.to_numeric(df['population_locality'], errors='coerce').fillna(0)
+                guess = _title_locality(meta['title'], df[pop >= BIG_CITY_ANYWHERE])
         locality = title_city(meta['title'], guess, df)
         touched.append(vid)
         plan[vid] = ({
@@ -6268,6 +6406,7 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
         if analysed and (lead := channel_lead_in(meta.get('channel_id'), df)):
             trim_lead_in(plan[vid], lead)
         town_sign_hint(plan[vid], sig_path, out_dir, df)
+        shutil.rmtree(os.path.join(out_dir, f'{vid}_open.tmp'), ignore_errors=True)  # screen_locality's frames
         commit([vid])  # appears in an open review page straight away
 
     # a run cut off (hotspot, pause) saved its videos but never got to their localities: this run finishes them
@@ -6548,6 +6687,8 @@ with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'templates', 
 REVIEW_PAGE = 50  # videos with something left to decide shown at once in the review page
 MAX_MERGE_GAP_S = 2  # wider gaps are excluded footage (stops, freeway), not suggested splits
 CHANNEL_DONE = 'Every video of this channel is proposed or in the mapping.'
+BIG_CITY_ANYWHERE = 500000  # a city this big named in a title is that city, wherever the batch is
+HARD_CUTS, HARD_CUTS_H = 10, 60  # this many hard cuts, this many an hour: a vlog cut together, left out
 EDITED_CUTS, EDITED_GHOSTS_H = 8, 40  # this many edit cuts with this many ghosts an hour: an edited drive, left out
 CHANNEL_REJECTED = 'channel_rejected'  # a file in a channel's folder: the reviewer rejected the whole channel
 REJECT_ON_WORKERS = """
@@ -7224,6 +7365,8 @@ async function suggest(input) {
   const mine = input._request = (input._request || 0) + 1;  // only the newest response is shown
   box.classList.remove('open');
   if (q.length < 2) return;
+  await new Promise(r => setTimeout(r, 120));  // a pause in the typing: one request, not one a key
+  if (mine !== input._request) return;
   const list = await (await fetch('localities?q=' + encodeURIComponent(q))).json();
   if (mine !== input._request) return;
   box.innerHTML = '';
@@ -8035,30 +8178,41 @@ def review(plan_path, port=None):
     def label(locality, state, country):
         return ', '.join(x for x in (locality, state, country) if x)
 
+    names_cache = {}
+
+    def locality_names():
+        """([(lower-case names and aliases, locality, state, country)] of the mapping, {(lower-case name, country)}),
+        read again only when the mapping changes: reading it on every key took half a second (user, 2026-10-20:
+        the suggestions are slow to appear)."""
+        mtime = os.path.getmtime(add_video.FILE_PATH)
+        if names_cache.get('mtime') != mtime:
+            df = add_video.load_csv(add_video.FILE_PATH)
+            rows = []
+            for locality, aka, state, country in zip(df['locality'], df['locality_aka'], df['state'], df['country']):
+                names = [locality] + ([a.strip() for a in aka[1:-1].split(',')] if isinstance(aka, str) else [])
+                rows.append(([n.lower() for n in names if isinstance(n, str)], locality,
+                             state if isinstance(state, str) else None, country))
+            names_cache.update(mtime=mtime, rows=rows, known={(n, r[3]) for r in rows for n in r[0]})
+        return names_cache['rows'], names_cache['known']
+
     @app.route('/localities')
     def localities():
         """Mapping localities whose name or alternative name contains the query, as canonical rows."""
         q = request.args.get('q', '').strip().lower()
         if len(q) < 2:
             return jsonify([])
-        df = add_video.load_csv(add_video.FILE_PATH)
+        rows, known = locality_names()
         hits = []
-        for _, row in df.iterrows():
-            names = [row['locality']] + ([a.strip() for a in row['locality_aka'][1:-1].split(',')]
-                                         if isinstance(row['locality_aka'], str) else [])
-            lower = [n.lower() for n in names if isinstance(n, str)]
+        for lower, locality, state, country in rows:
             if any(q in n for n in lower):
                 # exact name or alias first ("la" -> Los Angeles), then names starting with it, then the rest
                 rank = 0 if q in lower else 1 if any(n.startswith(q) for n in lower) else 2
-                state = row['state'] if isinstance(row['state'], str) else None
-                hits.append((rank, row['locality'], state, row['country'], False))
+                hits.append((rank, locality, state, country, False))
         # localities typed in for other videos of this plan that Apply has not created yet
-        in_mapping = {(h[1].lower(), h[3]) for h in hits}
         pending = {tuple(e['locality']) for p in load() for e in p.get('entries', []) if e.get('locality')}
         for locality, state, country in pending:
             low = locality.lower()
-            if q in low and (low, country) not in in_mapping and add_video.get_existing_locality_row(
-                    df, locality, state, country)[0] is None:
+            if q in low and (low, country) not in known:
                 hits.append((0 if low == q else 1 if low.startswith(q) else 2, locality, state, country, True))
         hits.sort(key=lambda h: (h[0], h[1], h[2] or '', h[3]))  # some localities have no state
         return jsonify([{'label': label(*h[1:4]) + (' (new: created on Apply)' if h[4] else ''),
