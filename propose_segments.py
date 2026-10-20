@@ -2517,6 +2517,49 @@ def read_signs(video_id, step=None, duration=None):
         shutil.rmtree(work_dir, ignore_errors=True)
 
 
+# the first minutes of a drive in one town read for its own sign (REvZ1XO105E: off the motorway into Briedel, its
+# sign at 5:05, the reviewer's start 4:50; user, 2026-10-20: "show the town sign hint ... with a button to start
+# segment of locality there"): on 151 reviewed drives in towns of up to SIGN_HEAD_POP a sign naming the town after a
+# start YOLO sees as rural or highway was nearer the reviewer's start 10 times, farther 6 (the name on a shop or a
+# direction sign in town), so a hint with the sign's frame and a button, no cut. The first SIGN_HEAD_S (at most half)
+SIGN_HEAD_S, SIGN_HEAD_POP = 600, 50000
+
+
+def head_signs(video_id, duration, keep_dir):
+    """{second: [texts]} EasyOCR reads every SIGN_STEP_S of the first SIGN_HEAD_S (at most half the video) of the
+    720p video, its frames with text kept in keep_dir as SECOND.jpg (for town_sign_hint). None without the OCR
+    environment on a GPU, or when not read."""
+    if not duration or not ocr_gpu():
+        return None
+    upto = min(SIGN_HEAD_S, duration / 2)
+    os.makedirs(keep_dir, exist_ok=True)
+    try:
+        _yt_dlp('-q', '-f', 'bv*[height<=720][ext=mp4]/bv*[height<=720]', '--download-sections', f'*0-{upto:.0f}',
+                '-o', os.path.join(keep_dir, 'v.%(ext)s'), _url(video_id))
+        path = next(os.path.join(keep_dir, n) for n in os.listdir(keep_dir) if n.startswith('v.'))
+        subprocess.run(['ffmpeg', '-v', 'error', '-i', path, '-t', f'{upto:.0f}', '-vf', f'fps=1/{SIGN_STEP_S}',
+                        '-q:v', '3', os.path.join(keep_dir, 's%05d.jpg')], capture_output=True, timeout=3600)
+        os.remove(path)
+        shots = sorted(n for n in os.listdir(keep_dir) if n.startswith('s'))
+        lines = _ocr_run([os.path.join(keep_dir, n) for n in shots])
+        if lines is None:
+            print('  first minutes not read: EasyOCR failed', flush=True)
+            return None
+        read = {}
+        for k, (n, texts) in enumerate(zip(shots, lines)):
+            if texts:
+                read[k * SIGN_STEP_S] = texts
+                os.replace(os.path.join(keep_dir, n), os.path.join(keep_dir, f'{k * SIGN_STEP_S:.1f}.jpg'))
+            else:
+                os.remove(os.path.join(keep_dir, n))
+        return read
+    except BotCheck:
+        raise
+    except (RuntimeError, StopIteration, OSError, subprocess.TimeoutExpired, ValueError) as e:
+        print(f'  first minutes not read: {e}', flush=True)
+        return None
+
+
 # a map of the drive in the opening (OkEXG95VyKk at 0:06: Google My Maps, Newport to New York along I-95; user,
 # 2026-10-19: "map at Time: 0:06 helps to also understand the exact route that was taken"): the opening frame with
 # MAP_LABELS or more texts, its texts with their places in the picture and the route, the longest line of one strong
@@ -3026,6 +3069,9 @@ def analyse_video(video_id, out_dir, meta=None, signs=False):
             sig['map_labels'], sig['map_line'] = np.array(json.dumps(m[0])), np.array(m[1], float)
         if signs and (read := read_signs(video_id, duration=meta.get('duration'))):
             sig['signs'] = np.array(json.dumps({str(t): x for t, x in read.items()}))
+        elif not signs and (read := head_signs(video_id, meta.get('duration'),
+                                               os.path.join(out_dir, f'{video_id}_head.tmp'))):
+            sig['head_signs'] = np.array(json.dumps({str(t): x for t, x in read.items()}))
         gps, clock, stamp = gps_track(video_id, meta['duration'])
         if gps:
             sig['gps'] = np.array(gps, float)
@@ -5159,12 +5205,13 @@ WELCOME_SIGN = re.compile(r'\bwel\w{2,4}[\s|]+to\b[\s|]*(?:the[\s|]+)?(?:(?:city
 SIGN_REACH_KM = 250  # without a route, a sign names a town this close to the video's localities
 
 
-def sign_towns(sig_path, towns, df, path):
-    """[(second, locality, welcome)] of the road signs read in a video (read_signs) that name a town of its route or
-    a mapping locality within 10 km of the route's path; welcome: a "Welcome to (the City of) X" sign."""
-    if not (sig_path and os.path.exists(sig_path)) or 'signs' not in np.load(sig_path).files:
+def sign_towns(sig_path, towns, df, path, key='signs'):
+    """[(second, locality, welcome)] of the road signs read in a video (read_signs; key 'head_signs': head_signs)
+    that name a town of its route or a mapping locality within 10 km of the route's path; welcome: a "Welcome to
+    (the City of) X" sign."""
+    if not (sig_path and os.path.exists(sig_path)) or key not in np.load(sig_path).files:
         return []
-    read = json.loads(str(np.load(sig_path)['signs']))
+    read = json.loads(str(np.load(sig_path)[key]))
     # no route: the towns within SIGN_REACH_KM of the video's localities (OkEXG95VyKk read "Mobile" on an ad and a
     # "Cedar" somewhere: Mobile, AL and Cedar City, UT)
     reach = 10 if path else SIGN_REACH_KM
@@ -5239,6 +5286,56 @@ def sign_clock(signs, path, df, t0, t1):
     xs.append(1.0)
     ys.append(float(max(t1, ys[-1])))
     return lambda f: float(np.interp(f, xs, ys))
+
+
+def quiet_stretch(sig, a, b):
+    """Whether YOLO sees a-b s as rural or highway driving on the whole (the counts the rural and highway checks
+    judge by, which ONE_PLACE leaves out for a town's own drive)."""
+    if 'urban' not in sig:
+        return False
+    i = int(a // URBAN_EVERY_S)
+    j = max(int(b // URBAN_EVERY_S), i + 1)
+    return bool(np.mean(sig['urban'][i:j]) < PARAMS['urban_objects'] or
+                'street' in sig and np.mean(sig['street'][i:j]) < PARAMS['street_objects'])
+
+
+def town_sign_hint(p, sig_path, out_dir, df):
+    """A drive in one town of up to SIGN_HEAD_POP: its first sign naming the town (head_signs) past its first
+    segment's start, after a rural or highway stretch: that frame kept as VIDEO_townsign.jpg, p['town_sign'] =
+    {'t', 'locality'} for the review page's button, and a note. The kept frames go either way."""
+    keep = os.path.join(out_dir, f"{p['video']}_head.tmp")
+    try:
+        ents = [e for e in p.get('entries', []) if e.get('locality')]
+        if len(ents) != 1 or not ents[0]['segments'] or not os.path.exists(sig_path):
+            return
+        loc, seg = ents[0]['locality'], ents[0]['segments'][0]
+        pop = pd.to_numeric(df.loc[(df['locality'] == loc[0]) & (df['country'] == loc[2]), 'population_locality'],
+                            errors='coerce')
+        if not len(pop) or not pop.max() <= SIGN_HEAD_POP:
+            return
+        sig = dict(np.load(sig_path))
+        for t, at, _ in sign_towns(sig_path, [loc], df, None, key='head_signs'):
+            if tuple(at) != tuple(loc) or not seg['start'] + 30 < t < seg['end'] \
+                    or not quiet_stretch(sig, seg['start'], t):
+                continue
+            shots = [n for n in os.listdir(keep) if n.endswith('.jpg')] if os.path.isdir(keep) else []
+            if shots:  # the frame read at t (its second rounded down), 320x180 around the name where OCR read it
+                shot = os.path.join(keep, min(shots, key=lambda n: abs(float(n[:-4]) - t - 0.25)))
+                img = cv2.imread(shot)
+                if img is not None:
+                    h, w = img.shape[:2]
+                    boxes = (_ocr_run([shot], boxes=True) or [[]])[0]
+                    key = _name_key(loc[0])
+                    at_name = [b for b in boxes if key[:4] in _name_key(str(b[2]))] or boxes
+                    x, y = (at_name[0][0], at_name[0][1]) if at_name else (w / 2, h / 2)
+                    x0, y0 = int(min(max(x - 160, 0), max(w - 320, 0))), int(min(max(y - 90, 0), max(h - 180, 0)))
+                    cv2.imwrite(os.path.join(out_dir, f"{p['video']}_townsign.jpg"), img[y0:y0 + 180, x0:x0 + 320])
+            p['town_sign'] = {'t': int(t), 'locality': loc[0]}
+            p['note'] = '; '.join(filter(None, [p.get('note'), f'a sign names {loc[0]} at {t // 60}:{t % 60:02d} '
+                                                f'after a rural or highway start: {loc[0]} starts there? check']))
+            return
+    finally:
+        shutil.rmtree(keep, ignore_errors=True)
 
 
 def note_signs(p, signs):
@@ -6046,6 +6143,7 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
             trim_montage(plan[vid], dict(np.load(sig_path)))
         if analysed and (lead := channel_lead_in(meta.get('channel_id'), df)):
             trim_lead_in(plan[vid], lead)
+        town_sign_hint(plan[vid], sig_path, out_dir, df)
         commit([vid])  # appears in an open review page straight away
 
     # a run cut off (hotspot, pause) saved its videos but never got to their localities: this run finishes them
@@ -6445,6 +6543,8 @@ input.at { width: 56px; font-size: 13px; padding: 2px 4px; }
 .note { color: #8a5300; font-size: 13px; margin: 2px 0 8px; }
 .note .warn { color: #c62828; font-weight: 600; }
 .sheet { width: 640px; max-width: 100%; display: block; margin: 8px 0; }
+.townsign { display: flex; align-items: center; gap: 8px; margin: 4px 0 8px; }
+.townsign img { width: 320px; max-width: 50%; border-radius: 4px; }
 .thumb { width: 320px; max-width: 100%; display: block; margin: 8px 0; }
 table { border-collapse: collapse; }
 td { padding: 4px 8px; font-size: 14px; border-top: 1px solid #eee; }
@@ -6568,6 +6668,15 @@ background:#fff;color:#222;font-size:13px;cursor:pointer}
        alt="YouTube thumbnail of {{ p.video }} (not analysed)">
   {% else %}
   <img class="sheet" src="sheet/{{ p.video }}.jpg" loading="lazy" alt="frames from {{ p.video }}">
+  {% set ts = p.town_sign %}{% if ts %}{% for e in p.entries if e.locality and e.locality[0] == ts.locality
+     and e.segments and not e.segments[0].applied and e.segments[0].start < ts.t < e.segments[0].end %}
+  <div class="townsign"><img src="sign/{{ p.video }}.jpg" loading="lazy" alt="the sign at {{ ts.t }} s"
+       onerror="this.remove()">
+    <span>a sign names {{ ts.locality }} at {{ '%d:%02d' % (ts.t // 60, ts.t % 60) }}</span>
+    <button class="small" onclick="play('{{ p.video }}', {{ ts.t }})">▶ sign</button>
+    <button class="small" data-video="{{ p.video }}" data-entry="{{ loop.index0 }}" data-t="{{ ts.t }}"
+            onclick="startAtSign(this)">Start {{ ts.locality }} here</button></div>
+  {% endfor %}{% endif %}
   {% set route = p.route or routes.get(p.video) %}
   {% if route %}{% set times = {} %}{% for e in p.entries if e.locality %}{% set _ = times.setdefault(
        e.locality[0], []).extend(e.segments | rejectattr('decision', 'equalto', 'reject')) %}{% endfor %}
@@ -6864,6 +6973,13 @@ async function setBounds(row, start, end) {
   row.dataset.start = start;
   row.dataset.end = end;
   showBounds(row);
+}
+function startAtSign(btn) {  // the town's first segment starts at its sign (town_sign_hint)
+  const row = document.querySelector(`tr.seg[data-video="${btn.dataset.video}"][data-entry="${btn.dataset.entry}"]`);
+  const box = row && row.querySelector('.t-start');
+  if (!box) return;
+  box.value = fmt(+btn.dataset.t);
+  editTimes(box);
 }
 function editTimes(input) {
   const row = input.closest('tr');
@@ -7962,6 +8078,10 @@ def review(plan_path, port=None):
     @app.route('/sheet/<video_id>.jpg')
     def sheet(video_id):
         return send_from_directory(plan_dir, f'{video_id}.jpg')
+
+    @app.route('/sign/<video_id>.jpg')
+    def town_sign(video_id):
+        return send_from_directory(plan_dir, f'{video_id}_townsign.jpg')
 
     @app.route('/decide', methods=['POST'])
     def decide():
