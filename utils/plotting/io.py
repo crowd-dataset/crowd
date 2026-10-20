@@ -1,8 +1,14 @@
+import functools
 import os
-import common
+import shutil
+import subprocess
+import webbrowser
+
 import plotly.graph_objects as go
 import plotly.io as pio
-import shutil
+from plotly.offline import get_plotlyjs
+
+import common
 from custom_logger import CustomLogger
 from utils.plotting import hover
 from utils.plotting.constants import TOPOJSON_URL
@@ -14,9 +20,20 @@ pio.kaleido.scope.mathjax = None
 pio.kaleido.scope.topojson = TOPOJSON_URL  # see constants.TOPOJSON_URL
 
 
+@functools.lru_cache(maxsize=1)
+def _can_save_eps() -> bool:
+    """Whether to write EPS: not when config has "save_eps": false (the GitHub Action: EPS files are made on purpose,
+    not at every weekly run), and only where poppler's pdftops can convert kaleido's PDF (warns once when not)."""
+    if not common.get_configs("save_eps", default=True):
+        return False
+    if shutil.which("pdftops"):
+        return True
+    logger.warning("pdftops (poppler-utils) is not installed: EPS figures are not saved.")
+    return False
+
+
 class IO:
-    def __init__(self) -> None:
-        pass
+    """Saving of plotly figures (HTML, PNG, EPS) to _output and figures/."""
 
     @staticmethod
     def _open_html() -> bool:
@@ -46,77 +63,81 @@ class IO:
         return False
 
     def save_plotly_figure(self, fig, filename, width=1600, height=900, scale=1, save_final=True, save_png=True,
-                           save_eps=True, post_script=None, html_fig=None):
+                           save_eps=True, post_script=None, html_fig=None, save_html=True):
         """
-        Saves a Plotly figure as HTML, PNG, SVG, and EPS formats.
+        Saves a Plotly figure as HTML, PNG and EPS in _output, and copies them to figures/ (`save_final`).
 
         Args:
             fig (plotly.graph_objs.Figure): Plotly figure object.
             filename (str): Name of the file (without extension) to save.
             width (int, optional): width of the PNG and EPS images in pixels. Defaults to 1600.
             height (int, optional): height of the PNG and EPS images in pixels. Defaults to 900.
-            scale (int, optional): Scaling factor for the PNG image. Defaults to 3.
+            scale (int, optional): Scaling factor for the PNG image. Defaults to 1.
             save_final (bool, optional): whether to save the "good" final figure.
+            save_png, save_eps, save_html (bool, optional): which formats to save. EPS needs poppler's pdftops and
+                is skipped without it.
             post_script (str, optional): JavaScript run after the HTML figure loads (`{plot_id}` is its div id).
             html_fig (plotly.graph_objs.Figure, optional): another figure for the HTML version, e.g. one without the
                 labels placed for the static images.
         """
-        # Create directory if it doesn't exist
         output_final = os.path.join(common.root_dir, 'figures')
         os.makedirs(common.output_dir, exist_ok=True)
         os.makedirs(output_final, exist_ok=True)
+        folders = [common.output_dir] + ([output_final] if save_final else [])
 
-        # Save as HTML. plotly.js is not embedded (~4.6 MB per file) but written once as plotly.min.js next to the
-        # figures and loaded by relative path: htmlpreview.github.io, used for the README links, only loads scripts
-        # hosted on GitHub, so plotly's CDN would not work there.
-        # The HTML fills the browser window: a size set for the static images (e.g., for label layout) is dropped.
+        if save_html:
+            self._save_html(html_fig if html_fig is not None else fig, filename, folders, post_script)
+
+        # static images cannot use interactive menus (e.g., dropdowns), so leave them out
+        static = go.Figure(fig)
+        static.layout.updatemenus = ()  # assignment: update_layout(updatemenus=[]) would keep the existing menus
+        self._static_basemap(static)
+        for ext in [e for e, wanted in (("png", save_png), ("eps", save_eps and _can_save_eps())) if wanted]:
+            logger.info(f"Saving {ext} file for {filename}.")
+            path = os.path.join(common.output_dir, f"{filename}.{ext}")
+            try:
+                if ext == "png":
+                    static.write_image(path, width=width, height=height, scale=scale)
+                else:
+                    # kaleido's own EPS export runs the same `pdftops -eps`, but under its bundled libraries, which
+                    # the system's pdftops cannot load on recent Linux ("PDF to EPS conversion failed")
+                    static.write_image(path + ".pdf", width=width, height=height)
+                    subprocess.run(["pdftops", "-eps", path + ".pdf", path], check=True, capture_output=True)
+                    os.remove(path + ".pdf")
+            except (ValueError, subprocess.CalledProcessError) as e:
+                logger.error(f"Could not save {ext} image {filename}: {e}")
+                return
+            for folder in folders[1:]:
+                shutil.copy(path, os.path.join(folder, f"{filename}.{ext}"))
+
+    def _save_html(self, fig, filename, folders, post_script):
+        """Write the HTML once and copy it to the other folders. plotly.js is not embedded (~4.6 MB per file) but
+        written once as plotly.min.js next to the figures and loaded by relative path: htmlpreview.github.io, used
+        for the README links, only loads scripts hosted on GitHub, so plotly's CDN would not work there. The HTML
+        fills the browser window: a size set for the static images (e.g., for label layout) is dropped."""
         logger.info(f"Saving html file for {filename}.")
-        interactive = go.Figure(html_fig if html_fig is not None else fig)
+        interactive = go.Figure(fig)
         interactive.layout.width = None
         interactive.layout.height = None
         # hover popups given as keys are filled in from popups.js, loaded like plotly.min.js (see hover.py)
         popups = self._uses_popups(interactive)
         if popups:
             post_script = hover.POPUPS_JS + (post_script or "")
-        paths = [os.path.join(common.output_dir, filename + ".html")]
-        if save_final:  # also save the final figure
-            paths.append(os.path.join(output_final, filename + ".html"))
-        for i, path in enumerate(paths):
-            interactive.write_html(path, include_plotlyjs="directory", auto_open=self._open_html() and i == 0,
-                                   config={"topojsonURL": TOPOJSON_URL},
+        html = interactive.to_html(include_plotlyjs="directory", config={"topojsonURL": TOPOJSON_URL},
                                    post_script=post_script)
-            if popups:
-                with open(path, encoding="utf-8") as f:
-                    html = f.read()
-                plotly_js = '<script charset="utf-8" src="plotly.min.js"></script>'
-                popups_js = f'<script charset="utf-8" src="{hover.POPUPS_FILE}"></script>'
-                html = html.replace(plotly_js, plotly_js + popups_js, 1)
-                with open(path, "w", encoding="utf-8") as f:
-                    f.write(html)
-
-        # static images cannot use interactive menus (e.g., dropdowns), so leave them out
-        static = go.Figure(fig)
-        static.layout.updatemenus = ()  # assignment: update_layout(updatemenus=[]) would keep the existing menus
-        self._static_basemap(static)
-
-        try:
-            # Save as PNG
-            if save_png:
-                logger.info(f"Saving png file for {filename}.")
-                static.write_image(os.path.join(common.output_dir, filename + ".png"), width=width, height=height,
-                                   scale=scale)
-                # also save the final figure
-                if save_final:
-                    shutil.copy(os.path.join(common.output_dir, filename + ".png"),
-                                os.path.join(output_final, filename + ".png"))
-
-            # Save as EPS
-            if save_eps:
-                logger.info(f"Saving eps file for {filename}.")
-                static.write_image(os.path.join(common.output_dir, filename + ".eps"), width=width, height=height)
-                # also save the final figure
-                if save_final:
-                    shutil.copy(os.path.join(common.output_dir, filename + ".eps"),
-                                os.path.join(output_final, filename + ".eps"))
-        except ValueError as e:
-            logger.error(f"Value error raised when attempted to save image {filename}: {e}")
+        if popups:
+            plotly_js = '<script charset="utf-8" src="plotly.min.js"></script>'
+            popups_js = f'<script charset="utf-8" src="{hover.POPUPS_FILE}"></script>'
+            html = html.replace(plotly_js, plotly_js + popups_js, 1)
+        paths = [os.path.join(folder, filename + ".html") for folder in folders]
+        with open(paths[0], "w", encoding="utf-8") as f:
+            f.write(html)
+        for folder, path in zip(folders, paths):
+            if path != paths[0]:
+                shutil.copy(paths[0], path)
+            bundle = os.path.join(folder, "plotly.min.js")  # as write_html(include_plotlyjs="directory") does
+            if not os.path.exists(bundle):
+                with open(bundle, "w", encoding="utf-8") as f:
+                    f.write(get_plotlyjs())
+        if self._open_html():
+            webbrowser.open("file://" + os.path.abspath(paths[0]))

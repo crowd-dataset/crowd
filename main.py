@@ -17,7 +17,6 @@ import os
 import threading
 import uuid
 import hashlib
-import glob  # checks for "do we already have CSVs?" without knowing FPS
 from datetime import datetime
 from helper_script import Youtube_Helper         # download/trim/track utilities
 import pandas as pd
@@ -50,12 +49,28 @@ def _get_worker_helper() -> Youtube_Helper:
 
 
 def _cfg(key: str, default=None):
-    """Backwards-compatible config lookup: returns default if key missing."""
-    try:
-        v = common.get_configs(key)
-        return default if v is None else v
-    except Exception:
-        return default
+    """Config lookup for optional keys: default when the key is missing or null."""
+    v = common.get_configs(key, default=default)
+    return default if v is None else v
+
+
+def _is_inside(path: str, root: str) -> bool:
+    """True when path is root or lies in the folder root."""
+    ap, root = os.path.abspath(path), os.path.abspath(root)
+    return ap == root or ap.startswith(root.rstrip(os.sep) + os.sep)
+
+
+def _bbox_done(data_folders) -> set:
+    """'{vid}_{st}' of each bbox CSV ({vid}_{st}_{fps}.csv) in the data folders: the segments already done. One
+    listing per folder (a glob per segment listed the folder each time)."""
+    done = set()
+    for folder in data_folders:
+        try:
+            names = os.listdir(os.path.join(folder, "bbox"))
+        except OSError:
+            continue
+        done.update(n[:-4].rsplit("_", 1)[0] for n in names if n.endswith(".csv"))
+    return done
 
 
 def _slurm_task_info():
@@ -189,23 +204,9 @@ def process_mapping_concurrently(mapping, config, secret, logger) -> int:
     # ------------------------------------------------------------------
     bbox_mode_cfg = bool(getattr(config, "tracking_mode", False))
 
-    vids_to_handle = []
-    for vid, info in video_plan.items():
-        segments = info["segments"]
-
-        if not bbox_mode_cfg:
-            vids_to_handle.append(vid)
-            continue
-
-        needs_any = False
-        for st, _, _ in segments:
-            has_bbox = any(glob.glob(os.path.join(folder, "bbox", f"{vid}_{st}_*.csv")) for folder in data_folders)
-            if bbox_mode_cfg and not has_bbox:
-                needs_any = True
-                break
-
-        if needs_any:
-            vids_to_handle.append(vid)
+    done = _bbox_done(data_folders) if bbox_mode_cfg else set()
+    vids_to_handle = [vid for vid, info in video_plan.items()
+                      if not bbox_mode_cfg or any(f"{vid}_{st}" not in done for st, _, _ in info["segments"])]
 
     if not vids_to_handle:
         logger.info("All required outputs already exist; nothing to process.")
@@ -274,13 +275,7 @@ def process_mapping_concurrently(mapping, config, secret, logger) -> int:
                     continue
 
                 try:
-                    out = h.copy_video_safe(candidate, output_path, vid)
-                    if out:
-                        base_video_path = out
-                    else:
-                        shutil.copy2(candidate, preferred_path)
-                        base_video_path = preferred_path
-
+                    base_video_path = h.copy_video_safe(candidate, output_path, vid)  # the copy, or it raises
                     download_source = "copy"
                     always_delete_paths.append(base_video_path)
                 except Exception as e:
@@ -370,7 +365,8 @@ def process_mapping_concurrently(mapping, config, secret, logger) -> int:
                 video_fps = 0.0
 
         # Optional processing-speed working copy (safe to delete after processing)
-        if getattr(config, "external_ssd", False) and base_video_path and not base_video_path.startswith(internal_ssd):
+        if (getattr(config, "external_ssd", False) and base_video_path
+                and not _is_inside(base_video_path, internal_ssd)):
             try:
                 out = h.copy_video_safe(base_video_path, internal_ssd, vid)
                 if out and out != base_video_path:
@@ -414,54 +410,43 @@ def process_mapping_concurrently(mapping, config, secret, logger) -> int:
         # Prefix with "yt_" so the basename never starts with "-".
         # This keeps downstream tools safe if they ever pass a basename to a CLI.
         trimmed_video_path = os.path.join(tmp_dir, f"yt_{vid}_{st}_{et}_{int(video_fps)}_mod_{uuid.uuid4().hex}.mp4")
-
-        # Trim as needed
-        if run_bbox:
-            end_time_adj = int(et) - 1
-            if end_time_adj <= int(st):
-                end_time_adj = int(et)
-            logger.info(f"{vid}: trimming segment {st}-{et}s.")
-            h.trim_video(base_video_path, trimmed_video_path, int(st), int(end_time_adj))
-
-            # Avoid annotated-video filename collisions
-            annotated_name = f"{vid}_{st}_{et}_mod.mp4"
-
-            h.tracking_mode(
-                trimmed_video_path,
-                output_path,
-                video_title=annotated_name,
-                video_fps=float(video_fps),
-                bbox_mode=bool(run_bbox),
-                flag=int(getattr(config, "save_annotated_video", 0)),
-                run_root=seg_run_root,
-            )
-
-        # Move CSVs into the final dataset location (same behaviour as original script)
-        data_path = config.data[-1] if config.data else "."
         processed = 0
 
-        if run_bbox:
-            old_bbox = os.path.join(seg_run_root, "detect", f"{vid}.csv")
-            new_bbox = os.path.join(seg_run_root, "detect", f"{vid}_{st}_{int(video_fps)}.csv")
-            if os.path.isfile(old_bbox):
-                os.rename(old_bbox, new_bbox)
-            dest_bbox = os.path.join(data_path, "bbox", os.path.basename(new_bbox))
-            os.makedirs(os.path.dirname(dest_bbox), exist_ok=True)
-            if os.path.isfile(new_bbox):
-                shutil.copy(new_bbox, dest_bbox)
-                processed = 1
+        try:
+            if run_bbox:
+                end_time_adj = int(et) - 1
+                if end_time_adj <= int(st):
+                    end_time_adj = int(et)
+                logger.info(f"{vid}: trimming segment {st}-{et}s.")
+                h.trim_video(base_video_path, trimmed_video_path, int(st), int(end_time_adj))
 
-        # Cleanup
-        if getattr(config, "delete_runs_files", True):
-            try:
-                shutil.rmtree(seg_run_root)
-            except Exception:
-                pass
-        if getattr(config, "delete_mod_video", True):
-            try:
-                os.remove(trimmed_video_path)
-            except FileNotFoundError:
-                pass
+                h.tracking_mode(
+                    trimmed_video_path,
+                    output_path,
+                    video_title=f"{vid}_{st}_{et}",  # the annotated video: {vid}_{st}_{et}_mod_bbox.mp4
+                    video_fps=float(video_fps),
+                    bbox_mode=bool(run_bbox),
+                    flag=int(getattr(config, "save_annotated_video", 0)),
+                    run_root=seg_run_root,
+                )
+
+                # Move the CSV into the final dataset location, swapped in whole: any CSV there counts as done
+                data_path = config.data[-1] if config.data else "."
+                bbox_csv = os.path.join(seg_run_root, "detect", f"{vid}.csv")
+                dest_bbox = os.path.join(data_path, "bbox", f"{vid}_{st}_{int(video_fps)}.csv")
+                os.makedirs(os.path.dirname(dest_bbox), exist_ok=True)
+                if os.path.isfile(bbox_csv):
+                    shutil.copy(bbox_csv, dest_bbox + ".tmp")
+                    os.replace(dest_bbox + ".tmp", dest_bbox)
+                    processed = 1
+        finally:  # also when trimming or tracking failed
+            if getattr(config, "delete_runs_files", True):
+                shutil.rmtree(seg_run_root, ignore_errors=True)
+            if getattr(config, "delete_mod_video", True):
+                try:
+                    os.remove(trimmed_video_path)
+                except FileNotFoundError:
+                    pass
 
         return processed
 
@@ -474,13 +459,11 @@ def process_mapping_concurrently(mapping, config, secret, logger) -> int:
     #   (b) downloaded but still has pending/active segments.
     #
     # This prevents the pipeline from downloading the entire mapping upfront.
-    # You can override via config key "download_buffer" if desired.
     # ------------------------------------------------------------------
     download_pool = ThreadPoolExecutor(max_workers=download_workers)
     segment_pool = ThreadPoolExecutor(max_workers=max_workers)
 
-    download_buffer = int(getattr(config, "download_buffer", 0) or (2 * max_workers))
-    download_buffer = max(1, min(download_buffer, len(vids_to_handle)))
+    download_buffer = max(1, min(2 * max_workers, len(vids_to_handle)))
 
     vid_queue = deque(vids_to_handle)
 
@@ -512,22 +495,10 @@ def process_mapping_concurrently(mapping, config, secret, logger) -> int:
             return
 
         ext_ssd = bool(getattr(config, "external_ssd", False))
-        keep_root = None
-        if ext_ssd:
-            try:
-                keep_root = os.path.abspath(internal_ssd)
-            except Exception:
-                keep_root = None
 
         def _ok_to_delete(path: str) -> bool:
             """When external_ssd=True, only delete files that live in videos[-1]."""
-            if not keep_root:
-                return True
-            try:
-                ap = os.path.abspath(path)
-            except Exception:
-                return False
-            return ap == keep_root or ap.startswith(keep_root + os.sep)
+            return not ext_ssd or _is_inside(path, internal_ssd)
 
         # Default cleanup: delete MP4s created by COPYING from other folders
         # (and any processing-speed working copies).
@@ -589,17 +560,16 @@ def process_mapping_concurrently(mapping, config, secret, logger) -> int:
                     continue
 
                 video_info[v] = info
-                fps = info["video_fps"]  # noqa: F841
 
                 if not bbox_mode_cfg:
                     # Download-only mode: nothing else to do.
                     _finalize_video(v)
                     continue
 
+                done = _bbox_done(data_folders)  # listed again: a download takes a while
                 for (st, et, tod) in video_plan[v]["segments"]:
-                    has_bbox = any(glob.glob(os.path.join(folder, "bbox",
-                                                          f"{v}_{st}_*.csv")) for folder in data_folders)
-                    run_bbox = bool(bbox_mode_cfg and not has_bbox)
+                    has_bbox = f"{v}_{st}" in done
+                    run_bbox = not has_bbox
 
                     logger.info(
                         f"{v}: segment {st}-{et}s output status: "
@@ -704,13 +674,12 @@ def process_mapping_concurrently(mapping, config, secret, logger) -> int:
         segment_pool.shutdown(wait=True, cancel_futures=False)
 
 
-# Guard to avoid duplicate crash emails (kept for compatibility with some runners)
-email_already_sent = False
-
 # =============================================================================
 # Main entry point
 # =============================================================================
 if __name__ == "__main__":
+    config = None           # set before the crash email reads them
+    counter_processed = 0   # segments processed this pass
     try:
         # ---------------------------------------------------------------------
         # Load static configuration (paths, switches) once
@@ -744,14 +713,16 @@ if __name__ == "__main__":
         )
 
         # ---------------------------------------------------------------------
-        # Load secrets (email + FTP credentials)
+        # Load the FTP credentials (send_email reads the email ones itself)
         # ---------------------------------------------------------------------
+        try:
+            ftp_token = common.get_secrets("ftp_token") or None  # sent as ?token=... (as tools/download_videos.py)
+        except KeyError:  # optional: not in default.secret
+            ftp_token = None
         secret = SimpleNamespace(
-            email_smtp=common.get_secrets("email_smtp"),
-            email_account=common.get_secrets("email_account"),
-            email_password=common.get_secrets("email_password"),
             ftp_username=common.get_secrets("ftp_username"),
             ftp_password=common.get_secrets("ftp_password"),
+            ftp_token=ftp_token,
         )
 
         # ---------------------------------------------------------------------
@@ -763,39 +734,14 @@ if __name__ == "__main__":
             config.snellius_world_size = w
             config.snellius_local_rank = lr
 
-            # Ensure each task uses the intended GPU when multiple GPUs are visible.
-            # try:
-            #     import torch
-            #     if torch.cuda.is_available():
-            #         torch.cuda.set_device(lr)
-            #         logger.info(f"[Snellius] Using CUDA device local_rank={lr} (rank={r}/{w}).")
-            # except Exception as e:
-            #     logger.warning(f"[Snellius] Unable to set CUDA device for local_rank={lr}: {e!r}")
-
         # =========================================================================
         # Endless loop: process mapping; sleep; repeat
         # =========================================================================
         while True:
             # Read mapping each pass to pick up edits
             mapping = pd.read_csv(config.mapping)
-            video_paths = config.videos  # convenience alias
-
-            # Decide where to write downloads
-            if config.external_ssd:
-                # With SSD, ensure mount exists and set output to videos[-1]
-                internal_ssd = config.videos[-1]
-                os.makedirs(internal_ssd, exist_ok=True)
-                output_path = config.videos[-1]
-            else:
-                output_path = config.videos[-1]
-
-            # Convenience locals; keep behavior intact
-            delete_runs_files = config.delete_runs_files
-            delete_youtube_video = config.delete_youtube_video
-            data_folders = config.data
             data_path = config.data[-1]  # final data root (where bbox CSVs land)
-            countries_analyse = config.countries_analyse
-            counter_processed = 0        # segments processed this pass
+            counter_processed = 0
 
             # -----------------------------------------------------------------
             # Optional mapping maintenance (all in-place on `mapping`)
@@ -837,7 +783,7 @@ if __name__ == "__main__":
             # Sleep between passes; clean *_mod.mp4 remnants; optionally git pull
             # -----------------------------------------------------------------
             if config.sleep_sec:
-                helper.delete_youtube_mod_videos(video_paths)
+                helper.delete_youtube_mod_videos(config.videos)
                 logger.info(f"Sleeping for {config.sleep_sec} s before attempting to go over mapping again.")
                 time.sleep(config.sleep_sec)
 
@@ -848,22 +794,16 @@ if __name__ == "__main__":
     # Crash handling: email details then re-raise for visibility
     # =============================================================================
     except Exception as e:
-        try:
-            if config.email_send and (not getattr(config, "snellius_mode",  # type: ignore
-                                                  False) or getattr(config, "snellius_rank", 0) == 0):  # type: ignore
-                time_now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                # kept from original (fun image): fine to send as plain link or ignore
-                image_url = "https://i.pinimg.com/474x/20/82/0f/20820fd73c946d3e1d2e6efe23e1b2f3.jpg"
-                common.send_email(
-                    subject=f"‼️ Processing job crashed on machine {config.machine_name}",  # type: ignore
-                    content=(
-                        f"Processing job crashed on {config.machine_name} at {time_now}. "  # type: ignore
-                        f"{counter_processed} segments were processed. Error message: {e}."  # type: ignore
-                    ),
-                    sender=config.email_sender,  # type: ignore
-                    recipients=config.email_recipients  # type: ignore
-                )
-        except Exception:
-            # If config/email not ready or mail fails, swallow and re-raise
-            pass
+        if config is not None and config.email_send and (not getattr(config, "snellius_mode", False)
+                                                         or getattr(config, "snellius_rank", 0) == 0):
+            time_now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            common.send_email(  # logs its own failure
+                subject=f"‼️ Processing job crashed on machine {config.machine_name}",
+                content=(
+                    f"Processing job crashed on {config.machine_name} at {time_now}. "
+                    f"{counter_processed} segments were processed. Error message: {e}."
+                ),
+                sender=config.email_sender,
+                recipients=config.email_recipients
+            )
         raise

@@ -33,10 +33,9 @@ def main():
     result = analysis.count_detections(df_mapping, workers=args.workers, write_snapshot=True)
     if result is None:
         raise SystemExit("No readable bbox CSV matched a segment of the mapping; nothing written.")
-    det, n_read = result
-    segments = sum(1 for _ in analysis._segment_lookup(df_mapping))
-    print(f"{n_read:,} CSVs read in {(time.time() - t) / 60:.1f} min: {det.height:,} of {segments:,} segments in the "
-          f"mapping have detections; written to {analysis.DETECTION_SNAPSHOT}")
+    det, _ = result
+    print(f"{det.height:,} segments with detections (one CSV each) counted in {(time.time() - t) / 60:.1f} min; "
+          f"written to {analysis.DETECTION_SNAPSHOT}")
 
 
 if __name__ == "__main__":

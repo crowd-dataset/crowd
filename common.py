@@ -1,17 +1,16 @@
-"""Contains various function used throughout this project.
+"""Functions and paths used throughout this project: configs and secrets, country codes, git and email.
 
 Attributes:
-    cache_dir (TYPE): Description
-    log_dir (TYPE): Description
-    logger (TYPE): Description
-    output_dir (TYPE): Description
-    root_dir (TYPE): Description
+    root_dir (str): the top folder of the repo.
+    output_dir (str): where generated files go (_output).
+    data_dir (str): the data files the analysis reads and writes (analysis_data).
+    logger (CustomLogger): this module's logger.
 """
 # by Pavlo Bazilinskyy <pavlo.bazilinskyy@gmail.com>
 from typing import Dict
+import copy
 import os
 import json
-import pickle
 import sys
 import pycountry
 from custom_logger import CustomLogger
@@ -20,13 +19,14 @@ import smtplib
 from email.message import EmailMessage
 
 root_dir = os.path.dirname(__file__)
-cache_dir = os.path.join(root_dir, '_cache')
-log_dir = os.path.join(root_dir, '_logs')
 output_dir = os.path.join(root_dir, '_output')
 # the data files the analysis reads and writes (not the mapping and metadata files, which stay in the top folder)
 data_dir = os.path.join(root_dir, 'analysis_data')
 
 logger = CustomLogger(__name__)  # use custom logger
+
+_MISSING = object()
+_parsed = {}  # path -> ((mtime, size), parsed JSON): get_configs is called often (15 times per helper)
 
 
 def data_path(name: str) -> str:
@@ -37,148 +37,57 @@ def data_path(name: str) -> str:
     return old if not os.path.exists(path) and os.path.exists(old) else path
 
 
+def _load_json(file_name: str):
+    """The parsed JSON file file_name in root_dir, read again only when its mtime or size changed."""
+    path = os.path.join(root_dir, file_name)
+    st = os.stat(path)
+    stamp = (st.st_mtime_ns, st.st_size)
+    hit = _parsed.get(path)
+    if hit is None or hit[0] != stamp:
+        with open(path) as f:
+            hit = _parsed[path] = (stamp, json.load(f))
+    return hit[1]
+
+
 def get_secrets(entry_name: str, secret_file_name: str = 'secret') -> Dict[str, str]:
-    """
-    Open the secrets file and return the requested entry.
-
-    Args:
-        entry_name (str): Description
-        secret_file_name (str, optional): Description
-
-    Returns:
-        Dict[str, str]: Description
-    """
+    """Return the entry entry_name of the secrets file (KeyError when it has none)."""
     with open(os.path.join(root_dir, secret_file_name)) as f:
         return json.load(f)[entry_name]
 
 
-def get_configs(entry_name: str, config_file_name: str = 'config', config_default_file_name: str = 'default.config'):
+def get_configs(entry_name: str, config_file_name: str = 'config', config_default_file_name: str = 'default.config',
+                default=_MISSING):
     """
-    Open the config file and return the requested entry.
-    If no config file is found, open default.config.
-
-    Args:
-        entry_name (str): Description
-        config_file_name (str, optional): Description
-        config_default_file_name (str, optional): Description
-
-    Returns:
-        TYPE: Description
+    Return the entry entry_name of the config file; default when it has none (KeyError when no default is given).
+    Exits when the config file is missing, badly formatted or has fewer entries than default.config.
     """
-    # check if config file is updated
-    if not check_config():
+    if not check_config(config_file_name, config_default_file_name):
         sys.exit()
-    try:
-        with open(os.path.join(root_dir, config_file_name)) as f:
-            content = json.load(f)
-    except FileNotFoundError:
-        with open(os.path.join(root_dir, config_default_file_name)) as f:
-            content = json.load(f)
-    return content[entry_name]
+    value = _load_json(config_file_name).get(entry_name, default)
+    if value is _MISSING:
+        raise KeyError(entry_name)
+    return copy.deepcopy(value)  # a fresh copy each call, as when the file was read every time
 
 
 def check_config(config_file_name: str = 'config',
                  config_default_file_name: str = 'default.config'):
-    """
-    Check if config file has at least as many rows as default.config.
-
-    Args:
-        config_file_name (str, optional): Description
-        config_default_file_name (str, optional): Description
-
-    Returns:
-        str: Description.
-    """
-    # load config file
-    try:
-        with open(os.path.join(root_dir, config_file_name)) as f:
-            config = json.load(f)
-    except FileNotFoundError:
-        logger.error('Config file {} not found.', config_file_name)
-        return False
-    except json.decoder.JSONDecodeError:
-        logger.error('Config file badly formatted. Please update based on default.config.', config_file_name)
-        return False
-    # load default.config file
-    try:
-        with open(os.path.join(root_dir, config_default_file_name)) as f:
-            default = json.load(f)
-    except FileNotFoundError:
-        logger.error('Default config file {} not found.', config_file_name)
-        return False
-    except json.decoder.JSONDecodeError:
-        logger.error('Config file badly formatted. Please update based on default.config.', config_file_name)
-        return False
-    # check length of each file
+    """True when the config file and default.config can be read and the config has at least as many entries."""
+    loaded = []
+    for name in (config_file_name, config_default_file_name):
+        try:
+            loaded.append(_load_json(name))
+        except FileNotFoundError:
+            logger.error('Config file {} not found.', name)
+            return False
+        except json.decoder.JSONDecodeError:
+            logger.error('Config file {} badly formatted. Please update based on {}.', name, config_default_file_name)
+            return False
+    config, default = loaded
     if len(config) < len(default):
-        logger.error('Config file has {} variables, which is fewer than {} variables in default.config. Please'
-                     + ' update.',
-                     len(config),
-                     len(default))
+        logger.error('Config file has {} variables, which is fewer than {} variables in {}. Please update.',
+                     len(config), len(default), config_default_file_name)
         return False
-    else:
-        return True
-
-
-def search_dict(dictionary, search_for, nested=False):
-    """
-    Search if dictionary value contains certain string search_for. If
-    nested=True multiple levels are traversed.
-
-    Args:
-        dictionary (dict): Dict to search in.
-        search_for (str): What to search for.
-        nested (bool, optional): If dictionary nested or not.
-
-    Returns:
-        str: Description.
-    """
-    for k in dictionary:
-        if nested:
-            for v in dictionary[k]:
-                if search_for in v:
-                    return k
-                elif v in search_for:
-                    return k
-        else:
-            if search_for in dictionary[k]:
-                return k
-            elif dictionary[k] in search_for:
-                return k
-    return None
-
-
-def save_to_p(file, data, description_data='data'):
-    """
-    Save data to a pickle file.
-
-    Args:
-        file (str): Pickle file (*.p or *.pkl).
-        data (tuple): Data tuple.
-        description_data (str, optional): Description of data.
-    """
-    path = os.path.join(os.path.join(root_dir, 'trust'), file)
-    with open(path, 'wb') as f:
-        pickle.dump(data, f)
-    logger.info('Saved ' + description_data + ' to pickle file {}.', file)
-
-
-def load_from_p(file, description_data='data'):
-    """Load data from a pickle file.
-
-    Args:
-        file (str): Pickle file (*.p or *.pkl).
-        description_data (str, optional): Description of data.
-
-    Returns:
-        tuple: data tuple.
-    """
-    path = os.path.join(os.path.join(root_dir, 'trust'), file)
-    with open(path, 'rb') as f:
-        data = pickle.load(f)
-    logger.info('Loaded ' + description_data + ' from pickle file {}.',
-                file)
-    return data
+    return True
 
 
 def correct_country(country):
@@ -211,101 +120,59 @@ def correct_country(country):
         'Macau': 'Macao',
         'Taiwan': 'Taiwan, Province of China',
         'Tanzania': 'Tanzania, United Republic of',
-        # 'United States': 'United States of America',
         'UK': 'United Kingdom',
         'Palestine': 'Palestine, State of',
         'Micronesia': 'Micronesia, Federated States of',
-        'Bahamas': 'Bahamas, The',
-        # 'Gambia': 'Gambia, The',
         'São Tomé and Príncipe': 'Sao Tome and Principe',
-        'Turkiye': 'Turkey',
-        'Türkiye': 'Turkey',
+        'Turkiye': 'Türkiye',  # pycountry's name (24.6.1 has no "Turkey", "Bahamas, The" or "Holy See")
+        'Turkey': 'Türkiye',
         'Congo (Democratic Republic)': 'Congo, The Democratic Republic of the',
         'Congo (Congo-Brazzaville)': 'Congo',
         'Burma': 'Myanmar',
         'East Timor': 'Timor-Leste',
         'Saint Kitts': 'Saint Kitts and Nevis',
         'Saint Vincent': 'Saint Vincent and the Grenadines',
-        'Saint Lucia': 'Saint Lucia',
         'Antigua': 'Antigua and Barbuda',
         'Trinidad': 'Trinidad and Tobago',
         'Slovak Republic': 'Slovakia',
-        'Vatican': 'Holy See',
+        'Vatican': 'Holy See (Vatican City State)',
+        'British Virgin Islands': 'Virgin Islands, British',
+        'United States Virgin Islands': 'Virgin Islands, U.S.',
+        'Falkland Islands': 'Falkland Islands (Malvinas)',
+        'Saint Helena': 'Saint Helena, Ascension and Tristan da Cunha',
+        'Saint Martin': 'Saint Martin (French part)',
+        'Sint Maarten': 'Sint Maarten (Dutch part)',
     }
 
     return corrections.get(country, country)
 
 
-# Convert ISO-3 to country name
-def iso3_to_country_name(iso3):
-    """
-    Get ISO-3 code for a country passed as ISO-3.
-
-    Args:
-        iso3 (str): ISO-3 code of a country.
-
-    Returns:
-        TYPE: ISO-3 code.
-    """
+def _country(country_name):
+    """pycountry's country of that name, None when it knows none."""
     try:
-        country = pycountry.countries.get(alpha_3=iso3.upper())
-        return country.name if country else None
-    except KeyError:
+        return pycountry.countries.get(name=country_name)
+    except (KeyError, LookupError):
         return None
 
 
-# Fetch ISO-2 country data
 def get_iso2_country_code(country_name):
-    """
-    Get ISO-2 code for a country passed as its full name.
-
-    Args:
-        country_name (str): Full name of a country.
-
-    Returns:
-        TYPE: ISO-2 code.
-    """
+    """ISO-2 code of a country given by its full name (pycountry's, see correct_country); None when unknown."""
     if country_name == 'Kosovo':
         return 'XK'
-    try:
-        country = pycountry.countries.get(name=country_name)
-        if country:
-            return country.alpha_2  # ISO-2 code
-        else:
-            return "Country not found"
-    except KeyError:
-        return "Country not found"
+    country = _country(country_name)
+    return country.alpha_2 if country else None
 
 
-# Fetch ISO-3 country data
 def get_iso3_country_code(country_name):
-    """
-    Get ISO-3 code for a country passed as its full name.
-
-    Args:
-        country_name (str): Full name of a country.
-
-    Returns:
-        TYPE: ISO-3 code.
-    """
+    """ISO-3 code of a country given by its full name (pycountry's, see correct_country); None when unknown."""
     if country_name == 'Kosovo':
         return 'XKX'
-    try:
-        country = pycountry.countries.get(name=country_name)
-        print(country_name)
-        if country:
-            return country.alpha_3  # ISO-3 code
-        else:
-            return "Country not found"
-    except KeyError:
-        return "Country not found"
+    country = _country(country_name)
+    return country.alpha_3 if country else None
 
 
-# Pull changes from repository
 def git_pull():
-    """
-    git pull changes from the repo with a terminal command.
-    """
+    """git pull changes from the repo with a terminal command."""
     try:
         logger.info("Attempting to pull latest changes from git repository...")
         result = subprocess.run(["git", "pull"], capture_output=True, text=True, check=True)
@@ -314,27 +181,20 @@ def git_pull():
         logger.error(f"Git pull failed with error:\n{e.stderr}")
 
 
-# Send email with certain message
 def send_email(subject, content, sender, recipients):
     """
-    Send email with certain subject and content from sender to recipients.
-
-    Args:
-        subject (str): Subject of email.
-        content (str): Content of email.
-        sender (str): Email address to send from.
-        recipients (list): Email addresses to send to.
+    Send email with certain subject and content from sender to recipients (a list). A failure is logged with its
+    traceback, not raised: a pass of the pipeline must not stop for a mail.
     """
     msg = EmailMessage()
     msg.set_content(content)
     msg["Subject"] = subject
     msg["From"] = sender
     msg["To"] = ", ".join(recipients)
-    # Try to send email
     try:
         with smtplib.SMTP_SSL(get_secrets("email_smtp"), 465) as smtp:
             smtp.login(get_secrets("email_account"), get_secrets("email_password"))
             smtp.send_message(msg)
             logger.info(f"Sent email to: {recipients}")
     except Exception as e:
-        logger.error(f"Failed to send email: {e}")
+        logger.error(f"Failed to send email '{subject}' to {recipients}: {e!r}", exc_info=True)

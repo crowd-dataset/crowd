@@ -73,6 +73,7 @@ def load() -> dict:
 
 
 def save(credits: dict) -> None:
+    """Write video_contributors.csv (oldest first), atomically."""
     tmp = FILE + ".tmp"
     with open(tmp, "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
@@ -116,7 +117,8 @@ def backfill_from_git() -> dict:
             if ids:
                 added.setdefault((who, path), set()).update(ids)
     flush()
-    proc.wait()
+    if proc.wait():  # a failed git log would otherwise save an empty record over video_contributors.csv
+        raise RuntimeError(f"git log failed (exit code {proc.returncode}); video_contributors.csv not changed")
     return credits
 
 

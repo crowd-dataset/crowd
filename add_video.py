@@ -1445,6 +1445,8 @@ def submit_data():
 
 
 def get_country_data(iso3_code: str):
+    if not iso3_code:  # a country pycountry does not know
+        return None
     iso3_code = iso3_code.upper()
     cache = _load_cache()
 
@@ -1543,6 +1545,8 @@ def get_country_traffic_mortality(iso3_code):
 
 
 def get_locality_data(locality, country_code, state=None, fuzzy=None):
+    if not country_code:  # a country pycountry does not know
+        return None
     params = {
         "q": locality,
         "country": country_code,

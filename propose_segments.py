@@ -4526,7 +4526,8 @@ def abroad_is_nearest(locality, df, home, country):
     _, row = add_video.get_existing_locality_row(df, *locality)
     if row is None:
         return True
-    hit = _osm_place(locality[0], (common.get_iso2_country_code(common.correct_country(country)),), home[3:5])
+    iso2 = common.get_iso2_country_code(common.correct_country(country))
+    hit = _osm_place(locality[0], (iso2,), home[3:5]) if iso2 else None
     return hit is None or (_km(home[3], home[4], hit[4], hit[5])
                            > _km(home[3], home[4], float(row['lat']), float(row['lon'])))
 
@@ -5725,7 +5726,7 @@ def _mapping_state(osm_state, rows, country):
         return known[_name_key(bare)]
     # the mapping may write the code: "New South Wales" is NSW
     iso2 = common.get_iso2_country_code(common.correct_country(country))
-    code = next((sub.code.split('-')[1] for sub in pycountry.subdivisions.get(country_code=iso2) or []
+    code = next((sub.code.split('-')[1] for sub in (iso2 and pycountry.subdivisions.get(country_code=iso2)) or []
                  if _name_key(sub.name) == _name_key(bare)), None)
     return code if code in states else bare
 
@@ -6640,7 +6641,7 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
                     continue
                 if near_context(row, p, e, df):
                     continue
-                if _place_near(loc[0], iso2, home[3], home[4]):
+                if iso2 and _place_near(loc[0], iso2, home[3], home[4]):
                     p['note'] = f"{p['note']}; {loc[0]} here is the place of that name near {home[0]}, " \
                                 f"not {', '.join(filter(None, loc))}".lstrip('; ')
                     e['locality'] = list(home[:3])

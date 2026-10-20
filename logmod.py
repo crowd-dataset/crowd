@@ -1,10 +1,7 @@
 """Contain function to display or store logging messages."""
 import logging
 import sys
-import os
-import datetime as dt
 from typing import Union, Optional
-import common
 
 
 def logs(
@@ -17,20 +14,14 @@ def logs(
         show_color: bool = True
 ) -> None:
     """
-    Initialize the logger.
+    Initialize the root logger: messages of show_level and above go to stdout.
 
     Parameters
     ----------
-    show_level : int or {'debug', 'info', warning', 'error', 'exception'},
+    show_level : int or {'debug', 'info', 'warning', 'error', 'critical'},
         optional. Pass a log level to display logs of that level and above.
-    save_level : int or {'debug', 'info', warning', 'error', 'exception'},
-        optional. Pass a log level to store logs of that level and above to
-        a file on disk. If no path is passed the default `_cache` folder will
-        be used.
-    program_name : str, optional
-        When saving logs to disk this string will be used in the filename.
-    path : str, optional
-        Path where log files will be stored. Defaults to the `_cache` folder.
+    save_level, program_name, path : ignored
+        Kept for old callers: logs are no longer saved to a file (no caller did).
     threads : bool, default False
         Add the thread name to log messages. Useful when using threading.
     multiproc : bool, default False
@@ -70,18 +61,6 @@ def logs(
         stream_handler.setLevel(_convert_logging_level(show_level))
         stream_handler.setFormatter(formatter)
         logger_root.addHandler(stream_handler)
-    if save_level:
-        if program_name is None:
-            program_name = 'noname'
-        date_str = dt.datetime.utcnow().strftime('%Y-%m-%d_%H-%M-%S')
-        log_filename = 'log_{}_{}.log'.format(program_name, date_str)
-        if path is None:
-            path = common.log_dir
-        file_handler = logging.FileHandler(filename=os.path.join(path,
-                                                                 log_filename))
-        file_handler.setFormatter(formatter)
-        file_handler.setLevel(_convert_logging_level(save_level))
-        logger_root.addHandler(file_handler)
     _logging_level_threshold()
 
 

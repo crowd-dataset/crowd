@@ -7,10 +7,12 @@ positions are computed in pixels of the equirectangular projection plotly uses f
 the saved 1600x900 figures.
 """
 
+import functools
 import json
 import math
 import os
-import urllib.request
+
+import requests
 
 import common
 from custom_logger import CustomLogger
@@ -38,17 +40,28 @@ NEAR = {"middle right": (1, 0), "middle left": (-1, 0), "top center": (0, -1), "
         "top right": (0.7, -0.7), "bottom right": (0.7, 0.7), "top left": (-0.7, -0.7), "bottom left": (-0.7, 0.7)}
 
 
+def download(url: str, path: str, timeout: float = 300) -> None:
+    """Download `url` to `path` through a temporary file, so an interrupted download leaves no broken cache."""
+    r = requests.get(url, timeout=timeout)
+    r.raise_for_status()
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path + ".tmp", "wb") as f:
+        f.write(r.content)
+    os.replace(path + ".tmp", path)
+
+
 def _load_topojson() -> dict:
     path = os.path.join(common.output_dir, "world_110m_un.json")
     if not os.path.exists(path):
-        os.makedirs(common.output_dir, exist_ok=True)
-        urllib.request.urlretrieve(TOPOJSON_URL, path)
+        download(TOPOJSON_URL, path)
     with open(path, encoding="utf-8") as f:
         return json.load(f)
 
 
+@functools.lru_cache(maxsize=1)
 def country_shapes() -> dict:
-    """ISO3 -> dict(ct=(lon, lat) of plotly's label point, rings=[outer rings as [(lon, lat), ...]])."""
+    """ISO3 -> dict(ct=(lon, lat) of plotly's label point, rings=[outer rings as [(lon, lat), ...]]); computed once
+    per run and shared, so callers must not change it."""
     topo = _load_topojson()
     (sx, sy), (tx, ty) = topo["transform"]["scale"], topo["transform"]["translate"]
     arcs = []
@@ -91,8 +104,9 @@ def country_shapes() -> dict:
 
 
 def _area(ring) -> float:
-    """Signed area of a ring in square degrees (shoelace)."""
-    return sum(x1 * y2 - x2 * y1 for (x1, y1), (x2, y2) in zip(ring, ring[1:])) / 2
+    """Signed area of a ring (shoelace; positive when counter-clockwise), in its own units squared; points may carry
+    more than two coordinates."""
+    return sum(x1 * y2 - x2 * y1 for (x1, y1, *_), (x2, y2, *_) in zip(ring, ring[1:] + ring[:1])) / 2
 
 
 def territory_ring(anchor, shapes: dict, owner_points: dict):
@@ -220,26 +234,44 @@ def place_labels(items: list, proj: Projection, shapes: dict, stack_clusters: bo
     """
     labels = []  # boxes of placed labels
     dots = []  # boxes kept free around dots
-    lines = []  # leader lines as (start, end, points along them)
+    lines = []  # leader lines as (start, end, points along them, bounding box of the points or None)
     bounds = (proj.frame[0] + 2, proj.frame[1] + 2, proj.frame[2] - 2, proj.frame[3] - 2)
     result = {}
+
+    def on_line(box, line):
+        """Whether a point of the leader line lies in the box (its bounding box first: most lines are far away)."""
+        lb = line[3]
+        return (lb is not None and box[0] <= lb[2] and lb[0] <= box[2] and box[1] <= lb[3] and lb[1] <= box[3]
+                and any(box[0] <= px <= box[2] and box[1] <= py <= box[3] for px, py in line[2]))
 
     def free(box):
         grown = (box[0] - GAP, box[1] - GAP, box[2] + GAP, box[3] + GAP)
         return (bounds[0] <= box[0] and box[2] <= bounds[2] and bounds[1] <= box[1] and box[3] <= bounds[3]
                 and not any(_overlaps(grown, t) for t in labels) and not any(_overlaps(box, d) for d in dots)
-                and not any(box[0] <= px <= box[2] and box[1] <= py <= box[3] for *_, pts in lines for px, py in pts))
+                and not any(on_line(box, line) for line in lines))
 
     def line_free(start, end, dot=DOT):
-        """A leader line may not cross other lines or labels; it may pass over other countries' dots."""
-        n = max(int(math.dist(start, end) / 3), 1)
-        pts = [(start[0] + (end[0] - start[0]) * i / n, start[1] + (end[1] - start[1]) * i / n) for i in range(n + 1)]
-        pts = [p for p in pts if math.dist(p, start) > dot / 2 and math.dist(p, end) > PAD]
-        if any(t[0] - GAP <= px <= t[2] + GAP and t[1] - GAP <= py <= t[3] + GAP for t in labels for px, py in pts):
+        """The leader line (start, end, points, bounding box) when it crosses no other line or label (it may pass over
+        other countries' dots), else None."""
+        def line():
+            n = max(int(math.dist(start, end) / 3), 1)
+            pts = [(start[0] + (end[0] - start[0]) * i / n, start[1] + (end[1] - start[1]) * i / n)
+                   for i in range(n + 1)]
+            pts = [p for p in pts if math.dist(p, start) > dot / 2 and math.dist(p, end) > PAD]
+            return (start, end, pts, (min(p[0] for p in pts), min(p[1] for p in pts), max(p[0] for p in pts),
+                                      max(p[1] for p in pts)) if pts else None)
+
+        # only labels near the segment can hold its points (sampling it is what takes the time)
+        span = (min(start[0], end[0]) - 1e-6, min(start[1], end[1]) - 1e-6, max(start[0], end[0]) + 1e-6,
+                max(start[1], end[1]) + 1e-6)
+        near = [g for g in ((t[0] - GAP, t[1] - GAP, t[2] + GAP, t[3] + GAP) for t in labels)
+                if g[0] <= span[2] and span[0] <= g[2] and g[1] <= span[3] and span[1] <= g[3]]
+        sampled = line() if near else None
+        if near and any(on_line(g, sampled) for g in near):
             return None
-        if any(_cross(start, end, a, b) for a, b, _ in lines):
+        if any(_cross(start, end, a, b) for a, b, *_ in lines):
             return None
-        return pts
+        return sampled or line()
 
     def dot_box(item):
         x, y = proj(*item["anchor"])
@@ -247,9 +279,8 @@ def place_labels(items: list, proj: Projection, shapes: dict, stack_clusters: bo
         return x - d / 2, y - d / 2, x + d / 2, y + d / 2
 
     # 1) labels inside countries large enough to hold them, largest countries first
-    def pixel_area(item):
-        rings = shapes.get(item["code"], {}).get("rings", [])
-        return sum(abs(sum(x1 * y2 - x2 * y1 for (x1, y1), (x2, y2) in zip(r, r[1:] + r[:1]))) for r in rings)
+    def area(item):
+        return sum(abs(_area(r)) for r in shapes.get(item["code"], {}).get("rings", []))
 
     def inside_spots(item):
         """Label boxes (closest to the country's label point first) whose core lies inside the country."""
@@ -272,7 +303,7 @@ def place_labels(items: list, proj: Projection, shapes: dict, stack_clusters: bo
     spots = {item["code"]: inside_spots(item) for item in items}
     # countries whose label can never go inside get a dot; reserve their spots before any label is placed
     dots.extend(dot_box(item) for item in items if not spots[item["code"]])
-    for item in sorted(items, key=pixel_area, reverse=True):
+    for item in sorted(items, key=area, reverse=True):
         for box in spots[item["code"]]:
             if free(box):
                 labels.append(box)
@@ -337,12 +368,12 @@ def place_labels(items: list, proj: Projection, shapes: dict, stack_clusters: bo
         for c in group:
             k = by_code[c].get("scale", 1)
             box = _box(*slot[c], text_width(" ".join(by_code[c]["lines"])) * k, LINE_H * k, position, pad=1)
-            pts = line_free(points[c], slot[c]) if free(box) else None
-            if pts is None:
+            line = line_free(points[c], slot[c]) if free(box) else None
+            if line is None:
                 del labels[n_labels:], lines[n_lines:]
                 return False
             labels.append(box)
-            lines.append((points[c], slot[c], pts))
+            lines.append(line)
         for c in group:
             result[c] = ("line", by_code[c]["anchor"], proj.invert(*slot[c]), position)
         return True
@@ -392,10 +423,10 @@ def place_labels(items: list, proj: Projection, shapes: dict, stack_clusters: bo
                         lx, ly = x + r * math.cos(angle), y - r * math.sin(angle)
                         position = "middle right" if math.cos(angle) >= 0 else "middle left"
                         box = _box(lx, ly, w, h, position, pad=1)
-                        pts = line_free((x, y), (lx, ly), dot) if free(box) else None
-                        if pts is not None:
+                        line = line_free((x, y), (lx, ly), dot) if free(box) else None
+                        if line is not None:
                             labels.append(box)
-                            lines.append(((x, y), (lx, ly), pts))
+                            lines.append(line)
                             result[item["code"]] = ("line", item["anchor"], proj.invert(lx, ly), position)
                             if r > LONG_LINE:
                                 long_lines[item["code"]] = r
@@ -408,18 +439,20 @@ def place_labels(items: list, proj: Projection, shapes: dict, stack_clusters: bo
 
     # rip-up and retry: labels that found no spot, then those far from their dot (Ghana's ran past Nigeria while its
     # neighbours took the spots near it), go first in the next round; the round with the fewest failures and the
-    # shortest long leader lines is kept
+    # shortest long leader lines is kept. When a round fails and lengthens the same labels as the one before, the
+    # order no longer changes and every further round would repeat it.
     state = (labels[:], lines[:], dict(result))
-    best = None
+    best, last = None, None
     for attempt in range(8):
         labels[:], lines[:], result = state[0][:], state[1][:], dict(state[2])
         failed, long_lines = place_rest(todo)
         score = (len(failed), sum(long_lines.values()))
         if best is None or score < best[0]:
             best = (score, labels[:], lines[:], dict(result), failed)
-        if not failed and not long_lines:
-            break
         first = set(failed) | set(long_lines)
+        if not first or (set(failed), first) == last:
+            break
+        last = (set(failed), first)
         todo = sorted(todo, key=lambda item: (item["code"] not in failed, item["code"] not in first))
     _, labels[:], lines[:], result, failed = best
     for code in [] if drop_unplaced else failed:  # nowhere free even so: keep the label next to its dot

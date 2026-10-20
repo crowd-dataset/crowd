@@ -77,6 +77,25 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v6
 
+
+      # Downloads the figures reuse (outlines, populations, World Bank and WHO
+      # data, the Blue Marble image); the code refreshes each by its own age.
+      # A new key each week; a miss restores the latest of the week before.
+      - name: Week
+        id: week
+        run: echo "week=$(date -u +%G-W%V)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache downloads
+        uses: actions/cache@v4
+        with:
+          path: |
+            _output/geo_cache
+            _output/world_110m_un.json
+            _output/blue_marble_2048.jpg
+            .wb_cache
+          key: figure-downloads-${{ steps.week.outputs.week }}
+          restore-keys: figure-downloads-
+
       # Default settings, analysis forced, no data or video folders,
       # empty API keys (not needed for the mapping-only figures).
       - name: Create config and secret
@@ -84,7 +103,7 @@ jobs:
           python3 - <<'EOF'
           import json
           c = json.load(open("default.config"))
-          c.update(always_analyse=True, data=[], videos=[])
+          c.update(data=[], videos=[], save_eps=False)  # no EPS: made on purpose, not weekly
           json.dump(c, open("config", "w"), indent=2)
           keys = json.load(open("default.secret"))
           json.dump({k: "" for k in keys}, open("secret", "w"), indent=2)

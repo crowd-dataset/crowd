@@ -38,7 +38,7 @@ POPUPS_JS = """
 })();
 """
 
-INDICATORS = [  # country column, label, format
+POPUP_INDICATORS = [  # country column, label, format
     ("population_country", "Population", "{:,.0f}"),
     ("traffic_mortality", "Road deaths per 100k", "{:.1f}"),
     ("literacy_rate", "Literacy rate", "{:.1f}%"),
@@ -46,6 +46,26 @@ INDICATORS = [  # country column, label, format
     ("med_age", "Median age", "{:.1f} years"),
     ("avg_height", "Average height", "{:.1f} cm"),
 ]
+# Expressions over the segment table (`dataset_figures.segments()`), shared by the figures.
+HOURS = (pl.sum("seconds") / 3600).alias("hours")
+NIGHT_PCT = pl.col("seconds").filter(pl.col("night")).sum() / pl.sum("seconds") * 100  # share of footage at night
+
+
+def channel_concentration(seg: pl.DataFrame, by=("iso3",)) -> pl.DataFrame:
+    """Per group of `by`: `effective` number of channels (inverse Herfindahl index of the channels' shares of the
+    footage: 1 is a single uploader, n as diverse as n equal channels), `top_channel` (% of the footage from the
+    largest), `hours` and number of `channels` (segments with a channel only)."""
+    by = list(by)
+    per_channel = seg.drop_nulls("channel").group_by(*by, "channel").agg(pl.sum("seconds"))
+    return (per_channel.with_columns((pl.col("seconds") / pl.col("seconds").sum().over(by)).alias("s"))
+                       .group_by(*by).agg((1 / (pl.col("s") ** 2).sum()).alias("effective"),
+                                          (pl.max("s") * 100).alias("top_channel"),
+                                          HOURS, pl.len().alias("channels")))
+
+
+def _known(v) -> bool:
+    """Whether a value is there: not missing, NaN or 0 (the mapping's zeros mean no data)."""
+    return v is not None and v == v and v != 0
 
 
 def _rule():
@@ -83,10 +103,10 @@ def _summary(seg: pl.DataFrame, key: str) -> pl.DataFrame:
                    .with_columns((pl.col("seconds") / pl.col("seconds").sum().over(key) * 100).alias("share"))
                    .group_by(key).agg(pl.struct("vehicle", "share").alias("vehicle_shares")))
     return (seg.group_by(key)
-               .agg((pl.sum("seconds") / 3600).alias("hours"), pl.len().alias("n_segments"),
+               .agg(HOURS, pl.len().alias("n_segments"),
                     pl.col("video").n_unique().alias("n_videos"),
                     pl.col("channel").drop_nulls().n_unique().alias("n_channels"),
-                    (pl.col("seconds").filter(pl.col("night")).sum() / pl.sum("seconds") * 100).alias("night"),
+                    NIGHT_PCT.alias("night"),
                     pl.col("year").filter(pl.col("year").is_between(2005, 2100)).min().alias("first_year"),
                     pl.col("year").filter(pl.col("year").is_between(2005, 2100)).max().alias("last_year"))
                .join(vehicles, on=key, how="left"))
@@ -123,11 +143,11 @@ def locality_hover(df_mapping: pl.DataFrame, seg: pl.DataFrame, flags: dict) -> 
         else:
             lines.append("No footage")
         lines.append(_rule())
-        if r.get("population_locality"):
+        if _known(r.get("population_locality")):
             lines.append(f"<b>Population:</b> {r['population_locality']:,.0f}")
-        if r.get("gmp"):
+        if _known(r.get("gmp")):
             lines.append(f"<b>Gross metropolitan product:</b> ${r['gmp']:,.0f} billion")
-        if r.get("traffic_index") is not None:
+        if _known(r.get("traffic_index")):
             lines.append(f"<b>Traffic index (TomTom):</b> {r['traffic_index']:,.1f}")
         if r.get("lat") is not None:
             lines.append(f"<b>Location:</b> {r['lat']:.3f}, {r['lon']:.3f}")
@@ -138,7 +158,7 @@ def locality_hover(df_mapping: pl.DataFrame, seg: pl.DataFrame, flags: dict) -> 
 
 def _country_indicators(r: dict) -> str:
     """The country's indicators on two lines (zeros mean no data)."""
-    parts = [f"{label} {fmt.format(r[col])}" for col, label, fmt in INDICATORS if r.get(col)]
+    parts = [f"{label} {fmt.format(r[col])}" for col, label, fmt in POPUP_INDICATORS if _known(r.get(col))]
     if not parts:
         return "no indicators"
     return " · ".join(parts[:3]) + ("<br>" + " · ".join(parts[3:]) if parts[3:] else "")
@@ -146,14 +166,11 @@ def _country_indicators(r: dict) -> str:
 
 def country_hover(df_mapping: pl.DataFrame, seg: pl.DataFrame, flags: dict) -> pl.DataFrame:
     """One popup per country: `iso3`, `hover`."""
-    first = (pl.col(c).filter(pl.col(c) > 0).first() for c, _, _ in INDICATORS)
+    first = (pl.col(c).filter(pl.col(c) > 0).first() for c, _, _ in POPUP_INDICATORS)
     countries = (df_mapping.group_by("iso3").agg(pl.first("country"), pl.col("continent").unique().sort(),
                                                  pl.len().alias("n_localities"), *first)
                            .join(_summary(seg, "iso3"), on="iso3", how="left"))
-    by_channel = seg.drop_nulls("channel").group_by("iso3", "channel").agg(pl.sum("seconds"))
-    channels = (by_channel.with_columns((pl.col("seconds") / pl.col("seconds").sum().over("iso3")).alias("s"))
-                          .group_by("iso3").agg((1 / (pl.col("s") ** 2).sum()).alias("effective"),
-                                                (pl.max("s") * 100).alias("top_channel")))
+    channels = channel_concentration(seg).select("iso3", "effective", "top_channel")
     countries = countries.join(channels, on="iso3", how="left")
     out = []
     for r in countries.iter_rows(named=True):
@@ -162,7 +179,7 @@ def country_hover(df_mapping: pl.DataFrame, seg: pl.DataFrame, flags: dict) -> p
             r["vehicle_shares"] = _shares(r)
             lines += _footage_lines(r)
             lines.insert(4, f"<b>Localities:</b> {r['n_localities']:,}")
-            if r.get("population_country"):
+            if _known(r.get("population_country")):
                 lines.append(f"<b>Per million people:</b> {r['hours'] / r['population_country'] * 1e6:,.1f} h")
             if r.get("effective"):
                 lines.append(f"<b>Largest channel:</b> {r['top_channel']:.0f}% of footage; "
@@ -170,28 +187,45 @@ def country_hover(df_mapping: pl.DataFrame, seg: pl.DataFrame, flags: dict) -> p
         else:
             lines.append("No footage")
         lines.append(_rule())
-        for col, label, fmt in INDICATORS:
-            if r.get(col):
+        for col, label, fmt in POPUP_INDICATORS:
+            if _known(r.get(col)):
                 lines.append(f"<b>{label}:</b> {fmt.format(r[col])}")
         out.append(dict(iso3=r["iso3"], hover="<br>".join(lines)))
     return pl.DataFrame(out, schema={"iso3": pl.Utf8, "hover": pl.Utf8})
 
 
+# the last popups made: analysis.py and the dataset and detection figures each ask for the same ones
+_last = None  # dict(inputs=(df_mapping, seg, flags), keys=(loc_keys, cty_keys), script=..., written=bool)
+
+
+def _same(a, b) -> bool:
+    if isinstance(a, pl.DataFrame) or isinstance(b, pl.DataFrame):
+        return a is b or (isinstance(a, pl.DataFrame) and isinstance(b, pl.DataFrame) and a.equals(b))
+    return a == b
+
+
 def popups(df_mapping: pl.DataFrame, seg: pl.DataFrame, flags: dict, write: bool = True) -> tuple:
     """Write all locality and country popups to popups.js (next to the figures) and return the keys that stand for
-    them: (DataFrame `id`, `hover`; DataFrame `iso3`, `hover`)."""
-    loc, cty = locality_hover(df_mapping, seg, flags), country_hover(df_mapping, seg, flags)
-    loc_keys = loc.with_columns(pl.format("@L{}", pl.col("id")).alias("key"))
-    cty_keys = cty.with_columns(pl.format("@C{}", pl.col("iso3")).alias("key"))
-    if write:
+    them: (DataFrame `id`, `hover`; DataFrame `iso3`, `hover`). Made once for the same inputs."""
+    global _last
+    inputs = (df_mapping, seg, flags)
+    if _last is None or not all(_same(a, b) for a, b in zip(inputs, _last["inputs"])):
+        loc, cty = locality_hover(df_mapping, seg, flags), country_hover(df_mapping, seg, flags)
+        loc_keys = loc.with_columns(pl.format("@L{}", pl.col("id")).alias("key"))
+        cty_keys = cty.with_columns(pl.format("@C{}", pl.col("iso3")).alias("key"))
         table = dict(zip(loc_keys["key"], loc_keys["hover"])) | dict(zip(cty_keys["key"], cty_keys["hover"]))
-        script = "window.CROWD_POPUPS = " + json.dumps(table, ensure_ascii=False, separators=(",", ":")) + ";\n"
+        _last = dict(inputs=inputs, written=False,
+                     script="window.CROWD_POPUPS = " + json.dumps(table, ensure_ascii=False, separators=(",", ":"))
+                     + ";\n",
+                     keys=(loc_keys.select("id", pl.col("key").alias("hover")),
+                           cty_keys.select("iso3", pl.col("key").alias("hover"))))
+    if write and not _last["written"]:
         for folder in (common.output_dir, os.path.join(common.root_dir, "figures")):
             os.makedirs(folder, exist_ok=True)
             with open(os.path.join(folder, POPUPS_FILE), "w", encoding="utf-8") as f:
-                f.write(script)
-    return (loc_keys.select("id", pl.col("key").alias("hover")),
-            cty_keys.select("iso3", pl.col("key").alias("hover")))
+                f.write(_last["script"])
+        _last["written"] = True
+    return _last["keys"]
 
 
 if __name__ == "__main__":
@@ -200,14 +234,19 @@ if __name__ == "__main__":
                           continent=["Europe"], lat=[1.0], lon=[2.0], gmp=[None], population_locality=[1000],
                           population_country=[5e6], traffic_mortality=[3.5], literacy_rate=[0.0], gini=[30.0],
                           med_age=[40.0], avg_height=[170.0], traffic_index=[0.0]))
+    m_nan = m.with_columns(pl.lit(float("nan")).alias("gini"), pl.lit(25.0).alias("traffic_index"))
     s = pl.DataFrame(dict(id=[1, 1], iso3=["BBB"] * 2, video=["v1", "v2"], seconds=[3600, 1800], night=[False, True],
                           vehicle=["Car", "Bus"], year=[2020, 2024], channel=["c1", "c1"]))
     h = locality_hover(m, s, {"BBB": "🇧🇧"})["hover"][0]
     assert "🇧🇧 A" in h and "also Aa" in h and "1.5 h in 2 segments of 2 videos" in h, h
-    assert "Night:</b> 33%" in h and "Car 67%, Bus 33%" in h and "2020–2024" in h and "Traffic index" in h, h
-    assert "literacy" not in h, h  # zero literacy means no data
+    assert "Night:</b> 33%" in h and "Car 67%, Bus 33%" in h and "2020–2024" in h, h
+    assert "literacy" not in h and "Traffic index" not in h, h  # zeros mean no data
+    h = locality_hover(m_nan, s, {})["hover"][0]
+    assert "Traffic index (TomTom):</b> 25.0" in h and "Gini" not in h, h  # NaN means no data too
     c = country_hover(m, s, {"BBB": "🇧🇧"})["hover"][0]
     assert "Localities:</b> 1" in c and "Per million people:</b> 0.3 h" in c and "Largest channel:</b> 100%" in c, c
     loc_keys, cty_keys = popups(m, s, {"BBB": "🇧🇧"}, write=False)
     assert loc_keys["hover"].to_list() == ["@L1"] and cty_keys["hover"].to_list() == ["@CBBB"]
+    assert popups(m.clone(), s, {"BBB": "🇧🇧"}, write=False)[0] is loc_keys  # the same inputs: made once
+    assert popups(m_nan, s, {}, write=False)[0] is not loc_keys
     print("ok")

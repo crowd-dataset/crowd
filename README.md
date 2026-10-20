@@ -692,51 +692,46 @@ The tests run with `python -m pytest tests` (after `uv pip install pytest`).
 
 
 ### Configuration of project
-Configuration of the project needs to be defined in `config`. Please use the `default.config` file for the required structure of the file. If no custom config file is provided, `default.config` is used. The config file has the following parameters:
-- **`data`**: Directory containing data (CSV output from YOLO).
-- **`videos`**: Directories containing the videos used to generate the data.
-- **`mapping`**: CSV file that contains mapping data for the cities referenced in the data.
-- **`prediction_mode`**: Configures YOLO for object detection.
-- **`tracking_mode`**: Configures YOLO for object tracking.
-- **`always_analyse`**: Always conduct analysis even when pickle files are present (good for testing).
-- **`display_frame_tracking`**: Displays the frame tracking during analysis.
-- **`save_annotated_img`**: Saves the annotated frames produced by YOLO.
-- **`delete_labels`**: Deletes label files from YOLO output.
-- **`delete_frames`**: Deletes frames from YOLO output.
-- **`delete_youtube_video`**: Deletes saved YouTube videos.
-- **`compress_youtube_video`**: Compresses YouTube videos (using the H.255 codec by default).
-- **`delete_runs_files`**: Deletes files containing YOLO output after analysis.
-- **`check_missing_mapping`**: Identifies all the missing csv files.
-- **`min_max_videos`**: Gives snippets of the fastest and slowest crossing pedestrian.
-- **`track_buffer_sec`**: Keep tracks longer (in seconds).
-- **`analysis_level`**: Specifies the analysis level; supported versions include `city` and `country`.
-- **`client`**: Specifies the client type for downloading YouTube videos; accepted values are `"WEB"`, `"ANDROID"` or `"ios"`.
-- **`model`**: Specifies the YOLO model to use; supported/tested versions include `v8x` and `v11x`.
-- **`population_threshold`**: Specifies the minimum population a city must have to be included in the analysis.
-- **`footage_threshold`**: Specifies the minimum amount of footage required for a city to be included in the analysis.
-- **`min_city_population_percentage`**: Specifies the minimum proportion of a country’s population that a city must have to be included in the analysis.
-- **`countries_analyse`**: Lists the countries to be analysed.
-- **`confidence`**: Sets the confidence threshold parameter for YOLO.
-- **`update_ISO_code`**: Updates the ISO code of the country in the mapping file during analysis.
-- **`update_pop_country`**: Updates the country’s population in the mapping file during analysis.
-- **`update_gini_value`**: Updates the GINI value of the country in the mapping file during analysis.
-- **`update_pytubefix`**: Updates the `pytubefix` library each time analysis starts.
-- **`font_family`**: Specifies the font family to be used in outputs.
-- **`font_size`**: Specifies the font size to be used in outputs.
-- **`plotly_template`**: Defines the template for Plotly figures.
-- **`open_html_figures`** (optional): Set to `true` to open every saved HTML figure in the browser. Off when absent.
-- **`logger_level`**: Level of console output. Can be: debug, info, warning, error.
-- **`sleep_sec`**: Amount of seconds of pause in the end of the loop in `main.py`.
-- **`git_pull`**: Pull changes from git repository in the end of the loop in `main.py`.
-- **`email_send`**: Send email about completion of the job in the end of the loop in `main.py`. See the following paragraph for the additional parameters in the `secret` file.
-- **`email_sender`**: Email address of the the "sender" of the email.
-- **`email_recipients`**: List of emails for sending the message.
-- **`max_workers`**: Specifies the maximum number of segment-processing worker threads (i.e., how many segments can be analysed in parallel). Increasing this increases concurrent segment processing, subject to GPU/CPU and I/O limits.
-- **`download_workers`**: Specifies the maximum number of concurrent video download/prepare workers. Increasing this allows multiple videos to be downloaded/prepared in parallel (useful when network/FTP is the bottleneck).
-- **`max_active_segments_per_video`**: Specifies the maximum number of segments from the *same video* that are allowed to be processed concurrently.
-  - If set to **1**, the scheduler tends to distribute workers across **different videos** (e.g., with `max_workers=3`, it will try to process 3 different videos at once).
-  - If set to **2+**, multiple workers may process segments from the **same video** simultaneously, which can improve throughput when one video has many segments but reduces “video diversity” across workers.
+Configuration of the project needs to be defined in `config`; copy `default.config` to start. The scripts stop when `config` is missing or has fewer entries than `default.config`. Entries marked optional may be left out. The config file has the following parameters:
 
+**Data and mapping**
+- **`data`**: folders with the YOLO output (a `bbox/` folder of detection CSVs in each).
+- **`videos`**: folders with the downloaded videos.
+- **`mapping`**: the mapping file (`mapping.csv`).
+- **`countries_analyse`**: ISO3 codes of the countries to analyse; empty for all.
+- **`min_confidence`**: minimum YOLO confidence of a detection counted in the analysis.
+
+**Video processing (`main.py`)**
+- **`machine_name`**: name of the machine in the emails sent by `main.py`.
+- **`tracking_mode`**: run YOLO tracking and write the detection CSVs.
+- **`tracking_model`**: the YOLO model file (e.g. `yolo11x.pt`).
+- **`bbox_tracker`**: the tracker settings (`bbox_custom_tracker.yaml`, its track buffer set from `track_buffer_sec`).
+- **`track_buffer_sec`**: how long (s) a lost track is kept before it ends.
+- **`max_workers`**: segments processed at the same time.
+- **`download_workers`**: videos downloaded or prepared at the same time.
+- **`max_active_segments_per_video`**: segments of the *same video* processed at the same time: with **1**, the workers take segments of different videos (with `max_workers=3`, 3 videos at once); with **2+**, several workers may take segments of one video, which helps when a video has many segments.
+- **`runs_root`**: folder for YOLO's working files.
+- **`external_ssd`**: the videos are on an external drive: segments are trimmed on the internal drive (the last folder of `videos`).
+- **`ftp_server`**: server from which videos are fetched before trying YouTube (`ftp_username` and `ftp_password`, and optionally `ftp_token`, in `secret`).
+- **`delete_youtube_video`**, **`delete_runs_files`**, **`delete_labels`**: delete downloaded videos, YOLO's working files and its label files after processing.
+- **`save_annotated_video`**, **`save_annoted_img`**, **`save_tracked_img`**, **`display_frame_tracking`**: save an annotated video, save annotated or tracked frames, show the tracking while it runs.
+- **`snellius_mode`**, **`snellius_shard_mode`**: running as several tasks on the Snellius cluster, each taking its share of the segments.
+- **`sleep_sec`**, **`git_pull`**: pause (s) at the end of each loop of `main.py`, and pulling the repository then.
+- **`email_send`**, **`email_sender`**, **`email_recipients`**: email when a job finishes or crashes (see the `secret` file below).
+
+**Downloading from YouTube**
+- **`client`**: pytubefix client (`"WEB"`, `"ANDROID"` or `"IOS"`).
+- **`need_authentication`**: sign in to YouTube for downloads with pytubefix.
+- **`update_package`**: update pytubefix and yt-dlp (on Mondays) before downloading.
+- Optional: **`use_pytubefix`** (false: yt-dlp only), **`cookies_file`** (a Netscape cookies file for yt-dlp), **`cookies_browser`** (yt-dlp's `--cookies-from-browser`, e.g. `chrome`) and **`js_runtime`** (yt-dlp's JavaScript runtime, e.g. `node:/path/to/node`).
+
+**Updating the mapping**
+- **`update_pop_country`**, **`update_gini_value`**: update the countries' population and Gini index in the mapping from the World Bank when `main.py` starts.
+
+**Figures and output**
+- **`font_family`**, **`font_size`**, **`plotly_template`**: look of the figures.
+- **`logger_level`**: level of console output: debug, info, warning or error.
+- Optional: **`open_html_figures`** (true: open every saved HTML figure in the browser) and **`save_eps`** (false: no EPS figures, as in the GitHub Action; EPS needs poppler's `pdftops`).
 
 ### The `secret` file
 API keys, passwords and usernames live in a file named `secret` (no extension) in the root of the project. It is ignored by git, so it is never committed. To create it, copy the template `default.secret` to `secret` and fill in the values you need. Any value can stay empty (`""`) if you do not use the feature it belongs to. Running the analysis on the released dataset needs none of them; running `main.py` needs at least an empty `secret` copied from the template.

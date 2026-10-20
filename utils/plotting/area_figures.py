@@ -12,6 +12,8 @@ counties (plotly's datasets) and their populations (US Census Bureau estimates),
 and their populations (Eurostat). A figure whose download fails is skipped.
 """
 
+import functools
+import itertools
 import json
 import math
 import os
@@ -35,17 +37,27 @@ logger = CustomLogger(__name__)
 def visible_scale(scale):
     """A plotly sequential colour scale (by name) without its near-white steps: the lowest values would look like the
     white sea or background, or like an area without data. Scales that start dark (Viridis) and lists are kept."""
-    import plotly.express as px
-    if not isinstance(scale, str) or not hasattr(px.colors.sequential, scale):
+    if not isinstance(scale, str) or not hasattr(plotly.colors.sequential, scale):
         return scale
-    colours = getattr(px.colors.sequential, scale)
+    colours = getattr(plotly.colors.sequential, scale)
 
     def light(c):
-        rgb = px.colors.hex_to_rgb(c) if c.startswith("#") else px.colors.unlabel_rgb(c)
+        rgb = plotly.colors.hex_to_rgb(c) if c.startswith("#") else plotly.colors.unlabel_rgb(c)
         return sum(rgb) / 3 > 225
     while len(colours) > 3 and light(colours[0]):
         colours = colours[1:]
     return colours
+
+
+def log_ticks(lo: float, hi: float, steps=(1, 2, 5)) -> tuple:
+    """(values, labels) of ticks for a log scale from 10**lo to 10**hi: `steps` times the powers of ten in that range,
+    or the two ends (two significant digits) when none falls in it (e.g., a single value)."""
+    ticks = [m * 10 ** p for p in range(math.floor(lo), math.ceil(hi) + 1) for m in steps
+             if lo <= math.log10(m * 10 ** p) <= hi]
+    if not ticks:
+        ticks = sorted({10 ** lo, 10 ** hi})
+        return ticks, [f"{float(f'{t:.2g}'):,g}" for t in ticks]
+    return ticks, [f"{t:,g}" for t in ticks]
 
 
 CACHE = os.path.join(common.output_dir, "geo_cache")
@@ -114,17 +126,16 @@ def _clockwise(geometry: dict) -> dict:
     """The polygon(s) with clockwise outer rings, as in the NUTS file: plotly's maps fill a counter-clockwise ring as
     the whole globe except it (geoBoundaries draws them counter-clockwise)."""
     def fix(polygon):
-        r = polygon[0]
-        ccw = sum(x1 * y2 - x2 * y1 for (x1, y1, *_), (x2, y2, *_) in zip(r, r[1:])) > 0
-        return [ring[::-1] for ring in polygon] if ccw else polygon
+        return [ring[::-1] for ring in polygon] if map_labels._area(polygon[0]) > 0 else polygon
     coords = geometry["coordinates"]
     return dict(type=geometry["type"],
                 coordinates=fix(coords) if geometry["type"] == "Polygon" else [fix(p) for p in coords])
 
 
+@functools.lru_cache(maxsize=None)
 def _areas(kind: str) -> tuple | None:
     """(features as {id: dict(name, rings, geometry)}, population by id) of US counties ("us") or NUTS-2 regions
-    ("eu"); None when the outlines cannot be downloaded."""
+    ("eu"); None when the outlines cannot be downloaded. Read once per run and shared: callers must not change it."""
     if kind == "us":
         path, pop_path = _fetch("us_counties.json"), _fetch("us_county_population.csv")
         if not path:
@@ -245,13 +256,12 @@ def _area_map(table: pl.DataFrame, feats: dict, pop: dict, value: str, title: st
                                                    "top").iter_rows()]
     colorbar = colorbar_top(title)
     if log:
-        steps = (1,) if z.max() - z.min() > 2.5 else (1, 2, 5)  # powers of ten; with a narrow range also 2x, 5x
-        ticks = [m * 10 ** p for p in range(math.floor(z.min()), math.ceil(z.max()) + 1) for m in steps
-                 if z.min() <= math.log10(m * 10 ** p) <= z.max()]
-        colorbar.update(tickvals=np.log10(ticks).tolist(), ticktext=[f"{t_:,g}" for t_ in ticks])
+        # powers of ten; with a narrow range also 2x, 5x
+        ticks, labels = log_ticks(z.min(), z.max(), (1,) if z.max() - z.min() > 2.5 else (1, 2, 5))
+        colorbar.update(tickvals=np.log10(ticks).tolist(), ticktext=labels)
     fig = go.Figure(go.Choropleth(geojson=_geojson(feats, t["area"]), locations=t["area"], z=z, featureidkey="id",
                                   colorscale=visible_scale(scale), marker_line_width=0.2, marker_line_color="#888888",
-                                  colorbar=colorbar, hovertext=text, hovertemplate="%{hovertext}<extra></extra>"))
+                                  colorbar=colorbar, hovertext=text, hovertemplate=hover.TEMPLATE))
     if us:
         states = ["AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "DC", "FL", "GA", "HI", "ID", "IL", "IN", "IA", "KS",
                   "KY", "LA", "ME", "MD", "MA", "MI", "MN", "MS", "MO", "MT", "NE", "NV", "NH", "NJ", "NM", "NY", "NC",
@@ -359,14 +369,18 @@ def _surface(lon, lat, w, box, cell: float, sigma_km: float = 40) -> tuple:
 
 
 def _borders(box) -> tuple:
-    """Country borders within the box as one line (x, y lists with None between rings)."""
+    """Country borders within the box (and a degree around it) as one line: x, y lists with None between rings and
+    where a ring leaves the box, so no straight chord joins the points either side of a part outside it."""
+    def near(p):
+        return box[0] - 1 <= p[0] <= box[1] + 1 and box[2] - 1 <= p[1] <= box[3] + 1
     xs, ys = [], []
     for shape in map_labels.country_shapes().values():
         for ring in shape["rings"]:
-            pts = [(x, y) for x, y in ring if box[0] - 1 <= x <= box[1] + 1 and box[2] - 1 <= y <= box[3] + 1]
-            if len(pts) > 1:
-                xs += [p[0] for p in pts] + [None]
-                ys += [p[1] for p in pts] + [None]
+            for inside, run in itertools.groupby(ring, near):
+                run = list(run)
+                if inside and len(run) > 1:
+                    xs += [p[0] for p in run] + [None]
+                    ys += [p[1] for p in run] + [None]
     return xs, ys
 
 
@@ -386,6 +400,7 @@ def _scene(box, z_max: float, distance: float = 1.0) -> dict:
 
 
 def _in_box(df: pl.DataFrame, box) -> pl.DataFrame:
+    """The rows whose lon/lat lie in the box (lon min, lon max, lat min, lat max)."""
     return df.filter(pl.col("lon").is_between(box[0], box[1]), pl.col("lat").is_between(box[2], box[3]))
 
 
@@ -412,10 +427,9 @@ def _spike_map(locs: pl.DataFrame, iso3: str, name: str, country: str):
                      line=dict(color="#666666", width=1.5), hoverinfo="skip", showlegend=False),
         go.Scatter3d(x=x, y=y, z=z, mode="lines", hoverinfo="skip", showlegend=False,
                      line=dict(color=c, colorscale="YlOrRd", cmin=0, cmax=1, width=3, showscale=True,
-                               colorbar=dict(title=dict(text="Footage (hours)", side="top"), orientation="h", x=0.5,
-                                             y=0.9, len=0.4, thickness=14,
-                                             tickvals=[(math.log10(t) - lo) / (top - lo) for t in ticks],
-                                             ticktext=[f"{t:,g}" for t in ticks]))),
+                               colorbar=colorbar_top("Footage (hours)") | dict(
+                                   y=0.9, len=0.4, tickvals=[(math.log10(t) - lo) / (top - lo) for t in ticks],
+                                   ticktext=[f"{t:,g}" for t in ticks]))),
         go.Scatter3d(x=p["lon"], y=p["lat"], z=h, mode="markers", showlegend=False,
                      marker=dict(size=2, color=h, colorscale="YlOrRd", cmin=0, cmax=1),
                      text=p["hover"], hovertemplate=hover.GL_TEMPLATE)])
@@ -423,13 +437,13 @@ def _spike_map(locs: pl.DataFrame, iso3: str, name: str, country: str):
     # in the tilted view, places far apart can have their labels at the same spot (Los Angeles and Sacramento):
     # neighbouring labels stack from south to north, each a step above the ones south of it (further north is also
     # further back, so it shows higher still)
-    w, hgt = (box[1] - box[0]) / 15, (box[3] - box[2]) / 4
+    near_lon, near_lat = (box[1] - box[0]) / 15, (box[3] - box[2]) / 4
     lons_, lats_ = big["lon"].to_list(), big["lat"].to_list()
     tips = (np.log10(big["hours"].to_numpy()) - lo) / (top - lo) + 0.04
     zs = list(tips)
     for i in sorted(range(len(lons_)), key=lambda k: lats_[k]):
         south = [zs[k] for k in range(len(lons_)) if lats_[k] < lats_[i]
-                 and abs(lons_[i] - lons_[k]) < w and lats_[i] - lats_[k] < hgt]
+                 and abs(lons_[i] - lons_[k]) < near_lon and lats_[i] - lats_[k] < near_lat]
         zs[i] = max([tips[i]] + [z + 0.2 for z in south])
     fig.add_trace(go.Scatter3d(x=big["lon"], y=big["lat"], z=zs, mode="text", text=big["locality"],
                                textfont=dict(size=12, color="#222222"),
@@ -454,8 +468,10 @@ FIELD_BOXES = {"Europe": (-25, 45, 34, 71.5), "North America": (-128, -60, 7, 58
 LAND_GREY = "#d9d9d9"
 
 
+@functools.lru_cache(maxsize=None)
 def _land_mask(box, cell: float) -> np.ndarray:
-    """Boolean grid (rows: latitude upwards) of the cells on land, from the country outlines."""
+    """Boolean grid (rows: latitude upwards) of the cells on land, from the country outlines (read-only: made once
+    per box and shared)."""
     from PIL import Image, ImageDraw
     nx, ny = int((box[1] - box[0]) / cell), int((box[3] - box[2]) / cell)
     img = Image.new("1", (nx, ny), 0)
@@ -469,7 +485,9 @@ def _land_mask(box, cell: float) -> np.ndarray:
             if max(xs) < box[0] or min(xs) > box[1]:
                 continue
             draw.polygon([((x - box[0]) / cell, (y - box[2]) / cell) for x, y in ring], fill=1)
-    return np.array(img, dtype=bool)
+    mask = np.array(img, dtype=bool)
+    mask.setflags(write=False)
+    return mask
 
 
 def _distance_grid(lons, lats, pts_lon, pts_lat) -> np.ndarray:
@@ -516,7 +534,7 @@ def _country_names(box, deg_per_char: float, deg_per_line: float) -> tuple:
         w, h = len(name) * deg_per_char / 2, deg_per_line / 2
         for dy in (0, 1.2 * deg_per_line, -1.2 * deg_per_line, 2.2 * deg_per_line, -2.2 * deg_per_line):
             b = (x - w, y + dy - h, x + w, y + dy + h)
-            if not any(b[0] < o[2] and o[0] < b[2] and b[1] < o[3] and o[1] < b[3] for o in boxes):
+            if not any(map_labels._overlaps(b, o) for o in boxes):
                 names.append(name)
                 xs.append(x)
                 ys.append(y + dy)
@@ -532,13 +550,10 @@ def _field_map(lons, lats, grid, shown, land, box, title: str, colorscale, name:
     from utils.plotting import dataset_figures as dfig
     z = np.where(shown, np.log10(np.maximum(grid, 1e-9)) if log else grid, np.nan)
     grey = np.where(land & ~shown, 1.0, np.nan)
-    colorbar = dict(title=dict(text=title, side="top"), orientation="h", x=0.5, xanchor="center", y=1.0,
-                    yanchor="bottom", len=0.5, thickness=14)
+    colorbar = colorbar_top(title) | dict(y=1.0)
     if log:
-        lo, hi = np.nanmin(z), np.nanmax(z)
-        ticks = [m * 10 ** p for p in range(math.floor(lo), math.ceil(hi) + 1) for m in (1, 3)
-                 if lo <= math.log10(m * 10 ** p) <= hi]
-        colorbar.update(tickvals=np.log10(ticks).tolist(), ticktext=[f"{t:,g}" for t in ticks])
+        ticks, labels = log_ticks(np.nanmin(z), np.nanmax(z), (1, 3))
+        colorbar.update(tickvals=np.log10(ticks).tolist(), ticktext=labels)
     customdata = np.where(shown, grid, np.nan)
     colorscale = visible_scale(colorscale)
     fig = go.Figure([
@@ -603,7 +618,7 @@ def _place_callouts(callouts: list, box, mid: float, width: int, height: int, ob
             # the arrow too: points along it (not its two ends) outside the names and boxes placed before
             line = [(px + ax * f, py + ay * f) for f in np.linspace(0.12, 0.8, 12)]
             if (b[0] >= 0 and b[1] >= 0 and b[2] <= map_w and b[3] <= map_h
-                    and not any(b[0] < o[2] and o[0] < b[2] and b[1] < o[3] and o[1] < b[3] for o in placed)
+                    and not any(map_labels._overlaps(b, o) for o in placed)
                     and not any(o[0] <= x <= o[2] and o[1] <= y <= o[3] for o in placed for x, y in line)):
                 break
         else:  # nowhere free: the usual direction
@@ -711,6 +726,8 @@ def _field_maps(locs: pl.DataFrame):
         lons, lats, mean, shown = _smoothed(p, value, box, cell)
         land = _land_mask(box, cell)
         shown &= land
+        if not shown.any():
+            continue
         calls = _extremes(lons, lats, mean, shown, p, 2, lows, fmt, words=words)
         _field_map(lons, lats, mean, shown, land, box, f"{title} (smoothed over ~50 km, weighted by footage)", scale,
                    name, "Europe: grey where there is too little footage nearby", calls, fmt=".1f")
@@ -753,6 +770,8 @@ def _detection_field_maps(d: pl.DataFrame, df_mapping: pl.DataFrame, flags: dict
         lons, lats, mean, shown = _smoothed(p, value, box, cell, min_weight=60)  # an analysed hour
         land = _land_mask(box, cell)
         shown &= land
+        if not shown.any():
+            continue
         calls = _extremes(lons, lats, mean, shown, p, 2, 2, fmt)
         # colours capped at the 98th percentile: one hotspot would otherwise leave the rest of Europe one pale colour
         top = float(np.nanpercentile(mean[shown], 98))
@@ -764,11 +783,12 @@ def _detection_field_maps(d: pl.DataFrame, df_mapping: pl.DataFrame, flags: dict
 # --- entry points ---------------------------------------------------------------------------------------------------
 
 def _localities(seg: pl.DataFrame, df_mapping: pl.DataFrame, loc_hover: pl.DataFrame, flags: dict) -> pl.DataFrame:
+    """One row per locality with footage and coordinates: hours, night_pct, year (footage-weighted mean upload year),
+    locality, iso3, lat, lon, hover and name (flag and locality)."""
     year = pl.col("year").filter(pl.col("year").is_between(2005, 2100))
     weights = pl.col("seconds").filter(pl.col("year").is_between(2005, 2100))
     return (seg.group_by("id").agg((pl.sum("seconds") / 3600).alias("hours"),
-                                   (pl.col("seconds").filter(pl.col("night")).sum() / pl.sum("seconds") * 100)
-                                   .alias("night_pct"),
+                                   hover.NIGHT_PCT.alias("night_pct"),
                                    ((year * weights).sum() / weights.sum()).alias("year"))
                .join(df_mapping.select("id", "locality", "iso3", "lat", "lon"), on="id").join(loc_hover, on="id")
                .drop_nulls(["lat", "lon"])

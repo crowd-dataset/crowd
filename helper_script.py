@@ -2,6 +2,7 @@
 import os
 import re
 import time
+from contextlib import contextmanager
 from pytubefix import YouTube
 from pytubefix.cli import on_progress
 from moviepy.video.io.VideoFileClip import VideoFileClip
@@ -13,7 +14,6 @@ import shutil
 import numpy as np
 import pandas as pd
 import world_bank_data as wb
-import pycountry
 from custom_logger import CustomLogger
 import common
 import torch
@@ -21,6 +21,7 @@ import subprocess
 import sys
 import logging
 from tqdm import tqdm
+import csv
 import datetime
 import json
 import yaml
@@ -29,18 +30,35 @@ import requests
 import yt_dlp
 from urllib.parse import urljoin, urlparse
 from bs4 import BeautifulSoup
+try:
+    import fcntl
+except ImportError:  # Windows: mapping.csv is rewritten without the lock
+    fcntl = None
 
 logger = CustomLogger(__name__)  # use custom logger
 logging.getLogger("ultralytics").setLevel(logging.ERROR)  # Show only errors
 
 # Consts
 LINE_THICKNESS = 1
-RENDER = False
-SHOW_LABELS = False
-SHOW_CONF = False
+# columns of the bbox CSVs, one row per detection (the label files' columns, then the frame)
+BBOX_COLUMNS = ["yolo-id", "x-center", "y-center", "width", "height", "unique-id", "confidence", "frame-count"]
 
 # logging of attempts to upgrade packages
 UPGRADE_LOG_FILE = "upgrade_log.json"
+
+
+@contextmanager
+def _mapping_lock(mapping_path):
+    """Hold mapping_path + '.lock', the lock the review pages and add_video take while they rewrite the mapping."""
+    with open(mapping_path + ".lock", "w") as lock:
+        if fcntl:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+        yield
+
+
+def _no_query(text):
+    """text without the query strings of the URLs in it: a request error names its URL with ?token=..."""
+    return re.sub(r"\?[^\s'\"]*", "", str(text))
 
 
 class Youtube_Helper:
@@ -53,53 +71,46 @@ class Youtube_Helper:
               - Interfaces with World Bank data to supplement mapping files.
 
     Attributes:
-        model (str): Path or identifier for the YOLO model to use.
-        resolution (str): Target resolution for downloaded videos.
+        tracking_model (str): Path or identifier for the YOLO model to use.
         video_title (str): Title of the currently processed video.
+        mapping (pd.DataFrame): the mapping, read on first use.
         """
 
     def __init__(self, video_title=None):
-        """
-        Initialises a new instance of the class.
-        Parameters:
-        video_title (str, optional): The title of the video. Defaults to None.
-        Instance Variables: self.model (str): The model configuration loaded from common.get_configs("model").
-        self.resolution (str): The video resolution. Initialised as None and set later when needed.
-        self.video_title (str): The title of the video.
-        """
+        """Read the settings of the config; video_title is the title of the video (None until one is set)."""
+        self.video_title = video_title
         self.tracking_model = common.get_configs("tracking_model")
         self.bbox_tracker = common.get_configs("bbox_tracker")
-        self.resolution = None
-        self.mapping = pd.read_csv(common.get_configs("mapping"))
-        self.confidence = 0.0
+        self._mapping = None
         self.display_frame_tracking = common.get_configs("display_frame_tracking")
         self.output_path = common.get_configs("videos")
         self.save_annoted_img = common.get_configs("save_annoted_img")
         self.save_tracked_img = common.get_configs("save_tracked_img")
         self.delete_labels = common.get_configs("delete_labels")
-        self.delete_frames = common.get_configs("delete_frames")
         self.update_package = common.get_configs("update_package")
         self.need_authentication = common.get_configs("need_authentication")
         self.client = common.get_configs("client")
-        try:  # optional: the browser yt-dlp reads YouTube cookies from, BROWSER[+KEYRING] (default brave, unless
-            self.cookies_browser = common.get_configs("cookies_browser")  # a "cookies_file" is set)
-        except KeyError:
-            self.cookies_browser = None
-        try:  # optional: yt-dlp's JavaScript runtime, as its --js-runtimes RUNTIME[:PATH] (default: deno, if any)
-            runtime, _, path = common.get_configs("js_runtime").partition(":")
-            self.js_runtimes = {runtime: {"path": path} if path else {}}
-        except KeyError:
-            self.js_runtimes = None
+        # optional: the browser yt-dlp reads YouTube cookies from, BROWSER[+KEYRING] (default brave, unless a
+        # "cookies_file" is set)
+        self.cookies_browser = common.get_configs("cookies_browser", default=None)
+        # optional: yt-dlp's JavaScript runtime, as its --js-runtimes RUNTIME[:PATH] (default: deno, if any)
+        runtime, _, path = (common.get_configs("js_runtime", default=None) or "").partition(":")
+        self.js_runtimes = {runtime: {"path": path} if path else {}} if runtime else None
         # optional: "use_pytubefix" false goes straight to yt-dlp (where pytubefix always fails, it only adds requests
         # to YouTube); "cookies_file", a Netscape cookies file (another login), is tried before the browser's
-        try:
-            self.use_pytubefix = bool(common.get_configs("use_pytubefix"))
-        except KeyError:
-            self.use_pytubefix = True
-        try:
-            self.cookies_file = common.get_configs("cookies_file") or None
-        except KeyError:
-            self.cookies_file = None
+        self.use_pytubefix = bool(common.get_configs("use_pytubefix", default=True))
+        self.cookies_file = common.get_configs("cookies_file", default=None) or None
+
+    @property
+    def mapping(self):
+        """The mapping DataFrame, read on first use (6.5 MB, and most helpers never need it)."""
+        if self._mapping is None:
+            self._mapping = pd.read_csv(common.get_configs("mapping"))
+        return self._mapping
+
+    @mapping.setter
+    def mapping(self, df):
+        self._mapping = df
 
     def set_video_title(self, title):
         """
@@ -107,21 +118,6 @@ class Youtube_Helper:
         Parameters: title (str): The new title for the video.
         """
         self.video_title = title
-
-    def rename_folder(self, old_name, new_name):
-        """
-        Renames a folder from old_name to new_name.
-        Parameters: old_name (str): The current name (or path) of the folder.
-        new_name (str): The new name (or path) to assign to the folder.
-        Error Handling: - Logs an error if the folder with old_name is not found.
-        - Logs an error if a folder with new_name already exists.
-        """
-        try:
-            os.rename(old_name, new_name)
-        except FileNotFoundError:
-            logger.error(f"Error: Folder '{old_name}' not found.")
-        except FileExistsError:
-            logger.error(f"Error: Folder '{new_name}' already exists.")
 
     def load_upgrade_log(self):
         """
@@ -186,16 +182,14 @@ class Youtube_Helper:
             to avoid repeated failures.
         """
         if self.was_upgraded_today(package_name):
-            logging.debug("%s upgrade already attempted today. Skipping.", package_name)
+            logger.debug(f"{package_name} upgrade already attempted today. Skipping.")
             return
 
         uv_exe = Youtube_Helper._resolve_uv_executable()
 
         if not uv_exe:
-            logging.error(
-                "Cannot upgrade %s because `uv` was not found on PATH (or common install locations).",
-                package_name,
-            )
+            logger.error(f"Cannot upgrade {package_name} because `uv` was not found on PATH (or common install "
+                         "locations).")
             # Still record the attempt to avoid retry loops.
             self.mark_as_upgraded(package_name)
             return
@@ -214,12 +208,12 @@ class Youtube_Helper:
         ]
 
         try:
-            logging.info("Upgrading %s with uv (targeting %s)...", package_name, sys.executable)
+            logger.info(f"Upgrading {package_name} with uv (targeting {sys.executable})...")
             subprocess.check_call(cmd)
-            logging.info("%s upgraded successfully.", package_name)
+            logger.info(f"{package_name} upgraded successfully.")
             self.mark_as_upgraded(package_name)
         except subprocess.CalledProcessError as e:
-            logging.error("Failed to upgrade %s with uv: %s", package_name, e)
+            logger.error(f"Failed to upgrade {package_name} with uv: {e}")
             # Still record the attempt to avoid retry loops.
             self.mark_as_upgraded(package_name)
 
@@ -393,7 +387,7 @@ class Youtube_Helper:
     def _video_info(self, path: str):
         """(resolution label, fps) of a video file; ("unknown", 0.0) when they cannot be read."""
         try:
-            return Youtube_Helper.get_video_resolution_label(path), float(self.get_video_fps(path))  # type: ignore
+            return Youtube_Helper.get_video_resolution_label(path), float(self.get_video_fps(path) or 0.0)
         except Exception as e:
             logger.warning(f"Metadata extraction failed for {path}: {e}")
             return "unknown", 0.0
@@ -482,7 +476,7 @@ class Youtube_Helper:
                     return r
                 except requests.RequestException as e:
                     missing = getattr(getattr(e, "response", None), "status_code", None) == 404
-                    (logger.debug if missing else logger.warning)(f"Request failed [{url}]: {e}")
+                    (logger.debug if missing else logger.warning)(f"Request failed [{url}]: {_no_query(e)}")
                     return None
 
             r = None
@@ -504,7 +498,7 @@ class Youtube_Helper:
             try:
                 written = self._save_response(r, local_path, f"Downloading from ftp: {name}")
             except Exception as e:
-                logger.error(f"Download failed for {name}: {e}")
+                logger.error(f"Download failed for {name}: {_no_query(e)}")
                 return None
 
         resolution, fps = self._video_info(local_path)
@@ -595,9 +589,8 @@ class Youtube_Helper:
                     break
             if stream is None:
                 stream, resolution = self._closest_to_720(list(yt.streams))
-                if stream is None:
-                    logger.error(f"{vid}: no MP4 stream available at any resolution.")
-                    return None
+                if stream is None:  # raised, so that yt-dlp has a go
+                    raise RuntimeError("no MP4 stream available at any resolution")
                 logger.debug(f"{vid}: no preferred resolution; picked {resolution}.")
 
             logger.info(f"{vid}: download in {resolution} started with pytubefix.")
@@ -661,34 +654,18 @@ class Youtube_Helper:
             return None
 
     def get_video_fps(self, video_file_path):
-        """
-        Retrieves the frames per second (FPS) of a video file using OpenCV.
-        Parameters: video_file_path (str): The file path to the video whose FPS is to be determined.
-        Returns: int or None: The rounded FPS value of the video if successful;
-        otherwise, returns None if an error occurs.
-        The function performs the following steps:
-        1. Opens the video file using OpenCV's VideoCapture.
-        2. Retrieves the FPS using the CAP_PROP_FPS property.
-        3. Rounds the FPS value to the nearest integer.
-        4. Releases the video resource.
-        5. Returns the rounded FPS value, or None if an exception is encountered.
-        """
+        """The FPS of a video file (OpenCV), rounded to a whole number (a float); None when it cannot be read."""
         try:
-            # Open the video file using OpenCV
             video = cv2.VideoCapture(video_file_path)
-
-            # Retrieve the FPS using OpenCV's CAP_PROP_FPS property
-            fps = video.get(cv2.CAP_PROP_FPS)
-
-            # Release the video resource
+            fps = video.get(cv2.CAP_PROP_FPS) if video.isOpened() else 0.0  # OpenCV gives 0.0 rather than raise
             video.release()
-
-            # Return the FPS rounded to the nearest integer
-            return round(fps, 0)
         except Exception as e:
-            # Log an error message if FPS retrieval fails
-            logger.error(f"Failed to retrieve FPS: {e}")
+            logger.error(f"Failed to retrieve FPS of {video_file_path}: {e}")
             return None
+        if not fps > 0:  # also NaN
+            logger.error(f"Failed to retrieve FPS of {video_file_path}.")
+            return None
+        return round(fps, 0)
 
     @staticmethod
     def get_video_resolution_label(video_path: str) -> str:
@@ -802,118 +779,6 @@ class Youtube_Helper:
         # Close the video clip to release any resources used.
         video_clip.close()
 
-    def draw_yolo_boxes_on_video(self, df, fps, video_path, output_path):
-        """
-        Draw YOLO-style bounding boxes on a video and save the annotated output.
-        This method takes a DataFrame containing normalised bounding box coordinates
-        (in YOLO format), matches them frame-by-frame to the input video,
-        draws the corresponding boxes and labels, and writes the resulting video to disk.
-        Args: df (pd.DataFrame): DataFrame containing at least the following columns:
-        - 'frame-count': Original frame indices in the source video.
-        - 'X-center', 'Y-center': Normalised center coordinates (0 to 1).
-        - 'width', 'Height': Normalised width and height (0 to 1).
-        - 'unique-id': Identifier to display in the label.
-        fps (float): Frames per second for the output video.
-        video_path (str): Path to the input video file.
-        output_path (str): Path to save the annotated output video.
-
-        Raises: IOError: If the input video cannot be opened.
-        """
-        # Ensure the output directory exists
-        output_dir = os.path.dirname(output_path)
-        if output_dir and not os.path.exists(output_dir):
-            os.makedirs(output_dir, exist_ok=True)
-
-        # Normalise frame indices to start from 0
-        min_frame = df["frame-count"].min()
-        df["Frame Index"] = df["frame-count"] - min_frame
-
-        # Attempt to open the input video
-        cap = cv2.VideoCapture(video_path)
-        if not cap.isOpened():
-            raise IOError(f"Cannot open video file: {video_path}")
-
-        # Get video dimensions and total number of frames
-        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-
-        # Set up video writer with the same resolution and specified fps
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')  # type: ignore
-        out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
-        logger.info(f"Writing to {output_path} ({width}x{height} @ {fps}fps)")
-
-        frame_index = 0
-
-        # Process each frame
-        while frame_index < total_frames:
-            success, frame = cap.read()
-            if not success:
-                logger.error(f"Failed to read frame {frame_index}")
-                break
-
-            # Filter YOLO data for this adjusted frame index
-            frame_data = df[df["Frame Index"] == frame_index]
-            for _, row in frame_data.iterrows():
-                # Convert normalised coordinates to absolute pixel values
-                x_center = row["x-center"] * width
-                y_center = row["y-center"] * height
-                w = row["width"] * width
-                h = row["height"] * height
-
-                # Calculate top-left and bottom-right corners of the box
-                x1 = int(x_center - w / 2)
-                y1 = int(y_center - h / 2)
-                x2 = int(x_center + w / 2)
-                y2 = int(y_center + h / 2)
-
-                # Draw rectangle and label with unique ID
-                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-                label = f"ID: {int(row['unique-id'])}"
-                cv2.putText(frame, label, (x1, max(y1 - 10, 0)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
-
-            # Write the modified frame to the output video
-            out.write(frame)
-            frame_index += 1
-
-        # Release video objects
-        cap.release()
-        out.release()
-
-    def detect_gpu(self):
-        """
-        Detects whether an NVIDIA or Intel GPU is available and returns the appropriate FFmpeg encoder.
-        Returns: str: 'hevc_nvenc' for NVIDIA, 'hevc_qsv' for Intel, or None if no compatible GPU is found.
-        """
-        try:
-            # Check for NVIDIA GPU
-            nvidia_check = subprocess.run(["nvidia-smi"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-            if nvidia_check.returncode == 0:
-                return "hevc_nvenc"
-
-            # Check for Intel QuickSync GPU
-            intel_check = subprocess.run(["vainfo"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-            if "Intel" in intel_check.stdout:
-                return "hevc_qsv"
-
-        except FileNotFoundError:
-            pass  # Command not found, meaning the hardware isn't available or the driver isn't installed
-
-        return None  # No compatible GPU found
-
-    def extract_youtube_id(self, file_path):
-        """
-        Extracts the YouTube video ID from a given file path.
-        Args: file_path (str): The full path of the video file.
-        Returns: str: The extracted YouTube ID.
-        Raises: ValueError: If no valid YouTube ID is found.
-        """
-        filename = os.path.basename(file_path)  # Get only the filename
-        youtube_id, ext = os.path.splitext(filename)  # Remove the file extension
-        if not youtube_id or len(youtube_id) < 5:  # Basic validation
-            raise ValueError("Invalid YouTube ID extracted.")
-        return youtube_id
-
     def create_video_from_images(self, image_folder, output_path,
                                  video_title, bbox_mode=False, frame_rate=30):
         """
@@ -966,38 +831,20 @@ class Youtube_Helper:
         logger.info(f"Video created successfully at: {output_video_path}")
         return output_video_path
 
-    def merge_txt_to_csv_dynamically_bbox(self, txt_location, output_csv, frame_count):
-        """
-        Merges YOLO-format label data from a .txt file into a CSV, frame by frame.
-        Parameters: txt_location (str): Directory containing label .txt files.
-        output_csv (str): Path to the CSV file to update.
-        frame_count (int): Frame number being processed (used for naming).
-        """
-        # Define the path for the new text file
-        new_txt_file_name = os.path.join(txt_location, f"label_{frame_count}.txt")
-
-        # Read data from the new text file
-        with open(new_txt_file_name, 'r') as text_file:
-            data = text_file.read()
-
-        # Save the data into the new text file
-        with open(new_txt_file_name, 'w') as new_file:
-            new_file.write(data)
-
-        # Read the newly created text file into a DataFrame
-        df = pd.read_csv(
-            new_txt_file_name,
-            delimiter=" ",
-            header=None,
-            names=["yolo-id", "x-center", "y-center", "width", "height", "unique-id", "confidence"],
-        )
-        df['frame-count'] = frame_count
-
-        # Append the DataFrame to the CSV file
-        if not os.path.exists(output_csv):
-            df.to_csv(output_csv, index=False, mode='w')  # If the CSV does not exist, create it
+    @staticmethod
+    def _frame_rows(boxes, frame_width, frame_height):
+        """The detections of one frame as [yolo-id, x-center, y-center, width, height, unique-id, confidence] rows:
+        the box normalised, it and the confidence rounded to 6 decimals as in YOLO's label files."""
+        cls = boxes.cls.int().cpu().tolist() if getattr(boxes, "cls", None) is not None else []
+        ids = boxes.id.int().cpu().tolist() if getattr(boxes, "id", None) is not None else [-1] * len(cls)
+        confs = boxes.conf.float().cpu().tolist() if getattr(boxes, "conf", None) is not None else [0.0] * len(cls)
+        if getattr(boxes, "xywhn", None) is not None:
+            xywhn = boxes.xywhn.cpu().tolist()
         else:
-            df.to_csv(output_csv, index=False, mode='a', header=False)  # If it exists, append without header
+            xywh = boxes.xywh.cpu().tolist() if getattr(boxes, "xywh", None) is not None else []
+            xywhn = [[x / frame_width, y / frame_height, w / frame_width, h / frame_height] for x, y, w, h in xywh]
+        return [[int(c), *(float(f"{v:.6f}") for v in box), int(t), float(f"{conf:.6f}")]
+                for c, box, t, conf in zip(cls, xywhn, ids, confs)]
 
     def delete_folder(self, folder_path):
         """
@@ -1017,38 +864,29 @@ class Youtube_Helper:
             logger.info(f"Folder '{folder_path}' does not exist.")
             return False
 
-    def delete_youtube_mod_videos(self, folders):
+    # the trimmed segments main.py writes (yt_VID_ST_ET_FPS_mod_HEX.mp4), and VID_mod.mp4 of older code
+    MOD_VIDEO = re.compile(r"^(?:yt_[A-Za-z0-9_-]{11}_\d+_\d+_\d+_mod_[0-9a-f]{32}|[A-Za-z0-9_-]{11}_mod)\.mp4$")
+
+    def delete_youtube_mod_videos(self, folders, min_age_s=3600):
         """
-        Deletes files of the form {youtube_id}_mod.mp4 from the given list of folders.
-        Args: folders (list): List of folder paths to scan.
+        Delete the trimmed segment videos a stopped run left in the given folders: only those not written to for
+        min_age_s, as another process sharing the folders (Snellius tasks) may be writing one.
         """
-        pattern = re.compile(r"^[A-Za-z0-9_-]{11}_mod\.mp4$")
         for folder in folders:
             if not os.path.exists(folder):
                 logger.info(f"Skipping missing folder: {folder}")
                 continue
             for filename in os.listdir(folder):
-                if pattern.match(filename):
-                    file_path = os.path.join(folder, filename)
-                    try:
-                        os.remove(file_path)
-                        logger.info(f"Deleted: {file_path}")
-                    except Exception as e:
-                        logger.info(f"Failed to delete {file_path}: {e}")
-
-    def get_iso_alpha_3(self, country_name, existing_iso):
-        """
-        Converts a country name to ISO 3166-1 alpha-3 format.
-        Parameters: country_name (str): Full country name.
-        existing_iso (str): Existing ISO code as fallback.
-        Returns: str or None: ISO 3166-1 alpha-3 code or fallback value.
-        """
-        try:
-            return pycountry.countries.lookup(country_name).alpha_3
-        except LookupError:
-            if country_name.strip().upper() == "KOSOVO":
-                return "XKX"  # User-assigned code for Kosovo
-            return existing_iso if existing_iso else None
+                if not self.MOD_VIDEO.match(filename):
+                    continue
+                file_path = os.path.join(folder, filename)
+                try:
+                    if time.time() - os.path.getmtime(file_path) < min_age_s:
+                        continue
+                    os.remove(file_path)
+                    logger.info(f"Deleted: {file_path}")
+                except OSError as e:
+                    logger.info(f"Failed to delete {file_path}: {e}")
 
     def get_latest_population(self):
         """
@@ -1075,32 +913,27 @@ class Youtube_Helper:
         population_df['Population'] = population_df['Population'] / 1000
         return population_df
 
+    @staticmethod
+    def _write_mapping(df, path):
+        """Write the mapping DataFrame to path whole (a temporary file swapped in): a reader never sees half."""
+        df.to_csv(path + ".tmp", index=False)
+        os.replace(path + ".tmp", path)
+
     def update_population_in_csv(self, data):
         """
-        Updates the mapping DataFrame with the latest country population data.
-        Parameters: data (pd.DataFrame): The mapping DataFrame to update.
+        Set the population_country column (thousands, World Bank's latest) of the mapping DataFrame data, and of
+        the mapping file: read again and rewritten under the mapping lock, so edits made meanwhile stay.
         """
-        # Ensure the required columns exist in the CSV
         if "iso3" not in data.columns:
             raise KeyError("The CSV file does not have a 'iso3' column.")
-        if "population_country" not in data.columns:
-            data["population_country"] = None  # Initialise the column if it doesn't exist
-
-        # Get the latest population data
         latest_population = self.get_latest_population()
-
-        # Create a dictionary for quick lookup
         population_dict = dict(zip(latest_population['iso3'], latest_population['Population']))
-
-        # Update the population_country column
-        for index, row in data.iterrows():
-            iso3 = row["iso3"]
-            population = population_dict.get(iso3, None)
-            # Always update with the latest population data
-            data.at[index, "population_country"] = population
-
-        # Save the updated DataFrame back to the same CSV
-        data.to_csv(self.mapping, index=False)
+        data["population_country"] = data["iso3"].map(population_dict)
+        mapping_path = common.get_configs("mapping")
+        with _mapping_lock(mapping_path):
+            fresh = pd.read_csv(mapping_path)
+            fresh["population_country"] = fresh["iso3"].map(population_dict)
+            self._write_mapping(fresh, mapping_path)
         logger.info("Mapping file updated successfully with country population.")
 
     def get_latest_gini_values(self):
@@ -1130,60 +963,46 @@ class Youtube_Helper:
 
     def fill_gini_data(self, df):
         """
-        Fill the GINI index column in a CSV file using World Bank data.
-        Args: file_path (str): Path to the input CSV file.
+        Fill the gini column of the mapping DataFrame df (kept as self.mapping) with World Bank's latest values, and
+        of the mapping file: read again and rewritten under the mapping lock, so edits made meanwhile stay.
         """
         try:
-            # Ensure the required column exists
             if 'gini' not in df.columns:
                 logger.error("The required columns 'iso3' and/or 'gini' are missing from the file.")
                 return
-
-            # Get the latest GINI index data
             geni_df = self.get_latest_gini_values()
 
-            # Merge the GINI index data with the existing DataFrame
-            updated_df = pd.merge(df, geni_df, on='iso3', how='left', suffixes=('', '_new'))
+            def with_gini(frame):
+                merged = pd.merge(frame, geni_df, on='iso3', how='left', suffixes=('', '_new'))
+                merged['gini'] = merged['gini_new'].combine_first(merged['gini'])
+                return merged.drop(columns=['gini_new'])
 
-            # Update the geni column with the new data
-            updated_df['gini'] = updated_df['gini_new'].combine_first(updated_df['gini'])
-
-            # Drop the temporary column
-            updated_df = updated_df.drop(columns=['gini_new'])
-
-            # Update in-memory mapping
-            self.mapping = updated_df
-
-            # Persist to the original CSV path
-            mapping_path = common.get_configs("mapping")  # path to the mapping CSV
-            updated_df.to_csv(mapping_path, index=False)
+            self.mapping = with_gini(df)
+            mapping_path = common.get_configs("mapping")
+            with _mapping_lock(mapping_path):
+                self._write_mapping(with_gini(pd.read_csv(mapping_path)), mapping_path)
             logger.info("Mapping file updated successfully with GINI value.")
         except Exception as e:
             logger.error(f"An error occurred: {e}")
 
     def update_track_buffer_in_yaml(self, yaml_path, video_fps):
-        # Load existing YAML
+        """Set track_buffer of the tracker YAML file to the config's track_buffer_sec in frames of video_fps."""
         with open(yaml_path, 'r') as f:
             config = yaml.safe_load(f)
-
-        # Update the track_buffer value
         config['track_buffer'] = common.get_configs("track_buffer_sec") * video_fps
-
-        # Write it back to the YAML file (overwrite)
         with open(yaml_path, 'w') as f:
             yaml.dump(config, f, default_flow_style=False)
 
     def tracking_mode(self, input_video_path, output_video_path, video_title,
                       video_fps, bbox_mode, flag=0, run_root='runs'):
         """
-        Performs object tracking on a video using YOLO models and saves results.
+        Track objects in a video with YOLO (bbox_mode) and write the detections to run_root/detect/{video_title of
+        this helper}.csv (BBOX_COLUMNS; no file when nothing was found). flag: also make the annotated video
+        {video_title}_mod_bbox.mp4 in output_video_path from the tracked frames (save_tracked_img).
         """
         device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-        # ------------------------------------------------------------------
-        # Multi-thread safety: isolate all YOLO "runs/*" side-effects per task
-        # and avoid in-place modifications of shared tracker YAML files.
-        # ------------------------------------------------------------------
+        # Multi-thread safety: all YOLO side-effects go to run_root (one per task), and the tracker YAML is a copy
         run_root = run_root or "runs"
         detect_root = os.path.join(run_root, "detect")
         os.makedirs(detect_root, exist_ok=True)
@@ -1210,8 +1029,9 @@ class Youtube_Helper:
                 self.update_track_buffer_in_yaml(bbox_tracker_path, video_fps)
             except Exception as e:
                 logger.warning(f"Failed to prepare bbox tracker YAML copy: {e!r}. Using original tracker path.")
+                if not os.path.exists(bbox_tracker_path):
+                    bbox_tracker_path = src
 
-        # --- Model Initialisation ---
         if bbox_mode:
             bbox_model = YOLO(self.tracking_model)
 
@@ -1219,22 +1039,23 @@ class Youtube_Helper:
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         frame_width, frame_height = int(cap.get(3)), int(cap.get(4))
 
-        # Output directories
+        # Output paths
+        bbox_annotated_frame_output_path = os.path.join(detect_root, "annotated_frames")
+        bbox_tracked_frame_output_path = os.path.join(detect_root, "tracked_frame")
+        bbox_txt_output_path = os.path.join(detect_root, "labels")
+        bbox_display_video_output_path = os.path.join(detect_root, "display_video.mp4")
+        bbox_output_csv_path = os.path.join(detect_root, f"{self.video_title}.csv")
         if bbox_mode:
-            bbox_frames_output_path = os.path.join(detect_root, "frames")
-            bbox_annotated_frame_output_path = os.path.join(detect_root, "annotated_frames")
-            bbox_tracked_frame_output_path = os.path.join(detect_root, "tracked_frame")
-            bbox_txt_output_path = os.path.join(detect_root, "labels")
-            bbox_text_filename = os.path.join(detect_root, "track", "labels", "image0.txt")
-            bbox_display_video_output_path = os.path.join(detect_root, "display_video.mp4")
-            os.makedirs(bbox_frames_output_path, exist_ok=True)
-            os.makedirs(bbox_txt_output_path, exist_ok=True)
             os.makedirs(bbox_annotated_frame_output_path, exist_ok=True)
             os.makedirs(bbox_tracked_frame_output_path, exist_ok=True)
+            if not self.delete_labels:
+                os.makedirs(bbox_txt_output_path, exist_ok=True)
+        # plotting the boxes and tracks is CPU-expensive: only when a frame is saved or shown
+        draw = self.save_annoted_img or self.save_tracked_img or self.display_frame_tracking
 
-        # Video writers
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')  # type: ignore
+        bbox_video_writer = None
         if bbox_mode and self.display_frame_tracking:
+            fourcc = cv2.VideoWriter_fourcc(*'mp4v')  # type: ignore
             bbox_video_writer = cv2.VideoWriter(
                 bbox_display_video_output_path, fourcc, video_fps, (frame_width, frame_height)  # type: ignore
             )
@@ -1246,176 +1067,116 @@ class Youtube_Helper:
 
         progress_bar = tqdm(total=total_frames, unit="frames", dynamic_ncols=True)
         frame_count = 0
+        bbox_track_history = defaultdict(lambda: [])
+        csv_file, csv_writer = None, None  # the CSV is opened at the first detection
 
-        # Track history
-        if bbox_mode:
-            bbox_track_history = defaultdict(lambda: [])
+        try:
+            while cap.isOpened():
+                success, frame = cap.read()
+                if not success:
+                    break
 
-        while cap.isOpened():
-            success, frame = cap.read()
-            if not success:
-                break
+                frame_count += 1
+                has_boxes = False  # bbox mode found objects (and did not fail)
+                boxes = None
+                bbox_annotated_frame = frame
 
-            frame_count += 1
-
-            # -------- BBOX MODE --------
-            bbox_failed = False
-            bbox_boxes_xywh = None
-            bbox_track_ids = []
-            bbox_confidences = []
-            bbox_annotated_frame = frame.copy()
-
-            if bbox_mode:
-                try:
-                    bbox_results = bbox_model.track(  # type: ignore
-                        frame,
-                        tracker=bbox_tracker_path,
-                        persist=True,
-                        conf=self.confidence,
-                        save=False,
-                        save_txt=False,
-                        project=detect_root,
-                        name="track",
-                        exist_ok=True,
-                        line_width=LINE_THICKNESS,
-                        show_labels=SHOW_LABELS,
-                        show_conf=SHOW_CONF,
-                        show=RENDER,
-                        verbose=False,
-                        device=device,
-                    )
-
-                    bbox_boxes_obj = bbox_results[0].boxes
-                    bbox_boxes_xywh = bbox_boxes_obj.xywh.cpu() if bbox_boxes_obj is not None else None  # type: ignore
-                    if bbox_boxes_xywh is not None and bbox_boxes_xywh.size(0) > 0:
-                        bbox_track_ids = (
-                            bbox_boxes_obj.id.int().cpu().tolist()  # type: ignore
-                            if hasattr(bbox_boxes_obj, "id") and bbox_boxes_obj.id is not None  # type: ignore
-                            else []
+                if bbox_mode:
+                    try:
+                        bbox_results = bbox_model.track(  # type: ignore
+                            frame,
+                            tracker=bbox_tracker_path,
+                            persist=True,
+                            conf=0.0,
+                            save=False,
+                            save_txt=False,
+                            project=detect_root,
+                            name="track",
+                            exist_ok=True,
+                            line_width=LINE_THICKNESS,
+                            show_labels=False,
+                            show_conf=False,
+                            show=False,
+                            verbose=False,
+                            device=device,
                         )
-                        bbox_confidences = (  # noqa: F841
-                            bbox_boxes_obj.conf.cpu().tolist()  # type: ignore
-                            if hasattr(bbox_boxes_obj, "conf") and bbox_boxes_obj.conf is not None  # type: ignore
-                            else []
-                        )
-
-                        # Only render overlays if requested (plotting is CPU-expensive)
-                        if self.save_annoted_img or self.save_tracked_img or self.display_frame_tracking:
-                            bbox_annotated_frame = bbox_results[0].plot()
+                        boxes = bbox_results[0].boxes
+                        if boxes is not None and boxes.xywh.size(0) > 0:  # type: ignore
+                            if draw:
+                                bbox_annotated_frame = bbox_results[0].plot()
+                            has_boxes = True
                         else:
-                            bbox_annotated_frame = frame.copy()
-                    else:
-                        logger.info(f"[Frame {frame_count}] BBox: No objects found. Using original frame.")
-                        with open(bbox_text_filename, 'w') as file:  # noqa:F841   # type: ignore
-                            pass
-                except Exception as e:
-                    logger.error(f"[Frame {frame_count}] BBox failed: {e}. Using original frame.")
-                    bbox_failed = True
+                            logger.info(f"[Frame {frame_count}] BBox: No objects found. Using original frame.")
+                    except Exception as e:
+                        logger.error(f"[Frame {frame_count}] BBox failed: {e}. Using original frame.")
 
-            progress_bar.update(1)
+                progress_bar.update(1)
 
-            # Save annotated frames
-            if self.save_annoted_img:
-                if bbox_mode:
-                    bbox_frame_filename = os.path.join(bbox_annotated_frame_output_path,  # type: ignore
-                                                       f"frame_{frame_count}.jpg")
-                    cv2.imwrite(bbox_frame_filename, bbox_annotated_frame)
+                if self.save_annoted_img and bbox_mode:
+                    cv2.imwrite(os.path.join(bbox_annotated_frame_output_path, f"frame_{frame_count}.jpg"),
+                                bbox_annotated_frame)
 
-            # Save txt files (only if detections found and not failed)
-            if bbox_mode and not bbox_failed and bbox_boxes_xywh is not None and bbox_boxes_xywh.size(0) > 0:
-                # Write labels directly from model outputs (avoid Ultralytics save_txt I/O)
-                new_txt_file_name_bbox = os.path.join(detect_root, "labels", f"label_{frame_count}.txt")
-                try:
-                    bbox_cls = bbox_boxes_obj.cls.int().cpu().tolist() if hasattr(bbox_boxes_obj, "cls") and bbox_boxes_obj.cls is not None else []  # type: ignore # noqa: E501
-                    bbox_ids = (
-                        bbox_boxes_obj.id.int().cpu().tolist()  # type: ignore
-                        if hasattr(bbox_boxes_obj, "id") and bbox_boxes_obj.id is not None  # type: ignore
-                        else [-1] * len(bbox_cls)
-                    )
-                    bbox_confs = (
-                        bbox_boxes_obj.conf.float().cpu().tolist()  # type: ignore
-                        if hasattr(bbox_boxes_obj, "conf") and bbox_boxes_obj.conf is not None  # type: ignore
-                        else [0.0] * len(bbox_cls)
-                    )
+                if has_boxes:
+                    try:
+                        rows = self._frame_rows(boxes, frame_width, frame_height)
+                    except Exception as e:
+                        logger.warning(f"[Frame {frame_count}] BBox label write failed: {e}")
+                        rows = []
+                    if rows:
+                        if csv_writer is None:
+                            new = not os.path.exists(bbox_output_csv_path)
+                            csv_file = open(bbox_output_csv_path, "a", newline="")
+                            csv_writer = csv.writer(csv_file, lineterminator=os.linesep)  # as pandas' to_csv
+                            if new:
+                                csv_writer.writerow(BBOX_COLUMNS)
+                        csv_writer.writerows(row + [frame_count] for row in rows)
+                    if not self.delete_labels:  # YOLO's label file of the frame, as save_txt writes it
+                        with open(os.path.join(bbox_txt_output_path, f"label_{frame_count}.txt"), "w") as f:
+                            f.writelines(f"{c} {x:.6f} {y:.6f} {w:.6f} {h:.6f} {t} {conf:.6f}\n"
+                                         for c, x, y, w, h, t, conf in rows)
 
-                    # Normalized xywh; fall back to manual normalization if needed
-                    if hasattr(bbox_boxes_obj, "xywhn") and bbox_boxes_obj.xywhn is not None:  # type: ignore
-                        xywhn = bbox_boxes_obj.xywhn.cpu().tolist()  # type: ignore
-                    else:
-                        xywh = bbox_boxes_obj.xywh.cpu().tolist() if hasattr(bbox_boxes_obj, "xywh") and bbox_boxes_obj.xywh is not None else []  # type: ignore # noqa: E501
-                        xywhn = []
-                        for (x, y, w, h) in xywh:
-                            xywhn.append([x / frame_width, y / frame_height, w / frame_width, h / frame_height])
+                    if draw:  # the tracks of the last 30 frames
+                        try:
+                            ids = boxes.id.int().cpu().tolist() if boxes.id is not None else []  # type: ignore
+                            for box, track_id in zip(boxes.xywh.cpu(), ids):  # type: ignore
+                                x, y, w, h = box
+                                track = bbox_track_history[track_id]
+                                track.append((float(x), float(y)))
+                                if len(track) > 30:
+                                    track.pop(0)
+                                points = np.hstack(track).astype(np.int32).reshape((-1, 1, 2))
+                                cv2.polylines(bbox_annotated_frame, [points], isClosed=False,
+                                              color=(230, 230, 230), thickness=LINE_THICKNESS * 5)
+                        except Exception as e:
+                            logger.warning(f"[Frame {frame_count}] Drawing the tracks failed: {e}")
 
-                    with open(new_txt_file_name_bbox, "w") as f:
-                        for cls_i, box_i, tid_i, conf_i in zip(bbox_cls, xywhn, bbox_ids, bbox_confs):
-                            x, y, w, h = box_i
-                            f.write(f"{int(cls_i)} {float(x):.6f} {float(y):.6f} {float(w):.6f} {float(h):.6f} {int(tid_i)} {float(conf_i):.6f}\n")  # noqa: E501
-                except Exception as e:
-                    logger.warning(f"[Frame {frame_count}] BBox label write failed: {e}")
-                    open(new_txt_file_name_bbox, "a").close()
-
-                bbox_labels_path = os.path.join(detect_root, "labels")
-                bbox_output_csv_path = os.path.join(detect_root, f"{self.video_title}.csv")
-                self.merge_txt_to_csv_dynamically_bbox(bbox_labels_path, bbox_output_csv_path, frame_count)
-
-            if self.delete_labels is True:
-                if bbox_mode and not bbox_failed and bbox_boxes_xywh is not None and bbox_boxes_xywh.size(0) > 0:
-                    os.remove(os.path.join(detect_root, "labels", f"label_{frame_count}.txt"))
-
-            # Save labeled image
-            if self.delete_frames is False:
-                if bbox_mode and not bbox_failed and bbox_boxes_xywh is not None and bbox_boxes_xywh.size(0) > 0:
-                    bbox_image_filename = os.path.join(detect_root, "track", "image0.jpg")
-                    bbox_new_img_file_name = os.path.join(detect_root, "frames", f"frame_{frame_count}.jpg")
-                    if os.path.exists(bbox_image_filename):
-                        shutil.move(bbox_image_filename, bbox_new_img_file_name)
-
-            # Plot the tracks
-            try:
-                if bbox_mode and not bbox_failed and bbox_boxes_xywh is not None and bbox_boxes_xywh.size(0) > 0:
-                    for box, track_id in zip(bbox_boxes_xywh, bbox_track_ids):
-                        x, y, w, h = box
-                        track = bbox_track_history[track_id]  # type: ignore
-                        track.append((float(x), float(y)))
-                        if len(track) > 30:
-                            track.pop(0)
-                        points = np.hstack(track).astype(np.int32).reshape((-1, 1, 2))
-                        cv2.polylines(bbox_annotated_frame, [points], isClosed=False,
-                                      color=(230, 230, 230), thickness=LINE_THICKNESS * 5)
-            except Exception:
-                pass
-
-            # Display the annotated frame
-            if self.display_frame_tracking:
-                if bbox_mode:
+                if self.display_frame_tracking and bbox_mode:
                     cv2.imshow("YOLOv11 Tracking", bbox_annotated_frame)
                     bbox_video_writer.write(bbox_annotated_frame)  # type: ignore
 
-            # Save the tracked frame here
-            if self.save_tracked_img:
-                if bbox_mode:
-                    bbox_frame_filename = os.path.join(bbox_tracked_frame_output_path,  # type: ignore
-                                                       f"frame_tracked_{frame_count}.jpg")
-                    cv2.imwrite(bbox_frame_filename, bbox_annotated_frame)
+                if self.save_tracked_img and bbox_mode:
+                    cv2.imwrite(os.path.join(bbox_tracked_frame_output_path, f"frame_tracked_{frame_count}.jpg"),
+                                bbox_annotated_frame)
 
-            # Break the loop if 'q' is pressed, only when display is enabled
+                # Break the loop if 'q' is pressed, only when display is enabled
+                if self.display_frame_tracking:
+                    if cv2.waitKey(1) & 0xFF == ord("q"):
+                        break
+        finally:
+            cap.release()
+            if csv_file is not None:
+                csv_file.close()
+            if bbox_video_writer is not None:
+                bbox_video_writer.release()
             if self.display_frame_tracking:
-                if cv2.waitKey(1) & 0xFF == ord("q"):
-                    break
+                cv2.destroyAllWindows()
+            progress_bar.close()
 
-        # Release resources
-        cap.release()
-        if self.display_frame_tracking:
-            cv2.destroyAllWindows()
-        progress_bar.close()
-
-        if flag:
-            if bbox_mode:
-                self.create_video_from_images(
-                    image_folder=bbox_tracked_frame_output_path,  # type: ignore
-                    output_path=output_video_path,
-                    video_title=video_title,
-                    bbox_mode=bbox_mode,
-                    frame_rate=video_fps,
-                )
+        if flag and bbox_mode:
+            self.create_video_from_images(
+                image_folder=bbox_tracked_frame_output_path,
+                output_path=output_video_path,
+                video_title=video_title,
+                bbox_mode=bbox_mode,
+                frame_rate=video_fps,
+            )

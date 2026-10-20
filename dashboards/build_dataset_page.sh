@@ -18,7 +18,7 @@ cd $W || exit 1
 export PATH=$HOME/micromamba/envs/dataset/bin:$PATH
 python - <<'PY'
 import json
-c = json.load(open("default.config")); c.update(always_analyse=True, data=[], videos=[])
+c = json.load(open("default.config")); c.update(data=[], videos=[], save_eps=False)
 json.dump(c, open("config", "w"), indent=2)
 json.dump({k: "" for k in json.load(open("default.secret"))}, open("secret", "w"), indent=2)
 PY
