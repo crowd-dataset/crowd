@@ -3334,10 +3334,12 @@ def shown_english(text):
         if not r.ok:
             return ''
         data = r.json()
-        out = '' if data[2] == 'en' else ''.join(part[0] for part in data[0] if part and part[0])
+        out = ''.join(part[0] for part in data[0] if part and part[0])
     except (requests.RequestException, ValueError, IndexError, TypeError):
         return ''
-    out = '' if out.strip().lower() == text.lower() else out
+    # English when the "translation" is the text itself, near enough: Google calls a title of road numbers English
+    # and translates it all the same (wBWyY5C32uo's Chinese; user, 2026-10-20)
+    out = '' if difflib.SequenceMatcher(None, out.strip().lower(), text.lower()).ratio() >= 0.9 else out
     with _SHOWN_LOCK:
         try:
             with open(SHOWN_TRANSLATIONS) as f:
