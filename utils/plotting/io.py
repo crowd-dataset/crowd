@@ -16,8 +16,9 @@ from utils.plotting.constants import TOPOJSON_URL
 logger = CustomLogger(__name__)  # use custom logger
 
 # Without this, kaleido bakes a "Loading [MathJax]..." box into PDF/EPS exports; no figure uses LaTeX.
-pio.kaleido.scope.mathjax = None
-pio.kaleido.scope.topojson = TOPOJSON_URL  # see constants.TOPOJSON_URL
+if pio.kaleido.scope is not None:  # None where plotly and kaleido versions do not match (images then fail anyway)
+    pio.kaleido.scope.mathjax = None
+    pio.kaleido.scope.topojson = TOPOJSON_URL  # see constants.TOPOJSON_URL
 
 
 @functools.lru_cache(maxsize=1)
