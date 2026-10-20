@@ -426,33 +426,47 @@ DRIVER_SCENES = (['a person driving a car, filmed from the dashboard', 'a selfie
                   'a highway seen from a car', 'a residential street seen from a car', 'traffic ahead on a road',
                   'a parking lot'], 4, 'a photo of ')
 DRIVER_CLIP_EVERY_S, DRIVER_NEAR_S, DRIVER_CLIP_SURE, DRIVER_CLIP_RUN = 10, 300, 0.9, 2
+# ... and through the whole video, a face found or not (_bp3qFNOUIg, T5wPNrMtuzI, MCithgIlV9M, i18ZB8XLplk: the
+# camera on the people in the car, no face found; user, 2026-10-20): far from a face DRIVER_FAR_RUN readings in a
+# row at DRIVER_FAR_SURE or more. Those four read so throughout their bad stretches; the first 15 min of 149 approved
+# videos (256x144) in 2 places, 1.7 min
+DRIVER_FAR_SURE, DRIVER_FAR_RUN = 0.95, 4
 
 
 def driver_clip_track(path, face, work_dir):
-    """[(second, CLIP score of DRIVER_SCENES)] every DRIVER_CLIP_EVERY_S within DRIVER_NEAR_S of a face frame."""
-    seen = np.flatnonzero(np.asarray(face) > 0) / FPS
-    if not len(seen):
-        return []
-    times = [float(t) for t in np.arange(DRIVER_CLIP_EVERY_S / 2, len(face) / FPS, DRIVER_CLIP_EVERY_S)
-             if np.abs(seen - t).min() <= DRIVER_NEAR_S]
-    return sorted(_clip_scores(path, times, work_dir, DRIVER_SCENES).items())
+    """[(second, CLIP score of DRIVER_SCENES)] every DRIVER_CLIP_EVERY_S through the video."""
+    times = [float(t) for t in np.arange(DRIVER_CLIP_EVERY_S / 2, len(face) / FPS, DRIVER_CLIP_EVERY_S)]
+    return sorted(_clip_scores(path, times, work_dir, DRIVER_SCENES).items()) if times else []
 
 
 def driver_clip_runs(sig):
-    """[(first frame, end frame)] of DRIVER_CLIP_RUN or more driver_clip readings in a row that are sure."""
+    """[(first frame, end frame, far)] of driver_clip readings in a row that are sure: DRIVER_CLIP_RUN at
+    DRIVER_CLIP_SURE within DRIVER_NEAR_S of a face, DRIVER_FAR_RUN at DRIVER_FAR_SURE anywhere (far: only so)."""
     dc = np.asarray(sig.get('driver_clip', np.zeros((0, 2)))).reshape(-1, 2)
-    out, run = [], []
-    for t, score in dc:
-        if score >= DRIVER_CLIP_SURE and (not run or t - run[-1] <= 1.5 * DRIVER_CLIP_EVERY_S):
-            run.append(t)
-            continue
-        if len(run) >= DRIVER_CLIP_RUN:
+    seen = np.flatnonzero(np.asarray(sig.get('face', np.zeros(0))) > 0) / FPS
+    near = [bool(len(seen)) and float(np.abs(seen - t).min()) <= DRIVER_NEAR_S for t, _ in dc]
+
+    def runs(counts, sure, need):
+        out, run = [], []
+        for (t, score), k in zip(dc, counts):
+            if k and score >= sure and (not run or t - run[-1] <= 1.5 * DRIVER_CLIP_EVERY_S):
+                run.append(t)
+                continue
+            if len(run) >= need:
+                out.append(run)
+            run = [t] if k and score >= sure else []
+        if len(run) >= need:
             out.append(run)
-        run = [t] if score >= DRIVER_CLIP_SURE else []
-    if len(run) >= DRIVER_CLIP_RUN:
-        out.append(run)
-    half = DRIVER_CLIP_EVERY_S / 2
-    return [(int(max(0, r[0] - half) * FPS), int((r[-1] + half) * FPS)) for r in out]
+        return out
+    half, merged = DRIVER_CLIP_EVERY_S / 2, []
+    for r, far in sorted([(r, False) for r in runs(near, DRIVER_CLIP_SURE, DRIVER_CLIP_RUN)]
+                         + [(r, True) for r in runs([True] * len(dc), DRIVER_FAR_SURE, DRIVER_FAR_RUN)]):
+        a, b = int(max(0, r[0] - half) * FPS), int((r[-1] + half) * FPS)
+        if merged and a <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], b), merged[-1][2] and far)
+        else:
+            merged.append((a, b, far))
+    return merged
 
 
 # night both ways, over the whole video: dusk with the street lights on counts as night, as the reviews label it
@@ -1085,15 +1099,19 @@ def propose(sig, p=PARAMS):
         # 2026-10-14: 248nL9hGz8s split at 10:52-11:44 for 13%; 8 of the 12 cuts approved across were under 0.2)
         sure = [share[a:b].max() >= DRIVER_CUT_SHARE for a, b in runs]
         # ... and where CLIP sees the driver, face or not (driver_clip_runs)
-        for run in driver_clip_runs(sig):
-            k = int(np.searchsorted([a for a, _ in runs], run[0]))
-            runs.insert(k, run)
+        near = [True] * len(runs)  # runs a face found, or near one: the gap between two is bridged below
+        for a, b, far in driver_clip_runs(sig):
+            k = int(np.searchsorted([x for x, _ in runs], a))
+            runs.insert(k, (a, b))
             sure.insert(k, True)
+            near.insert(k, not far)
         # ... unless next to a cut one, and then the footage between them is the driver too, the face turned away for
         # a while (1MDz3XJ82Oc 0:57-1:57; user, 2026-10-16): in reviewed videos, of 67 hint runs next to a cut one
         # within DRIVER_GAP_S none was approved, of 92 stretches between two cut ones 3
+        # ... but not between two runs CLIP found far from a face (_bp3qFNOUIg: 5:02-12:15 between two, approved)
         pairs = [k for k in range(len(runs) - 1)
-                 if (sure[k] or sure[k + 1]) and (runs[k + 1][0] - runs[k][1]) / FPS <= DRIVER_GAP_S]
+                 if (sure[k] or sure[k + 1]) and (near[k] or near[k + 1])
+                 and (runs[k + 1][0] - runs[k][1]) / FPS <= DRIVER_GAP_S]
         cut_run = [c or k in pairs or k - 1 in pairs for k, c in enumerate(sure)]
         for k in pairs:
             a, b = runs[k][1], runs[k + 1][0]
