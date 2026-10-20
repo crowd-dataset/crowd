@@ -3352,15 +3352,24 @@ def shown_english(text):
     if time.time() < _SHOWN_PAUSE[0]:
         return '', ''
     try:
+        # Google's two free endpoints: the second answers while the first refuses (429; user, 2026-10-20:
+        # wBWyY5C32uo's title stayed untranslated)
         r = requests.post('https://translate.googleapis.com/translate_a/single', timeout=20, data={'q': text[:5000]},
                           params={'client': 'gtx', 'sl': 'auto', 'tl': 'en', 'dt': 't'})
-        if r.status_code == 429:
-            _SHOWN_PAUSE[0] = time.time() + SHOWN_PAUSE_S
-        if not r.ok:
-            return '', ''
-        data = r.json()
-        out = _shown(''.join(part[0] for part in data[0] if part and part[0]), text)
-        lang = _language(data[2]) if out else ''
+        if r.ok:
+            data = r.json()
+            out, code = ''.join(part[0] for part in data[0] if part and part[0]), data[2]
+        else:
+            r = requests.post('https://translate.googleapis.com/translate_a/t', timeout=20, data={'q': text[:5000]},
+                              params={'client': 'gtx', 'sl': 'auto', 'tl': 'en'})
+            if r.status_code == 429:
+                _SHOWN_PAUSE[0] = time.time() + SHOWN_PAUSE_S
+            if not r.ok:
+                return '', ''
+            first = r.json()[0]  # [English, language], or English alone
+            out, code = (first[0], first[1]) if isinstance(first, list) else (first, None)
+        out = _shown(out, text)
+        lang = _language(code) if out else ''
     except (requests.RequestException, ValueError, IndexError, TypeError):
         return '', ''
     with _SHOWN_LOCK:
