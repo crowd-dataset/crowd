@@ -362,9 +362,10 @@ def done_before(url, sheet, state):
     return (f'row {rows[same[0]]}' if same[0] in rows else same[0]) if same else None
 
 
-def refresh_todo(state, args):
+def refresh_todo(state, args, any_phase=False):
     """[(None, state key, url, country, new uploads only)] of the channels done before this machine fetches again:
-    every m-th of the refresh queue (--rows k/m), one started here first."""
+    every m-th of the refresh queue (--rows k/m), one started here first; any_phase: of every phase, not only
+    --phases."""
     try:
         with open(REFRESH_QUEUE) as f:
             queue = json.load(f)
@@ -384,7 +385,7 @@ def refresh_todo(state, args):
         key, c = 'refresh:' + q['url'], state.get('refresh:' + q['url'], {})
         if (c.get('status', 'processing') == 'processing' and not c.get('host')
                 and (key in state or share is None or i % share[1] == share[0])
-                and (key in state or args.phases is None or q.get('phase') in args.phases)
+                and (key in state or any_phase or args.phases is None or q.get('phase') in args.phases)
                 and (q.get('country') or '').strip().lower() != 'russia'):
             todo.append((key in state, None, key, q['url'], q.get('country') or '', q.get('new_only', True)))
     todo.sort(key=lambda t: not t[0])  # one started here first, else the queue's order (its phases)
@@ -571,6 +572,10 @@ def main():
         def going(ts):
             return [t for t in ts if not country_in(t, PAUSED_COUNTRIES)]
         todo, queue = going(todo), going(queue)
+        # this machine's phases done: the queue's other phases next, in its order, before the held-back drives
+        # (user, 2026-10-20: "assign next phase in the queue to workers when work is done automatically")
+        if not queue and args.phases is not None and not args.no_queue:
+            queue = going(refresh_todo(state, args, any_phase=True))
         todo = [t for t in todo if not in_us(t)] or [t for t in queue if not in_us(t)] \
             or [t for t in todo if in_us(t)] or [t for t in queue if in_us(t)] \
             or (US_LATER and going(deferred_todo(state, args, 'us'))) or going(deferred_todo(state, args)) \
