@@ -7514,7 +7514,6 @@ async function showMap(box, isNew) {
   });
 }
 document.querySelectorAll('.locmap[data-new]').forEach(m => showMap(m.closest('.locbox'), true));
-// YouTube's chapters, fetched once per video and one video at a time so the page stays quick
 const esc = x => String(x).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 // English for text in another language, marked with its language; the original on hover, and in its place on a
 // click (and back) (translate; user, 2026-10-20)
@@ -7531,6 +7530,33 @@ function flipTr(e, el) {
 const TIMESTAMP = /(?<![\\d:])(?:(\\d{1,2}):)?(\\d{1,2}):(\\d{2})(?![\\d:])/g;
 const playLinks = (video, text) => esc(text).replace(TIMESTAMP, (m, h, mi, se) =>
   `<a href="#" onclick="play('${video}', ${(+h || 0) * 3600 + +mi * 60 + +se}); return false;">${m}</a>`);
+// a video's title, description and chapter names in English (translate); the chapters again once fetched
+async function translateVideo(div) {
+  const video = div.dataset.video;
+  try {
+    const tr = await (await fetch('translate/' + video)).json();
+    const h3 = div.querySelector('h3.vtitle');
+    if (tr.title[0] && h3 && !h3.querySelector('.tr')) {
+      h3.innerHTML = shownTr(tr.title[0], h3.textContent, tr.title[1]);
+    }
+    const desc = div.querySelector('.desctext');
+    if (tr.description[0] && desc && !desc.querySelector('.tr')) {
+      desc.innerHTML = shownTr('', desc.textContent, tr.description[1], playLinks(video, tr.description[0]),
+                               desc.innerHTML);
+    }
+    const box = div.querySelector('.chapters');
+    if (box && tr.chapters.some(c => c[2]) && !box.querySelector('.tr')) {
+      box.innerHTML = '<b>Chapters</b>' + tr.chapters.map(([t, name, en, lang]) =>
+        `<div><a href="#" onclick="play('${video}', ${t}); return false;">${fmt(t)}</a> ` +
+        `${en ? shownTr(en, name, lang) : esc(name)}</div>`).join('');
+    }
+  } catch (e) { /* no connection: shown untranslated */ }
+}
+// translations at once, top to bottom (user, 2026-10-20: ZYbdS5u7OR4's Vietnamese waited for every video's chapters)
+(async () => {
+  for (const div of document.querySelectorAll('.video[data-video]')) await translateVideo(div);
+})();
+// YouTube's chapters, fetched once per video and one video at a time so the page stays quick
 (async () => {
   for (const box of document.querySelectorAll('.chapters[data-pending]')) {
     try {
@@ -7539,26 +7565,8 @@ const playLinks = (video, text) => esc(text).replace(TIMESTAMP, (m, h, mi, se) =
       box.innerHTML = '<b>Chapters</b>' + list.map(([t, title]) =>
         `<div><a href="#" onclick="play('${box.dataset.video}', ${t}); return false;">${fmt(t)}</a> ` +
         `${esc(title)}</div>`).join('');
+      await translateVideo(box.closest('.video'));
     } catch (e) { /* no connection: the next page load tries again */ }
-  }
-  for (const div of document.querySelectorAll('.video[data-video]')) {
-    const video = div.dataset.video;
-    try {
-      const tr = await (await fetch('translate/' + video)).json();
-      const h3 = div.querySelector('h3.vtitle');
-      if (tr.title[0] && h3) h3.innerHTML = shownTr(tr.title[0], h3.textContent, tr.title[1]);
-      const desc = div.querySelector('.desctext');
-      if (tr.description[0] && desc) {
-        desc.innerHTML = shownTr('', desc.textContent, tr.description[1], playLinks(video, tr.description[0]),
-                                 desc.innerHTML);
-      }
-      const box = div.querySelector('.chapters');
-      if (box && tr.chapters.some(c => c[2])) {
-        box.innerHTML = '<b>Chapters</b>' + tr.chapters.map(([t, name, en, lang]) =>
-          `<div><a href="#" onclick="play('${video}', ${t}); return false;">${fmt(t)}</a> ` +
-          `${en ? shownTr(en, name, lang) : esc(name)}</div>`).join('');
-      }
-    } catch (e) { /* no connection: shown untranslated */ }
   }
 })();
 // after a reload (a join, a split) the browser refills inputs by position, so rows that moved would show another
