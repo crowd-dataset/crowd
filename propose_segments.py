@@ -1182,7 +1182,10 @@ def propose(sig, p=PARAMS):
                 dark = sig['sky'][a:b] < p['night_sky']
                 if 'ground' in sig:
                     dark = dark & (sig['ground'][a:b] < p['night_ground'])
-                if dark.mean() >= SIDEWAYS_DARK:
+                # ... but not on a bus, whose inside is dark whatever the hour: a camera at its side window
+                # (YdIDmVIjOk4, 9Nr4xAUyJKI; user, 2026-10-20: "common for bus videos"). On 22 reviewed bus
+                # videos that cut 1.8 min more the reviewer cut, nothing approved
+                if dark.mean() >= SIDEWAYS_DARK and not bool(sig.get('on_bus', False)):
                     notes.append(f'{label}? {a / FPS:.0f}-{b / FPS:.0f}s in the dark: check, cut it if so')
                     continue
             keep[a:b] = False
@@ -3032,6 +3035,18 @@ def gps_clean(track, kmh=None):
             if len(track) < 3 or (i and reach(track[i - 1], x)) or (i + 1 < len(track) and reach(x, track[i + 1]))]
 
 
+GPS_DRIVE_KMH = 20  # a GPS overlay moving this fast (median) is a vehicle's: no walk
+
+
+def gps_drive(sig):
+    """Whether the GPS overlay in the picture moves at a vehicle's pace: Car_fx9kn's dashcam drives were left out as
+    walks (people close by in 5-6% of the frames, a step-like bob; user, 2026-10-20), their positions at 70-100
+    km/h."""
+    track = gps_clean([tuple(x) for x in np.asarray(sig.get('gps', np.zeros((0, 3)))).reshape(-1, 3)])
+    kmh = [_km(a[1], a[2], b[1], b[2]) / (b[0] - a[0]) * 3600 for a, b in zip(track, track[1:]) if b[0] > a[0]]
+    return len(kmh) >= 5 and float(np.median(kmh)) >= GPS_DRIVE_KMH
+
+
 def night_from_title(segments, notes, sig, title):
     """(segments, notes) all at night when the title says night, unless the picture is plainly daylight: a camera's
     exposure brightens a lit city at night (I5I9fOnHrPg, "Night Time Driving In The Bronx": sky 110); 71 of 73 such
@@ -3107,6 +3122,7 @@ def analyse_video(video_id, out_dir, meta=None, signs=False):
     finally:
         os.remove(path)
         os.rmdir(work_dir)
+    sig['on_bus'] = np.array(title_vehicle(title_text(meta.get('title') or '')) == 1)
     segments, notes = night_from_title(*propose(sig), sig, meta.get('title'))
     np.savez_compressed(os.path.join(out_dir, f'{video_id}_signals.npz'), **sig)
     return {'meta': meta, 'segments': segments, 'notes': notes}
@@ -3534,12 +3550,24 @@ def _iso2(country):
 # that mostly drives); "motorbike" is no bike
 VEHICLE_TITLE = [(4, re.compile(r'\b(?:bike (?:route|ride|tour|path|lane)s?|cycling|cycle (?:ride|tour)|bicycle'
                                 r'|by bike|on (?:a|my) bike|e-?bike)\b', re.I)),
-                 (3, re.compile(r'\b(?:motorcycle|motorbike|motor bike|moped)s?\b', re.I))]
+                 (3, re.compile(r'\b(?:motorcycle|motorbike|motor bike|moped)s?\b', re.I)),
+                 # "bus 22 ride", "bus Z13 ride", "by bus", "bus route" (YdIDmVIjOk4, 9Nr4xAUyJKI were cars from
+                 # the channel's history; user, 2026-10-20): 22 of 24 reviewed such titles were set to bus
+                 (1, re.compile(r'\b(?:bus(?:es)?\s+(?:[A-Z]{0,2}\d+[A-Z]?\s+)?(?:ride|route|tour|trip|journey)s?'
+                                r'|(?:by|on (?:a|the)) bus|bus (?:no\.?|number|line)\s*[A-Z]{0,2}\d+'
+                                r'|bus [A-Z]{0,2}\d+[A-Z]?)\b', re.I))]
 
 
 def title_vehicle(title):
-    """The VEHICLE_TYPES code a title names (a bicycle, a motorcycle), else None."""
+    """The VEHICLE_TYPES code a title names (a bicycle, a motorcycle, a bus), else None."""
     return next((vt for vt, r in VEHICLE_TITLE if r.search(title or '')), None)
+
+
+def load_signals(sig_path, title):
+    """A video's saved signals, with on_bus set from its title (see propose's side views)."""
+    sig = dict(np.load(sig_path))
+    sig['on_bus'] = np.array(title_vehicle(title_text(title or '')) == 1)
+    return sig
 
 
 WORD_STATE_CODES = {'IN', 'OR', 'ME', 'OK', 'HI', 'DE', 'CO', 'MA', 'AL', 'ID', 'OH', 'LA'}  # LA: Los Angeles
@@ -5756,7 +5784,7 @@ def locate_now(p, df, home, sig_path=None, meta=None, boilerplate=frozenset()):
         es = p.get('entries') or []
     # not after a GPS split that left one town (kddS8sGShKA: rural until 95:30, then Laughlin): the GPS decides
     if sig_path and len(es) == 1 and es[0].get('locality') and not p.get('route') and not es[0].get('gps'):
-        es[0]['segments'] = propose(dict(np.load(sig_path)), ONE_PLACE)[0]
+        es[0]['segments'] = propose(load_signals(sig_path, p.get('title')), ONE_PLACE)[0]
         p['note'] = re.sub(r'; (?:rural|highway) driving \d+-\d+s', '', p['note'])
 
 
@@ -6099,15 +6127,16 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
                 reason = 'another camera is shown in a corner of the picture (picture-in-picture)'
             elif (n_driver := driver_frames(frames)) >= DRIVER_SHEET_FRAMES:
                 reason = f'the camera faces the driver (a big face in {n_driver} of {len(frames)} sampled frames)'
-            elif (n_walk := walking_frames(os.path.join(out_dir, f'{vid}.jpg'))) >= WALK_SHEET_FRAMES:
+            elif not (driving := gps_drive(dict(np.load(sig_path)))) and (n_walk := walking_frames(
+                    os.path.join(out_dir, f'{vid}.jpg'))) >= WALK_SHEET_FRAMES:
                 reason = f'a walk, not a drive ({n_walk} of {len(frames)} sampled frames look taken on foot)'
-            elif float(np.load(sig_path).get('step_bob', 0)) >= STEP_BOB_WALK:
+            elif not driving and float(np.load(sig_path).get('step_bob', 0)) >= STEP_BOB_WALK:
                 reason = (f"a walk, not a drive: the camera bobs at a walker's step rate "
                           f"({float(np.load(sig_path)['step_bob']):.0%} of its shake)")
-            elif seen := walk_view(dict(np.load(sig_path))):
+            elif not driving and (seen := walk_view(dict(np.load(sig_path)))):
                 reason = (f'a walk, not a drive: people close by in {seen[0]:.0%} of the frames, a vehicle ahead in '
                           f'only {seen[1]:.0%}')
-            elif walk_no_stop(dict(np.load(sig_path))):
+            elif not driving and walk_no_stop(dict(np.load(sig_path))):
                 reason = (f"a walk, not a drive: the camera bobs at a walker's step rate "
                           f"({float(np.load(sig_path)['step_bob']):.0%} of its shake) and never stands {NO_STOP_S} s")
             elif dashboard_view(os.path.join(out_dir, f'{vid}.jpg')):
@@ -6151,7 +6180,8 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
             commit([vid])
             continue
         if analysed:
-            segments, notes = night_from_title(*propose(sig := dict(np.load(sig_path))), sig, meta.get('title'))
+            segments, notes = night_from_title(*propose(sig := load_signals(sig_path, meta.get('title'))), sig,
+                                               meta.get('title'))
             if skip_note:
                 notes.insert(0, skip_note)
             if (bob := float(np.load(sig_path).get('step_bob', 0))) >= STEP_BOB_HINT:
@@ -6419,11 +6449,11 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
                 and not es[0].get('gps')
                 and not any(s.get('decision') or s.get('applied') for s in es[0]['segments'])):
             if (role := title_role(p['title'], es[0]['locality'])):
-                p['entries'] = by_role(propose(dict(np.load(sig_path)))[0], es[0]['locality'], role)
+                p['entries'] = by_role(propose(load_signals(sig_path, p['title']))[0], es[0]['locality'], role)
                 p['note'] = (f"{p['note']}; the title drives {'to' if role == 'end' else 'from'} "
                              f"{es[0]['locality'][0]}: only its {role} is there, set the locality of the rest")
                 continue
-            es[0]['segments'] = propose(dict(np.load(sig_path)), ONE_PLACE)[0]
+            es[0]['segments'] = propose(load_signals(sig_path, p.get('title')), ONE_PLACE)[0]
             p['note'] = re.sub(r'; (?:rural|highway) driving \d+-\d+s', '', p.get('note') or '')
     # nothing names a place, neither title, description, chapters nor GPS (iHwHqW98IRQ, "Driving tour view with my
     # friends on the holiday"; user, 2026-10-19: no way to learn its locality): the channel's city when it mostly
