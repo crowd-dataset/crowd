@@ -2955,6 +2955,26 @@ def clock_speedups(sig, rate=1.3, steps=3):
             for a, b in _runs(fast) if b - a >= steps]
 
 
+GPS_REACH_KM = 300  # a track this far from every locality the batch may be in has its signs misread
+
+
+def gps_fit(track, df):
+    """The track with its signs as they must be: OCR drops a minus sign or a hemisphere letter (passeios_no_rio_com
+    _uber's Rio read 22.87, 43.25 for -22.87, -43.25: no town on the way, the drives left out; user, 2026-10-20).
+    Read as printed when that is within GPS_REACH_KM of a locality of df, else the first sign flip that is; None
+    when none is."""
+    if not track or not len(df):
+        return track or None
+    lat0, lon0 = float(np.median([x[1] for x in track])), float(np.median([x[2] for x in track]))
+    lats, lons = df['lat'].astype(float).values, df['lon'].astype(float).values
+    for a, b in ((1, 1), (-1, 1), (1, -1), (-1, -1)):
+        km = 6371 * np.hypot(np.radians(lats - a * lat0),
+                             np.radians(lons - b * lon0) * np.cos(np.radians(a * lat0)))
+        if np.nanmin(km) <= GPS_REACH_KM:
+            return [(t, a * la, b * lo) for t, la, lo in track]
+    return None
+
+
 def split_gps(p, df, out_dir):
     """Split an untouched one-group proposal into the localities its GPS overlay passes through. Returns whether
     it was split."""
@@ -2967,7 +2987,9 @@ def split_gps(p, df, out_dir):
         return False
     countries = {common.get_iso2_country_code(common.correct_country(c)): c for c in df['country'].dropna().unique()}
     countries.pop(None, None)
-    track = gps_clean(sig['gps'].tolist())
+    track = gps_fit(gps_clean(sig['gps'].tolist()), df)
+    if not track:
+        return False
     lats, lons = np.radians(df['lat'].astype(float).values), np.radians(df['lon'].astype(float).values)
     stretches, town, locs = [], None, []
     for t, lat, lon in track:
