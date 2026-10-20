@@ -409,7 +409,7 @@ def deferred_todo(state, args, kind='multi_city'):
         except (OSError, ValueError):
             continue
         url = c.get('url') or key.removeprefix('refresh:')
-        dkey = 'deferred:' + ('us:' if kind == 'us' else '') + url
+        dkey = 'deferred:' + ({'us': 'us:', 'long': 'long:'}.get(kind, '')) + url
         if held and state.get(dkey, {}).get('status') not in ('rejected', 'error'):
             seen.add(c['name'])
             todo.append((None, dkey, url, c.get('country') or '', False))
@@ -573,7 +573,8 @@ def main():
         todo, queue = going(todo), going(queue)
         todo = [t for t in todo if not in_us(t)] or [t for t in queue if not in_us(t)] \
             or [t for t in todo if in_us(t)] or [t for t in queue if in_us(t)] \
-            or (US_LATER and going(deferred_todo(state, args, 'us'))) or going(deferred_todo(state, args))
+            or (US_LATER and going(deferred_todo(state, args, 'us'))) or going(deferred_todo(state, args)) \
+            or going(deferred_todo(state, args, 'long'))  # videos over an hour: the very last (LONG_LATER_S)
         if not todo:
             log('no channel left to process; waiting for reviews and the sheet')
             time.sleep(IDLE_WAIT_S)
@@ -598,7 +599,8 @@ def main():
             log(f'SHEET: set row {n} ({url}) to Processing{BY}')
         c = state.setdefault(key, {'row': n, 'name': channel_name(url), 'status': 'processing',
                                    **({} if n is not None else {'refresh': True, 'url': url, 'new_only': new_only}),
-                                   **({'deferred': 'us' if key.startswith('deferred:us:') else True}
+                                   **({'deferred': 'us' if key.startswith('deferred:us:') else
+                                       'long' if key.startswith('deferred:long:') else True}
                                       if key.startswith('deferred:') else {})})
         if c.get('deferred'):
             c['status'] = 'processing'  # held-back drives again since the last pass

@@ -3215,6 +3215,7 @@ def analyse_video(video_id, out_dir, meta=None, signs=False):
     return {'meta': meta, 'segments': segments, 'notes': notes}
 
 
+LONG_LATER_S = 3600  # videos longer than this wait for the very end (see process_channel)
 MIN_UPLOAD_S = 300  # the paper requires source uploads of at least five minutes
 EXCLUDE_TITLE = re.compile(r'walking tour|walk tour|city walk|time[- ]?lapse|hyperlapse|compilation'
                            r'|sped[- ]?up|speed(?:ed)?[- ]?up|fast[- ]?forward|\b\d(?:\.\d)?x speed\b|\bx\d speed\b'
@@ -6195,6 +6196,15 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
                 plan[vid] = {'video': vid, 'title': meta['title'], 'deferred': 'us',
                              'exclude': 'held back for later: the title names a place in the US (footage from '
                                         'outside the US first)'}
+                touched.append(vid)
+                commit([vid])
+                continue
+            # a video over LONG_LATER_S waits for the very end, after every queue phase (user, 2026-10-20: "leave
+            # long videos of more than 1h for later"): held back like multi_city, proposed by the 'long' pass
+            if not reason and deferred != 'long' and (meta.get('duration') or 0) > LONG_LATER_S:
+                plan[vid] = {'video': vid, 'title': meta['title'], 'deferred': 'long',
+                             'exclude': f"held back for later: {int(meta['duration']) // 60} min long (videos of an "
+                                        "hour or less first)"}
                 touched.append(vid)
                 commit([vid])
                 continue
