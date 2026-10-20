@@ -2258,8 +2258,9 @@ GPS_HEMI = re.compile(r'([NS])\s*(\d{1,2}[.,]\d{3,})\D{0,4}?([EW])\s*(\d{1,3}[.,
 GPS_DMS = re.compile(r"([NS])\s*(\d{1,2})\s*[°*º˚]\s*(\d{2})\s*['’′`]?\s*(\d{1,2}(?:[.,]\d+)?)\W{0,4}?"
                      r"([EW])\s*(\d{1,3})\s*[°*º˚]\s*(\d{2})\s*['’′`]?\s*(\d{1,2}(?:[.,]\d+)?)")
 # ... and labelled: "lat: 23.18409 lon: 120.48879" (Car_fx9kn's other dashcam, the two a line apart in OCR)
-GPS_LABELLED = re.compile(r'(?i)\blat(?:itude)?\b\W{0,3}(-?\d{1,2}[.,]\d{3,})[\s\S]{0,40}?'
-                          r'\b(?:lon|lng|long|longitude)\b\W{0,3}(-?\d{1,3}[.,]\d{3,})')
+# (OCR reads the l as I, 1 or |: "Iat: 24.30392", "Ion: 120.59553", aEIGIgrxOgM)
+GPS_LABELLED = re.compile(r'(?i)(?<![a-z])[li1|]at(?:itude)?\b\W{0,3}(-?\d{1,2}[.,]\d{3,})[\s\S]{0,40}?'
+                          r'(?<![a-z])(?:[li1|]on|[li1|]ng|[li1|]ong|[li1|]ongitude)\b\W{0,3}(-?\d{1,3}[.,]\d{3,})')
 GPS_SIGNED = re.compile(r'(?<![\d.])(-?\d{1,2}\.\d{4,})(?:\s*[,;]?\s+|\s*(?=-))(-?\d{1,3}\.\d{4,})(?!\d|\.\d)')
 
 
@@ -2397,7 +2398,7 @@ def stamp_cuts(sig):
     return cuts
 
 
-def gps_track(video_id, duration):
+def gps_track(video_id, duration, opening=None):
     """([(t, lat, lon)] read from a GPS overlay in the picture or None, [(t, clock seconds)] read from a time stamp
     in it, [(t, seconds since 2000)] from a time and date stamp to the minute: parse_stamp), all empty when the
     first frames show none. Frames come from the 720p stream (the 240p copy is too
@@ -2407,7 +2408,10 @@ def gps_track(video_id, duration):
     try:
         stream = _stream(video_id)
         texts = [(t, _frame_text(stream, t)) for t in GPS_PROBE_S if t < duration]
-        if not any(parse_gps(x) or parse_clock(x) or parse_stamp(x) for _, x in texts):
+        # ... or the opening's frames, read by EasyOCR (opening_texts), show coordinates the probes missed
+        # (aEIGIgrxOgM; user, 2026-10-20: "this should be done for all videos where coordinates are available")
+        seen = any(parse_gps(' '.join(x)) for x in (opening or {}).values())
+        if not seen and not any(parse_gps(x) or parse_clock(x) or parse_stamp(x) for _, x in texts):
             return None, [], []
         # at most ~200 frames: a 3-hour road trip read every 30 s printed nothing for 45 min and was stopped as
         # stuck (1D9hw6ob380); a line every 50 frames shows it is going
@@ -3214,7 +3218,7 @@ def analyse_video(video_id, out_dir, meta=None, signs=False):
         elif not signs and (read := head_signs(video_id, meta.get('duration'),
                                                os.path.join(out_dir, f'{video_id}_head.tmp'))):
             sig['head_signs'] = np.array(json.dumps({str(t): x for t, x in read.items()}))
-        gps, clock, stamp = gps_track(video_id, meta['duration'])
+        gps, clock, stamp = gps_track(video_id, meta['duration'], texts)
         if gps:
             sig['gps'] = np.array(gps, float)
             print(f'  GPS overlay: {len(gps)} positions', flush=True)
