@@ -3314,44 +3314,67 @@ ENGLISH_HINT = re.compile(r'\b(?:the|in|to|of|and|from|with|at|drive|driving|wal
                           re.I)
 
 
-SHOWN_TRANSLATIONS = os.path.join('_output', 'proposals', 'translations_shown.json')  # for the review page
+# for the review page: text -> [English, its language], '' where English already
+SHOWN_TRANSLATIONS = os.path.join('_output', 'proposals', 'translations_shown2.json')
 _SHOWN_LOCK = threading.Lock()
+_SHOWN_PAUSE = [0.0]  # Google refused (429, too many asks): none asked until then
+SHOWN_PAUSE_S = 600
+
+
+def _shown(out, text):
+    """'' when a "translation" is the text itself, near enough: Google calls a title of road numbers English and
+    translates it all the same (wBWyY5C32uo's Chinese), and gives an English title back with a space less
+    (QtUPn385Kw8; user, 2026-10-20)."""
+    norm = (lambda x: ' '.join(x.lower().split()))
+    return '' if difflib.SequenceMatcher(None, norm(out), norm(text)).ratio() >= 0.9 else out
+
+
+def _language(code):
+    """The English name of a language code from Google Translate ("ko", "zh-TW", "tl"), '' for none or English."""
+    if not code or code == 'en':
+        return ''
+    lang = pycountry.languages.get(alpha_2=code.split('-')[0].lower())
+    return getattr(lang, 'name', None) or code
 
 
 def shown_english(text):
-    """text in English for the review page, '' when Google Translate finds it English already, or does not answer
-    (asked again next time). Kept in SHOWN_TRANSLATIONS."""
+    """(text in English, the name of its language) for the review page, ('', '') when Google Translate finds it
+    English already, or does not answer (asked again next time, after SHOWN_PAUSE_S when it refused). Kept in
+    SHOWN_TRANSLATIONS."""
     text = (text or '').strip()
     if not text:
-        return ''
+        return '', ''
     with _SHOWN_LOCK, contextlib.suppress(OSError, ValueError), open(SHOWN_TRANSLATIONS) as f:
         known = json.load(f)
         if text in known:
-            return known[text]
+            out, lang = known[text]
+            return _shown(out, text), lang
+    if time.time() < _SHOWN_PAUSE[0]:
+        return '', ''
     try:
         r = requests.post('https://translate.googleapis.com/translate_a/single', timeout=20, data={'q': text[:5000]},
                           params={'client': 'gtx', 'sl': 'auto', 'tl': 'en', 'dt': 't'})
+        if r.status_code == 429:
+            _SHOWN_PAUSE[0] = time.time() + SHOWN_PAUSE_S
         if not r.ok:
-            return ''
+            return '', ''
         data = r.json()
-        out = ''.join(part[0] for part in data[0] if part and part[0])
+        out = _shown(''.join(part[0] for part in data[0] if part and part[0]), text)
+        lang = _language(data[2]) if out else ''
     except (requests.RequestException, ValueError, IndexError, TypeError):
-        return ''
-    # English when the "translation" is the text itself, near enough: Google calls a title of road numbers English
-    # and translates it all the same (wBWyY5C32uo's Chinese; user, 2026-10-20)
-    out = '' if difflib.SequenceMatcher(None, out.strip().lower(), text.lower()).ratio() >= 0.9 else out
+        return '', ''
     with _SHOWN_LOCK:
         try:
             with open(SHOWN_TRANSLATIONS) as f:
                 known = json.load(f)
         except (OSError, ValueError):
             known = {}
-        known[text] = out
+        known[text] = [out, lang]
         with contextlib.suppress(OSError):
             with open(SHOWN_TRANSLATIONS + '.tmp', 'w') as f:
                 json.dump(known, f, ensure_ascii=False)
             os.replace(SHOWN_TRANSLATIONS + '.tmp', SHOWN_TRANSLATIONS)
-    return out
+    return out, lang
 
 
 @functools.lru_cache(maxsize=None)
@@ -6577,7 +6600,9 @@ main { padding: 10px 20px 40px; max-width: 1400px; }
 .desc { font-size: 13px; color: #333; max-height: 520px; overflow-y: auto; border-left: 1px solid #eee;
         padding-left: 12px; }
 .desctext { white-space: pre-wrap; overflow-wrap: anywhere; }
-.tr { background: rgba(255, 196, 0, 0.18); border-bottom: 1px dashed #b58900; cursor: help; }
+.tr { background: rgba(255, 196, 0, 0.18); border-bottom: 1px dashed #b58900; cursor: pointer; }
+.tr[data-lang]:not([data-lang=""])::before { content: '🌐 from ' attr(data-lang); }
+.tr.orig::before { content: '🌐 original · click for English' !important; }
 .tr::before { content: '🌐 translated'; font-size: 11px; font-weight: bold; color: #fff; background: #b58900;
               border-radius: 3px; padding: 0 4px; margin-right: 5px; vertical-align: middle; }
 .chapters { margin-bottom: 8px; }
@@ -7223,8 +7248,18 @@ async function showMap(box, isNew) {
 document.querySelectorAll('.locmap[data-new]').forEach(m => showMap(m.closest('.locbox'), true));
 // YouTube's chapters, fetched once per video and one video at a time so the page stays quick
 const esc = x => String(x).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
-// English for text in another language, marked, the original on hover (translate)
-const shownTr = (en, original, html) => `<span class="tr" title="${esc(original)}">${html || esc(en)}</span>`;
+// English for text in another language, marked with its language; the original on hover, and in its place on a
+// click (and back) (translate; user, 2026-10-20)
+const shownTr = (en, original, lang, html, origHtml) =>
+  `<span class="tr" data-lang="${esc(lang || '')}" title="${esc((lang || 'the') + ' original: ' + original)}" ` +
+  `data-other="${esc(origHtml || esc(original))}" onclick="flipTr(event, this)">${html || esc(en)}</span>`;
+function flipTr(e, el) {
+  if (e.target.closest('a')) return;  // a time in it plays
+  const shown = el.innerHTML;
+  el.innerHTML = el.dataset.other;
+  el.dataset.other = shown;
+  el.classList.toggle('orig');
+}
 const TIMESTAMP = /(?<![\\d:])(?:(\\d{1,2}):)?(\\d{1,2}):(\\d{2})(?![\\d:])/g;
 const playLinks = (video, text) => esc(text).replace(TIMESTAMP, (m, h, mi, se) =>
   `<a href="#" onclick="play('${video}', ${(+h || 0) * 3600 + +mi * 60 + +se}); return false;">${m}</a>`);
@@ -7243,14 +7278,17 @@ const playLinks = (video, text) => esc(text).replace(TIMESTAMP, (m, h, mi, se) =
     try {
       const tr = await (await fetch('translate/' + video)).json();
       const h3 = div.querySelector('h3.vtitle');
-      if (tr.title && h3) h3.innerHTML = shownTr(tr.title, h3.textContent);
+      if (tr.title[0] && h3) h3.innerHTML = shownTr(tr.title[0], h3.textContent, tr.title[1]);
       const desc = div.querySelector('.desctext');
-      if (tr.description && desc) desc.innerHTML = shownTr('', desc.textContent, playLinks(video, tr.description));
+      if (tr.description[0] && desc) {
+        desc.innerHTML = shownTr('', desc.textContent, tr.description[1], playLinks(video, tr.description[0]),
+                                 desc.innerHTML);
+      }
       const box = div.querySelector('.chapters');
       if (box && tr.chapters.some(c => c[2])) {
-        box.innerHTML = '<b>Chapters</b>' + tr.chapters.map(([t, name, en]) =>
+        box.innerHTML = '<b>Chapters</b>' + tr.chapters.map(([t, name, en, lang]) =>
           `<div><a href="#" onclick="play('${video}', ${t}); return false;">${fmt(t)}</a> ` +
-          `${en ? shownTr(en, name) : esc(name)}</div>`).join('');
+          `${en ? shownTr(en, name, lang) : esc(name)}</div>`).join('');
       }
     } catch (e) { /* no connection: shown untranslated */ }
   }
@@ -7775,8 +7813,8 @@ def review(plan_path, port=None):
     @app.route('/translate/<video_id>')
     def translate(video_id):
         """English for a video's title, description and chapter names written in another language (user,
-        2026-10-20: iLggcDY7PD0's Korean): {'title', 'description', 'chapters': [[s, name, English]]}, '' where
-        the text is English already."""
+        2026-10-20: iLggcDY7PD0's Korean): {'title': [English, language], 'description': [...], 'chapters':
+        [[s, name, English, language]]}, '' where the text is English already."""
         path = os.path.join(plan_dir, f'{video_id}_meta.json')
         meta = {}
         if re.fullmatch(r'[\w-]{11}', video_id) and os.path.exists(path):
@@ -7784,11 +7822,13 @@ def review(plan_path, port=None):
                 meta = json.load(f)
         title = next((p.get('title') for p in load() if p['video'] == video_id), meta.get('title'))
         names = [name for _, name in video_chapters(meta)]
-        both = shown_english('\n'.join(names)).split('\n') if names else []  # one request for them all
+        joined, lang = shown_english('\n'.join(names)) if names else ('', '')  # one request for them all
+        both = [(en, lang) for en in joined.split('\n')]
         if len(both) != len(names):
             both = [shown_english(name) for name in names]
         return jsonify(title=shown_english(title), description=shown_english(meta.get('description')),
-                       chapters=[[t, name, en.strip()] for (t, name), en in zip(video_chapters(meta), both)])
+                       chapters=[[t, name, en.strip(), lang] for (t, name), (en, lang)
+                                 in zip(video_chapters(meta), both)])
 
     @app.route('/chapters/<video_id>')
     def chapters(video_id):
