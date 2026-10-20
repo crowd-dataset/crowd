@@ -2239,6 +2239,9 @@ GPS_HEMI = re.compile(r'([NS])\s*(\d{1,2}[.,]\d{3,})\D{0,4}?([EW])\s*(\d{1,3}[.,
 # minutes mark at times: "N 24°2240.2""; user, 2026-10-20)
 GPS_DMS = re.compile(r"([NS])\s*(\d{1,2})\s*[°*º˚]\s*(\d{2})\s*['’′`]?\s*(\d{1,2}(?:[.,]\d+)?)\W{0,4}?"
                      r"([EW])\s*(\d{1,3})\s*[°*º˚]\s*(\d{2})\s*['’′`]?\s*(\d{1,2}(?:[.,]\d+)?)")
+# ... and labelled: "lat: 23.18409 lon: 120.48879" (Car_fx9kn's other dashcam, the two a line apart in OCR)
+GPS_LABELLED = re.compile(r'(?i)\blat(?:itude)?\b\W{0,3}(-?\d{1,2}[.,]\d{3,})[\s\S]{0,40}?'
+                          r'\b(?:lon|lng|long|longitude)\b\W{0,3}(-?\d{1,3}[.,]\d{3,})')
 GPS_SIGNED = re.compile(r'(?<![\d.])(-?\d{1,2}\.\d{4,})(?:\s*[,;]?\s+|\s*(?=-))(-?\d{1,3}\.\d{4,})(?!\d|\.\d)')
 
 
@@ -2251,6 +2254,10 @@ def parse_gps(text):
         lon = int(d2) + int(m2) / 60 + float(s2.replace(',', '.')) / 3600
         lat, lon = -lat if ns == 'S' else lat, -lon if ew == 'W' else lon
         if abs(lat) <= 90 and abs(lon) <= 180:
+            return lat, lon
+    if m := GPS_LABELLED.search(text or ''):
+        lat, lon = float(m.group(1).replace(',', '.')), float(m.group(2).replace(',', '.'))
+        if abs(lat) <= 90 and abs(lon) <= 180 and (lat, lon) != (0, 0):
             return lat, lon
     text = re.sub(r"(\d)['’`/](\d)", r'\1.\2', text or '').replace("'", ' ')  # 49'29065'-123.13081
     text = re.sub(r'(?<![\d.])(-?\d{1,3}) (\d{5,6})(?![\d.])', r'\1.\2', text)  # 360p: 49 25780 -123.17192
