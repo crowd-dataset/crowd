@@ -106,6 +106,12 @@ background:#fff;color:#222;font-size:13px;cursor:pointer}
  <span class="s">{% if b.row %}· row {{ b.row }} {% endif %}· {{ b.state }}</span></span>
  <span>{{ b.waiting }} of {{ b.proposed }} to review</span></a>
 {% else %}<p>Nothing to review.</p>{% endfor %}
+{% if unapplied %}<h2>✅ Approved, not in the mapping yet
+ <span class="s">({{ unapplied|sum(attribute="count") }} segments)</span></h2>
+<p class="ok">Their review page is closed: open it and press Apply (a segment without a locality needs one first)</p>
+{% for u in unapplied %}<a class="b" href="/open/{{ u.name }}" target="_blank"><span class="n">{{ u.name }}</span>
+ <span>{{ u.count }} approved{% if u.no_place %}, {{ u.no_place }} without a locality{% endif %}</span></a>
+{% endfor %}{% endif %}
 <div class="acts">
 <button class="g" title="commit mapping.csv as it is now and push it to GitHub"
  onclick="act(this, '/push_mapping', 'Commit mapping.csv as it is now and push it to GitHub?')"
@@ -162,6 +168,18 @@ def stop_finished_pages():
         del servers[name]
 
 
+def approved_unapplied(name):
+    """(approved segments of the batch not in the mapping yet, how many of them have no locality: Apply skips
+    those)."""
+    path = os.path.join(rc.ROOT, name, 'plan.json')
+    if not os.path.exists(path):
+        return 0, 0
+    with open(path) as f:
+        segs = [(e, s) for p in json.load(f) for e in p.get('entries', []) for s in e['segments']
+                if s.get('decision') == 'approve' and not s.get('applied')]
+    return len(segs), sum(not e.get('locality') for e, _ in segs)
+
+
 @app.route('/')
 def index():
     stop_finished_pages()
@@ -204,7 +222,16 @@ def index():
             cookies = json.load(r).get('cookies', [])
     except (OSError, ValueError):
         cookies = []
-    return render_template_string(PAGE, batches=batches, done=done, health=health, cookies=cookies)
+    # approved, never applied, their page closed: Apply forgotten, or its answer lost in an outage (user, 2026-10-20)
+    unapplied = []
+    for name in sorted(os.listdir(rc.ROOT)):
+        if name in servers and servers[name][0].poll() is None:
+            continue
+        count, no_place = approved_unapplied(name)
+        if count:
+            unapplied.append(dict(name=name, count=count, no_place=no_place))
+    return render_template_string(PAGE, batches=batches, done=done, health=health, cookies=cookies,
+                                  unapplied=unapplied)
 
 
 @app.route('/open/<name>')
