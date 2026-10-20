@@ -93,7 +93,7 @@ background:#fff;color:#222;font-size:13px;cursor:pointer}
 {% if health | selectattr('ok') | list %}
 <p class="load" title="load over the last 30 min: green busy, amber medium, red low">
 {%- for w in health if w.ok and not w.same %}{% if not loop.first %} · {% endif %}<span title="{{ w.what }}">
-{{- w.machine if w.pct is not none else w.host }}
+{{- w.machine if w.wide else w.host }}
 {%- if w.pct is not none %} {{ w.kind }} <b class="{{ w.level }}">{{ w.pct }}%</b>
 {%- else %}: {{ w.short }}{% endif %}</span>
 {%- endfor %}</p>{% endif %}
@@ -209,11 +209,12 @@ def index():
     for w in health:
         m = re.match(r'(GPU|CPU) (\d+)%$', w.get('what', ''))
         w['kind'], w['pct'] = (m.group(1), int(m.group(2))) if m else (None, None)
-        # a load is the machine's: shown once, under its name, not again for its second worker (lin5080b; user,
-        # 2026-10-19)
+        # a load is the machine's, and so is a pause (wsl_yield.py pauses both workers of win5090): shown once, under
+        # its name, not again for its second worker (lin5080b, wsl5090b; user, 2026-10-19 and 2026-10-20)
         w['machine'] = sync_workers.place(w['host'])[0]
-        w['same'] = m is not None and w['machine'] in loaded
-        if m:
+        w['wide'] = m is not None or w.get('what', '').startswith('paused')
+        w['same'] = w['wide'] and w['machine'] in loaded
+        if w['wide']:
             loaded.add(w['machine'])
         w['level'] = None if not m else 'hi' if w['pct'] >= 60 else 'mid' if w['pct'] >= 30 else 'lo'
         w['short'] = w.get('what', '').split(':')[0]
