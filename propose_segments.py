@@ -3450,7 +3450,8 @@ def _shown(out, text):
     """'' when a "translation" is the text itself, near enough: Google calls a title of road numbers English and
     translates it all the same (wBWyY5C32uo's Chinese), and gives an English title back with a space less
     (QtUPn385Kw8; user, 2026-10-20)."""
-    norm = (lambda x: ' '.join(x.lower().split()))
+    def norm(x):
+        return ' '.join(x.lower().split())
     return '' if difflib.SequenceMatcher(None, norm(out), norm(text)).ratio() >= 0.9 else out
 
 
