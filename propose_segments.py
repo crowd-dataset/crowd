@@ -2192,11 +2192,23 @@ GPS_EVERY_S = 30            # then one frame this often
 # "N40.12345 W75.12345", "40.12345N 75.12345W", "40.123456, -75.123456" as dashcams print them
 GPS_HEMI = re.compile(r'([NS])\s*(\d{1,2}[.,]\d{3,})\D{0,4}?([EW])\s*(\d{1,3}[.,]\d{3,})'
                       r'|(\d{1,2}[.,]\d{3,})\s*°?\s*([NS])\W{0,4}(\d{1,3}[.,]\d{3,})\s*°?\s*([EW])')
+# ... and in degrees, minutes and seconds (Car_fx9kn's MiVue: "N 24°22'25.2" E 120°35'20.4"", OCR losing the
+# minutes mark at times: "N 24°2240.2""; user, 2026-10-20)
+GPS_DMS = re.compile(r"([NS])\s*(\d{1,2})\s*[°*º˚]\s*(\d{2})\s*['’′`]?\s*(\d{1,2}(?:[.,]\d+)?)\W{0,4}?"
+                     r"([EW])\s*(\d{1,3})\s*[°*º˚]\s*(\d{2})\s*['’′`]?\s*(\d{1,2}(?:[.,]\d+)?)")
 GPS_SIGNED = re.compile(r'(?<![\d.])(-?\d{1,2}\.\d{4,})(?:\s*[,;]?\s+|\s*(?=-))(-?\d{1,3}\.\d{4,})(?!\d|\.\d)')
 
 
 def parse_gps(text):
     """(lat, lon) of the first coordinates in a frame's text, else None."""
+    if (m := GPS_DMS.search(text or '')) and all(int(m.group(k)) < 60 for k in (3, 7)) \
+            and all(float(m.group(k).replace(',', '.')) < 60 for k in (4, 8)):
+        ns, d1, m1, s1, ew, d2, m2, s2 = m.groups()
+        lat = int(d1) + int(m1) / 60 + float(s1.replace(',', '.')) / 3600
+        lon = int(d2) + int(m2) / 60 + float(s2.replace(',', '.')) / 3600
+        lat, lon = -lat if ns == 'S' else lat, -lon if ew == 'W' else lon
+        if abs(lat) <= 90 and abs(lon) <= 180:
+            return lat, lon
     text = re.sub(r"(\d)['’`/](\d)", r'\1.\2', text or '').replace("'", ' ')  # 49'29065'-123.13081
     text = re.sub(r'(?<![\d.])(-?\d{1,3}) (\d{5,6})(?![\d.])', r'\1.\2', text)  # 360p: 49 25780 -123.17192
     if m := GPS_HEMI.search(text):
@@ -2243,6 +2255,16 @@ def _frame_text(stream, t):
                                    'tessedit_char_whitelist=0123456789.,-:/NSEW '], input=strip,
                                   capture_output=True, timeout=120).stdout.decode(errors='ignore')
             text += '\n' + line
+    # yellow text in the bottom right corner (Car_fx9kn's MiVue: time, speed and position in two lines; the grey
+    # threshold above loses it on a bright sky): yellow kept, enlarged 4 times
+    strip = subprocess.run(['ffmpeg', '-v', 'error', '-i', '-', '-vf',
+                            "crop=iw*0.22:ih*0.09:iw*0.78:ih*0.91,scale=iw*4:-2,colorchannelmixer=rr=1:gg=1:bb=-1,"
+                            "format=gray,lut=y='if(gt(val\\,150)\\,0\\,255)'", '-f', 'image2pipe', '-vcodec', 'png',
+                            '-'], input=png, capture_output=True, timeout=60).stdout
+    if strip:
+        read = subprocess.run(['tesseract', 'stdin', 'stdout', '--psm', '6'], input=strip, capture_output=True,
+                              timeout=120)
+        text += '\n' + read.stdout.decode(errors='ignore')
     # a phone app's time and date in a corner, two lines in letters and digits ("12:58 PM" over "Feb 6, 2025" at
     # the bottom left of CuseVegas's drives, REnfw4fpZ5A): read without the digit whitelist
     for crop in ('iw*0.35:ih*0.17:0:ih*0.82',):
