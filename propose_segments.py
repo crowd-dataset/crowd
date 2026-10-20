@@ -3314,6 +3314,44 @@ ENGLISH_HINT = re.compile(r'\b(?:the|in|to|of|and|from|with|at|drive|driving|wal
                           re.I)
 
 
+SHOWN_TRANSLATIONS = os.path.join('_output', 'proposals', 'translations_shown.json')  # for the review page
+_SHOWN_LOCK = threading.Lock()
+
+
+def shown_english(text):
+    """text in English for the review page, '' when Google Translate finds it English already, or does not answer
+    (asked again next time). Kept in SHOWN_TRANSLATIONS."""
+    text = (text or '').strip()
+    if not text:
+        return ''
+    with _SHOWN_LOCK, contextlib.suppress(OSError, ValueError), open(SHOWN_TRANSLATIONS) as f:
+        known = json.load(f)
+        if text in known:
+            return known[text]
+    try:
+        r = requests.post('https://translate.googleapis.com/translate_a/single', timeout=20, data={'q': text[:5000]},
+                          params={'client': 'gtx', 'sl': 'auto', 'tl': 'en', 'dt': 't'})
+        if not r.ok:
+            return ''
+        data = r.json()
+        out = '' if data[2] == 'en' else ''.join(part[0] for part in data[0] if part and part[0])
+    except (requests.RequestException, ValueError, IndexError, TypeError):
+        return ''
+    out = '' if out.strip().lower() == text.lower() else out
+    with _SHOWN_LOCK:
+        try:
+            with open(SHOWN_TRANSLATIONS) as f:
+                known = json.load(f)
+        except (OSError, ValueError):
+            known = {}
+        known[text] = out
+        with contextlib.suppress(OSError):
+            with open(SHOWN_TRANSLATIONS + '.tmp', 'w') as f:
+                json.dump(known, f, ensure_ascii=False)
+            os.replace(SHOWN_TRANSLATIONS + '.tmp', SHOWN_TRANSLATIONS)
+    return out
+
+
 @functools.lru_cache(maxsize=None)
 def english(text):
     """text in English (Google Translate's free endpoint, no key; user 2026-10-11: BonBonB Phương's Vietnamese
@@ -6518,8 +6556,9 @@ REVIEW_HTML = """<!doctype html>
 body { font-family: Arial, sans-serif; margin: 0; background: #f6f6f6; color: #222; }
 header { position: sticky; top: 0; z-index: 1; background: #fff; border-bottom: 1px solid #ddd;
          display: flex; gap: 20px; padding: 10px 20px; align-items: center; }
-/* the player keeps its size: a longer keys line beside it squeezed it (user, 2026-10-19) */
-#player { width: clamp(480px, 42vw, 960px); height: auto; aspect-ratio: 16 / 9; border: 0; background: #000;
+/* the player keeps its size: a longer keys line beside it squeezed it (user, 2026-10-19); at most about a third
+   of the window's height, so the frames and a segment with its buttons show below it (user, 2026-10-20) */
+#player { width: clamp(400px, min(34vw, 62vh), 900px); height: auto; aspect-ratio: 16 / 9; border: 0; background: #000;
           flex: 0 0 auto; }
 header > div { min-width: 0; }
 #status { font-size: 15px; line-height: 1.6; }
@@ -6536,6 +6575,9 @@ main { padding: 10px 20px 40px; max-width: 1400px; }
 .desc { font-size: 13px; color: #333; max-height: 520px; overflow-y: auto; border-left: 1px solid #eee;
         padding-left: 12px; }
 .desctext { white-space: pre-wrap; overflow-wrap: anywhere; }
+.tr { background: rgba(255, 196, 0, 0.18); border-bottom: 1px dashed #b58900; cursor: help; }
+.tr::before { content: '🌐 translated'; font-size: 11px; font-weight: bold; color: #fff; background: #b58900;
+              border-radius: 3px; padding: 0 4px; margin-right: 5px; vertical-align: middle; }
 .chapters { margin-bottom: 8px; }
 input.at { width: 56px; font-size: 13px; padding: 2px 4px; }
 @media (max-width: 900px) { .video { grid-template-columns: 1fr; } .desc { border-left: 0; padding-left: 0; } }
@@ -6651,7 +6693,7 @@ background:#fff;color:#222;font-size:13px;cursor:pointer}
 <main>
 {% for p in plan if p.entries and p.video in open_videos %}
 <div class="video" data-video="{{ p.video }}" data-duration="{{ durations.get(p.video) or '' }}"><div class="main">
-  <h3>{{ p.title }}</h3>
+  <h3 class="vtitle">{{ p.title }}</h3>
   <a href="https://www.youtube.com/watch?v={{ p.video }}" target="_blank">{{ p.video }}</a>
   {% if p.upload_date and (p.upload_date | string).isdigit() %}{% set u = '%08d' % (p.upload_date | int) %}
   <span class="uploaded" title="upload date (day, month, year)">· uploaded {{ u[:2] }}.{{ u[2:4] }}.{{ u[4:] }}</span>
@@ -7178,6 +7220,12 @@ async function showMap(box, isNew) {
 }
 document.querySelectorAll('.locmap[data-new]').forEach(m => showMap(m.closest('.locbox'), true));
 // YouTube's chapters, fetched once per video and one video at a time so the page stays quick
+const esc = x => String(x).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+// English for text in another language, marked, the original on hover (translate)
+const shownTr = (en, original, html) => `<span class="tr" title="${esc(original)}">${html || esc(en)}</span>`;
+const TIMESTAMP = /(?<![\\d:])(?:(\\d{1,2}):)?(\\d{1,2}):(\\d{2})(?![\\d:])/g;
+const playLinks = (video, text) => esc(text).replace(TIMESTAMP, (m, h, mi, se) =>
+  `<a href="#" onclick="play('${video}', ${(+h || 0) * 3600 + +mi * 60 + +se}); return false;">${m}</a>`);
 (async () => {
   for (const box of document.querySelectorAll('.chapters[data-pending]')) {
     try {
@@ -7185,8 +7233,24 @@ document.querySelectorAll('.locmap[data-new]').forEach(m => showMap(m.closest('.
       if (!list.length) continue;
       box.innerHTML = '<b>Chapters</b>' + list.map(([t, title]) =>
         `<div><a href="#" onclick="play('${box.dataset.video}', ${t}); return false;">${fmt(t)}</a> ` +
-        `${title.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c])}</div>`).join('');
+        `${esc(title)}</div>`).join('');
     } catch (e) { /* no connection: the next page load tries again */ }
+  }
+  for (const div of document.querySelectorAll('.video[data-video]')) {
+    const video = div.dataset.video;
+    try {
+      const tr = await (await fetch('translate/' + video)).json();
+      const h3 = div.querySelector('h3.vtitle');
+      if (tr.title && h3) h3.innerHTML = shownTr(tr.title, h3.textContent);
+      const desc = div.querySelector('.desctext');
+      if (tr.description && desc) desc.innerHTML = shownTr('', desc.textContent, playLinks(video, tr.description));
+      const box = div.querySelector('.chapters');
+      if (box && tr.chapters.some(c => c[2])) {
+        box.innerHTML = '<b>Chapters</b>' + tr.chapters.map(([t, name, en]) =>
+          `<div><a href="#" onclick="play('${video}', ${t}); return false;">${fmt(t)}</a> ` +
+          `${en ? shownTr(en, name) : esc(name)}</div>`).join('');
+      }
+    } catch (e) { /* no connection: shown untranslated */ }
   }
 })();
 // after a reload (a join, a split) the browser refills inputs by position, so rows that moved would show another
@@ -7705,6 +7769,24 @@ def review(plan_path, port=None):
         parts.append(escape(text[last:]))
         chapters = video_chapters(meta)  # YouTube's, else the description's timestamped lines
         return {'html': Markup('').join(parts), 'chapters': chapters, 'fetched': 'yt_chapters' in meta}
+
+    @app.route('/translate/<video_id>')
+    def translate(video_id):
+        """English for a video's title, description and chapter names written in another language (user,
+        2026-10-20: iLggcDY7PD0's Korean): {'title', 'description', 'chapters': [[s, name, English]]}, '' where
+        the text is English already."""
+        path = os.path.join(plan_dir, f'{video_id}_meta.json')
+        meta = {}
+        if re.fullmatch(r'[\w-]{11}', video_id) and os.path.exists(path):
+            with open(path) as f:
+                meta = json.load(f)
+        title = next((p.get('title') for p in load() if p['video'] == video_id), meta.get('title'))
+        names = [name for _, name in video_chapters(meta)]
+        both = shown_english('\n'.join(names)).split('\n') if names else []  # one request for them all
+        if len(both) != len(names):
+            both = [shown_english(name) for name in names]
+        return jsonify(title=shown_english(title), description=shown_english(meta.get('description')),
+                       chapters=[[t, name, en.strip()] for (t, name), en in zip(video_chapters(meta), both)])
 
     @app.route('/chapters/<video_id>')
     def chapters(video_id):
