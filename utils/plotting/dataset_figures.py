@@ -242,7 +242,7 @@ def _vs_indicators(df: pl.DataFrame, value: str, value_title: str, name: str, lo
             groups = np.array_split(np.arange(len(x)), max(3, min(8, len(x) // 15)))
             fig.add_trace(go.Scatter(x=[np.median(x[g]) for g in groups], y=[np.median(y[g]) for g in groups],
                                      mode="lines", showlegend=False, hoverinfo="skip",
-                                     line=dict(color="#555555", width=2, dash="dash")), row=r, col=c)
+                                     line=dict(color="#222222", width=2.5, dash="dash")), row=r, col=c)
     if log_y:
         fig.update_yaxes(type="log")
     fig.update_yaxes(title_text=value_title, col=1)
@@ -746,8 +746,10 @@ def dataset_figures(df_mapping: pl.DataFrame, seg: pl.DataFrame, flags: dict) ->
     edges = np.logspace(np.log10(max(minutes["minutes"].min(), 0.1)), np.log10(minutes["minutes"].max()), 40)
     counts, _ = np.histogram(minutes["minutes"], bins=edges)
     fig = px.bar(x=np.sqrt(edges[:-1] * edges[1:]), y=counts, log_x=True,
-                 labels={"x": "Length of segment (minutes)", "y": "Number of segments"})
-    fig.update_traces(width=np.diff(edges))
+                 labels={"x": "Length of segment (minutes, log scale)", "y": "Number of segments"})
+    fig.update_traces(width=np.diff(edges), marker_color="#0072B2")
+    # a little room left of the first bar, so the 0.1 label is clear of the y axis's 0
+    fig.update_xaxes(range=[math.log10(edges[0]) - 0.12, math.log10(edges[-1]) + 0.03])
     _save(_style(fig), "hist_segment_length")
 
     # share of footage against share of population per country: which countries are over- or under-represented

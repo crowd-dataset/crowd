@@ -253,7 +253,14 @@ def _area_map(table: pl.DataFrame, feats: dict, pop: dict, value: str, title: st
                                   colorscale=visible_scale(scale), marker_line_width=0.2, marker_line_color="#888888",
                                   colorbar=colorbar, hovertext=text, hovertemplate="%{hovertext}<extra></extra>"))
     if us:
-        fig.update_geos(scope="usa", showsubunits=True, subunitcolor="#999999", showland=True, landcolor="#f2f2f2")
+        states = ["AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "DC", "FL", "GA", "HI", "ID", "IL", "IN", "IA", "KS",
+                  "KY", "LA", "ME", "MD", "MA", "MI", "MN", "MS", "MO", "MT", "NE", "NV", "NH", "NJ", "NM", "NY", "NC",
+                  "ND", "OH", "OK", "OR", "PA", "RI", "SC", "SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV", "WI", "WY"]
+        fig.add_trace(go.Choropleth(locations=states, z=[0] * len(states), locationmode="USA-states",
+                                    colorscale=[[0, "#f2f2f2"], [1, "#f2f2f2"]], showscale=False, hoverinfo="skip",
+                                    marker_line_width=0.6, marker_line_color="#999999"))
+        fig.data = fig.data[::-1]  # the grey states under the counties
+        fig.update_geos(scope="usa", showland=False, showlakes=False)
     else:
         fig.update_geos(showcountries=True, countrycolor="#999999", showland=True, landcolor="#f2f2f2",
                         showocean=True, oceancolor="#ffffff", **EUROPE_VIEW)
@@ -423,7 +430,7 @@ def _spike_map(locs: pl.DataFrame, iso3: str, name: str, country: str):
     for i in sorted(range(len(lons_)), key=lambda k: lats_[k]):
         south = [zs[k] for k in range(len(lons_)) if lats_[k] < lats_[i]
                  and abs(lons_[i] - lons_[k]) < w and lats_[i] - lats_[k] < hgt]
-        zs[i] = max([tips[i]] + [z + 0.16 for z in south])
+        zs[i] = max([tips[i]] + [z + 0.2 for z in south])
     fig.add_trace(go.Scatter3d(x=big["lon"], y=big["lat"], z=zs, mode="text", text=big["locality"],
                                textfont=dict(size=12, color="#222222"),
                                hoverinfo="skip", showlegend=False))
@@ -544,9 +551,18 @@ def _field_map(lons, lats, grid, shown, land, box, title: str, colorscale, name:
     fig.add_trace(go.Scatter(x=bx, y=by, mode="lines", line=dict(color="#555555", width=0.6), hoverinfo="skip",
                              showlegend=False))
     mid = math.cos(math.radians((box[2] + box[3]) / 2))
-    width, height = 1400 - 20, 1200 - 160  # the plot area in pixels
+    # the plot area in pixels: 1,380 wide, as tall as the frame's shape needs (up to 1,040: wide frames such as Asia
+    # left empty bands above and below the map)
+    width = 1400 - 20
+    height = min(1200 - 160, round(width * (box[3] - box[2]) / mid / (box[1] - box[0])))
     sx = min(width / (box[1] - box[0]), height / ((box[3] - box[2]) / mid))  # pixels per degree of longitude
     names, xs, ys, name_boxes = _country_names(box, 6.5 / sx, 14 * mid / sx)  # 11 px text
+    # outlined in white (copies a pixel off in 8 directions under the name), so names stay readable on dark colours;
+    # the static images do not draw plotly's text shadow
+    for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1), (-1, -1), (1, 1), (-1, 1), (1, -1)):
+        fig.add_trace(go.Scatter(x=[x + dx / sx for x in xs], y=[y + dy * mid / sx for y in ys], mode="text",
+                                 text=names, hoverinfo="skip", showlegend=False,
+                                 textfont=dict(size=11, color="rgba(255,255,255,0.9)")))
     fig.add_trace(go.Scatter(x=xs, y=ys, mode="text", text=names, hoverinfo="skip", showlegend=False,
                              textfont=dict(size=11, color="#222222")))
     # the names' boxes in pixels from the map's top-left corner: callouts keep clear of them
@@ -561,7 +577,7 @@ def _field_map(lons, lats, grid, shown, land, box, title: str, colorscale, name:
                            yanchor="top", font=dict(size=13, color="#666666"))
     fig.update_xaxes(range=box[:2], visible=False, constrain="domain")
     fig.update_yaxes(range=box[2:], visible=False, scaleanchor="x", scaleratio=1 / mid, constrain="domain")
-    dfig._save(dfig._style(fig, width=1400, height=1200, plot_bgcolor="white", paper_bgcolor="white",
+    dfig._save(dfig._style(fig, width=1400, height=height + 160, plot_bgcolor="white", paper_bgcolor="white",
                            margin=dict(l=10, r=10, t=110, b=50)), name, save_eps=False)
 
 
@@ -584,8 +600,11 @@ def _place_callouts(callouts: list, box, mid: float, width: int, height: int, ob
                  for dx, dy in ((kx, ky), (kx, -ky), (-kx, ky), (-kx, -ky), (0, ky), (0, -ky))]
         for ax, ay in tries:
             b = (px + ax - w / 2, py + ay - h / 2, px + ax + w / 2, py + ay + h / 2)  # the box centres on the tail
+            # the arrow too: points along it (not its two ends) outside the names and boxes placed before
+            line = [(px + ax * f, py + ay * f) for f in np.linspace(0.12, 0.8, 12)]
             if (b[0] >= 0 and b[1] >= 0 and b[2] <= map_w and b[3] <= map_h
-                    and not any(b[0] < o[2] and o[0] < b[2] and b[1] < o[3] and o[1] < b[3] for o in placed)):
+                    and not any(b[0] < o[2] and o[0] < b[2] and b[1] < o[3] and o[1] < b[3] for o in placed)
+                    and not any(o[0] <= x <= o[2] and o[1] <= y <= o[3] for o in placed for x, y in line)):
                 break
         else:  # nowhere free: the usual direction
             ax, ay = tries[0]
