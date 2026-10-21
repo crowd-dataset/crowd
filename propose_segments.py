@@ -1577,7 +1577,7 @@ def cross_traffic(path, sig, p=PARAMS):
 # one pass over the decoded frames, lines "G second" and "U counts" (user, 2026-10-18: "run multiple tools over
 # those frames in a pipeline fashion"); after the ghosts' first 45 min, on to the counts' frames by seeking
 GHOST_CODE = """
-import sys, cv2, numpy as np, torch
+import sys, time, cv2, numpy as np, torch
 from ultralytics import YOLO
 if not torch.cuda.is_available():  # 15 frames a second of a whole video: only a CUDA GPU does it in minutes
     sys.exit(0)
@@ -1587,7 +1587,7 @@ fps = cap.get(cv2.CAP_PROP_FPS) or 30
 W, H = cap.get(cv2.CAP_PROP_FRAME_WIDTH), cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
 step = max(1, round(fps / 15))  # at 5 a second ByteTrack loses people between frames: misses and false alarms
 ustep, frames = max(1, round(fps * float(sys.argv[2]))), int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-tracks, f, end = {}, 0, 0
+tracks, f, end, shown = {}, 0, 0, time.time()
 while True:
     if f >= fps * 2700:  # the first 45 min: a whole 3-hour road trip would print nothing for half an hour
         f = -(-f // ustep) * ustep
@@ -1597,6 +1597,9 @@ while True:
     ok, img = cap.read()
     if not ok:
         break
+    if time.time() - shown > 600:  # the batch is going: run_channels.py stops one silent for 45 min
+        print('P', f, frames, flush=True)
+        shown = time.time()
     if f % ustep == 0 and f < frames:
         print('U', urban_line(counter, img, 'cuda'), flush=True)
     if f < fps * 2700 and f % step == 0:
@@ -1634,14 +1637,24 @@ def ghost_and_urban(path):
     (user, 2026-10-11). On a CUDA GPU only (wsl5090, lin5080): elsewhere no ghosts, and urban_objects counts."""
     if not os.path.exists(YOLO_PYTHON):
         return np.zeros(0), None
-    r = subprocess.run([YOLO_PYTHON, '-c', GHOST_CODE, path, str(URBAN_EVERY_S)], capture_output=True, text=True,
-                       cwd=HERE)
-    if r.returncode:
-        print(f'  YOLO tracking failed, no ghost check: {r.stderr.strip()[-300:]}', flush=True)
-    lines = [x.split() for x in r.stdout.splitlines()]
+    # its progress shown as it goes: two workers sharing wsl5090's GPU took over 45 min for a 40-min video, and
+    # run_channels.py stopped the silent batch on the same video again and again (24 times on 2026-10-21)
+    lines = []
+    with tempfile.TemporaryFile('w+') as err:
+        proc = subprocess.Popen([YOLO_PYTHON, '-c', GHOST_CODE, path, str(URBAN_EVERY_S)], stdout=subprocess.PIPE,
+                                stderr=err, text=True, cwd=HERE)
+        for line in proc.stdout:
+            if line.startswith('P '):
+                print(f'  YOLO pass: frame {line.split()[1]} of {line.split()[2]}', flush=True)
+            else:
+                lines.append(line.split())
+        failed = proc.wait()
+        err.seek(0)
+        if failed:
+            print(f'  YOLO tracking failed, no ghost check: {err.read().strip()[-300:]}', flush=True)
     counts = [[int(v) for v in x[1:]] for x in lines if x[:1] == ['U']]
     return (np.array([float(x[1]) for x in lines if x[:1] == ['G']], float),
-            np.array(counts, float) if counts and not r.returncode else urban_objects(path))
+            np.array(counts, float) if counts and not failed else urban_objects(path))
 
 
 def skip_events(path):
