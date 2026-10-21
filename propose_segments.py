@@ -4883,13 +4883,16 @@ def _metro_city(town, at, rows, state=None):
 # "Driving from Hazle Township to White Haven, Pennsylvania": where a drive starts and where it ends
 # "Desde Sabana Grande a Ponce", "Ponce a Juana Diaz,Puerto Rico", "de San Juan hacia Carolina": in Spanish too,
 # tried in this order
-_END = r"\s*(?:,|\||\(|\s-\s|\s–\s|\bin\b|\ben\b|\bvia\b|\bpor\b|$)"
+# ... "Richmond to Vancouver for the First Time" ends at "for" (UEPl-VrHpr0; user, 2026-10-21)
+_END = r"\s*(?:,|\||\(|\s-\s|\s–\s|\bin\b|\ben\b|\bvia\b|\bpor\b|\bfor\b|$)"
 # a town in a cab-view title, with a note in brackets maybe ("Sokołów Małopolski(podkarpackie)")
 _DASH_TOWN = r"([A-ZÀ-ÞŁŚŻŹĆŃ][\w'’.-]*(?: [A-ZÀ-ÞŁŚŻŹĆŃ][\w'’.-]*){0,3})(?:\s*\([^)]*\))?"
 FROM_TO = (re.compile(r"\bfrom\s+(.+?)\s+to\s+(.+?)" + _END, re.I),
            # without "from": "Driving Lincoln to Hickman, Nebraska" (yQbYiSKgB-I), "Ashland to Waterloo Drive Tour"
            # ... also "4K POV Drive: Fremont to Downtown Omaha, Nebraska" (iSMg2dH2uuA: a colon after the word)
-           re.compile(r"\b(?:driv(?:e|ing)|cruis(?:e|ing)|road ?trip)\s*[:|–-]?\s+"
+           # ... and by bike ("Cycling Richmond to Vancouver", UEPl-VrHpr0)
+           re.compile(r"\b(?:driv(?:e|ing)|cruis(?:e|ing)|road ?trip|cycl(?:e|ing)|bik(?:e|ing))"
+                      r"\s*[:|–-]?\s+"
                       r"(?!(?:to|back|home|down|up|through|thru|"
                       r"around|in|into|along|across|past|by|over|tour|on|at|the|my|our|a|out|with|all|"
                       r"welcome|return|dusk|dawn|day|night|sunset|sunrise|morning|evening)\b)"
