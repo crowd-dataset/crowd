@@ -24,6 +24,7 @@ import json
 import math
 import os
 import re
+import shlex
 import subprocess
 import sys
 import threading
@@ -178,6 +179,36 @@ def trim_row(row, video, end):
     return True
 
 
+# run on lin4080 by apply: the YOLO CSVs ({video}_{start}_{fps}.csv in each data folder's bbox/) of the trimmed
+# segments without the frames past the new end (user, 2026-10-21). frame-count is 1 at the segment's start and
+# main.py detects from start to end - 1 s, so a frame is kept up to (end - 1 - start) * fps; a segment dropped whole
+# leaves no CSV. The original goes to bbox-trimmed-DATE beside bbox/ (count_detections.py reads only bbox/).
+TRIM_BBOX = """
+import csv, glob, json, os, sys, time
+day = time.strftime('%Y-%m-%d')
+folders = (glob.glob('/media/salam/*/pedestrians*/data/bbox')
+           + glob.glob(os.path.expanduser('~/Documents/GitHub/*/data/bbox')))
+for vid, start, end in json.loads(sys.argv[1]):
+    for folder in folders:
+        for path in glob.glob(os.path.join(folder, f'{vid}_{start}_*.csv')):
+            fps = int(path[:-4].rsplit('_', 1)[1])
+            last = (end - 1 - start) * fps
+            aside = os.path.join(os.path.dirname(folder), f'bbox-trimmed-{day}')
+            os.makedirs(aside, exist_ok=True)
+            old = os.path.join(aside, os.path.basename(path))
+            os.replace(path, old)
+            if last > 0:
+                with open(old, newline='') as f, open(path + '.tmp', 'w', newline='') as g:
+                    rows, out = csv.reader(f), csv.writer(g, lineterminator='\\n')
+                    head = next(rows)
+                    out.writerow(head)
+                    i = head.index('frame-count')
+                    out.writerows(r for r in rows if int(float(r[i])) <= last)
+                os.replace(path + '.tmp', path)
+            print(f'{os.path.basename(path)}: ' + (f'frames after {last} left out' if last > 0 else 'set aside'))
+"""
+
+
 def apply():
     import add_video  # noqa: E402: the review pages' modules, needed here only
     import review_hub
@@ -219,8 +250,12 @@ def apply():
     with locked():
         save(data)
     msg = review_hub.push_mapping() if trims else ''
+    cuts = [(c['video'], s, trims[c['video']]) for c in todo if c['decision'] == 'trim' and c['video'] not in left
+            for r in c['rows'] for s, _ in r['past']]
+    yolo = sw.ssh(INVENTORY[0], f'python3 -c {shlex.quote(TRIM_BBOX)} {shlex.quote(json.dumps(cuts))}') if cuts else ''
     return (f'{len(moves)} files moved to be downloaded again, {changed} rows trimmed'
-            + (f', left for a person: {", ".join(left)}' if left else '') + f'. {msg}')
+            + (f', left for a person: {", ".join(left)}' if left else '') + f'. {msg}'
+            + (f' YOLO CSVs: {yolo.strip() or "none of these segments has one yet"}.' if cuts else ''))
 
 
 def _check_carried():
