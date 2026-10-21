@@ -1,373 +1,373 @@
 {
 "area_contributors_footage": {
-"html": "9fa0e5a9938a4cf2",
-"png": "732b71d52007efa4"
+"html": "4b64594392b1ebc5",
+"png": "75585e536c846522"
 },
 "bar_continent_time_of_day": {
-"html": "d3bb68e18496b3bd",
-"png": "06b2df2489dcdebe"
+"html": "58a42a33aadf3a6f",
+"png": "607133d7963880ca"
 },
 "bar_footage_population_band": {
-"html": "170c454145ba327e",
-"png": "4e5eee56feadeffb"
+"html": "cb1911481090a77b",
+"png": "b076623595f8f177"
 },
 "bar_pedestrians_city_size": {
-"html": "49aa7dce750aa680",
-"png": "916827308444b4bc"
+"html": "52829e127d4e98be",
+"png": "e8150a43792f1f1a"
 },
 "bar_pedestrians_vehicle_type": {
-"html": "95a807d76e039c58",
-"png": "0fa6293ca57e0aa3"
+"html": "eef0e063d1fb10ae",
+"png": "596ca80c71cc0db5"
 },
 "bar_road_user_mix": {
-"html": "453759f5e6fdd387",
-"png": "6b808fdca42295a0"
+"html": "c8769d027d94e6a8",
+"png": "bf41cf99466a1cd2"
 },
 "bar_road_user_mix_continent": {
-"html": "c2e127bc00f14521",
-"png": "5f451c2daa63432e"
+"html": "1411ae9732ba7991",
+"png": "83eb4347e02cb93e"
 },
 "bar_road_users_day_night": {
-"html": "28422a5506245e43",
-"png": "174788302dedfa9d"
+"html": "94a20f854cf97e04",
+"png": "3ec853826b4bd0fd"
 },
 "bar_vehicle_type_continent": {
-"html": "b24ef5e03c4efa4b",
-"png": "899fe07026b5c58f"
+"html": "650358783404c71a",
+"png": "7511b8180d583311"
 },
 "bar_vehicle_type_time_of_day": {
-"html": "4285a909c22270f0",
-"png": "65fa14bbedc79a0a"
+"html": "d37d798498108330",
+"png": "b3574a521fcc9385"
 },
 "box_pedestrians_per_minute_continent": {
-"html": "0e00cea14268f15d",
-"png": "7660be96d38452bc"
+"html": "c23a54dcd29bd0bd",
+"png": "3131b998694eba6b"
 },
 "box_segment_length": {
-"html": "d6200ccedb12a013",
-"png": "91d30d13aa8d7a2e"
+"html": "a37bf5e6ff3011f1",
+"png": "23cb127b0dd9db71"
 },
 "bubble_bicycles_gdp": {
-"html": "b1e5cbaf1f0cd949",
-"png": "93ed7ed6d2ccd21b"
+"html": "869d61fc9b0453ae",
+"png": "dc7d9b27dc251866"
 },
 "bubble_cars_gdp": {
-"html": "aa627c9e981b0ada",
-"png": "41e86c55715e42b4"
+"html": "bcca22d7496637f4",
+"png": "88974f8f742348e3"
 },
 "bubble_channels_vs_footage": {
-"html": "b37d73d00be1916e",
-"png": "b63d1dfc5aa81d0c"
+"html": "5a894930a49b8ac8",
+"png": "827e6bd8914e11ad"
 },
 "bubble_footage_per_capita_gdp": {
-"html": "4fb3e2bf47f045cd",
-"png": "0d26fa2aeb81db2e"
+"html": "8a88857ae822911c",
+"png": "d624cf7b2861c523"
 },
 "bubble_motorcycles_gdp": {
-"html": "b0da718c76e651d7",
-"png": "10323876718e1832"
+"html": "1d533dad9f5a398d",
+"png": "dcc27088171c7692"
 },
 "bubble_pedestrian_deaths_vs_pedestrians": {
-"html": "2e90d2f21de60ffa",
-"png": "5ea0cbf6516d6cb3"
+"html": "5814d2e2a22bfdec",
+"png": "9800118029616a0b"
 },
 "bubble_pedestrians_gdp": {
-"html": "41b9cc4c4e614d72",
-"png": "459ba06fd8475a93"
+"html": "29aebd30701173f8",
+"png": "22064200fed29418"
 },
 "bubble_road_deaths_vs_pedestrians": {
-"html": "a6c9af5215267de3",
-"png": "5913d8332ea3d65e"
+"html": "26cdad2721f308da",
+"png": "26b03376e17f9062"
 },
 "dot_pedestrians_per_minute": {
-"html": "fbede4c3d1134cb1",
-"png": "4830d80b5a1ed6a1"
+"html": "2722f706824dfd5c",
+"png": "6f13388b8b69b829"
 },
 "dumbbell_footage_population_share": {
-"html": "ea468b5800f68636",
-"png": "2bc783a6e5d0d374"
+"html": "7c70abfccc0297bf",
+"png": "0fd7688f222b6489"
 },
 "dumbbell_pedestrians_day_night": {
-"html": "c5aefda137d3fbb9",
-"png": "4058d77605744bc4"
+"html": "0396af816415de39",
+"png": "98dffba548a385e5"
 },
 "globe_localities_footage": {
-"html": "5523a3864dae95e5",
-"png": "72cbdf855f51d3ce"
+"html": "f646fbc368d990d3",
+"png": "b0f3b9ae5d2281ba"
 },
 "globe_localities_footage_spikes": {
-"html": "e21d2992d4aef5c1",
-"png": "746d795892ba5461"
+"html": "bd73c396880cef3b",
+"png": "341068c6efb3b2ed"
 },
 "globe_localities_widget": {
-"png": "929c03631cf9dea7"
+"png": "47ac7ec46e04f2de"
 },
 "heatmap_road_users_per_minute": {
-"html": "0a0c9c8ac4321f0e",
-"png": "10aba10b3f184564"
+"html": "15c997a959db420b",
+"png": "800df00dec9b0d80"
 },
 "hist_months": {
-"html": "b472005b2f8eabbc",
-"png": "a1138c1330ef70df"
+"html": "f56f30ccf496ff11",
+"png": "b0d8cd791672b508"
 },
 "hist_pedestrians_per_minute_segment": {
-"html": "896738c7c510dfb2",
-"png": "20599d08f363c697"
+"html": "451245b5135631bb",
+"png": "3fba6e7aa626fdb1"
 },
 "hist_segment_length": {
-"html": "75b757826d9ffaba",
-"png": "6a84eef0a528cd81"
+"html": "0bddc5fd5376f191",
+"png": "49f8fc65979bf13c"
 },
 "line_channel_concentration": {
-"html": "a116e151a2f8a5ea",
-"png": "3b69cfc1577a2b02"
+"html": "cdf3df98d2dba198",
+"png": "e0995794c739765a"
 },
 "line_road_users_upload_year": {
-"html": "4b7f44fddeeeb489",
-"png": "e0e87fbac67ffe51"
+"html": "b6f65cc66fce3f35",
+"png": "42e9ebf8957d2f5a"
 },
 "map_bicycles_smoothed_europe": {
-"html": "4a657210ebd22f8a",
-"png": "12205d6aab6dec11"
+"html": "0573b07bbb12cb20",
+"png": "79aecf4d5de0a477"
 },
 "map_channel_footprints": {
-"html": "d7662363e4f4043a",
-"png": "9bcf1ae9b3bd3a44"
+"html": "15d7cdf6a672413c",
+"png": "aab6a43c998113de"
 },
 "map_density_footage_asia": {
-"html": "135f05b11516aca2",
-"png": "fe530debbc0e87ab"
+"html": "96ebdb5a6c41beba",
+"png": "b4a43dd69c7db930"
 },
 "map_density_footage_europe": {
-"html": "659b3180cf52b94c",
-"png": "08ae25571401e5eb"
+"html": "56baf17475cff9df",
+"png": "eafe512611e32e70"
 },
 "map_density_footage_north_america": {
-"html": "1d0d7c17552be411",
-"png": "e492aa94bb46d412"
+"html": "399fcd6eb5bda6b4",
+"png": "580a74322f27cba7"
 },
 "map_detection_coverage": {
-"html": "a70f491a325bad31",
-"png": "4b7b9ad9ce6fe27c"
+"html": "17b7b16da0d5a69a",
+"png": "2e5e2440ff7f4984"
 },
 "map_distance_to_footage_asia": {
-"html": "0a54069fa85bdeaa",
-"png": "8d75830718c5b33f"
+"html": "a8ad733f60fb481c",
+"png": "0119056269c5f216"
 },
 "map_distance_to_footage_europe": {
 "html": "1836df502f0ed059",
 "png": "28eab864d2303ba9"
 },
 "map_distance_to_footage_north_america": {
-"html": "b793362fd87a08ec",
-"png": "0246dec34f0a3434"
+"html": "55608aea0fedb651",
+"png": "7a0ce18032c54bf3"
 },
 "map_effective_channels": {
-"html": "dfe908f5612c4f92",
-"png": "6beef214ffb76a5c"
+"html": "9223020d79eed853",
+"png": "2a9604137d6f0f9f"
 },
 "map_eu_regions_bicycles": {
-"html": "b9b0ad1119fc55fe",
-"png": "ab23ef2f20faf290"
+"html": "32038d139ea2037a",
+"png": "ec91b29f551993e5"
 },
 "map_eu_regions_footage": {
-"html": "fbd66e74863003e0",
-"png": "0afe73ea753f12a4"
+"html": "ea53ba1f2ff371b4",
+"png": "09622b179d9d2973"
 },
 "map_eu_regions_footage_per_capita": {
-"html": "fcb280609c5906cb",
-"png": "76239aee312cf72f"
+"html": "44c47b3434efaa2e",
+"png": "e2addd78a25d8798"
 },
 "map_eu_regions_night_share": {
-"html": "366d480ec40e4a2b",
-"png": "62a364bf76e702ea"
+"html": "9f28cc568a66d8be",
+"png": "2e3bd0b8cfe8aefd"
 },
 "map_eu_regions_pedestrians": {
-"html": "8f8f602bdd7b8f2d",
-"png": "cecd8c028d1f5938"
+"html": "a1f381b369c9c212",
+"png": "cd178b6ce05c39cf"
 },
 "map_footage_africa": {
-"html": "0b0be4d545a63025",
-"png": "b8f6866d1a484d34"
+"html": "1ecf1533efefe0d1",
+"png": "3296c7045ae4d855"
 },
 "map_footage_asia": {
-"html": "704f5b05cc114a67",
-"png": "c247c94c29770763"
+"html": "a471b78e1001a3da",
+"png": "de5ec8843bf73530"
 },
 "map_footage_europe": {
-"html": "4d82f95aa5f13e46",
-"png": "fc5e064c6851a0d2"
+"html": "f71be8258d5d922a",
+"png": "acb9065943b0f8f0"
 },
 "map_footage_north_america": {
-"html": "b93134292ea1a82a",
-"png": "53e52ecf422dfb9f"
+"html": "7945605b69b24c32",
+"png": "167f446b1a8b629b"
 },
 "map_footage_oceania": {
-"html": "270cc38000206ab6",
-"png": "85af228f87e0d6b2"
+"html": "704fd054542788cd",
+"png": "d61b97629cb2b2ae"
 },
 "map_footage_per_capita": {
-"html": "0fd5edc995cf3d4a",
-"png": "c83f7a80e757fd78"
+"html": "0df5e427ffa28c11",
+"png": "9e138c8ae09d9a13"
 },
 "map_footage_south_america": {
-"html": "96dd17772c618dd6",
-"png": "b8ab9a72eb70fa7d"
+"html": "c9c0b567b32c32bd",
+"png": "a4a35bb93aadfa50"
 },
 "map_localities_footage": {
-"html": "38760d34323a4b78",
-"png": "7851782a75cabc48"
+"html": "c23116515524b1dc",
+"png": "fdbe317926e82e1b"
 },
 "map_motorcycle_share_europe": {
-"html": "e83f36d2b627d1c1",
-"png": "d79f4a8c7daa49e2"
+"html": "6561c194a984ac97",
+"png": "fc1ba66ec882e51f"
 },
 "map_night_share": {
-"html": "1d3a6a8d7458de9f",
-"png": "935f9aacd142ad4b"
+"html": "59bb4dbbfcee0f07",
+"png": "62ef0567553bf165"
 },
 "map_night_share_smoothed_europe": {
-"html": "fb7547b711c07fa8",
-"png": "0c7fca3f2f36f9d3"
+"html": "b7d7d5d1cc24db3a",
+"png": "cf14f8366c20ca18"
 },
 "map_pedestrians_per_minute": {
-"html": "88ff0438e712c112",
-"png": "210472d2cd7700b5"
+"html": "268d6a95ed108fa8",
+"png": "a9e9656beffdfd04"
 },
 "map_pedestrians_smoothed_europe": {
-"html": "0c550789cef52508",
-"png": "245a210a712c8d19"
+"html": "bd3f80bb64aa8e03",
+"png": "2f8f4431386e114b"
 },
 "map_top_channel_share": {
-"html": "2d84a205517af371",
-"png": "1199f2ac97432931"
+"html": "245a482f0f477f33",
+"png": "bd23fca18db0fb34"
 },
 "map_two_wheeler_share": {
-"html": "35341248a8f32e7b",
-"png": "ec88a91e406e5b5c"
+"html": "5aa9843f7d896a39",
+"png": "18fe4d62f30c72b8"
 },
 "map_upload_year_europe": {
-"html": "b6d66f1b36c685ff",
-"png": "a3095f5c134d730d"
+"html": "4ccf0a88b22ff92b",
+"png": "79ec27985af84475"
 },
 "map_us_counties_footage": {
-"html": "f865e2ecd8af81db",
-"png": "3b192367669a2d1a"
+"html": "caeec0d52120e852",
+"png": "e19e2d3f6e1de6dc"
 },
 "map_us_counties_footage_per_capita": {
-"html": "883409f3d128a7ef",
-"png": "8d19c176ed9b022d"
+"html": "ad8244d33d5c749a",
+"png": "64e9a3efb94a5eb7"
 },
 "map_us_counties_night_share": {
-"html": "74f66b98de7e1a1f",
-"png": "967c5b108f32ca34"
+"html": "0452702f13ba35ee",
+"png": "0be16e0a85d713e1"
 },
 "map_us_counties_pedestrians": {
-"html": "e7cf539fe73a4f60",
-"png": "6822ce270dc7a4f3"
+"html": "7ee07f07f2d3611d",
+"png": "05d68b6a8660e4bc"
 },
 "map_us_states_footage": {
-"html": "660666e22b94b491",
-"png": "d72cf2bf527b22af"
+"html": "72254f1c333bfb91",
+"png": "c858f0f779568537"
 },
 "map_walkable_minutes_europe": {
-"html": "2bce1d6cdc5f274b",
-"png": "1cc1c29a1e726335"
+"html": "1927510202120aab",
+"png": "337717f104c1982e"
 },
 "mapbox_map_all": {
-"html": "fb7998514055c0f1",
-"png": "f46393211a827861"
+"html": "002ff5aaab009855",
+"png": "6c163ff00ffb996c"
 },
 "mapbox_map_all_pop": {
-"html": "2672f529f903c2a5",
-"png": "090c6687c5a8ab82"
+"html": "f0641e4233f09c33",
+"png": "e423152b0e19d35d"
 },
 "mapbox_map_all_time": {
-"html": "0145da017f6ac19c",
-"png": "36fbec73cccc9353"
+"html": "a4d07767b7daa9f1",
+"png": "12b3a2fbf1587783"
 },
 "mapbox_map_all_videos": {
-"html": "f4d9799caef60bb6",
-"png": "d3c13860a1d88e4f"
+"html": "820a26f78eb4dea4",
+"png": "96528c4c2ec9fda0"
 },
 "scatter_all_country_total_time-video_count": {
-"html": "a97530f78b078cf6",
-"png": "4e123ed25bbeb414"
+"html": "e5a074499dcaf95e",
+"png": "86e874a4bb0e33ba"
 },
 "scatter_all_country_total_time-video_count_linear": {
-"html": "d6b19f6c035a51c5",
-"png": "cd7cf2cb8523b7c3"
+"html": "c6a1ad353c3034ed",
+"png": "5ea75df4eda36524"
 },
 "scatter_all_total_time-video_count": {
-"html": "742cbffb32ff6c25",
-"png": "becc93a88b14bab4"
+"html": "cb0c833467c6a53a",
+"png": "6235c4500cb90f57"
 },
 "scatter_all_total_time-video_count_linear": {
-"html": "2b5fedbca7904f94",
-"png": "b7cfe55eb1a6bc97"
+"html": "a3f34e119c243ba1",
+"png": "1a66c3bb7e71011f"
 },
 "scatter_gmp_footage": {
-"html": "203b8c18063027d0",
-"png": "959e5fbe60226e24"
+"html": "60c6eddd2bc62e90",
+"png": "1315ec455eb9f03d"
 },
 "scatter_indicators_footage": {
-"html": "53951731d8570720",
-"png": "faebf81265af8c05"
+"html": "66e7cfb49240fec1",
+"png": "d8fb977ce484ac5a"
 },
 "scatter_indicators_pedestrians": {
-"html": "0609498cf8748146",
-"png": "8be69c5bf5f0df00"
+"html": "6a9b88b95198c933",
+"png": "b517138d25c0f0f9"
 },
 "scatter_interval_width_hours": {
-"html": "57f5caaccd8cbf02",
-"png": "dce9a67776168970"
+"html": "516a09978cb0546f",
+"png": "5133f5bbd40d16c7"
 },
 "scatter_locality_footage_vs_population": {
-"html": "2660380acece8bce",
-"png": "61261cf94835fbb4"
+"html": "86da678d8c131db4",
+"png": "b24db8f4eb1433a2"
 },
 "scatter_locality_pedestrians_vs_population": {
-"html": "e32806e803172c5c",
-"png": "fae7d982cc7292c2"
+"html": "bb9d5e36d878c68e",
+"png": "ff60144448af3aaa"
 },
 "scatter_pedestrians_population": {
-"html": "d60d13699e4fe998",
-"png": "03dd4c73e3a5b2d1"
+"html": "ef86d42ceb5d7b82",
+"png": "61f36f9c45658cb1"
 },
 "scatter_population_footage": {
-"html": "8cbf7ea7edc94b3a",
-"png": "9f4d0734be0070f0"
+"html": "effbc7fa8fdbc132",
+"png": "67d45f79a4c5a1dc"
 },
 "scatter_traffic_index_footage": {
-"html": "ff783f844ad7c5cc",
-"png": "4ccb063aac8cc3c7"
+"html": "0c8236fde2cf13eb",
+"png": "7b0018618b317a13"
 },
 "scatter_walkable_car_dominated": {
-"html": "32d182e1eab19970",
-"png": "34d31e1ee0539dc6"
+"html": "082d9c3360de256a",
+"png": "30d54b7a4b718f07"
 },
 "spikes_footage_jpn": {
-"html": "2fffc743020126b0",
-"png": "05e4e5abe2adf8c7"
+"html": "aad5dbf55ec5ea1b",
+"png": "fb9af5b80aa7930b"
 },
 "spikes_footage_rus": {
-"html": "ec4374370f7d46ea",
-"png": "e96e593dfe27041d"
+"html": "a498b7b8fd3d61b4",
+"png": "c1adabf24f35c95e"
 },
 "spikes_footage_usa": {
-"html": "354b4010f8df7323",
-"png": "d7baedd4e8eb9d5a"
+"html": "3150f296e48bd783",
+"png": "8821b0ef5ce07503"
 },
 "treemap_footage": {
-"html": "5f36405de148ba5e",
-"png": "13e29c37629820ff"
+"html": "333d869719f5253f",
+"png": "de8ddd1286b4c13a"
 },
 "waffle_road_user_mix": {
-"html": "8498634b57104969",
-"png": "c9604d8862cd8a10"
+"html": "f04991c47b326f35",
+"png": "e16958fb72d6c40e"
 },
 "world_map_locality_footage": {
-"html": "6cec491b89994fa1",
-"png": "e493d4a19cce55cc"
+"html": "c47f3f3f5c39071c",
+"png": "e79b6d0129f60cc0"
 }
 }
