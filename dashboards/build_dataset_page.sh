@@ -14,6 +14,10 @@ rsync -a --delete --exclude .git --exclude _output --exclude videos --exclude '*
 # which the review repo does not pull; only the mapping stays the review repo's (the Action ignores mapping-NAME too)
 git -C "$REPO" fetch -q origin && git -C "$REPO" archive origin/main | \
   tar -xf - -C $W --exclude mapping.csv --exclude 'mapping-*.csv' || exit 1
+# the history, for the credits of new videos (utils/analytics/contributors.py): the copy as a repository at GitHub's
+# main, sharing the review repo's objects; only the unpushed reviews in mapping.csv show as changes
+[ -d $W/.git ] || { git init -q $W && echo "$REPO/.git/objects" > $W/.git/objects/info/alternates; }
+git -C $W fetch -q "$REPO" +refs/remotes/origin/main:refs/heads/crowd-main && git -C $W reset -q crowd-main || exit 1
 cd $W || exit 1
 export PATH=$HOME/micromamba/envs/dataset/bin:$PATH
 python - <<'PY'
