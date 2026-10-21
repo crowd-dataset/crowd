@@ -3689,7 +3689,9 @@ VEHICLE_TITLE = [(4, re.compile(r'\b(?:bike (?:route|ride|tour|path|lane)s?|cycl
                  # the channel's history; user, 2026-10-20): 22 of 24 reviewed such titles were set to bus
                  (1, re.compile(r'\b(?:bus(?:es)?\s+(?:[A-Z]{0,2}\d+[A-Z]?\s+)?(?:ride|route|tour|trip|journey)s?'
                                 r'|(?:by|on (?:a|the)) bus|bus (?:no\.?|number|line)\s*[A-Z]{0,2}\d+'
-                                r'|bus [A-Z]{0,2}\d+[A-Z]?)\b', re.I))]
+                                r'|bus [A-Z]{0,2}\d+[A-Z]?'
+                                # ... "Shuttle Bus 🚌 ... Upper Deck View" (zF8FDqyDUAM; user, 2026-10-21): 12 of 12
+                                r'|shuttle bus|double[- ]?decker(?: bus)?|bus(?:es)? view|upper deck)\b|🚌', re.I))]
 
 
 def title_vehicle(title):
