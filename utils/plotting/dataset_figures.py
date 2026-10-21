@@ -83,8 +83,8 @@ def _flag(flags: dict) -> pl.Expr:
 
 def _population(df_mapping: pl.DataFrame) -> pl.DataFrame:
     """One row per country: iso3, population_country (its first non-zero value in the mapping)."""
-    return df_mapping.group_by("iso3").agg(pl.col("population_country").filter(pl.col("population_country") > 0)
-                                           .first())
+    return (df_mapping.group_by("iso3", maintain_order=True)
+                      .agg(pl.col("population_country").filter(pl.col("population_country") > 0).first()))
 
 
 def _hover_args(d: pl.DataFrame, line: str = "") -> dict:
@@ -197,7 +197,7 @@ def _bar_totals(fig, df: pl.DataFrame, x: str, y: str, fmt: str = "{:,.0f}", ver
                 plot_width: float = 1400):
     """Write each stacked bar's total above it. Vertical labels (narrow bars) are as large as one bar's width allows
     (`plot_width`: width of the plot area in pixels)."""
-    totals = df.group_by(x).agg(pl.sum(y)).sort(x)
+    totals = df.group_by(x, maintain_order=True).agg(pl.sum(y)).sort(x)
     size = min(20, int(plot_width / totals.height * 0.85)) if vertical else 16
     for xv, yv in totals.iter_rows():
         fig.add_annotation(x=xv, y=yv, text=fmt.format(yv), showarrow=False, textangle=-90 if vertical else 0,
@@ -208,7 +208,8 @@ def _bar_totals(fig, df: pl.DataFrame, x: str, y: str, fmt: str = "{:,.0f}", ver
 
 def _country_indicators(df_mapping: pl.DataFrame) -> pl.DataFrame:
     """One row per country with its indicators; zeros are treated as missing."""
-    return (df_mapping.group_by("iso3").agg(pl.col(list(INDICATORS)).filter(pl.col(list(INDICATORS)) > 0).first())
+    return (df_mapping.group_by("iso3", maintain_order=True)
+                      .agg(pl.col(list(INDICATORS)).filter(pl.col(list(INDICATORS)) > 0).first())
                       .with_columns(pl.col("population_country").log10()))
 
 
@@ -385,10 +386,11 @@ def _public_indicators(df_mapping: pl.DataFrame, seg: pl.DataFrame) -> pl.DataFr
     inactive, obese = _who("NCD_PAA", "SEX_BTSX"), _who("NCD_BMI_30A", "SEX_BTSX")
     temperature, rainfall = _climate("tas"), _climate("pr")
     pop = _population(df_mapping)
-    traffic = (seg.group_by("id").agg(pl.sum("seconds"))
+    traffic = (seg.group_by("id", maintain_order=True).agg(pl.sum("seconds"))
                   .join(df_mapping.select("id", "iso3", "traffic_index").filter(pl.col("traffic_index") > 0), on="id")
-                  .group_by("iso3").agg(((pl.col("traffic_index") * pl.col("seconds")).sum() / pl.sum("seconds"))
-                                        .alias("traffic_index")))
+                  .group_by("iso3", maintain_order=True)
+                  .agg(((pl.col("traffic_index") * pl.col("seconds")).sum() / pl.sum("seconds"))
+                       .alias("traffic_index")))
     lookup = {"gdp_log": gdp, "pedestrian_share": share, "urban": urban, "density_log": density,
               "inactive": inactive, "obese": obese, "temperature": temperature, "rainfall": rainfall,
               "agriculture": agriculture, "vehicles": vehicles}
@@ -482,7 +484,7 @@ def _labelled_scatter(df: pl.DataFrame, x_col: str, y_col: str, label: str, labe
         # one legend entry per country (clicking one hides or shows it), in alphabetical order; the points keep
         # their continent's colour. The legend is a column beside the plot, scrolling when it does not fit (the
         # static image shows its top)
-        order = df.group_by(country_legend).agg(pl.first("country"))
+        order = df.group_by(country_legend, maintain_order=True).agg(pl.first("country"))
         # alphabetical ignoring accents: Åland Islands with the As, Türkiye before Turkmenistan
         order = order.with_columns(pl.col("country").map_elements(
             lambda c: unicodedata.normalize("NFKD", c).encode("ascii", "ignore").decode().lower(),
@@ -640,7 +642,7 @@ def dataset_figures(df_mapping: pl.DataFrame, seg: pl.DataFrame, flags: dict) ->
 
 def _footage_videos_scatters(df_mapping, seg, flag, loc_hover, cty_hover):
     """Footage against number of videos per locality and per country, on log and linear axes."""
-    city = (seg.group_by("id").agg(HOURS, pl.col("video").n_unique().alias("videos"))
+    city = (seg.group_by("id", maintain_order=True).agg(HOURS, pl.col("video").n_unique().alias("videos"))
                .join(df_mapping.select("id", "locality", "state", "country", "iso3", "continent"), on="id")
                .join(loc_hover, on="id")
                .with_columns(_place(flag).alias("name"),
@@ -650,7 +652,8 @@ def _footage_videos_scatters(df_mapping, seg, flag, loc_hover, cty_hover):
     _labelled_scatter(city, "hours", "videos", "name", rank <= 40, "Footage (hours)", "Number of videos",
                       "scatter_all_total_time-video_count", emphasis=rank <= LABEL_TOP, country_legend="flag_country")
     # every country labelled with flag and ISO3 code (tall, so the flags fit); the top 30 by footage in black
-    country = (seg.group_by("iso3").agg(HOURS, pl.col("video").n_unique().alias("videos"), pl.first("continent"))
+    country = (seg.group_by("iso3", maintain_order=True)
+                  .agg(HOURS, pl.col("video").n_unique().alias("videos"), pl.first("continent"))
                   .with_columns(pl.concat_str([flag, pl.col("iso3")], separator=" ").alias("name"))
                   .join(cty_hover, on="iso3"))
     _labelled_scatter(country, "hours", "videos", "name", pl.lit(True), "Footage (hours)", "Number of videos",
@@ -671,7 +674,7 @@ def _time_of_day_vehicle_bars(seg):
     """Day and night footage per continent, and footage per type of vehicle filmed from."""
     # day and night footage per continent
     tod = (seg.with_columns(pl.when(pl.col("night")).then(pl.lit("Night")).otherwise(pl.lit("Day")).alias("time"))
-              .group_by("continent", "time").agg(HOURS))
+              .group_by("continent", "time", maintain_order=True).agg(HOURS))
     fig = px.bar(tod.to_pandas(), x="continent", y="hours", color="time",
                  category_orders={"continent": CONTINENT_ORDER, "time": ["Day", "Night"]},
                  color_discrete_map={"Day": "#E69F00", "Night": "#0072B2"},
@@ -680,7 +683,7 @@ def _time_of_day_vehicle_bars(seg):
     _save(_style(fig), "bar_continent_time_of_day")
 
     # vehicle the footage is filmed from: cars are ~90% of footage, so a log axis with the share written on each bar
-    veh = (seg.drop_nulls("vehicle").group_by("vehicle")
+    veh = (seg.drop_nulls("vehicle").group_by("vehicle", maintain_order=True)
               .agg(HOURS, NIGHT_PCT.alias("night"))
               .with_columns((pl.col("hours") / pl.col("hours").sum() * 100).alias("share"))
               .sort("hours"))
@@ -697,7 +700,7 @@ def _locality_scatters(df_mapping, seg, flag, loc_hover):
     """Footage per locality against its population, economy (GMP) and congestion (TomTom traffic index)."""
     # 1) footage against city population: which large cities are under-sampled
     # labelled: the localities with the most footage and the largest ones by population
-    city = (seg.group_by("id").agg(HOURS)
+    city = (seg.group_by("id", maintain_order=True).agg(HOURS)
                .join(df_mapping.select("id", "locality", "state", "iso3", "continent", "population_locality"), on="id")
                .join(loc_hover, on="id").filter(pl.col("population_locality") > 0)
                .with_columns(_place(flag).alias("name")))
@@ -716,7 +719,7 @@ def _locality_scatters(df_mapping, seg, flag, loc_hover):
     # footage against the economy (GMP, known for ~200 large cities) and the congestion of each locality: do rich or
     # congested cities dominate the data? The traffic index (how much slower than free flow traffic is, %) is one
     # TomTom reading per locality; shown where it is above 0, as older zeros also stand for failed requests
-    city = (seg.group_by("id").agg(HOURS)
+    city = (seg.group_by("id", maintain_order=True).agg(HOURS)
                .join(df_mapping.select("id", "locality", "state", "iso3", "continent", "gmp", "traffic_index"),
                      on="id")
                .join(loc_hover, on="id")
@@ -740,16 +743,17 @@ def _country_figures(df_mapping, seg, flag, cty_hover):
     share of the largest channel."""
     # 2) footage against country indicators: is the dataset biased towards some kinds of countries
     # countries split across continents (e.g., Russia) count as one country, shown with their first continent
-    country = (seg.group_by("iso3", "country").agg(HOURS, pl.first("continent"))
+    country = (seg.group_by("iso3", "country", maintain_order=True).agg(HOURS, pl.first("continent"))
                   .join(_country_indicators(df_mapping), on="iso3", how="left").join(cty_hover, on="iso3"))
     _vs_indicators(country, "hours", "Footage (hours)", "scatter_indicators_footage", log_y=True)
 
     # 3) share of night-time footage per country; countries with too little footage are grey (share unreliable)
-    night = seg.group_by("iso3", "country").agg(HOURS, NIGHT_PCT.alias("night_pct"))
+    night = seg.group_by("iso3", "country", maintain_order=True).agg(HOURS, NIGHT_PCT.alias("night_pct"))
     _country_map(night.join(cty_hover, on="iso3"), "night_pct", "Night footage (%)", "Blues", "map_night_share")
 
     # footage per million inhabitants: coverage relative to country size
-    per_capita = (seg.group_by("iso3", "country").agg(HOURS).join(_population(df_mapping), on="iso3")
+    per_capita = (seg.group_by("iso3", "country", maintain_order=True).agg(HOURS)
+                     .join(_population(df_mapping), on="iso3")
                      .with_columns((pl.col("hours") / pl.col("population_country") * 1e6).alias("per_million")))
     _country_map(per_capita.join(cty_hover, on="iso3"), "per_million", "Hours per million people", "YlOrRd",
                  "map_footage_per_capita", log=True)
@@ -772,7 +776,7 @@ def _country_figures(df_mapping, seg, flag, cty_hover):
 
 def _vehicle_continent_bar(seg):
     """Type of vehicle the footage is filmed from, per continent (share of footage)."""
-    veh = (seg.drop_nulls("vehicle").group_by("continent", "vehicle").agg(HOURS)
+    veh = (seg.drop_nulls("vehicle").group_by("continent", "vehicle", maintain_order=True).agg(HOURS)
               .with_columns((pl.col("hours") / pl.col("hours").sum().over("continent") * 100).alias("share")))
     fig = px.bar(veh.sort("hours", descending=True).to_pandas(), x="continent", y="share", color="vehicle",
                  category_orders={"continent": CONTINENT_ORDER}, color_discrete_map=VEHICLE_COLOURS,
@@ -784,9 +788,10 @@ def _upload_quarters(seg):
     """Videos uploaded per quarter, by continent; the quarter still in progress is hatched."""
     videos = (seg.drop_nulls(["year", "month"]).filter(pl.col("year").is_between(2005, 2100),
                                                        pl.col("month").is_between(1, 12))
-                 .group_by("video").agg(pl.first("year"), pl.first("month"), pl.first("continent"))
+                 .group_by("video", maintain_order=True)
+                 .agg(pl.first("year"), pl.first("month"), pl.first("continent"))
                  .with_columns(pl.date(pl.col("year"), (pl.col("month") - 1) // 3 * 3 + 1, 1).alias("quarter"))
-                 .group_by("quarter", "continent").len().sort("quarter"))
+                 .group_by("quarter", "continent", maintain_order=True).len().sort("quarter"))
     today = date.today()
     current = date(today.year, (today.month - 1) // 3 * 3 + 1, 1)
     fig = px.bar(videos.to_pandas(), x="quarter", y="len", color="continent", **CONTINENT_STYLE,
@@ -809,7 +814,8 @@ def _upload_quarters(seg):
 
 def _channel_concentration_line(seg):
     """How concentrated the footage is in a few YouTube channels: cumulative share by channel, largest first."""
-    chan = (seg.drop_nulls("channel").group_by("channel").agg(HOURS).sort("hours", descending=True)
+    chan = (seg.drop_nulls("channel").group_by("channel", maintain_order=True).agg(HOURS)
+               .sort("hours", descending=True)
                .with_columns(pl.int_range(1, pl.len() + 1).alias("rank"),
                              (pl.col("hours").cum_sum() / pl.col("hours").sum() * 100).alias("cumulative")))
     fig = px.line(chan.to_pandas(), x="rank", y="cumulative", log_x=True, hover_data=["channel", "hours"],
@@ -837,7 +843,7 @@ def _segment_length_hist(seg):
 def _share_dumbbell(df_mapping, seg, flag, cty_hover):
     """Share of the footage against share of the population per country: which countries are over- or
     under-represented (population share of all countries in the dataset); the 25 largest by either share."""
-    shares = (seg.group_by("iso3", "country").agg(HOURS).join(_population(df_mapping), on="iso3")
+    shares = (seg.group_by("iso3", "country", maintain_order=True).agg(HOURS).join(_population(df_mapping), on="iso3")
                  .with_columns((pl.col("hours") / pl.col("hours").sum() * 100).alias("footage"),
                                (pl.col("population_country") / pl.col("population_country").sum() * 100)
                                .alias("population"),
@@ -858,7 +864,7 @@ def _population_band_bar(df_mapping, seg):
                                                                        left_closed=True).cast(pl.Utf8))
                                .otherwise(pl.lit("Unknown")).alias("band")))
     size = pl.concat([size, size.with_columns(pl.lit("All").alias("continent"))])
-    size = (size.group_by("continent", "band").agg(HOURS)
+    size = (size.group_by("continent", "band", maintain_order=True).agg(HOURS)
                 .with_columns((pl.col("hours") / pl.col("hours").sum().over("continent") * 100).alias("share")))
     fig = px.bar(size.to_pandas(), x="continent", y="share", color="band",
                  category_orders={"continent": CONTINENT_ORDER + ["All"], "band": bands + ["Unknown"]},
@@ -888,7 +894,7 @@ def _treemap(df_mapping, seg, flag, loc_hover, cty_hover):
     tree = (seg.join(df_mapping.select("id", "state"), on="id")
                .with_columns(place.alias("place"), pl.concat_str([flag, pl.col("country")], separator=" ")
                              .alias("country"))
-               .group_by("continent", "country", "place")  # same-named places in one state are merged
+               .group_by("continent", "country", "place", maintain_order=True)  # same-named places merged
                .agg(HOURS, NIGHT_PCT.alias("night"), pl.first("id"), pl.first("iso3"))
                .join(loc_hover, on="id"))
     fig = px.treemap(tree.to_pandas(), path=[px.Constant("All footage"), "continent", "country", "place"],
@@ -898,11 +904,12 @@ def _treemap(df_mapping, seg, flag, loc_hover, cty_hover):
     # the shared popups: localities and countries as in the other figures, continents with their totals
     popups = {f"All footage/{c}/{k}/{p}": h for c, k, p, h in tree.select("continent", "country", "place", "hover")
               .iter_rows()}
-    popups |= {f"All footage/{c}/{k}": h for c, k, h in tree.unique(["continent", "country"])
+    popups |= {f"All footage/{c}/{k}": h for c, k, h in tree.unique(["continent", "country"], maintain_order=True)
                .join(cty_hover.rename({"hover": "country_hover"}), on="iso3")
                .select("continent", "country", "country_hover").iter_rows()}
     totals = tree.with_columns(night_h=pl.col("hours") * pl.col("night") / 100)
-    for key, d in [("All footage", totals), *((f"All footage/{c}", d) for (c,), d in totals.group_by("continent"))]:
+    by_continent = totals.group_by("continent", maintain_order=True)
+    for key, d in [("All footage", totals), *((f"All footage/{c}", d) for (c,), d in by_continent)]:
         popups[key] = (f"<b>{key.split('/')[-1]}</b><br><b>Footage:</b> {d['hours'].sum():,.0f} h in "
                        f"{d['country'].n_unique()} countries and {d.height:,} localities<br><b>Night:</b> "
                        f"{d['night_h'].sum() / d['hours'].sum() * 100:.0f}%")
@@ -917,7 +924,7 @@ def _locality_maps(df_mapping, seg, flag, loc_hover) -> pl.DataFrame:
     returns the dots (one row per locality with coordinates)."""
     # every locality as a dot sized by footage (area proportional to hours), for print where the tile maps are weak
     night_hours = (pl.col("seconds").filter(pl.col("night")).sum() / 3600).alias("night_hours")
-    dots = (seg.group_by("id").agg(HOURS, night_hours)
+    dots = (seg.group_by("id", maintain_order=True).agg(HOURS, night_hours)
                .join(df_mapping.select("id", "locality", "state", "country", "continent", "lat", "lon"), on="id")
                .join(loc_hover, on="id").drop_nulls(["lat", "lon"]).sort("hours", descending=True))
     fig = go.Figure(_dot_traces(dots))
@@ -954,9 +961,10 @@ def _locality_maps(df_mapping, seg, flag, loc_hover) -> pl.DataFrame:
 def _channel_footprints(seg, dots):
     """Footprints of the 20 channels with the most footage: where each one films (travel channels vs local drivers);
     channels are numbered by footage; in the HTML each number links to the channel on YouTube."""
-    per_channel = (seg.drop_nulls("channel").group_by("channel", "id").agg(HOURS)
+    per_channel = (seg.drop_nulls("channel").group_by("channel", "id", maintain_order=True).agg(HOURS)
                       .join(dots.select("id", "locality", "country", "continent", "lat", "lon", "hover"), on="id"))
-    top = (per_channel.group_by("channel").agg(pl.sum("hours"), pl.col("country").n_unique().alias("countries"))
+    top = (per_channel.group_by("channel", maintain_order=True)
+                      .agg(pl.sum("hours"), pl.col("country").n_unique().alias("countries"))
                       .sort("hours", descending=True).head(20))
     cols = 5
     rows = math.ceil(top.height / cols)
@@ -985,7 +993,8 @@ def _segment_length_boxes(seg):
     small with ~100k segments); whiskers at the 5th and 95th percentiles."""
     fig = make_subplots(rows=1, cols=2, shared_yaxes=True, horizontal_spacing=0.03,
                         column_widths=[0.45, 0.55], subplot_titles=["By continent", "By type of vehicle"])
-    by_vehicle = seg.drop_nulls("vehicle").group_by("vehicle").agg(pl.sum("seconds")).sort("seconds", descending=True)
+    by_vehicle = (seg.drop_nulls("vehicle").group_by("vehicle", maintain_order=True).agg(pl.sum("seconds"))
+                     .sort("seconds", descending=True))
     for col, key, groups in [(1, "continent", CONTINENT_ORDER), (2, "vehicle", by_vehicle["vehicle"].to_list())]:
         for g in groups:
             m = seg.filter(pl.col(key) == g)["seconds"].to_numpy() / 60
@@ -1126,7 +1135,7 @@ def _globe_cells(dots: pl.DataFrame, deg: float = 2.0) -> pl.DataFrame:
     The hover text is the locality's popup for a cell with one locality, else a list of its localities."""
     cells = (dots.with_columns((pl.col("lat") / deg).round().alias("_r"), (pl.col("lon") / deg).round().alias("_c"))
                  .sort("hours", descending=True)
-                 .group_by("_r", "_c")
+                 .group_by("_r", "_c", maintain_order=True)
                  .agg(pl.sum("hours", "night_hours"), ((pl.col("lat") * pl.col("hours")).sum() / pl.sum("hours"))
                       .alias("lat"), ((pl.col("lon") * pl.col("hours")).sum() / pl.sum("hours")).alias("lon"),
                       pl.col("name"), pl.col("hours").alias("each"), pl.first("hover"), pl.len().alias("n")))
@@ -1241,15 +1250,16 @@ def contributor_figures(seg: pl.DataFrame, credits: dict) -> pl.DataFrame:
     utils/analytics/contributors.py): cumulative footage over time per contributor, and the README table."""
     who = pl.DataFrame([(v, c, t) for v, (c, t, *_) in credits.items()], schema=["video", "contributor", "added"],
                        orient="row").with_columns(pl.col("added").str.to_datetime("%Y-%m-%dT%H:%M:%SZ"))
-    videos = (seg.group_by("video").agg((pl.sum("seconds") / 3600).alias("hours"), pl.first("id"), pl.first("iso3"))
+    videos = (seg.group_by("video", maintain_order=True)
+                 .agg((pl.sum("seconds") / 3600).alias("hours"), pl.first("id"), pl.first("iso3"))
                  .join(who, on="video", how="left")
                  .with_columns(pl.col("contributor").fill_null("Unknown")))
-    totals = videos.group_by("contributor").agg(pl.sum("hours")).sort("hours", descending=True)
+    totals = videos.group_by("contributor", maintain_order=True).agg(pl.sum("hours")).sort("hours", descending=True)
     order = totals["contributor"].to_list()
     colors = dict(zip(order, itertools.cycle(["#0072B2", "#E69F00", "#009E73", "#CC79A7", "#56B4E9", "#D55E00",
                                               "#F0E442", "#999999", "#000000", "#882255"])))
     daily = (videos.drop_nulls("added").with_columns(pl.col("added").dt.date().alias("day"))
-                   .group_by("contributor", "day").agg(pl.sum("hours")).sort("day"))
+                   .group_by("contributor", "day", maintain_order=True).agg(pl.sum("hours")).sort("day"))
     days = pl.DataFrame({"day": pl.date_range(daily["day"].min(), daily["day"].max(), eager=True)})
     fig = go.Figure()
     for c in order[::-1]:  # the largest at the bottom of the stack
@@ -1265,7 +1275,7 @@ def contributor_figures(seg: pl.DataFrame, credits: dict) -> pl.DataFrame:
     fig.update_yaxes(title_text="Footage (hours, cumulative)", showgrid=True, gridcolor="#e5e5e5")
     _save(_style(fig, legend=dict(x=0.01, y=0.99, bgcolor="rgba(255,255,255,0.8)", traceorder="reversed")),
           "area_contributors_footage")
-    return (videos.group_by("contributor")
+    return (videos.group_by("contributor", maintain_order=True)
                   .agg(pl.len().alias("Videos"), pl.sum("hours").round(1).alias("Footage (h)"),
                        pl.col("id").n_unique().alias("Localities"), pl.col("iso3").n_unique().alias("Countries"),
                        pl.col("added").min().dt.strftime("%Y-%m-%d").alias("First added"),
@@ -1370,9 +1380,10 @@ RATE_LINE = "<b>Pedestrians per minute: %{PLACE:.2f}</b><br>"  # on top of the s
 
 def _rates(classes: list, df: pl.DataFrame, *by) -> pl.DataFrame:
     """Detections per minute of each class per group, with the analysed hours, segments and localities."""
-    return df.group_by(*by).agg(*[(pl.col(c).sum() / pl.sum("minutes")).alias(c) for c in classes],
-                                (pl.sum("minutes") / 60).alias("hours"), pl.len().alias("segments"),
-                                pl.col("id").n_unique().alias("localities"))
+    return (df.group_by(*by, maintain_order=True)
+              .agg(*[(pl.col(c).sum() / pl.sum("minutes")).alias(c) for c in classes],
+                   (pl.sum("minutes") / 60).alias("hours"), pl.len().alias("segments"),
+                   pl.col("id").n_unique().alias("localities")))
 
 
 def _boot(person: str, rng, df: pl.DataFrame, *by) -> pl.DataFrame:
@@ -1380,7 +1391,7 @@ def _boot(person: str, rng, df: pl.DataFrame, *by) -> pl.DataFrame:
     `hi`; groups with at least 3 localities)."""
     rows = []
     # sorted: group_by returns the localities in any order, and the draws below must meet them in the same one
-    per_loc = df.group_by(*by, "id").agg(pl.col(person).sum(), pl.sum("minutes")).sort(*by, "id")
+    per_loc = df.group_by(*by, "id", maintain_order=True).agg(pl.col(person).sum(), pl.sum("minutes")).sort(*by, "id")
     for key, g in per_loc.group_by(*by, maintain_order=True):  # in order: the same intervals on every run
         if g.height < 3:
             continue
@@ -1414,7 +1425,8 @@ def detection_figures(df_mapping: pl.DataFrame, det: pl.DataFrame, classes: list
     d = (det.select("id", "video", "start", *classes).join(seg, on=["id", "video", "start"])
             .with_columns((pl.col("seconds") / 60).alias("minutes")))
     country = (_rates(classes, d, "iso3")
-               .join(seg.group_by("iso3").agg(pl.first("country"), pl.first("continent")), on="iso3")
+               .join(seg.group_by("iso3", maintain_order=True).agg(pl.first("country"), pl.first("continent")),
+                     on="iso3")
                .join(cty_hover, on="iso3")
                .with_columns(pl.concat_str([flag, pl.col("country")], separator=" ").alias("name")))
     locality = (_rates(classes, d, "id")
@@ -1447,7 +1459,7 @@ def _coverage_maps(seg, country, person, cty_hover) -> pl.DataFrame:
     """Share of each country's footage that has been analysed, and pedestrians per minute per country; returns the
     footage per country (`iso3`, `country`, `hours`)."""
     # how much of each country's footage has been analysed
-    total = seg.group_by("iso3", "country").agg((pl.sum("seconds") / 3600).alias("hours"))
+    total = seg.group_by("iso3", "country", maintain_order=True).agg((pl.sum("seconds") / 3600).alias("hours"))
     coverage = (total.join(country.select("iso3", pl.col("hours").alias("analysed")), on="iso3", how="left")
                      .with_columns((pl.col("analysed").fill_null(0) / pl.col("hours") * 100).alias("analysed_pct"))
                      .join(cty_hover, on="iso3"))
@@ -1804,8 +1816,8 @@ def _detection_tables(seg, total, by_continent, ci, locality, classes, flag) -> 
     person = classes[0]
     two = dict(function=lambda v: f"{v:.2f}", return_dtype=pl.Utf8)  # rates with two decimals in the tables
     per_min = [pl.col(c).map_elements(**two).alias(f"{c} / min") for c in classes]
-    footage = pl.concat([total.join(seg.group_by("iso3").agg(pl.first("continent")), on="iso3")
-                              .group_by("continent").agg(pl.sum("hours")),
+    footage = pl.concat([total.join(seg.group_by("iso3", maintain_order=True).agg(pl.first("continent")), on="iso3")
+                              .group_by("continent", maintain_order=True).agg(pl.sum("hours")),
                          pl.DataFrame({"continent": ["All"], "hours": [total["hours"].sum()]})])
     t_continent = (by_continent.join(footage.rename({"hours": "total"}), on="continent")
                    .with_columns(pl.col("continent").replace_strict(

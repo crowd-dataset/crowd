@@ -56,11 +56,11 @@ def channel_concentration(seg: pl.DataFrame, by=("iso3",)) -> pl.DataFrame:
     footage: 1 is a single uploader, n as diverse as n equal channels), `top_channel` (% of the footage from the
     largest), `hours` and number of `channels` (segments with a channel only)."""
     by = list(by)
-    per_channel = seg.drop_nulls("channel").group_by(*by, "channel").agg(pl.sum("seconds"))
+    per_channel = seg.drop_nulls("channel").group_by(*by, "channel", maintain_order=True).agg(pl.sum("seconds"))
     return (per_channel.with_columns((pl.col("seconds") / pl.col("seconds").sum().over(by)).alias("s"))
-                       .group_by(*by).agg((1 / (pl.col("s") ** 2).sum()).alias("effective"),
-                                          (pl.max("s") * 100).alias("top_channel"),
-                                          HOURS, pl.len().alias("channels")))
+                       .group_by(*by, maintain_order=True)
+                       .agg((1 / (pl.col("s") ** 2).sum()).alias("effective"),
+                            (pl.max("s") * 100).alias("top_channel"), HOURS, pl.len().alias("channels")))
 
 
 def _known(v) -> bool:
@@ -99,10 +99,10 @@ def _footage_lines(r: dict) -> list:
 
 def _summary(seg: pl.DataFrame, key: str) -> pl.DataFrame:
     """Footage statistics per `key` (id or iso3) from the segment table."""
-    vehicles = (seg.drop_nulls("vehicle").group_by(key, "vehicle").agg(pl.sum("seconds"))
+    vehicles = (seg.drop_nulls("vehicle").group_by(key, "vehicle", maintain_order=True).agg(pl.sum("seconds"))
                    .with_columns((pl.col("seconds") / pl.col("seconds").sum().over(key) * 100).alias("share"))
-                   .group_by(key).agg(pl.struct("vehicle", "share").alias("vehicle_shares")))
-    return (seg.group_by(key)
+                   .group_by(key, maintain_order=True).agg(pl.struct("vehicle", "share").alias("vehicle_shares")))
+    return (seg.group_by(key, maintain_order=True)
                .agg(HOURS, pl.len().alias("n_segments"),
                     pl.col("video").n_unique().alias("n_videos"),
                     pl.col("channel").drop_nulls().n_unique().alias("n_channels"),
@@ -167,8 +167,9 @@ def _country_indicators(r: dict) -> str:
 def country_hover(df_mapping: pl.DataFrame, seg: pl.DataFrame, flags: dict) -> pl.DataFrame:
     """One popup per country: `iso3`, `hover`."""
     first = (pl.col(c).filter(pl.col(c) > 0).first() for c, _, _ in POPUP_INDICATORS)
-    countries = (df_mapping.group_by("iso3").agg(pl.first("country"), pl.col("continent").unique().sort(),
-                                                 pl.len().alias("n_localities"), *first)
+    countries = (df_mapping.group_by("iso3", maintain_order=True)
+                           .agg(pl.first("country"), pl.col("continent").unique().sort(),
+                                pl.len().alias("n_localities"), *first)
                            .join(_summary(seg, "iso3"), on="iso3", how="left"))
     channels = channel_concentration(seg).select("iso3", "effective", "top_channel")
     countries = countries.join(channels, on="iso3", how="left")

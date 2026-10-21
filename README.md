@@ -519,8 +519,9 @@ The code is open-source and free to use. It is aimed for, but not limited to, ac
   YOLO detection counts (`detection_counts.csv.gz`) and who added which video (`video_contributors.csv`). The mapping
   and metadata files (`mapping.csv`, `mapping-NAME.csv`, `mapping_metadata.csv`, `crowd_index.jsonl`, ...) and
   `cut_times.csv` stay in the top folder.
-- `figures/`: the figures of this README (PNG, HTML and, when made on purpose, EPS); `readme/` and `screenshots/`:
-  images of this README and of the figures.
+- `figures/`: the figures of this README (PNG, HTML and, when made on purpose, EPS), and `figure_hashes.json`, which
+  records what each file was made from, so that only changed figures are saved again (see
+  [Step 11](#step-11-run-the-scripts)); `readme/` and `screenshots/`: images of this README and of the figures.
 - `logs/`: records kept by the scripts (`traffic_index_log.csv`, appended by `tools/update_traffic_index.py`).
 - `archive/`: old files no code uses any more (`mappingsubmitted.csv`).
 - `tests/`: tests of the scripts.
@@ -715,6 +716,8 @@ python analysis.py                 # tables, figures and README statistics (YOLO
                                    # or, without them, from analysis_data/detection_counts.csv.gz)
 python count_detections.py --data /path/to/data   # count the YOLO detections and save the snapshot
 ```
+
+`analysis.py` saves a figure (each of its HTML, PNG and EPS files) only when what it shows changed since it was last saved, as recorded in `figures/figure_hashes.json`, and renders the PNG and EPS files in parallel; an unchanged run takes about a minute. To save every figure again, delete `figures/figure_hashes.json` first.
 
 The scripts in `tools/` and `release/` can be run as a file or as a module, and from any folder (they switch to the top folder, where `mapping.csv` and the other files are):
 

@@ -36,6 +36,7 @@ from utils.core.parsing import (ENDPOINT_ADJUSTMENT_SECONDS, parse_list, parse_n
                                 processed_segment_duration_seconds)
 from utils.analytics import contributors
 from utils.plotting import dataset_figures, hover
+from utils.plotting.io import wait_for_figures
 from utils.plotting.maps import Maps
 
 # Suppress a specific FutureWarning emitted by plotly.
@@ -1067,4 +1068,5 @@ if __name__ == "__main__":
     else:
         detection_tables = dataset_figures.detection_figures(df_mapping, detections[0], list(README_DETECTIONS), seg,
                                                              ISO3_TO_FLAG)
+    wait_for_figures()  # the PNGs are rendered in the background; the README lists only figures that exist
     update_readme(df_mapping, detections, detection_tables, contributors_table)

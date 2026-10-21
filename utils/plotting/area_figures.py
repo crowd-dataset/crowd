@@ -231,12 +231,12 @@ def _area_table(seg: pl.DataFrame, area_of: dict, df_mapping: pl.DataFrame, flag
     loc = (df_mapping.select("id", "locality", "iso3").with_columns(
         pl.col("id").replace_strict(area_of, default=None, return_dtype=pl.Utf8).alias("area"))
         .drop_nulls("area"))
-    per_loc = (seg.join(loc, on="id").group_by("area", "id", "locality", "iso3")
+    per_loc = (seg.join(loc, on="id").group_by("area", "id", "locality", "iso3", maintain_order=True)
                   .agg((pl.sum("seconds") / 3600).alias("h"),
                        (pl.col("seconds").filter(pl.col("night")).sum() / 3600).alias("nh")))
     per_loc = per_loc.with_columns(pl.format("{} {}: {} h", pl.col("iso3").replace_strict(flags, default="🏳️"),
                                              pl.col("locality"), pl.col("h").round(1)).alias("line"))
-    return (per_loc.sort("h", descending=True).group_by("area")
+    return (per_loc.sort("h", descending=True).group_by("area", maintain_order=True)
                    .agg(pl.sum("h").alias("hours"), (pl.sum("nh") / pl.sum("h") * 100).alias("night"),
                         pl.len().alias("localities"), pl.col("line").head(6).alias("top")))
 
@@ -285,7 +285,8 @@ def _country_population(pop: dict, df_mapping: pl.DataFrame) -> dict:
     """`pop` with the mapping's population of the countries that are one area (GEOBOUNDARIES at ADM0)."""
     whole = [iso3 for iso3, level in GEOBOUNDARIES.items() if level == "ADM0"]
     return pop | dict(df_mapping.filter(pl.col("iso3").is_in(whole), pl.col("population_country").cast(pl.Float64) > 0)
-                      .group_by("iso3").agg(pl.col("population_country").cast(pl.Float64).first()).iter_rows())
+                      .group_by("iso3", maintain_order=True)
+                      .agg(pl.col("population_country").cast(pl.Float64).first()).iter_rows())
 
 
 def _area_maps(seg: pl.DataFrame, df_mapping: pl.DataFrame, flags: dict):
@@ -333,7 +334,7 @@ def _detection_area_maps(d: pl.DataFrame, df_mapping: pl.DataFrame, flags: dict,
         pts = df_mapping.filter(sel).drop_nulls(["lat", "lon"])
         area_of = {k: v for k, v in zip(pts["id"], _assign(pts["lon"].to_numpy(), pts["lat"].to_numpy(), feats)) if v}
         dd = d.with_columns(pl.col("id").replace_strict(area_of, default=None, return_dtype=pl.Utf8).alias("area"))
-        rates = (dd.drop_nulls("area").group_by("area")
+        rates = (dd.drop_nulls("area").group_by("area", maintain_order=True)
                    .agg(*[(pl.col(c).sum() / pl.sum("minutes")).alias(c) for c in cols],
                         (pl.sum("minutes") / 60).alias("analysed")))
         table = _area_table(d.select("id", "seconds", "night"), area_of, df_mapping, flags).join(rates, on="area")
@@ -743,7 +744,7 @@ def _detection_field_maps(d: pl.DataFrame, df_mapping: pl.DataFrame, flags: dict
     # walkable street minutes: segments with at least 2 pedestrians and at most 10 cars per minute
     walkable = (pl.col("_p") >= 2) & (pl.col("_c") <= 10)
     vehicles = [c for c in ("Cars", "Bicycles", "Motorcycles", "Buses", "Trucks") if c in classes]
-    per_loc = (seg.group_by("id").agg(
+    per_loc = (seg.group_by("id", maintain_order=True).agg(
         pl.sum("minutes").alias("weight"), (pl.col(person).sum() / pl.sum("minutes")).alias("pedestrians"),
         (pl.col("minutes").filter(walkable).sum() / pl.sum("minutes") * 100).alias("walkable"),
         *([(pl.col("Motorcycles").sum() / pl.sum_horizontal(*[pl.col(c).sum() for c in vehicles]) * 100)
@@ -787,9 +788,9 @@ def _localities(seg: pl.DataFrame, df_mapping: pl.DataFrame, loc_hover: pl.DataF
     locality, iso3, lat, lon, hover and name (flag and locality)."""
     year = pl.col("year").filter(pl.col("year").is_between(2005, 2100))
     weights = pl.col("seconds").filter(pl.col("year").is_between(2005, 2100))
-    return (seg.group_by("id").agg((pl.sum("seconds") / 3600).alias("hours"),
-                                   hover.NIGHT_PCT.alias("night_pct"),
-                                   ((year * weights).sum() / weights.sum()).alias("year"))
+    return (seg.group_by("id", maintain_order=True)
+               .agg((pl.sum("seconds") / 3600).alias("hours"), hover.NIGHT_PCT.alias("night_pct"),
+                    ((year * weights).sum() / weights.sum()).alias("year"))
                .join(df_mapping.select("id", "locality", "iso3", "lat", "lon"), on="id").join(loc_hover, on="id")
                .drop_nulls(["lat", "lon"])
                .with_columns(pl.concat_str([pl.col("iso3").replace_strict(flags, default="🏳️"), pl.col("locality")],
