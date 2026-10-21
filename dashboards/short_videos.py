@@ -181,18 +181,35 @@ def trim_row(row, video, end):
 
 # run on lin4080 by apply: the YOLO CSVs ({video}_{start}_{fps}.csv in each data folder's bbox/) of the trimmed
 # segments without the frames past the new end (user, 2026-10-21). frame-count is 1 at the segment's start and
-# main.py detects from start to end - 1 s, so a frame is kept up to (end - 1 - start) * fps; a segment dropped whole
-# leaves no CSV. The original goes to bbox-trimmed-DATE beside bbox/ (count_detections.py reads only bbox/).
+# main.py detects from start to end - 1 s, so a frame is kept up to (end - 1 - start) * the video's frame rate (the
+# file's, from ffprobe: the CSV's name has it rounded down, 59 for 59.94); a segment dropped whole leaves no CSV, one
+# of no known frame rate is left as it is. The original goes to bbox-trimmed-DATE beside bbox/ (count_detections.py
+# reads only bbox/).
 TRIM_BBOX = """
-import csv, glob, json, os, sys, time
+import csv, glob, json, os, subprocess, sys, time
 day = time.strftime('%Y-%m-%d')
+
+
+def rate(vid, fps):
+    for mp4 in glob.glob(f'/media/salam/crowd-tue-*/pedestrians-in-youtube/videos/{vid}.mp4'):
+        r = subprocess.run(['ffprobe', '-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=r_frame_rate',
+                            '-of', 'csv=p=0', mp4], capture_output=True, text=True).stdout.strip().split('/')
+        if len(r) == 2 and float(r[1]):
+            return float(r[0]) / float(r[1])
+    return fps
+
+
+
 folders = (glob.glob('/media/salam/*/pedestrians*/data/bbox')
            + glob.glob(os.path.expanduser('~/Documents/GitHub/*/data/bbox')))
 for vid, start, end in json.loads(sys.argv[1]):
     for folder in folders:
         for path in glob.glob(os.path.join(folder, f'{vid}_{start}_*.csv')):
-            fps = int(path[:-4].rsplit('_', 1)[1])
-            last = (end - 1 - start) * fps
+            fps = rate(vid, int(path[:-4].rsplit('_', 1)[1]))
+            if not fps:
+                print(f'{os.path.basename(path)}: frame rate unknown, left as it is')
+                continue
+            last = int((end - 1 - start) * fps)
             aside = os.path.join(os.path.dirname(folder), f'bbox-trimmed-{day}')
             os.makedirs(aside, exist_ok=True)
             old = os.path.join(aside, os.path.basename(path))
