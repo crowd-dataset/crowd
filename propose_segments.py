@@ -3769,11 +3769,30 @@ def misspelt_places(phrases, df, states):
 MISSPELT_RATIO = 0.85
 
 
+def hashtag_locality(title, df):
+    """[locality, state, country] of df whose name (or alias) a hashtag of the title spells, without spaces,
+    accents or punctuation, when exactly one: "#barradatijuca" (-DQubgdlVY8; user, 2026-10-21: its title's other
+    places were a condominium and a hospital, put in Itabuna). 2 of 2 reviewed such titles right."""
+    tags = {k for t in re.findall(r'#(\w+)', title or '') if len(k := re.sub(r'\W', '', _name_key(t))) >= 4
+            and not ordinary(t)}
+    if not tags:
+        return None
+    hits = set()
+    for r in df.itertuples():
+        names = [r.locality] + ([a.strip() for a in r.locality_aka[1:-1].split(',')]
+                                if isinstance(r.locality_aka, str) else [])
+        if any(isinstance(n, str) and re.sub(r'\W', '', _name_key(n)) in tags for n in names):
+            hits.add((r.locality, None if pd.isna(r.state) else r.state, r.country))
+    return list(hits.pop()) if len(hits) == 1 else None
+
+
 def guess_locality(title, country, df):
     """[locality, state, country] when the title names exactly one mapping locality of that country, else None.
     A drive "from A to B in C" with C a locality is in C: neighbourhoods of a big city ("from Hollywood to Venice
     in Los Angeles") are often namesakes of other localities."""
     df = df[df['country'] == country]
+    if (tagged := hashtag_locality(title, df)):
+        return tagged
     area = DRIVE_AREA.search(title or '')
     if area and (loc := _title_locality(area.group(1), df)):
         return loc
