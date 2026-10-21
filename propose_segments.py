@@ -2193,6 +2193,17 @@ def channel_lead_in(channel_id, df, min_videos=10):
     return _lead_ins[channel_id]
 
 
+def batch_lead_in(plan, min_videos=8):
+    """Seconds this batch's reviewed drives start at or later (the 10th percentile of their first approved starts,
+    at least min_videos), else 0: a channel's new uploads open with longer highlights than its mapped videos
+    (venezuelaenrutas: reviewed from 1:23-3:18, the mapping's 54 s; user, 2026-10-21)."""
+    approved = [[g['start'] for e in p.get('entries', []) for g in e['segments'] if g.get('decision') == 'approve']
+                for p in plan.values()]
+    starts = [min(a) for a in approved if a]
+    lead = float(np.percentile(starts, 10)) if len(starts) >= min_videos else 0
+    return int(lead) if lead >= 5 else 0
+
+
 def trim_lead_in(p, lead):
     """Start a just-proposed video no earlier than its channel's drives start (channel_lead_in)."""
     if not any(s['start'] < lead for e in p.get('entries', []) for s in e['segments']):
@@ -4924,7 +4935,8 @@ def _metro_city(town, at, rows, state=None):
 _END = r"\s*(?:,|\||\(|\s-\s|\s–\s|\bin\b|\ben\b|\bvia\b|\bpor\b|\bfor\b|$)"
 # a town in a cab-view title, with a note in brackets maybe ("Sokołów Małopolski(podkarpackie)")
 _DASH_TOWN = r"([A-ZÀ-ÞŁŚŻŹĆŃ][\w'’.-]*(?: [A-ZÀ-ÞŁŚŻŹĆŃ][\w'’.-]*){0,3})(?:\s*\([^)]*\))?"
-FROM_TO = (re.compile(r"\bfrom\s+(.+?)\s+to\s+(.+?)" + _END, re.I),
+# ("from Gamagori City toward Toyokawa City", ER7UFbJuaq0; user, 2026-10-21)
+FROM_TO = (re.compile(r"\bfrom\s+(.+?)\s+to(?:wards?)?\s+(.+?)" + _END, re.I),
            # without "from": "Driving Lincoln to Hickman, Nebraska" (yQbYiSKgB-I), "Ashland to Waterloo Drive Tour"
            # ... also "4K POV Drive: Fremont to Downtown Omaha, Nebraska" (iSMg2dH2uuA: a colon after the word)
            # ... and by bike ("Cycling Richmond to Vancouver", UEPl-VrHpr0)
@@ -6534,7 +6546,7 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
             print(f'  locality not found yet ({type(e).__name__})', flush=True)
         if montages and analysed:
             trim_montage(plan[vid], dict(np.load(sig_path)))
-        if analysed and (lead := channel_lead_in(meta.get('channel_id'), df)):
+        if analysed and (lead := max(channel_lead_in(meta.get('channel_id'), df) or 0, batch_lead_in(plan))):
             trim_lead_in(plan[vid], lead)
         town_sign_hint(plan[vid], sig_path, out_dir, df)
         shutil.rmtree(os.path.join(out_dir, f'{vid}_open.tmp'), ignore_errors=True)  # screen_locality's frames
