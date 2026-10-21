@@ -24,7 +24,9 @@ WORKERS = {'lin5080': 'queue phase 5 (highway videos to redo), then 2 (new uploa
                       'every other channel (--queue-rows 0/2)',
            'wsl5090': 'sheet rows 0/2, then queue phase 4 (UCxbv63aE7sg8_HzYz5KFPeA highway videos), 1 and 3',
            # account pavlo since 2026-10-12 (shadab before): ~/crowd-routine, started by cron with start_worker.sh
-           'mini': 'sheet rows 1/2 (weirdlifenow, row 861)',
+           # phases 1 and 3, the half of them wsl5090 leaves (user, 2026-10-21: with phases 6, 2 it took channels
+           # wsl5090b and lin5080b took too)
+           'mini': 'queue phases 1 and 3: the other half of wsl5090\'s (--rows 1/2 --phases 1,3)',
            # a second worker on lin5080 (user, 2026-10-18: its GPU had room), in its own folder
            'lin5080b': 'queue phase 6 (new uploads of the channels added from the mapping)',
            # and one on wsl5090 (user, 2026-10-18), paused with the first while someone uses win5090 (wsl_yield.py)
