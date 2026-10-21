@@ -12,8 +12,11 @@ The credits are kept in video_contributors.csv (video, contributor, added_utc: t
 the video, file: the mapping file it first appeared in). It is the record of who added what once the history of the
 mapping files is gone, so keep it when rewriting the history:
 - `python -m utils.analytics.contributors` builds it from the git history (needs the full history; run once);
-- update(), run by analysis.py, credits videos that are new since, from the mapping files as they are now, with
-  the time of the last commit that changed the file (or the current time while it has uncommitted changes).
+- update(), run by analysis.py, credits videos that are new since: from the commits of the last LOOKBACK_DAYS
+  before the newest credit (as the backfill, so a video Olena added to mapping-olena.csv before it was copied to
+  mapping.csv is hers), and videos found in no such commit (uncommitted, or no history: a shallow clone) from the
+  mapping files as they are now, with the time of the last commit that changed the file (or the current time while it
+  has uncommitted changes).
 """
 
 import csv
@@ -22,7 +25,7 @@ import os
 import re
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import common
 
@@ -34,6 +37,9 @@ VIDEO_URL = re.compile(r"(?:watch\?v=|youtu\.be/)([A-Za-z0-9_-]{11})")  # the fi
 FILE_OWNERS = {"epfl": "Shadab"}  # mapping-NAME.csv files kept by another contributor
 # contributors who also commit to mapping.csv from their own account: a word in the commit author's name or email
 ACCOUNTS = {"shadab": "Shadab", "fayefang": "Faye", "ying.fayeda": "Faye"}
+# how far before the newest credit update() reads the history: a video waits in a contributor's file until it is
+# reviewed into mapping.csv
+LOOKBACK_DAYS = 60
 
 
 def account_owner(author: str) -> str:
@@ -83,12 +89,13 @@ def save(credits: dict) -> None:
     os.replace(tmp, FILE)
 
 
-def backfill_from_git() -> dict:
-    """Credit every video in the history of the mapping files to the file it first appeared in. Reads the history as
-    a stream: commits that replace a whole mapping file have diffs of several MB."""
+def backfill_from_git(since: str | None = None, only: set | None = None) -> dict:
+    """Credit every video in the history of the mapping files (commits after `since` only, and videos in `only`) to the
+    file it first appeared in. Reads the history as a stream: commits that replace a whole mapping file have diffs of
+    several MB."""
     proc = subprocess.Popen(
         ["git", "log", "--reverse", "--date-order", "-p", "--unified=0", "--no-color",
-         "--format=@@COMMIT %ct %an <%ae>",
+         "--format=@@COMMIT %ct %an <%ae>", *([f"--since={since}"] if since else []),
          "--", "mapping.csv", "mapping-*.csv"],
         cwd=common.root_dir, stdout=subprocess.PIPE, text=True, errors="replace")
     credits: dict = {}
@@ -100,7 +107,8 @@ def backfill_from_git() -> dict:
         # to mapping.csv go to the owner of the commit's account (Pavlo unless in ACCOUNTS)
         for w, f in sorted(added, key=lambda k: k[0] != MAIN):
             for video in added[(w, f)] - credits.keys():
-                credits[video] = (owner if w == MAIN else w, stamp, f)
+                if only is None or video in only:
+                    credits[video] = (owner if w == MAIN else w, stamp, f)
         added.clear()
 
     for line in proc.stdout:
@@ -155,13 +163,16 @@ def update() -> dict:
         if who:
             with open(path, encoding="utf-8", errors="replace") as f:
                 current.append((who, os.path.basename(path), _added_time(path), video_ids(f.read())))
+    new_ids = set().union(*(ids for *_, ids in current)) - credits.keys()
+    if new_ids and credits and _git("rev-parse", "--is-shallow-repository") == "false":
+        newest = datetime.strptime(max(when for _, when, _ in credits.values()), "%Y-%m-%dT%H:%M:%SZ")
+        since = (newest - timedelta(days=LOOKBACK_DAYS)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        credits.update(backfill_from_git(since, new_ids))
     owner = account_owner(_author_of_mapping())
-    new = 0
     for who, name, when, ids in sorted(current, key=lambda c: c[0] != MAIN):  # in mapping.csv and a copy: credited
         for video in ids - credits.keys():                                    # for mapping.csv
             credits[video] = (owner if who == MAIN else who, when, name)
-            new += 1
-    if new or not os.path.exists(FILE):
+    if new_ids or not os.path.exists(FILE):
         save(credits)
     return credits
 

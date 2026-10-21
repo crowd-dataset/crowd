@@ -61,11 +61,15 @@ jobs:
       github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
+      # the whole history: new videos are credited to the mapping file they
+      # first appeared in (utils/analytics/contributors.py)
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      # Out of the analysis (and so of video_contributors.csv): videos are
-      # credited from mapping.csv alone; put back before committing.
+      # Out of the analysis, which counts mapping.csv alone (their history
+      # still credits Olena's and others' videos); put back before committing.
       - name: Leave out the mapping-NAME files
         run: |
           mkdir -p /tmp/mapping-names
