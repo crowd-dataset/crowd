@@ -1,40 +1,41 @@
-import pandas as pd
-from math import radians, sin, cos, sqrt, atan2
+"""Pairs of mapping localities within RADIUS_KM of each other (likely the same place twice): writes
+nearby_pairs_<R>km.csv and a Leaflet map of them (nearby_pairs_<R>km.html with its .js) in the top folder.
+
+    python -m tools.check_nearby_localities
+"""
 import os
+
+import numpy as np
+import pandas as pd
 os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # top folder: mapping.csv, ...
 
 RADIUS_KM = 2.0
-
-
-def haversine_km(lat1, lon1, lat2, lon2):
-    R = 6371
-    lat1, lon1, lat2, lon2 = map(radians, [lat1, lon1, lat2, lon2])
-    dlat, dlon = lat2 - lat1, lon2 - lon1
-    a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlon/2)**2
-    return R * 2 * atan2(sqrt(a), sqrt(1 - a))
-
+EARTH_KM = 6371
 
 df = pd.read_csv('mapping.csv')
 df = df.dropna(subset=['lat', 'lon'])
 
 rows = df[['id', 'locality', 'country', 'lat', 'lon']].values.tolist()
+lat, lon = np.radians(df['lat'].to_numpy(float)), np.radians(df['lon'].to_numpy(float))
 pairs = []
 nearby_ids = set()
 
 for i in range(len(rows)):
-    for j in range(i + 1, len(rows)):
+    # haversine distance from row i to every later row at once (a Python loop over all pairs took minutes)
+    a = (np.sin((lat[i + 1:] - lat[i]) / 2) ** 2
+         + np.cos(lat[i]) * np.cos(lat[i + 1:]) * np.sin((lon[i + 1:] - lon[i]) / 2) ** 2)
+    dists = EARTH_KM * 2 * np.arctan2(np.sqrt(a), np.sqrt(1 - a))
+    for j in np.flatnonzero(dists <= RADIUS_KM) + i + 1:
         id1, loc1, country1, lat1, lon1 = rows[i]
         id2, loc2, country2, lat2, lon2 = rows[j]
-        dist = haversine_km(lat1, lon1, lat2, lon2)
-        if dist <= RADIUS_KM:
-            pairs.append({
-                'id_1': int(id1), 'locality_1': loc1, 'country_1': country1,
-                'lat_1': lat1, 'lon_1': lon1,
-                'id_2': int(id2), 'locality_2': loc2, 'country_2': country2,
-                'lat_2': lat2, 'lon_2': lon2,
-                'distance_km': round(dist, 3)
-            })
-            nearby_ids.update([int(id1), int(id2)])
+        pairs.append({
+            'id_1': int(id1), 'locality_1': loc1, 'country_1': country1,
+            'lat_1': lat1, 'lon_1': lon1,
+            'id_2': int(id2), 'locality_2': loc2, 'country_2': country2,
+            'lat_2': lat2, 'lon_2': lon2,
+            'distance_km': round(float(dists[j - i - 1]), 3)
+        })
+        nearby_ids.update([int(id1), int(id2)])
 
 # CSV output
 out = pd.DataFrame(pairs)

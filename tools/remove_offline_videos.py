@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """
-remove_offline_videos.py
+Interactive tool to delete a video (all its segments, or one of them) from the mapping, keeping the list columns
+aligned.
 
-Interactive tool to delete video information from mapping.csv.
-
-Keeps list columns aligned.
+    python -m tools.remove_offline_videos     # asks for the mapping file, the video and what to delete
 
 Always aligned (per video occurrence):
 - videos
@@ -22,11 +21,11 @@ Aligned per segment (nested lists per video occurrence):
 
 If a row ends up with zero videos after deletion, the whole row is removed.
 If an id column exists (serial number), it is reassigned sequentially.
+The file is saved under its .lock (as the review pages save the mapping) and not at all when it changed meanwhile.
 """
 
 from __future__ import annotations
 
-import ast
 import csv
 import json
 import logging
@@ -39,6 +38,8 @@ from typing import Any, Dict, List, Optional, Tuple
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # top folder: common, logmod, ...
 os.chdir(sys.path[0])  # files such as mapping.csv are opened relative to the top folder
 from custom_logger import CustomLogger  # noqa: E402
+from tools.mapping_io import locked, replace  # noqa: E402
+from utils.core.parsing import parse_list  # noqa: E402
 
 
 def _parse_log_level(name: str) -> int:
@@ -81,48 +82,10 @@ def setup_terminal_logging(py_logger: logging.Logger) -> int:
 logger = CustomLogger(__name__)
 setup_terminal_logging(logger.logger)
 
-# Allow very large CSV fields
-try:
-    csv.field_size_limit(min(sys.maxsize, 1024 * 1024 * 1024))
-except Exception:
-    try:
-        csv.field_size_limit(sys.maxsize)
-    except Exception:
-        pass
+csv.field_size_limit(2 ** 30)  # allow very large CSV fields (1 GB fits a C long everywhere)
 
 
 PER_VIDEO_LIST_COLS = ["upload_date", "channel", "views", "date_updated", "title"]
-
-
-def safe_eval_list(x: Any) -> List[Any]:
-    if x is None:
-        return []
-    if isinstance(x, list):
-        return x
-    if not isinstance(x, str):
-        return []
-
-    s = x.strip()
-    if s == "" or s.lower() in {"nan", "none", "null"}:
-        return []
-
-    if (len(s) >= 2) and (s[0] == s[-1]) and s[0] in {"'", '"'}:
-        s = s[1:-1].strip()
-
-    if s == "" or s == "[]":
-        return []
-
-    try:
-        v = ast.literal_eval(s)
-        return v if isinstance(v, list) else []
-    except Exception:
-        if s.startswith("[") and s.endswith("]"):
-            inner = s[1:-1].strip()
-            if inner == "":
-                return []
-            parts = [p.strip().strip('"').strip("'") for p in inner.split(",")]
-            return [p for p in parts if p != ""]
-        return []
 
 
 def _to_int_maybe(x: Any) -> Optional[int]:
@@ -173,7 +136,8 @@ def _to_float_maybe(x: Any) -> Optional[float]:
 
 
 def norm_list_of_lists_int(cell: Any) -> List[List[int]]:
-    outer = safe_eval_list(cell)
+    """A nested list cell as lists of ints (values that are not numbers dropped)."""
+    outer = parse_list(cell)
     out: List[List[int]] = []
     for item in outer:
         if isinstance(item, list):
@@ -189,7 +153,8 @@ def norm_list_of_lists_int(cell: Any) -> List[List[int]]:
 
 
 def norm_list_of_lists_float(cell: Any) -> List[List[float]]:
-    outer = safe_eval_list(cell)
+    """A nested list cell as lists of floats (values that are not numbers dropped)."""
+    outer = parse_list(cell)
     out: List[List[float]] = []
     for item in outer:
         if isinstance(item, list):
@@ -205,7 +170,8 @@ def norm_list_of_lists_float(cell: Any) -> List[List[float]]:
 
 
 def norm_flat_list_int(cell: Any) -> List[int]:
-    outer = safe_eval_list(cell)
+    """A flat list cell as ints (0 for values that are not numbers)."""
+    outer = parse_list(cell)
     out: List[int] = []
     for item in outer:
         iv = _to_int_maybe(item)
@@ -214,7 +180,7 @@ def norm_flat_list_int(cell: Any) -> List[int]:
 
 
 def norm_flat_list_str(cell: Any) -> List[str]:
-    outer = safe_eval_list(cell)
+    outer = parse_list(cell)
     out: List[str] = []
     for item in outer:
         s = "" if item is None else str(item).strip()
@@ -253,19 +219,21 @@ def _fmt_atom(x: Any) -> str:
 
 
 def to_compact_list(obj: Any) -> str:
+    """A (nested) list as the mapping writes it: [a,b], [[0,10],[5]]."""
     if isinstance(obj, list):
         return "[" + ",".join(to_compact_list(x) if isinstance(x, list) else _fmt_atom(x) for x in obj) + "]"
     return _fmt_atom(obj)
 
 
 def load_mapping(path: str) -> Tuple[List[str], List[Dict[str, Any]]]:
+    """(fieldnames, rows) of a mapping file: each row its raw cells and its list columns parsed."""
     with open(path, "r", encoding="utf-8", newline="") as f:
         reader = csv.DictReader(f)
         fieldnames = reader.fieldnames or []
 
         rows: List[Dict[str, Any]] = []
         for r in reader:
-            vids = [str(v).strip() for v in safe_eval_list(r.get("videos")) if str(v).strip() != ""]
+            vids = [str(v).strip() for v in parse_list(r.get("videos")) if str(v).strip() != ""]
 
             tod = norm_list_of_lists_int(r.get("time_of_day"))
             st = norm_list_of_lists_float(r.get("start_time"))
@@ -275,7 +243,7 @@ def load_mapping(path: str) -> Tuple[List[str], List[Dict[str, Any]]]:
             vehicle_type = None
             vehicle_type_is_nested = False
             if "vehicle_type" in fieldnames:
-                vt_raw = safe_eval_list(r.get("vehicle_type"))
+                vt_raw = parse_list(r.get("vehicle_type"))
                 vehicle_type_is_nested = any(isinstance(x, list) for x in vt_raw)
                 if vehicle_type_is_nested:
                     vehicle_type = norm_list_of_lists_int(r.get("vehicle_type"))
@@ -287,7 +255,7 @@ def load_mapping(path: str) -> Tuple[List[str], List[Dict[str, Any]]]:
             for col in PER_VIDEO_LIST_COLS:
                 if col not in fieldnames:
                     continue
-                raw_list = safe_eval_list(r.get(col))
+                raw_list = parse_list(r.get(col))
                 if isinstance(raw_list, list) and len(raw_list) == len(vids):
                     if col in {"upload_date", "views", "date_updated"}:
                         per_video[col] = norm_flat_list_int(r.get(col))
@@ -313,23 +281,23 @@ def load_mapping(path: str) -> Tuple[List[str], List[Dict[str, Any]]]:
 
 
 def write_mapping(path: str, fieldnames: List[str], rows: List[Dict[str, Any]]) -> None:
-    with open(path, "w", encoding="utf-8", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
-        writer.writeheader()
-        for rd in rows:
-            rd["raw"]["videos"] = to_compact_list(rd["videos"])
-            rd["raw"]["time_of_day"] = to_compact_list(rd["time_of_day"])
-            rd["raw"]["start_time"] = to_compact_list(rd["start_time"])
-            rd["raw"]["end_time"] = to_compact_list(rd["end_time"])
-
-            if rd["vehicle_type"] is not None and "vehicle_type" in fieldnames:
-                rd["raw"]["vehicle_type"] = to_compact_list(rd["vehicle_type"])
-
-            for col, val in rd["per_video"].items():
-                if col in fieldnames and val is not None:
-                    rd["raw"][col] = to_compact_list(val)
-
-            writer.writerow(rd["raw"])
+    """Write the rows to path, swapped in whole. Only the rows a deletion changed get their lists written again
+    (rewriting all of them turned 06072025 into 6072025, a missing date into 0); the others keep their cells."""
+    def write(tmp: str) -> None:
+        with open(tmp, "w", encoding="utf-8", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore", lineterminator="\n")
+            writer.writeheader()
+            for rd in rows:
+                if rd.get("changed"):
+                    for col in ("videos", "time_of_day", "start_time", "end_time"):
+                        rd["raw"][col] = to_compact_list(rd[col])
+                    if rd["vehicle_type"] is not None and "vehicle_type" in fieldnames:
+                        rd["raw"]["vehicle_type"] = to_compact_list(rd["vehicle_type"])
+                    for col, val in rd["per_video"].items():
+                        if col in fieldnames and val is not None:
+                            rd["raw"][col] = to_compact_list(val)
+                writer.writerow(rd["raw"])
+    replace(path, write)
 
 
 def _loc_string(raw: Dict[str, str]) -> str:
@@ -346,6 +314,8 @@ def _loc_string(raw: Dict[str, str]) -> str:
 
 
 def remove_outer_at_index(rd: Dict[str, Any], outer_i: int) -> None:
+    """Delete the outer_i-th video of a row from all its per-video lists."""
+    rd["changed"] = True
     del rd["videos"][outer_i]
     if outer_i < len(rd["time_of_day"]):
         del rd["time_of_day"][outer_i]
@@ -364,6 +334,7 @@ def remove_outer_at_index(rd: Dict[str, Any], outer_i: int) -> None:
 
 
 def delete_all(video_id: str, rows: List[Dict[str, Any]]) -> Tuple[int, int]:
+    """Delete every occurrence of video_id; returns (occurrences removed, segments removed)."""
     removed_video_slots = 0
     removed_segments = 0
 
@@ -385,6 +356,7 @@ def delete_all(video_id: str, rows: List[Dict[str, Any]]) -> Tuple[int, int]:
 
 
 def list_instances(video_id: str, rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Every segment of video_id: its row, video and segment index, place, start, end, time of day, vehicle type."""
     instances: List[Dict[str, Any]] = []
 
     for row_i, rd in enumerate(rows):
@@ -431,7 +403,9 @@ def list_instances(video_id: str, rows: List[Dict[str, Any]]) -> List[Dict[str, 
 
 
 def delete_one(inst: Dict[str, Any], rows: List[Dict[str, Any]]) -> None:
+    """Delete one segment (an instance of list_instances); the video goes when it has no segments left."""
     rd = rows[inst["row_i"]]
+    rd["changed"] = True
     outer_i = inst["outer_i"]
     inner_i = inst["inner_i"]
 
@@ -468,6 +442,7 @@ def _detect_id_column(fieldnames: List[str]) -> Optional[str]:
 
 
 def _reassign_ids(rows: List[Dict[str, Any]], id_col: str) -> None:
+    """Number the rows in order from 1 (from 0 when the ids started at 0)."""
     ints: List[int] = []
     for rd in rows:
         iv = _to_int_maybe(rd["raw"].get(id_col))
@@ -481,6 +456,7 @@ def _reassign_ids(rows: List[Dict[str, Any]], id_col: str) -> None:
 
 
 def _prune_empty_rows_and_reindex(fieldnames: List[str], rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """The rows that still have videos, with the id column (if any) renumbered."""
     before = len(rows)
     kept = [rd for rd in rows if len(rd.get("videos", [])) > 0]
     removed = before - len(kept)
@@ -503,6 +479,7 @@ def main() -> None:
 
     try:
         logger.info("Loading mapping from {}", mapping_path)
+        loaded = os.stat(mapping_path).st_mtime_ns  # a save checks nobody else wrote it meanwhile
         fieldnames, rows = load_mapping(mapping_path)
     except FileNotFoundError:
         logger.error("File not found: {}", mapping_path)
@@ -598,7 +575,13 @@ def main() -> None:
         logger.error("Invalid choice.")
         return
 
-    write_mapping(out_path, fieldnames, rows)
+    with locked(out_path):
+        if os.path.exists(out_path) and os.path.samefile(out_path, mapping_path) \
+                and os.stat(mapping_path).st_mtime_ns != loaded:
+            logger.error("{} changed while this ran (a review page or script saved it): nothing saved, run again.",
+                         mapping_path)
+            return
+        write_mapping(out_path, fieldnames, rows)
     logger.info("Saved: {}", out_path)
 
 

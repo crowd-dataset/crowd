@@ -1,8 +1,9 @@
 #!/bin/bash
 # Weekly metadata update: refresh mapping_metadata.csv (update_info.py) and crowd_index.jsonl
 # (make_crowd_jsonl.py), split either into NAME_partN files when over 99 MB, commit and push.
-# Runs from cron on the mini (Mondays 02:00) in a clone used only by this job:
-#   0 2 * * 1 $HOME/repos/crowd/release/weekly_metadata.sh >> $HOME/repos/crowd-metadata.log 2>&1
+# Runs from cron on the mini (Mondays 02:00) in a fresh shallow clone made by ~/weekly_metadata_run.sh for each run,
+# never in a clone with work to keep (it resets to origin/main):
+#   0 2 * * 1 $HOME/weekly_metadata_run.sh >> $HOME/Library/Logs/crowd-metadata.log 2>&1
 set -euo pipefail
 shopt -s nullglob
 cd "$(dirname "$0")/.."  # the repo's top folder
@@ -11,6 +12,7 @@ MAX_BYTES=${SPLIT_MAX_BYTES:-99000000}  # also read by split_large_files.py
 FILES=(mapping_metadata.csv crowd_index.jsonl)
 
 LOCK=/tmp/crowd-weekly-metadata.lock
+find "$LOCK" -maxdepth 0 -mmin +1440 -exec rmdir {} \; 2>/dev/null || true  # left by a killed run (a run takes ~2 h)
 mkdir "$LOCK" 2>/dev/null || { echo "$(date '+%F %T') already running"; exit 0; }
 trap 'rmdir "$LOCK"' EXIT
 echo "== $(date '+%F %T') start"

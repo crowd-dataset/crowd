@@ -16,19 +16,21 @@ csv.field_size_limit(sys.maxsize)
 
 
 def part_path(path, n):
+    """NAME_partN.EXT for path NAME.EXT."""
     p = Path(path)
     return p.with_name(f"{p.stem}_part{n}{p.suffix}")
 
 
 def existing_parts(path):
-    parts, n = [], 1
-    while part_path(path, n).exists():
-        parts.append(part_path(path, n))
-        n += 1
+    """The parts of path that exist, in order, up to the first missing number."""
+    parts = []
+    while (p := part_path(path, len(parts) + 1)).exists():
+        parts.append(p)
     return parts
 
 
 def _remove_parts_from(path, n):
+    """Delete parts n, n + 1, ... of path (stale ones from an earlier, larger split)."""
     while part_path(path, n).exists():
         part_path(path, n).unlink()
         n += 1

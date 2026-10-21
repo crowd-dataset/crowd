@@ -14,7 +14,7 @@ reading by the place's coordinates (its id and name are kept for reading it): lo
 mapping changes, so ids would point at other places later. A place is done when its latest reading is "ok" or "no
 coverage" and its value in the mapping is still that reading; setting a value back to 0 has it read again.
 
-Usage: python update_traffic_index.py [--limit 1200] [--dry-run]
+Usage: python -m tools.update_traffic_index [--limit 1200] [--dry-run]   (or python tools/update_traffic_index.py)
 """
 
 import argparse
@@ -40,6 +40,7 @@ DAY = (8, 20)  # local solar hours counted as daytime
 
 
 def local_hour(lon: float, now: datetime) -> float:
+    """Local solar hour (0-24) at longitude lon at the UTC time now."""
     return (now.hour + now.minute / 60 + lon / 15) % 24
 
 
@@ -152,6 +153,7 @@ def main():
         fcntl.flock(lock, fcntl.LOCK_EX)
         raw = open(mapping, newline="", encoding="utf-8").read()
         rows = list(csv.reader(io.StringIO(raw)))
+        i_t, i_lat, i_lon = (rows[0].index(c) for c in ("traffic_index", "lat", "lon"))  # columns may have moved too
         for r in rows[1:]:  # by coordinates: ids may have been renumbered while the requests ran
             if (r[i_lat], r[i_lon]) in new_values:
                 r[i_t] = new_values[(r[i_lat], r[i_lon])]

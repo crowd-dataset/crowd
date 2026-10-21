@@ -51,6 +51,7 @@ FAILED = os.path.join('_output', 'download_failed.json')  # when each failed vid
 
 
 def setting(name, default):
+    """The config entry name, default when the config has none."""
     try:
         return common.get_configs(name)
     except KeyError:
@@ -58,6 +59,7 @@ def setting(name, default):
 
 
 def log(msg):
+    """Print msg with the time, at once (the output goes to a log through tee)."""
     print(time.strftime('%Y-%m-%d %H:%M:%S'), msg, flush=True)
 
 
@@ -105,6 +107,7 @@ def mounted(folder):
 
 def usage(folder):
     """shutil.disk_usage of the drive a folder is on (the folder need not exist yet)."""
+    folder = os.path.abspath(folder)  # a relative one that does not exist looped for ever (dirname('') is '')
     while not os.path.isdir(folder):
         folder = os.path.dirname(folder)
     return shutil.disk_usage(folder)
@@ -155,6 +158,7 @@ def upgrade_ytdlp(h):
 
 
 def secret(name):
+    """The secret name, None when it is empty or missing."""
     try:
         return common.get_secrets(name) or None
     except (KeyError, FileNotFoundError):

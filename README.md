@@ -1362,7 +1362,7 @@ The proposal for the Kyiv video used in the `add_video.py` example above: one se
 `mapping_metadata.csv` holds the YouTube metadata of every video in the `mapping` file (title, upload date, channel, views, description, chapters), and `crowd_index.jsonl` is the same dataset as JSON Lines, one object per segment, built from `mapping.csv` and `mapping_metadata.csv` without the free-text fields (titles, descriptions, chapters). Both are refreshed every Monday at 02:00 (Amsterdam time) by `release/weekly_metadata.sh`, run by cron on a Mac mini at TU/e in a fresh shallow clone made for each run and removed after it:
 
 1. it resets the clone to the latest `main` on GitHub;
-2. `python -m release.update_info` fetches the metadata of videos added since the last run and retries the videos with missing values (offline videos keep being retried and are never removed);
+2. `python -m release.update_info` fetches the metadata of videos added since the last run and retries the videos with missing values (offline videos in the mapping keep being retried); rows of videos no longer in the mapping are dropped;
 3. `python -m release.make_crowd_jsonl` rebuilds `crowd_index.jsonl`;
 4. `python -m release.split_large_files split` splits a file over 99 MB into `NAME_part1.EXT`, `NAME_part2.EXT`, ... (each under 99 MB; CSV parts repeat the header), as GitHub refuses files over 100 MB;
 5. the two files (or their parts) are committed as "Weekly update of video metadata" and pushed. A file over 99 MB is never pushed: the job stops instead. When someone pushed in the meantime, the commit is replayed on top of theirs.

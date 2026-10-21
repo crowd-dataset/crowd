@@ -43,6 +43,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # top folder: common, logmod, ...
 os.chdir(sys.path[0])  # files such as mapping.csv are opened relative to the top folder
 from release import split_large_files  # noqa: E402
+from utils.core.parsing import ENDPOINT_ADJUSTMENT_SECONDS, parse_videos  # noqa: E402
 
 # -----------------------------------------------------------------------------
 # Edit these paths when running without positional arguments.
@@ -50,9 +51,6 @@ from release import split_large_files  # noqa: E402
 MAPPING_CSV = "mapping.csv"
 MAPPING_METADATA_CSV = "mapping_metadata.csv"
 OUTPUT_JSONL = "crowd_index.jsonl"
-
-# The detector/tracker pipeline processes each segment to end_time - 1 second.
-ENDPOINT_ADJUSTMENT_SECONDS = 1
 
 # Privacy-safe default: do not release source-provided free-text metadata.
 # Set to False only if you explicitly decide to release these fields.
@@ -65,16 +63,7 @@ SOURCE_FREE_TEXT_METADATA_FIELDS = {
     "categories",
 }
 
-TIME_OF_DAY_NAMES = {
-    0: "day",
-    1: "night",
-    "0": "day",
-    "1": "night",
-    "day": "day",
-    "night": "night",
-    "Day": "day",
-    "Night": "night",
-}
+TIME_OF_DAY_NAMES = {0: "day", 1: "night"}
 
 VEHICLE_TYPE_NAMES = {
     0: "Car",
@@ -91,20 +80,6 @@ VEHICLE_TYPE_NAMES = {
     11: "Automated two-wheeler",
     12: "Non-electric scooter",
     13: "Pedestrian",
-    "0": "Car",
-    "1": "Bus",
-    "2": "Truck",
-    "3": "Two-wheeler",
-    "4": "Bicycle",
-    "5": "Automated car",
-    "6": "Electric scooter",
-    "7": "Monowheel/unicycle",
-    "8": "Emergency vehicle",
-    "9": "Automated bus",
-    "10": "Automated truck",
-    "11": "Automated two-wheeler",
-    "12": "Non-electric scooter",
-    "13": "Pedestrian",
 }
 
 # Known fields in mapping.csv that describe per-video or per-segment nested values.
@@ -149,16 +124,11 @@ REQUIRED_LOCATION_FIELDS = {"locality", "country", "iso3", "continent", "lat", "
 # -----------------------------------------------------------------------------
 # CSV and parsing helpers
 # -----------------------------------------------------------------------------
-try:
-    csv.field_size_limit(min(sys.maxsize, 1024 * 1024 * 1024))
-except Exception:
-    try:
-        csv.field_size_limit(sys.maxsize)
-    except Exception:
-        pass
+csv.field_size_limit(1024 * 1024 * 1024)  # long list cells; fits a C long everywhere
 
 
 def _is_missing(value: Any) -> bool:
+    """True for None, NaN and empty or nan/none/null/na/n/a strings."""
     if value is None:
         return True
     if isinstance(value, float) and math.isnan(value):
@@ -173,12 +143,6 @@ def _clean_scalar(value: Any) -> Any:
     """Convert CSV scalar strings to JSON-friendly scalars."""
     if _is_missing(value):
         return None
-
-    if isinstance(value, (int, float, bool)):
-        if isinstance(value, float) and math.isnan(value):
-            return None
-        return value
-
     if not isinstance(value, str):
         return value
 
@@ -200,17 +164,11 @@ def _clean_scalar(value: Any) -> Any:
 
     # Convert numeric strings when doing so is safe.
     if re.fullmatch(r"[-+]?\d+", s):
-        try:
-            return int(s)
-        except Exception:
-            return s
+        return int(s)
     if re.fullmatch(r"[-+]?(?:\d+\.\d*|\d*\.\d+)(?:[eE][-+]?\d+)?", s):
-        try:
-            f = float(s)
-            if math.isfinite(f):
-                return f
-        except Exception:
-            return s
+        f = float(s)
+        if math.isfinite(f):  # 1e999 stays a string
+            return f
 
     return s
 
@@ -283,6 +241,7 @@ def _parse_cell_uncached(value: Any) -> Any:
 
 
 def _ensure_list(value: Any) -> List[Any]:
+    """value as a list: [] for None, itself for a list, else [value]."""
     if value is None:
         return []
     if isinstance(value, list):
@@ -291,6 +250,7 @@ def _ensure_list(value: Any) -> List[Any]:
 
 
 def _read_csv_rows(path: Path) -> Tuple[List[str], List[Dict[str, Any]]]:
+    """The header and the rows (dicts of strings) of a CSV file."""
     with path.open("r", encoding="utf-8-sig", newline="") as f:
         reader = csv.DictReader(f)
         fieldnames = reader.fieldnames or []
@@ -319,34 +279,6 @@ def _extract_youtube_id(value: Any) -> Optional[str]:
         return s
 
     return None
-
-
-def _parse_video_ids(value: Any) -> List[str]:
-    parsed = _parse_cell(value)
-    ids: List[str] = []
-
-    if isinstance(parsed, list):
-        for item in parsed:
-            vid = _extract_youtube_id(item)
-            if vid:
-                ids.append(vid)
-    else:
-        vid = _extract_youtube_id(parsed)
-        if vid:
-            ids.append(vid)
-
-    # Fallback for awkward cells.
-    if not ids and isinstance(value, str):
-        ids.extend(re.findall(r"[A-Za-z0-9_-]{6,}", value))
-
-    # Preserve order and remove duplicates.
-    seen = set()
-    out = []
-    for vid in ids:
-        if vid not in seen:
-            seen.add(vid)
-            out.append(vid)
-    return out
 
 
 def _get_group_for_video(value: Any, video_index: int, n_videos: int) -> List[Any]:
@@ -384,6 +316,7 @@ def _get_group_for_video(value: Any, video_index: int, n_videos: int) -> List[An
 
 
 def _get_segment_value(row: Dict[str, Any], field: str, video_index: int, n_videos: int, segment_index: int) -> Any:
+    """The value of one segment in a nested mapping column (the video's first value when it has fewer)."""
     group = _get_group_for_video(row.get(field), video_index, n_videos)
     if not group:
         return None
@@ -393,6 +326,7 @@ def _get_segment_value(row: Dict[str, Any], field: str, video_index: int, n_vide
 
 
 def _to_float(value: Any) -> Optional[float]:
+    """value as a finite float, else None."""
     if _is_missing(value):
         return None
     try:
@@ -413,6 +347,7 @@ def _to_int(value: Any) -> Optional[int]:
 
 
 def _format_number_for_id(value: Any) -> str:
+    """A time for a segment id: 12 -> '12', 12.5 -> '12p5', None -> 'missing'."""
     f = _to_float(value)
     if f is None:
         return "missing"
@@ -423,6 +358,8 @@ def _format_number_for_id(value: Any) -> str:
 
 
 def _processed_duration(start_time: Any, end_time: Any) -> Tuple[Optional[float], Optional[float], Optional[float]]:
+    """(processed end, duration s, duration min) as main.py trims a segment (float times kept, unlike
+    utils.core.parsing.processed_segment_duration_seconds); Nones for non-numeric times."""
     start = _to_float(start_time)
     end = _to_float(end_time)
     if start is None or end is None:
@@ -436,18 +373,13 @@ def _processed_duration(start_time: Any, end_time: Any) -> Tuple[Optional[float]
     return processed_end, duration, duration / 60.0
 
 
-def _normalise_date(value: Any) -> Any:
-    """Keep upload date strings stable and JSON-friendly without inventing recording dates."""
-    if _is_missing(value):
-        return None
-    return _clean_scalar(value)
-
-
 def _scalar_mapping_value(row: Dict[str, Any], field: str) -> Any:
+    """A mapping cell as a JSON value."""
     return _json_friendly(_parse_cell(row.get(field)))
 
 
 def _build_location(row: Dict[str, Any], fieldnames: Iterable[str]) -> Dict[str, Any]:
+    """The location object of a mapping row (lat/lon under those names); required keys are null when missing."""
     location: Dict[str, Any] = {}
     lower_to_actual = {name.lower(): name for name in fieldnames}
 
@@ -466,13 +398,14 @@ def _build_location(row: Dict[str, Any], fieldnames: Iterable[str]) -> Dict[str,
 
     # These keys are required by the public JSONL schema. Missing source values
     # are represented explicitly as JSON null rather than by omitting the key.
-    for required in ("locality", "country", "iso3", "continent", "lat", "lon"):
+    for required in sorted(REQUIRED_LOCATION_FIELDS):
         location.setdefault(required, None)
 
     return location
 
 
 def _build_mapping_extra(row: Dict[str, Any], fieldnames: Iterable[str]) -> Dict[str, Any]:
+    """The other non-empty mapping columns of a row (gmp, population, ...), keyed by their names."""
     location_fields = {x.lower() for x in LOCATION_FIELD_CANDIDATES}
     core_fields = {x.lower() for x in CORE_LIST_LIKE_MAPPING_FIELDS}
     extra: Dict[str, Any] = {}
@@ -489,6 +422,7 @@ def _build_mapping_extra(row: Dict[str, Any], fieldnames: Iterable[str]) -> Dict
 
 
 def _clean_metadata_row(row: Dict[str, Any], fieldnames: Iterable[str]) -> Dict[str, Any]:
+    """The non-empty mapping_metadata.csv fields of a row, without ids and (by default) free text."""
     metadata: Dict[str, Any] = {}
 
     for field in fieldnames:
@@ -498,7 +432,7 @@ def _clean_metadata_row(row: Dict[str, Any], fieldnames: Iterable[str]) -> Dict[
         if EXCLUDE_SOURCE_FREE_TEXT_METADATA and fl in SOURCE_FREE_TEXT_METADATA_FIELDS:
             continue
 
-        value = _json_friendly(_parse_cell(row.get(field)))
+        value = _scalar_mapping_value(row, field)
         if value is not None:
             metadata[field] = value
 
@@ -506,6 +440,7 @@ def _clean_metadata_row(row: Dict[str, Any], fieldnames: Iterable[str]) -> Dict[
 
 
 def _build_metadata_index(metadata_csv: Path) -> Dict[str, Dict[str, Any]]:
+    """YouTube id -> its cleaned metadata (joined from its parts first when split); {} without the file."""
     split_large_files.join(metadata_csv)
     if not metadata_csv.exists():
         return {}
@@ -527,58 +462,42 @@ def _build_metadata_index(metadata_csv: Path) -> Dict[str, Dict[str, Any]]:
             continue
 
         cleaned = _clean_metadata_row(row, fieldnames)
-        if vid in index:
-            # Merge duplicate metadata rows, later non-empty values take precedence.
-            merged = dict(index[vid])
-            merged.update(cleaned)
-            index[vid] = merged
-        else:
-            index[vid] = cleaned
+        # Merge duplicate metadata rows, later non-empty values take precedence.
+        index.setdefault(vid, {}).update(cleaned)
 
     return index
 
 
 def _make_segment_record(
     row: Dict[str, Any],
-    fieldnames: List[str],
     row_number: int,
     video_id: str,
     video_index: int,
     n_videos: int,
     segment_index: int,
     duplicate_suffix: int,
-    metadata_index: Dict[str, Dict[str, Any]],
+    metadata: Dict[str, Any],
+    location: Dict[str, Any],
+    mapping_extra: Dict[str, Any],
 ) -> Optional[Dict[str, Any]]:
+    """The JSONL record of one segment; None when its times are missing or end <= start."""
     start_time = _get_segment_value(row, "start_time", video_index, n_videos, segment_index)
     end_time = _get_segment_value(row, "end_time", video_index, n_videos, segment_index)
 
     start_float = _to_float(start_time)
     end_float = _to_float(end_time)
-    if start_float is None or end_float is None:
+    if start_float is None or end_float is None or end_float <= start_float:
         return None
-    if end_float <= start_float:
-        return None
-
-    processed_end, processed_duration_s, processed_duration_min = _processed_duration(start_float, end_float)
 
     time_of_day = _to_int(_get_segment_value(row, "time_of_day", video_index, n_videos, segment_index))
     vehicle_type = _to_int(_get_segment_value(row, "vehicle_type", video_index, n_videos, segment_index))
-    upload_date_mapping = _get_segment_value(row, "upload_date", video_index, n_videos, segment_index)
-
-    metadata = metadata_index.get(video_id, {})
-    upload_date_metadata = metadata.get("upload_date")
-    upload_date = _normalise_date(upload_date_mapping if upload_date_mapping is not None else upload_date_metadata)
+    upload_date = _get_segment_value(row, "upload_date", video_index, n_videos, segment_index)
+    upload_date = _clean_scalar(upload_date if upload_date is not None else metadata.get("upload_date"))
 
     start_id = _format_number_for_id(start_float)
     end_id = _format_number_for_id(end_float)
     base_segment_id = f"{video_id}_{start_id}_{end_id}"
     segment_id = base_segment_id if duplicate_suffix == 0 else f"{base_segment_id}_{duplicate_suffix}"
-
-    time_of_day_name = TIME_OF_DAY_NAMES.get(time_of_day, TIME_OF_DAY_NAMES.get(str(time_of_day), None))
-    vehicle_type_name = VEHICLE_TYPE_NAMES.get(vehicle_type, VEHICLE_TYPE_NAMES.get(str(vehicle_type), None))
-
-    location = _build_location(row, fieldnames)
-    mapping_extra = _build_mapping_extra(row, fieldnames)
 
     mapping_row_number = _to_int(row.get("id")) or row_number
 
@@ -592,9 +511,9 @@ def _make_segment_record(
         "end_time_s": end_float,
         "upload_date": upload_date,
         "time_of_day_code": time_of_day,
-        "time_of_day_name": time_of_day_name,
+        "time_of_day_name": TIME_OF_DAY_NAMES.get(time_of_day),
         "vehicle_type_code": vehicle_type,
-        "vehicle_type_name": vehicle_type_name,
+        "vehicle_type_name": VEHICLE_TYPE_NAMES.get(vehicle_type),
         "location": location,
         "mapping_row_number": mapping_row_number,
         "metadata": metadata,
@@ -605,6 +524,7 @@ def _make_segment_record(
 
 
 def build_records(mapping_csv: Path, metadata_csv: Path) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    """The JSONL records of all segments of the mapping, sorted by video and segment id, and a summary of counts."""
     metadata_index = _build_metadata_index(metadata_csv)
 
     fieldnames, rows = _read_csv_rows(mapping_csv)
@@ -615,12 +535,15 @@ def build_records(mapping_csv: Path, metadata_csv: Path) -> Tuple[List[Dict[str,
     seen_segment_ids: Counter[str] = Counter()
 
     for row_index, row in enumerate(rows, start=1):
-        video_ids = _parse_video_ids(row.get("videos") or row.get("video_id") or row.get("video"))
+        video_ids = parse_videos(row.get("videos") or row.get("video_id") or row.get("video"))
         if not video_ids:
             skipped_rows_without_video += 1
             continue
 
         n_videos = len(video_ids)
+        # The same for every segment of the row; _json_friendly(record) copies them.
+        location = _build_location(row, fieldnames)
+        mapping_extra = _build_mapping_extra(row, fieldnames)
 
         for video_index, video_id in enumerate(video_ids):
             starts = _get_group_for_video(row.get("start_time"), video_index, n_videos)
@@ -639,14 +562,15 @@ def build_records(mapping_csv: Path, metadata_csv: Path) -> Tuple[List[Dict[str,
 
                 record = _make_segment_record(
                     row=row,
-                    fieldnames=fieldnames,
                     row_number=row_index,
                     video_id=video_id,
                     video_index=video_index,
                     n_videos=n_videos,
                     segment_index=segment_index,
                     duplicate_suffix=duplicate_suffix,
-                    metadata_index=metadata_index,
+                    metadata=metadata_index.get(video_id, {}),
+                    location=location,
+                    mapping_extra=mapping_extra,
                 )
                 if record is None:
                     skipped_segments_bad_times += 1
@@ -676,6 +600,7 @@ def build_records(mapping_csv: Path, metadata_csv: Path) -> Tuple[List[Dict[str,
 
 
 def write_jsonl_atomic(records: List[Dict[str, Any]], output_path: Path) -> None:
+    """Write one compact, key-sorted JSON object per line to output_path via a temporary file."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     fd, tmp_name = tempfile.mkstemp(prefix=output_path.name + ".", suffix=".tmp", dir=str(output_path.parent))
@@ -713,6 +638,7 @@ def validate_generated_schema(records: List[Dict[str, Any]]) -> None:
 
 
 def _resolve_paths_from_argv() -> Tuple[Path, Path, Path]:
+    """Mapping, metadata and output paths from the optional positional arguments."""
     args = sys.argv[1:]
     mapping_csv = Path(args[0]) if len(args) >= 1 else Path(MAPPING_CSV)
     metadata_csv = Path(args[1]) if len(args) >= 2 else Path(MAPPING_METADATA_CSV)

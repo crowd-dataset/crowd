@@ -1,17 +1,21 @@
 # by Pavlo Bazilinskyy <pavlo.bazilinskyy@gmail.com>
+"""Refresh mapping_metadata.csv: fetch title, upload date, channel, views, description and chapters (pytubefix) of
+every mapping video not in it yet, and again of those with a missing title, upload date, channel or views. Rows of
+videos no longer in the mapping are dropped (the ids of the other rows stay)."""
 
 import pandas as pd
-import ast
 from pytubefix import YouTube
 from tqdm import tqdm
 from datetime import datetime, timedelta
 import os
+import socket
 import sys
 import csv
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # top folder: common, logmod, ...
 os.chdir(sys.path[0])  # files such as mapping.csv are opened relative to the top folder
 import common  # noqa: E402
 from release import split_large_files  # noqa: E402
+from utils.core.parsing import parse_videos  # noqa: E402
 from custom_logger import CustomLogger  # noqa: E402
 from logmod import logs  # noqa: E402
 
@@ -23,24 +27,12 @@ csv_headers = [
     "id", "video", "title", "upload_date", "channel", "views", "description",
     "chapters", "segments", "date_updated"
 ]
-
-
-# -----------------------------
-# helpers
-# -----------------------------
-
-def safe_parse(val):
-    if isinstance(val, str):
-        try:
-            return ast.literal_eval(val)
-        except Exception:
-            if val.startswith("[") and val.endswith("]"):
-                inner = val[1:-1]
-                return [item.strip().strip("'\"") for item in inner.split(",") if item.strip()]
-    return []
+SAVE_EVERY = 200  # videos between saves of the file, so an interrupted manual run keeps most of its work
+socket.setdefaulttimeout(60)  # a stalled YouTube connection must not hang the weekly job forever
 
 
 def clean_text(val):
+    """A cell as one line of text: a list as its repr, NaN as ''."""
     if isinstance(val, list):
         return str(val)
     if pd.isna(val):
@@ -58,7 +50,19 @@ def is_missing(value):
     return s == "" or s == "nan"
 
 
+def to_int_safe(x):
+    """x as an int ('21092024.0' -> 21092024); 0 for missing or unparsable values."""
+    try:
+        if is_missing(x):
+            return 0
+        s = str(x).strip()
+        return int(float(s)) if "." in s else int(s)
+    except (TypeError, ValueError, OverflowError):
+        return 0
+
+
 def get_video_info(video_id):
+    """The metadata fields of one video; empty strings for all of them when it cannot be fetched."""
     try:
         # OAuth asks for a sign-in in the terminal, which a scheduled run cannot answer
         yt = YouTube(
@@ -73,22 +77,18 @@ def get_video_info(video_id):
         upload_date = yt.publish_date.strftime("%d%m%Y") if yt.publish_date else ""
 
         chapters = []
-        if yt.chapters:
-            for c in yt.chapters:
-                try:
-                    chapters.append({
-                        "title": c.title,
-                        "timestamp": str(timedelta(seconds=c.start_seconds))
-                    })
-                except Exception as e:
-                    logger.error(f"⚠️ failed to extract chapter for {video_id}: {e}")
-
-        safe_title = str(title).replace("{", "{{").replace("}", "}}")
-        safe_channel = str(channel).replace("{", "{{").replace("}", "}}")
+        for c in yt.chapters or []:
+            try:
+                chapters.append({
+                    "title": c.title,
+                    "timestamp": str(timedelta(seconds=c.start_seconds))
+                })
+            except Exception as e:
+                logger.error(f"⚠️ failed to extract chapter for {video_id}: {e}")
 
         logger.info(
             "✅ fetched: {} | title: {} | upload: {} | channel: {} | views: {}",
-            video_id, safe_title, upload_date, safe_channel, views
+            video_id, title, upload_date, channel, views
         )
 
         return {
@@ -101,11 +101,8 @@ def get_video_info(video_id):
             "chapters": clean_text(chapters),
         }
 
-    except Exception as e:
-        logger.info(
-            "❌ failed to fetch {}: {}",
-            video_id, e
-        )
+    except Exception as e:  # unavailable, private, needs a login, network error: retried next run
+        logger.info("❌ failed to fetch {}: {}", video_id, e)
         return {
             "video": video_id,
             "title": "",
@@ -117,6 +114,14 @@ def get_video_info(video_id):
         }
 
 
+def save(df):
+    """Write df to the metadata file atomically (the weekly job pushes it); views as integers."""
+    df["views"] = df["views"].apply(to_int_safe)
+    tmp = f"{metadata_file}.tmp"
+    df.to_csv(tmp, index=False)
+    os.replace(tmp, metadata_file)
+
+
 # -----------------------------------------------------
 # main
 # -----------------------------------------------------
@@ -126,11 +131,7 @@ if __name__ == "__main__":
     df_map = pd.read_csv(common.get_configs("mapping"))
 
     # gather all video IDs found in mapping file
-    all_video_ids = []
-    for row in df_map["videos"]:
-        vids = safe_parse(row)
-        all_video_ids.extend(vids)
-
+    all_video_ids = [vid for row in df_map["videos"] for vid in parse_videos(row)]
     video_count = pd.Series(all_video_ids).value_counts().to_dict()
     unique_video_ids = list(video_count.keys())
 
@@ -139,15 +140,20 @@ if __name__ == "__main__":
     if os.path.exists(metadata_file):
         existing_df = pd.read_csv(metadata_file, dtype=str)
         existing_df["id"] = existing_df["id"].astype(int)  # id must stay numeric
+        last_id = existing_df["id"].max() if not existing_df.empty else 0  # before dropping: ids are never reused
+        # videos no longer in the mapping (removed, or merged away) leave the file
+        gone = ~existing_df["video"].astype(str).isin(video_count)
+        if gone.any():
+            logger.info(f"🗑️ dropping {int(gone.sum())} videos no longer in the mapping")
+            existing_df = existing_df[~gone].reset_index(drop=True)
         existing_ids = set(existing_df["video"].astype(str).tolist())
-        last_id = existing_df["id"].max() if not existing_df.empty else 0
 
         logger.info(f"🗃️ found {len(existing_ids)} videos in existing metadata")
 
         # detect missing data
         critical_cols = ["title", "upload_date", "channel", "views"]
-        failed_mask = existing_df[critical_cols].applymap(is_missing).any(axis=1)  # type: ignore
-        failed_ids = set(existing_df.loc[failed_mask, "video"].astype(str).tolist())  # type: ignore
+        failed_mask = existing_df[critical_cols].map(is_missing).any(axis=1)
+        failed_ids = set(existing_df.loc[failed_mask, "video"].astype(str).tolist())
 
         logger.info(f"🔁 found {len(failed_ids)} videos with missing metadata")
 
@@ -158,6 +164,7 @@ if __name__ == "__main__":
             w.writerow(csv_headers)
 
         existing_df = pd.DataFrame(columns=csv_headers)
+        gone = pd.Series(dtype=bool)
         existing_ids = set()
         failed_ids = set()
         last_id = 0
@@ -166,8 +173,7 @@ if __name__ == "__main__":
 
     # determine which videos to fetch
     missing_in_metadata = [vid for vid in unique_video_ids if vid not in existing_ids]
-    retry_videos = [vid for vid in failed_ids]
-
+    retry_videos = list(failed_ids)
     videos_to_fetch = missing_in_metadata + retry_videos
 
     logger.info(
@@ -182,7 +188,7 @@ if __name__ == "__main__":
     existing_df["video"] = existing_df["video"].astype(str)
 
     # main loop
-    for vid in tqdm(videos_to_fetch):
+    for n, vid in enumerate(tqdm(videos_to_fetch), start=1):
         vid = str(vid)
         info = get_video_info(vid)
 
@@ -193,8 +199,7 @@ if __name__ == "__main__":
         mask = existing_df["video"] == vid
 
         if mask.any():
-            existing_id = existing_df.loc[mask, "id"].iloc[0]
-            info["id"] = existing_id
+            info["id"] = existing_df.loc[mask, "id"].iloc[0]
             for col, val in info.items():
                 existing_df.loc[mask, col] = val
         else:
@@ -202,30 +207,11 @@ if __name__ == "__main__":
             info["id"] = current_id
             existing_df = pd.concat([existing_df, pd.DataFrame([info])], ignore_index=True)
 
-        # enforce integer types for selected columns
-        int_columns = ["id", "upload_date", "date_updated", "views"]
+        if n % SAVE_EVERY == 0 or n == len(videos_to_fetch):
+            save(existing_df)
+            logger.info(f"💾 saved metadata after {n} of {len(videos_to_fetch)} videos")
 
-        for col in int_columns:
-            if col in existing_df.columns:
-                def to_int_safe(x):
-                    try:
-                        if x is None:
-                            return 0
-                        s = str(x).strip()
-                        if s == "" or s.lower() == "nan":
-                            return 0
-                        # handle floats stored as strings: "21092024.0"
-                        if "." in s:
-                            return int(float(s))
-                        return int(s)
-                    except Exception:
-                        return 0
-
-        existing_df[col] = existing_df[col].apply(to_int_safe)
-
-        # write entire file safely
-        existing_df.to_csv(metadata_file, index=False)
-
-        logger.info(f"💾 updated metadata for {vid}")
-
+    if gone.any() and not videos_to_fetch:  # only rows dropped: save them too
+        save(existing_df)
+        logger.info("💾 saved metadata without the dropped videos")
     logger.info("✅ all videos processed and metadata file updated.")

@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
 """
-Scan specific folders for likely-corrupt videos (e.g., container duration looks fine
-but video frames stop early) and write a TXT report.
+Scan the video folders ("videos" of the config) for likely-corrupt videos (e.g., container duration looks fine
+but video frames stop early, or the last seconds do not decode) and write a TXT report, corrupt_videos.txt.
 
-Requires:
-  - ffprobe and ffmpeg on PATH (FFmpeg)
+Requires ffprobe and ffmpeg on PATH. tools/video_inventory.py (nightly on lin4080) finds unreadable and short files
+too, from the metadata only; this one decodes the last seconds of each file.
 
-Edit ROOT_FOLDERS below to your folder paths, then run:
-  python find_corrupt_videos_hardcoded.py
+    python -m tools.find_corrupt_files
 """
 
 from __future__ import annotations
@@ -26,7 +25,7 @@ from pathlib import Path  # noqa: E402
 from typing import Iterable, Optional, Tuple, List  # noqa: E402
 
 # =========================
-# EDIT THESE PATHS
+# the folders to scan
 # =========================
 ROOT_FOLDERS = common.get_configs("videos")
 
@@ -54,6 +53,7 @@ class CheckResult:
 
 
 def which_or_exit(bin_name: str) -> str:
+    """Path of a program on PATH; exits with 2 when it is not there."""
     p = shutil.which(bin_name)
     if not p:
         print(
@@ -65,6 +65,7 @@ def which_or_exit(bin_name: str) -> str:
 
 
 def iter_video_files(roots: List[Path]) -> Iterable[Path]:
+    """The video files among roots and in their folders, recursively."""
     for r in roots:
         if r.is_file():
             if r.suffix.lower() in VIDEO_EXTS:
@@ -79,6 +80,7 @@ def iter_video_files(roots: List[Path]) -> Iterable[Path]:
 
 
 def run_cmd(cmd: List[str], timeout_s: int = 120) -> Tuple[int, str, str]:
+    """(exit code, stdout, stderr) of a command; 124 and "TIMEOUT" when it took too long."""
     try:
         cp = subprocess.run(
             cmd,
@@ -128,16 +130,19 @@ def ffprobe_metadata(ffprobe: str, path: Path) -> Tuple[Optional[float], bool, s
     return format_duration, has_video, ""
 
 
-def ffprobe_last_video_frame_ts(ffprobe: str, path: Path, tail_seconds: int) -> Tuple[Optional[float], str]:
+def ffprobe_last_video_frame_ts(ffprobe: str, path: Path, tail_seconds: int,
+                                duration: Optional[float]) -> Tuple[Optional[float], str]:
     """
-    Try to read video frames near the end of file and return the last frame timestamp.
-    If no frames are returned, returns (None, reason).
+    Try to read the video frames of the last tail_seconds before duration (the whole file when it is None) and
+    return the last frame timestamp. If no frames are returned, returns (None, reason).
     """
+    # ffprobe has no -sseof (an ffmpeg option): with it every run failed and every file was flagged
+    interval = [] if duration is None else ["-read_intervals", f"{max(0.0, duration - tail_seconds)}%"]
     cmd = [
         ffprobe,
         "-v", "error",
         "-select_streams", "v:0",
-        "-sseof", f"-{tail_seconds}",
+        *interval,
         "-show_entries", "frame=best_effort_timestamp_time",
         "-of", "csv=p=0",
         str(path),
@@ -178,8 +183,8 @@ def ffmpeg_decode_tail_errors(ffmpeg: str, path: Path, tail_seconds: int) -> Tup
     rc, _out, err = run_cmd(cmd, timeout_s=120)
 
     err_clean = (err or "").strip()
-    if rc != 0 and err_clean:
-        return True, f"ffmpeg_decode_tail_failed: {err_clean.splitlines()[-1][:300]}"
+    if rc != 0:  # a failure without a message was passed as fine
+        return True, f"ffmpeg_decode_tail_failed: {(err_clean.splitlines() or [f'exit code {rc}'])[-1][:300]}"
     if err_clean:
         last_line = err_clean.splitlines()[-1][:300]
         return True, f"ffmpeg_decode_tail_error: {last_line}"
@@ -187,6 +192,8 @@ def ffmpeg_decode_tail_errors(ffmpeg: str, path: Path, tail_seconds: int) -> Tup
 
 
 def check_video(path: Path, ffprobe: str, ffmpeg: str) -> CheckResult:
+    """Whether a video looks corrupt: no video stream, errors decoding its tail, or frames ending well before its
+    duration."""
     format_duration, has_video, meta_err = ffprobe_metadata(ffprobe, path)
     if meta_err:
         return CheckResult(path, True, meta_err, format_duration, None)
@@ -194,7 +201,7 @@ def check_video(path: Path, ffprobe: str, ffmpeg: str) -> CheckResult:
     if not has_video:
         return CheckResult(path, True, "no_video_stream_found", format_duration, None)
 
-    last_ts, tail_reason = ffprobe_last_video_frame_ts(ffprobe, path, tail_seconds=TAIL_SECONDS)
+    last_ts, tail_reason = ffprobe_last_video_frame_ts(ffprobe, path, TAIL_SECONDS, format_duration)
     ffmpeg_tail_err, ffmpeg_reason = ffmpeg_decode_tail_errors(ffmpeg, path, tail_seconds=TAIL_SECONDS)
 
     reasons = []

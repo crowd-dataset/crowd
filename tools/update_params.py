@@ -1,17 +1,30 @@
+"""Country values of the mapping brought up to date, written to mapping_updated.csv (the mapping itself is not
+changed): avg_height from analysis_data/height_data.csv, med_age from analysis_data/countries.csv, and
+traffic_mortality, literacy_rate, population_country and gini from the World Bank (the latest year with a value;
+where it has none, countries.csv's population, then the mapping's value). Prints the countries left without a value.
+
+    python -m tools.update_params
+
+The World Bank files are kept in .wb_cache/ for a week.
+"""
 import os
 import io
 import re
+import sys
 import time
 import zipfile
 import pandas as pd
 import pycountry
 import requests
-os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # top folder: mapping.csv, ...
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # top folder: common, logmod, ...
+os.chdir(sys.path[0])  # files such as mapping.csv are opened relative to the top folder
+import common  # noqa: E402
 
 mapping_path = "mapping.csv"
-height_path = os.path.join("analysis_data", "height_data.csv")
-countries_path = os.path.join("analysis_data", "countries.csv")
+height_path = common.data_path("height_data.csv")
+countries_path = common.data_path("countries.csv")
 OUT_PATH = "mapping_updated.csv"
+CACHE_S = 7 * 86400  # a World Bank file older than this is downloaded again
 
 WB_INDICATORS = {
     "SH.STA.TRAF.P5": "traffic_mortality",
@@ -22,6 +35,7 @@ WB_INDICATORS = {
 
 
 def robust_get(url, params=None, timeout=(20, 180), tries=5):
+    """requests.get that tries again (waiting 1, 2, 4, ... s) on timeouts, connection and HTTP errors."""
     last = None
     for i in range(tries):
         try:
@@ -58,14 +72,17 @@ def wb_download_indicator_latest(
     os.makedirs(cache_dir, exist_ok=True)
     zip_path = os.path.join(cache_dir, f"{indicator_code}.zip")
 
-    if not os.path.exists(zip_path):
+    # downloaded again after CACHE_S (it was kept for ever), and swapped in whole: a download cut off part way left a
+    # broken zip that every later run failed on
+    if not os.path.exists(zip_path) or time.time() - os.path.getmtime(zip_path) > CACHE_S:
         url = (
             "https://api.worldbank.org/v2/country/all/indicator/"
             f"{indicator_code}"
         )
         r = robust_get(url, params={"downloadformat": "csv"})
-        with open(zip_path, "wb") as f:
+        with open(zip_path + ".tmp", "wb") as f:
             f.write(r.content)
+        os.replace(zip_path + ".tmp", zip_path)
 
     with zipfile.ZipFile(zip_path, "r") as z:
         data_name = None
@@ -243,6 +260,7 @@ iso2_age = (
 
 
 def iso3_to_iso2(iso3):
+    """ISO-2 code of an ISO-3 code (XK for Kosovo), NA when pycountry has none."""
     if iso3 == "XKX":  # Kosovo is not in ISO 3166
         return "XK"
     country = pycountry.countries.get(alpha_3=str(iso3))

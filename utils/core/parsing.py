@@ -8,6 +8,7 @@ get only those files on a sync, not utils/.
 """
 import ast
 import re
+import warnings
 
 # The detector/tracker pipeline trims each segment to t_end - 1 second (main.py); durations in the analysis use the
 # same processed endpoint.
@@ -42,7 +43,9 @@ def parse_list(cell) -> list:
     if s in ("", "[]") or s.lower() in ("nan", "none", "null"):
         return []
     try:
-        value = ast.literal_eval(s)
+        with warnings.catch_warnings():  # bare IDs starting with a digit (1PLGB...) warn before they fail
+            warnings.simplefilter("ignore", SyntaxWarning)
+            value = ast.literal_eval(s)
         return value if isinstance(value, list) else []
     except (ValueError, SyntaxError):
         if s.startswith("[") and s.endswith("]"):
@@ -71,6 +74,9 @@ def total_processed_seconds(start_cell, end_cell) -> int:
 if __name__ == "__main__":
     assert processed_segment_duration_seconds(0, 61) == 60 and processed_segment_duration_seconds(5, 6) == 1
     assert processed_segment_duration_seconds("x", 3) == 0 and processed_segment_duration_seconds(0, float("inf")) == 0
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")  # no SyntaxWarning for IDs starting with a digit
+        assert parse_list("[1PLGBTgF_jM,abc]") == ["1PLGBTgF_jM", "abc"]
     assert parse_list("[abc,def-_1]") == ["abc", "def-_1"] and parse_list('"[1, 2]"') == [1, 2]
     assert parse_list("") == [] and parse_list(None) == [] and parse_list("nan") == []
     assert parse_nested("[0, 10]") == [[0, 10]] and parse_nested("[[0],[5,6]]") == [[0], [5, 6]]

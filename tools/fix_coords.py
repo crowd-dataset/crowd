@@ -1,7 +1,7 @@
 """Drag the localities added to the mapping since a commit to where they really are, then write those coordinates.
 
-    python fix_coords.py --country "Puerto Rico"           # page at http://127.0.0.1:8771: drag the markers
-    python fix_coords.py --country "Puerto Rico" --apply   # write the dragged coordinates to mapping.csv
+    python -m tools.fix_coords --country "Puerto Rico"           # page at http://127.0.0.1:8771: drag the markers
+    python -m tools.fix_coords --country "Puerto Rico" --apply   # write the dragged coordinates to mapping.csv
 
 Each drag is kept in _output/coords_fixes.json; --apply changes only lat and lon of those rows.
 """
@@ -21,6 +21,7 @@ FIXES = '_output/coords_fixes.json'
 
 
 def key(r):
+    """A locality's key: locality|state|country (ids change when the mapping is renumbered)."""
     return f"{r['locality']}|{r['state']}|{r['country']}"
 
 
@@ -33,6 +34,7 @@ def new_rows(since, country):
 
 
 def load_fixes():
+    """{key: [lat, lon]} of the drags so far ({} before the first)."""
     try:
         with open(FIXES) as f:
             return json.load(f)
@@ -49,6 +51,7 @@ def apply(rows, fixes):
 
 
 def _apply(rows, fixes):
+    """apply without the lock: the names of the localities moved."""
     with open(MAPPING, newline='') as f:
         lines = f.read().split('\n')
     header = next(csv.reader([lines[0]]))

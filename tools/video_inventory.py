@@ -23,7 +23,6 @@ Standard library only, and ffprobe. Nightly on lin4080, in the checkout ~/crowd-
         --config ~/Documents/GitHub/pedestrians-in-youtube/config' >> $HOME/crowd-counts/inventory.log 2>&1
 """
 import argparse
-import ast
 import collections
 import csv
 import glob
@@ -34,6 +33,9 @@ import subprocess
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # top folder: utils/
+from utils.core.parsing import parse_list, parse_videos  # noqa: E402
 
 OUT_CSV, OUT_JSON = '_output/video_inventory.csv', '_output/video_inventory.json'
 VIDEO = re.compile(r'[A-Za-z0-9_-]{11}\.mp4')  # a YouTube id: not main.py's working clips (yt_ID_..._mod_....mp4)
@@ -50,7 +52,9 @@ def probe(path):
         s = info['streams'][0]
         num, _, den = s.get('avg_frame_rate', '0/1').partition('/')
         return float(info['format']['duration']), int(s['height']), round(float(num) / float(den or 1), 2)
-    except Exception:
+    except FileNotFoundError:  # no ffprobe: every file would be listed as unreadable
+        raise
+    except Exception:  # a broken or partial file: no JSON, no stream, no duration, or ffprobe timed out
         return None
 
 
@@ -63,12 +67,8 @@ def segment_ends(mapping_files):
         file_ends = {}
         with open(path, encoding='utf-8') as f:
             for row in csv.DictReader(f):
-                vids = [v.strip() for v in row['videos'].strip('"[] ').split(',') if v.strip()]
-                try:
-                    end_times = ast.literal_eval(row['end_time'] or '[]')
-                except (ValueError, SyntaxError):
-                    end_times = []
-                for i, v in enumerate(vids):
+                end_times = parse_list(row['end_time'])
+                for i, v in enumerate(parse_videos(row['videos'])):
                     seg = end_times[i] if i < len(end_times) and isinstance(end_times[i], list) else []
                     file_ends[v] = max([file_ends.get(v, 0), *[t for t in seg if isinstance(t, (int, float))]])
         if first is None:
@@ -100,7 +100,11 @@ def main():
     ap.add_argument('--config', default='config', help='a config with "videos" (default: ./config)')
     ap.add_argument('--threads', type=int, default=8)
     args = ap.parse_args()
-    folders = args.folders or json.load(open(os.path.expanduser(args.config)))['videos'][:-1]
+    if args.folders:
+        folders = args.folders
+    else:
+        with open(os.path.expanduser(args.config)) as f:
+            folders = json.load(f)['videos'][:-1]
     old = {}
     if os.path.exists(OUT_CSV):
         with open(OUT_CSV) as f:
@@ -147,8 +151,9 @@ def main():
         problems={p: dict(files=n, gb=round(gb[p])) for p, n in count.items()},
         folders=[dict(folder=d, files=sum(r['folder'] == d for r in files),
                       tb=round(sum(r['mb'] for r in files if r['folder'] == d) / 1e6, 2)) for d in folders])
-    with open(OUT_JSON, 'w') as f:
+    with open(OUT_JSON + '.tmp', 'w') as f:  # swapped in whole: the status page reads it over ssh
         json.dump(summary, f, indent=1)
+    os.replace(OUT_JSON + '.tmp', OUT_JSON)
     print(json.dumps({k: v for k, v in summary.items() if k != 'folders'}))
 
 
