@@ -298,14 +298,26 @@ WALK_PERSON_SHARE, WALK_AHEAD_SHARE = 0.03, 0.3
 WALK_BATCH_N, WALK_BATCH_SHARE = 8, 0.6
 
 
-def walk_batch(plan):
-    """'N of M long videos of this batch were left out as walks' when most were, else None."""
+def walk_share(plan):
+    """(walks, long videos) of a batch when at least WALK_BATCH_N and WALK_BATCH_SHARE of its long videos were left
+    out as walks, else None."""
     ex = [str(q.get('exclude') or '') for q in plan.values()]
     walks = sum(bool(re.search(r'walk', e, re.I)) and 'min minimum' not in e for e in ex)
     long_ = walks + sum('entries' in q for q in plan.values())
-    if walks >= WALK_BATCH_N and walks / long_ >= WALK_BATCH_SHARE:
-        return f'{walks} of {long_} long videos of this batch were left out as walks: a walk too? check'
+    return (walks, long_) if walks >= WALK_BATCH_N and walks / long_ >= WALK_BATCH_SHARE else None
+
+
+def walk_batch(plan):
+    """'N of M long videos of this batch were left out as walks' when most were, else None."""
+    if (share := walk_share(plan)):
+        return f'{share[0]} of {share[1]} long videos of this batch were left out as walks: a walk too? check'
     return None
+
+
+# a title naming a vehicle or a drive, in the languages the batches come in
+MOVING_TITLE = re.compile(r'driv|dash ?cam|road ?trip|\bcar\b|cruis|\bpov\b|\btaxi|\buber|\bbus\b|cycl'
+                          r'|bik(?:e|ing)|motor|highway|freeway|route|commute|ride|manej|conduc|recorrido|carretera|fahrt|autobahn|jazda'
+                          r'|przejazd|guida|strada|estrada|dirigindo|운전|드라이브|가는길|🚗|🚙|🚕|🚌|🏍|🚲', re.I)
 
 
 def walk_view(sig):
@@ -6346,6 +6358,11 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
             elif not driving and walk_no_stop(dict(np.load(sig_path))):
                 reason = (f"a walk, not a drive: the camera bobs at a walker's step rate "
                           f"({float(np.load(sig_path)['step_bob']):.0%} of its shake) and never stands {NO_STOP_S} s")
+            # ... and in a batch mostly of walks, a title naming no vehicle or drive (AsQAgDtCWbw's showground walk
+            # read as a drive by every check; user, 2026-10-21): of such reviewed videos 32 rejected, 2 approved
+            elif not driving and (share := walk_share(plan)) and not MOVING_TITLE.search(meta['title'] or ''):
+                reason = (f'probably a walk: {share[0]} of {share[1]} long videos of this batch were walks and the '
+                          'title names no vehicle or drive')
             elif dashboard_view(os.path.join(out_dir, f'{vid}.jpg')):
                 reason = 'filmed from inside the car: the dashboard fills the picture, not a dashcam view'
             elif fast := overlay_speedup(dict(np.load(sig_path))):  # the cross traffic is a note: see below
