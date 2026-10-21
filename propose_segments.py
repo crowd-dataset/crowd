@@ -4906,8 +4906,10 @@ FROM_TO = (re.compile(r"\bfrom\s+(.+?)\s+to\s+(.+?)" + _END, re.I),
            # without "from": "Driving Lincoln to Hickman, Nebraska" (yQbYiSKgB-I), "Ashland to Waterloo Drive Tour"
            # ... also "4K POV Drive: Fremont to Downtown Omaha, Nebraska" (iSMg2dH2uuA: a colon after the word)
            # ... and by bike ("Cycling Richmond to Vancouver", UEPl-VrHpr0)
+           # ... "in real time" between ("A Drive in real time Craigie to Carine Western Australia", Scaryscooby;
+           # user, 2026-10-21)
            re.compile(r"\b(?:driv(?:e|ing)|cruis(?:e|ing)|road ?trip|cycl(?:e|ing)|bik(?:e|ing))"
-                      r"\s*[:|–-]?\s+"
+                      r"(?:\s+in\s+real\s*-?\s*time)?\s*[:|–-]?\s+"
                       r"(?!(?:to|back|home|down|up|through|thru|"
                       r"around|in|into|along|across|past|by|over|tour|on|at|the|my|our|a|out|with|all|"
                       r"welcome|return|dusk|dawn|day|night|sunset|sunrise|morning|evening)\b)"

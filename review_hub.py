@@ -231,6 +231,16 @@ def index():
         count, no_place = approved_unapplied(name)
         if count:
             unapplied.append(dict(name=name, count=count, no_place=no_place))
+    # batches the user reviews later (review_later.json: names; user, 2026-10-21: Scaryscooby proposed again): last
+    try:
+        with open(os.path.join(rc.ROOT, 'review_later.json')) as f:
+            later = set(json.load(f))
+    except (OSError, ValueError):
+        later = set()
+    for b in batches:
+        if b['name'] in later:
+            b['state'] = 'for later · ' + b['state']
+    batches.sort(key=lambda b: b['name'] in later)
     return render_template_string(PAGE, batches=batches, done=done, health=health, cookies=cookies,
                                   unapplied=unapplied)
 
