@@ -477,21 +477,54 @@ If you use this work for academic work please cite the following paper:
 
 What the dataset contains, how it was collected and its known biases are described in the [datasheet](DATASHEET.md). Citation metadata is in [CITATION.cff](CITATION.cff).
 
-The code is open-source and free to use. It is aimed for, but not limited to, academic research. We welcome forking of this repository, pull requests, and any contributions in the spirit of open science and open-source code. For inquiries about collaboration, you may contact Md Shadab Alam (md_shadab_alam@outlook.com) or Pavlo Bazilinskyy (pavlo.bazilinskyy@gmail.com).
+The code is open-source and free to use. It is aimed for, but not limited to, academic research. We welcome forking of this repository, pull requests, and any contributions in the spirit of open science and open-source code. For inquiries about collaboration, you may contact Md Shadab Alam (md_shadab_alam@outlook.com) or [Pavlo Bazilinskyy](https://bazilinskyy.github.io) (p.bazilinskyy@tue.nl).
 
 ## Repository layout
 
-- top folder: the analysis (`main.py`, `analysis.py`), its shared modules (`common.py`, `helper_script.py`, `logmod.py`,
-  `custom_logger.py`, `add_video.py`) and the channel pipeline (`run_channels.py`, `propose_segments.py`,
-  `review_hub.py`, ...); `utils/` holds the plotting and analytics code
+**Top folder: processing the videos and the analysis**
+- `main.py`: downloads the videos of the mapping (from the FTP server, else YouTube) and runs YOLO tracking on their
+  segments, writing one detection CSV per segment to the `data` folders; runs in a loop. `helper_script.py` holds its
+  download, trimming and tracking code.
+- `analysis.py`: the tables, maps and figures of the dataset and the statistics in this README, from the mapping and,
+  when available, the YOLO detections. `count_detections.py` counts the detections where the CSVs are and saves the
+  counts (`analysis_data/detection_counts.csv.gz`), so that `analysis.py` and the GitHub Action can use them without
+  the CSVs.
+- `add_video.py`: the page for adding videos and segments to the mapping by hand (templates in `templates/`).
+- `common.py` (configs, secrets, country codes, git, email), `custom_logger.py` and `logmod.py` (logging): shared by
+  all scripts.
+
+**Top folder: proposing segments from YouTube channels** (see [Proposing segments](#proposing-segments-from-youtube-channels))
+- `propose_segments.py`: proposes segments, localities, time of day and vehicle of a channel's videos, and serves the
+  review page of a batch.
+- `run_channels.py`: works through the channels sheet, batch by batch; `refresh_queue.py` builds the queue of channels
+  to look at again for new uploads.
+- `review_hub.py`: the page listing the batches to review, and applying and pushing reviewed segments.
+- `sync_workers.py`: brings the batches of the worker machines to the reviewing machine and the mapping to them.
+- `review_merges.py`: merging towns into the city whose metropolitan area they lie in; `review_lessons.py`: what the
+  reviews say about the proposals.
+
+**Folders**
+- `utils/`: the analysis and figure code used by `analysis.py`:
+  - `core/parsing.py` (the mapping's list cells, the processed length of a segment), `core/dataset_stats.py` (totals);
+  - `analytics/contributors.py` (who added each video), `analytics/metrics_cache.py` (YOLO class IDs, unique keys);
+  - `plotting/dataset_figures.py` (the README figures), `plotting/area_figures.py` (county, region, smoothed and spike
+    maps), `plotting/maps.py` (world and continent maps), `plotting/map_labels.py` (label placement),
+    `plotting/hover.py` (popups shared by all figures), `plotting/io.py` (saving figures), `plotting/constants.py`.
 - `release/`: the weekly metadata update and the release files (`update_info.py`, `make_crowd_jsonl.py`,
-  `split_large_files.py`, `validation_release.py`, `weekly_metadata.sh`)
-- `tools/`: one-off maintenance scripts for the mapping and the data
-- `dashboards/`: pages and widgets that follow the pipeline (its own README)
-- `analysis_data/`: data files the analysis reads and writes: country tables (`countries.csv`, `height_data.csv`), the YOLO detection counts (`detection_counts.csv.gz`) and who added which video (`video_contributors.csv`); the mapping and metadata files (`mapping.csv`, `mapping-NAME.csv`, `mapping_metadata.csv`, `crowd_index.jsonl`, ...) and `cut_times.csv` stay in the top folder
-- `logs/`: records kept by the scripts (`traffic_index_log.csv`, appended by `tools/update_traffic_index.py`)
-- `archive/`: old files no code uses any more (`mappingsubmitted.csv`)
-- `tests/`
+  `split_large_files.py`, `validation_release.py`, `weekly_metadata.sh`).
+- `tools/`: maintenance scripts for the mapping and the data, e.g. `download_videos.py`, `video_inventory.py`,
+  `update_traffic_index.py`, `update_params.py` and `weekly_detection_counts.sh`.
+- `dashboards/`: pages and widgets that follow the pipeline (its own README).
+- `analysis_data/`: data files the analysis reads and writes: country tables (`countries.csv`, `height_data.csv`), the
+  YOLO detection counts (`detection_counts.csv.gz`) and who added which video (`video_contributors.csv`). The mapping
+  and metadata files (`mapping.csv`, `mapping-NAME.csv`, `mapping_metadata.csv`, `crowd_index.jsonl`, ...) and
+  `cut_times.csv` stay in the top folder.
+- `figures/`: the figures of this README (PNG, HTML and, when made on purpose, EPS); `readme/` and `screenshots/`:
+  images of this README and of the figures.
+- `logs/`: records kept by the scripts (`traffic_index_log.csv`, appended by `tools/update_traffic_index.py`).
+- `archive/`: old files no code uses any more (`mappingsubmitted.csv`).
+- `tests/`: tests of the scripts.
+- `.github/workflows/`: the weekly refresh of the README statistics and figures (`dataset-figures.yml`) and the linter.
 
 Run the scripts with the virtual environment active (see [Step 11](#step-11-run-the-scripts)).
 
@@ -670,15 +703,17 @@ cp default.config config
 cp default.secret secret
 ```
 
-In `config`, set `data` to the folders that hold (or will hold) the YOLO output (`bbox/*.csv` in each), `videos` to the folders with the videos, and `mapping` to the mapping file (`mapping.csv`); the other parameters are described in [Configuration of project](#configuration-of-project). Without a `config`, `default.config` is used. Fill in only the keys of `secret` you need ([The `secret` file](#the-secret-file)); the analysis needs none.
+In `config`, set `data` to the folders that hold (or will hold) the YOLO output (`bbox/*.csv` in each), `videos` to the folders with the videos, and `mapping` to the mapping file (`mapping.csv`); the other parameters are described in [Configuration of project](#configuration-of-project). The scripts stop when there is no `config`. Fill in only the keys of `secret` you need ([The `secret` file](#the-secret-file)); the analysis needs none.
 
 ### Step 11: Run the scripts
 
 Run the scripts from the top folder of the repository with the virtual environment active:
 
 ```bash
-python main.py       # download the videos and run YOLO on their segments (runs in a loop)
-python analysis.py   # tables and figures from the YOLO output in the data folders
+python main.py                     # download the videos and run YOLO on their segments (runs in a loop)
+python analysis.py                 # tables, figures and README statistics (YOLO counts from the data folders
+                                   # or, without them, from analysis_data/detection_counts.csv.gz)
+python count_detections.py --data /path/to/data   # count the YOLO detections and save the snapshot
 ```
 
 The scripts in `tools/` and `release/` can be run as a file or as a module, and from any folder (they switch to the top folder, where `mapping.csv` and the other files are):
@@ -688,7 +723,7 @@ python tools/check_lists.py
 python -m tools.check_lists
 ```
 
-The tests run with `python -m pytest tests` (after `uv pip install pytest`).
+The tests run with `python -m pytest tests` (after `uv pip install pytest`); `tests/test_reject_segments.py` is a script run with `python tests/test_reject_segments.py` on the reviewing machine, as it needs its review plans. Some modules have a self-check: `python -m utils.core.parsing`, `python -m utils.plotting.map_labels`.
 
 
 ### Configuration of project
@@ -1324,7 +1359,7 @@ The proposal for the Kyiv video used in the `add_video.py` example above: one se
 **5. Merging towns into cities.** `python review_merges.py` serves a page at [http://127.0.0.1:8772](http://127.0.0.1:8772) with towns of under 250,000 people within 30 km of a city of over a million in the same state, side by side on maps: **Y** merges a town into the city, **N** keeps it separate. `python review_merges.py --apply` merges the accepted towns: their videos move to the city and their name is added to the city's other names.
 
 ## Weekly update of video metadata
-`mapping_metadata.csv` holds the YouTube metadata of every video in the `mapping` file (title, upload date, channel, views, description, chapters), and `crowd_index.jsonl` is the same dataset as JSON Lines, one object per segment, built from `mapping.csv` and `mapping_metadata.csv` without the free-text fields (titles, descriptions, chapters). Both are refreshed every Monday at 02:00 (Amsterdam time) by `weekly_metadata.sh`, run by cron on a Mac mini at TU/e in a clone used only by this job:
+`mapping_metadata.csv` holds the YouTube metadata of every video in the `mapping` file (title, upload date, channel, views, description, chapters), and `crowd_index.jsonl` is the same dataset as JSON Lines, one object per segment, built from `mapping.csv` and `mapping_metadata.csv` without the free-text fields (titles, descriptions, chapters). Both are refreshed every Monday at 02:00 (Amsterdam time) by `release/weekly_metadata.sh`, run by cron on a Mac mini at TU/e in a fresh shallow clone made for each run and removed after it:
 
 1. it resets the clone to the latest `main` on GitHub;
 2. `python -m release.update_info` fetches the metadata of videos added since the last run and retries the videos with missing values (offline videos keep being retried and are never removed);
@@ -1332,7 +1367,7 @@ The proposal for the Kyiv video used in the `add_video.py` example above: one se
 4. `python -m release.split_large_files split` splits a file over 99 MB into `NAME_part1.EXT`, `NAME_part2.EXT`, ... (each under 99 MB; CSV parts repeat the header), as GitHub refuses files over 100 MB;
 5. the two files (or their parts) are committed as "Weekly update of video metadata" and pushed. A file over 99 MB is never pushed: the job stops instead. When someone pushed in the meantime, the commit is replayed on top of theirs.
 
-When the files are split, the whole file is not in the repository. `release/update_info.py`, `release/make_crowd_jsonl.py` and `release/validation_release.py` rebuild it from its parts when needed, or run `python -m release.split_large_files join mapping_metadata.csv crowd_index.jsonl`. The log of the job is in `~/repos/crowd-metadata.log` on the mini. To run it elsewhere, clone the repository with push access and add `0 2 * * 1 /path/to/clone/weekly_metadata.sh >> /path/to/crowd-metadata.log 2>&1` to `crontab -e` (set `PY` to the Python of the environment if it is not `~/micromamba/envs/crowd/bin/python`).
+When the files are split, the whole file is not in the repository. `release/update_info.py`, `release/make_crowd_jsonl.py` and `release/validation_release.py` rebuild it from its parts when needed, or run `python -m release.split_large_files join mapping_metadata.csv crowd_index.jsonl`. The log of the job is in `~/Library/Logs/crowd-metadata.log` on the mini. To run it elsewhere, clone the repository with push access and add `0 2 * * 1 /path/to/clone/release/weekly_metadata.sh >> /path/to/crowd-metadata.log 2>&1` to `crontab -e` (set `PY` to the Python of the environment if it is not `~/micromamba/envs/crowd/bin/python`).
 
 ## Who added the videos
 Videos are added by several people, each in their own copy of the mapping file: `mapping.csv` is Pavlo's, `mapping-olena.csv` Olena's, `mapping-shadab.csv` and `mapping-epfl.csv` Shadab's and, in general, `mapping-NAME.csv` NAME's. Videos added to `mapping.csv` in commits from a contributor's own account (currently Shadab's and Faye's) are credited to that contributor. Each video is credited to the file it first appeared in. The credits are kept in `analysis_data/video_contributors.csv`: one row per video with the contributor, the time of the commit that added it (UTC) and the mapping file it first appeared in. It was built from the git history with `python -m utils.analytics.contributors`, and `analysis.py` (also in the GitHub Action) adds new videos with the time of the last commit to their mapping file. It is the only record of who added what once the history of the mapping files is gone, so keep it when rewriting the repository's history. A video that appeared in `mapping.csv` and another file at the same time is credited to `mapping.csv`, as the other files are refreshed with copies of it. The table counts the videos in the dataset now.

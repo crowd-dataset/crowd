@@ -1,4 +1,4 @@
-"""Bring the batches of the worker machines to this laptop, and the mapping to them.
+"""Bring the batches of the worker machines to the reviewing machine (mini), and the mapping to them.
 
     python sync_workers.py
 
