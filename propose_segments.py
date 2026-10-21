@@ -898,10 +898,16 @@ def camera_tilt(sig, n, p=PARAMS):
     med = np.array([np.nanmedian(w) if np.isfinite(w := y[max(0, i - half):i + half]).sum() >= 4 else np.nan
                     for i in range(0, n, FPS)])
     med = np.repeat(med, FPS)[:n]
+    # ... and higher than the video's own usual by TILT_MARGIN: a camera mounted low sees road users low all along
+    # (7hYOYuyq75U, icbwAVkek8Q, AK_tsTz04Vk, YcD4BADV13Y; user, 2026-10-21: "it does not seem to work well"). Of 408
+    # reviewed cuts, 61 approved in full had a usual of 0.83, the others 0.67: the margin leaves 36 of the 61 and 260
+    # of the 340 kept out (the user's choice). The usual: the median of the video's readings not past tilt_up
+    usual = np.nanmedian(y[y <= p['tilt_up']]) if np.isfinite(y).any() and (y <= p['tilt_up']).sum() >= 10 else 0
     with np.errstate(invalid='ignore'):
-        return med > p['tilt_up'], med < p['tilt_down']
+        return med > max(p['tilt_up'], usual + TILT_MARGIN), med < p['tilt_down']
 
 
+TILT_MARGIN = 0.03  # see camera_tilt
 SIDEWAYS_DARK = 0.5  # a sideways stretch this much in the dark is only a hint (see propose)
 
 
