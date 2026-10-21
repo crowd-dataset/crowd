@@ -210,6 +210,10 @@
 "html": "0df5e427ffa28c11",
 "png": "9e138c8ae09d9a13"
 },
+"map_footage_per_capita_europe": {
+"html": "c242f39afab4b430",
+"png": "43f5f4e403b244ff"
+},
 "map_footage_south_america": {
 "html": "c9c0b567b32c32bd",
 "png": "a4a35bb93aadfa50"
@@ -226,6 +230,10 @@
 "html": "59bb4dbbfcee0f07",
 "png": "62ef0567553bf165"
 },
+"map_night_share_europe": {
+"html": "9c64ab190c76f83f",
+"png": "9db9856d6013cb2c"
+},
 "map_night_share_smoothed_europe": {
 "html": "b7d7d5d1cc24db3a",
 "png": "cf14f8366c20ca18"
@@ -233,6 +241,10 @@
 "map_pedestrians_per_minute": {
 "html": "268d6a95ed108fa8",
 "png": "a9e9656beffdfd04"
+},
+"map_pedestrians_per_minute_europe": {
+"html": "a1e07be535fb1fdf",
+"png": "b95175d11287f411"
 },
 "map_pedestrians_smoothed_europe": {
 "html": "bd3f80bb64aa8e03",
@@ -269,6 +281,10 @@
 "map_us_states_footage": {
 "html": "72254f1c333bfb91",
 "png": "c858f0f779568537"
+},
+"map_walkable_minutes_countries_europe": {
+"html": "fed5d6013a7b882b",
+"png": "e3913c48bde7743f"
 },
 "map_walkable_minutes_europe": {
 "html": "1927510202120aab",
