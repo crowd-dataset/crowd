@@ -316,7 +316,8 @@ def walk_batch(plan):
 
 # a title naming a vehicle or a drive, in the languages the batches come in
 MOVING_TITLE = re.compile(r'driv|dash ?cam|road ?trip|\bcar\b|cruis|\bpov\b|\btaxi|\buber|\bbus\b|cycl'
-                          r'|bik(?:e|ing)|motor|highway|freeway|route|commute|ride|manej|conduc|recorrido|carretera|fahrt|autobahn|jazda'
+                          r'|bik(?:e|ing)|motor|highway|freeway|route|commute|ride|manej|conduc|recorrido|carretera'
+                          r'|fahrt|autobahn|jazda'
                           r'|przejazd|guida|strada|estrada|dirigindo|운전|드라이브|가는길|🚗|🚙|🚕|🚌|🏍|🚲', re.I)
 
 
