@@ -4883,6 +4883,16 @@ def metro_of_all(locs, df):
     return list(city) if pop[city] >= TITLE_CITY_POP and around else None
 
 
+@lru_cache(maxsize=None)
+def _council(lat, lon):
+    """The local government area a point lies in, by OpenStreetMap ("City of Joondalup" -> "Joondalup"), else None."""
+    r = _nominatim('reverse', (round(lat, 3), round(lon, 3)), zoom=10, addressdetails=True, language='en',
+                   timeout=15)
+    a = (r.raw.get('address') or {}) if r else {}
+    name = a.get('municipality') or a.get('county') or a.get('city')
+    return re.sub(r'(?i)^(?:city|town|shire|municipality|borough|district) of ', '', name) if name else None
+
+
 def _metro_city(town, at, rows, state=None):
     """[locality, state, country] of the big city (METRO_POP or more, in rows: the mapping's localities of the
     country) whose metropolitan area a new town at (lat, lon) in that state lies in, else None. Another state is
@@ -4896,6 +4906,12 @@ def _metro_city(town, at, rows, state=None):
         return None
     own = [p[1] for p in _nearby_places(at[0], at[1]) or [] if _name_key(p[0]) == _name_key(town)]
     if own and max(own) >= METRO_TOWN_POP:
+        return None
+    # outside the US a town that is its own city council stays a locality of its own, its suburbs the big city's:
+    # Joondalup ("City of Joondalup"), Fremantle, Rockingham are not Perth, Craigie and Balcatta are (user,
+    # 2026-10-21: "separate cities only"). In the US the reviewer counts such cities in the big one (Long Beach,
+    # Yonkers, Bellflower)
+    if rows['country'].iloc[0] != 'United States' and _name_key(_council(*at) or '') == _name_key(town):
         return None
     r = min(big, key=lambda dr: dr[0])[1]
     return [r.locality, r.state if isinstance(r.state, str) else None, r.country]
