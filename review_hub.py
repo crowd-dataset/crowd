@@ -284,7 +284,14 @@ def commit_to_github(files, message):
     these files replaced, so this checkout's other files and branch are left as they are. Returns the commit, or None
     when GitHub has them already. Call with git fetched."""
     blobs = {f: git('hash-object', '-w', f) for f in files}
+    there = git('rev-parse', f'origin/main:{MAPPING}', check_tree=True)
+    # a mapping.csv pushed whole undid what reached GitHub meanwhile (2026-10-21: Shadab's cut-time splits of 51
+    # videos, reverted by the traffic index job): only one with GitHub's changes taken in (pull_github_mapping)
+    if MAPPING in blobs and there not in (merged_with, git('rev-parse', mapping_base(), check_tree=True)):
+        raise RuntimeError('GitHub has mapping.csv changes not taken in here: push it with push_mapping')
     if all(git('rev-parse', f'origin/main:{f}', check_tree=True) == b for f, b in blobs.items()):
+        if MAPPING in blobs:
+            record_pushed(blobs[MAPPING])
         return None
     index = os.path.join(git('rev-parse', '--absolute-git-dir'), 'push-mapping.index')
     env = {**os.environ, 'GIT_INDEX_FILE': index}
@@ -297,7 +304,29 @@ def commit_to_github(files, message):
     os.remove(index)
     commit = git('commit-tree', tree, '-p', 'origin/main', '-m', message)
     git('push', '-q', 'origin', f'{commit}:refs/heads/main')
+    if MAPPING in blobs:
+        record_pushed(blobs[MAPPING])
     return commit
+
+
+merged_with = None  # GitHub's mapping.csv (blob) pull_github_mapping last took the changes of
+
+
+def record_pushed(blob):
+    with open(os.path.join(git('rev-parse', '--absolute-git-dir'), 'mapping-pushed'), 'w') as f:
+        f.write(blob)
+
+
+def mapping_base():
+    """The mapping.csv this machine last pushed (a git object): GitHub's changes are those made since. Before the
+    first record (record_pushed), the last mapping commit from here."""
+    path = os.path.join(git('rev-parse', '--absolute-git-dir'), 'mapping-pushed')
+    if os.path.exists(path):
+        with open(path) as f:
+            return f.read().strip()
+    commit = git('log', '-1', '-E', '--format=%H', '--grep=^(Update mapping.csv|Traffic index)', 'origin/main', '--',
+                 MAPPING)
+    return f'{commit}:{MAPPING}' if commit else ''
 
 
 MAPPING = os.path.basename(add_video.FILE_PATH)
@@ -336,18 +365,47 @@ def add_videos(df, have, other, source, only=None):
     return df, added
 
 
-def pull_github_mapping(df, have):
-    """The videos added to mapping.csv on GitHub since this machine last pushed it, added here before it is pushed
-    again, which would otherwise drop them (user, 2026-10-14). "Added there" is against the last mapping commit
-    from here ("Update mapping.csv…"), so a video taken out here since does not come back. Call with git fetched.
-    Returns (df, added)."""
-    base = git('log', '-1', '--format=%H', '--grep=^Update mapping.csv', 'origin/main', '--', MAPPING)
-    if not base or git('rev-parse', f'{base}:{MAPPING}') == git('rev-parse', f'origin/main:{MAPPING}'):
+def video_segments(df):
+    """{video: ((locality, state, country), (times of day, starts, ends), row index, its place in the row)}."""
+    out = {}
+    for i, r in df.iterrows():
+        nested = [add_video._safe_literal_eval(r[c], []) for c in NESTED]
+        place = (r['locality'], '' if pd.isna(r['state']) else r['state'], r['country'])
+        for k, v in enumerate(add_video._parse_flat_list_cell(r['videos'])):
+            out[v] = (place, tuple(tuple(x[k]) if k < len(x) else () for x in nested), i, k)
+    return out
+
+
+def pull_github_mapping(df, have, base=None, there='origin/main'):
+    """What reached mapping.csv on GitHub since this machine last pushed it (mapping_base), taken in here before it
+    is pushed again, which would otherwise undo it: the videos added there (user, 2026-10-14), and the segment times
+    changed there of a video left as it was here (user, 2026-10-21: Shadab's cut times split segments). A video
+    changed on both sides stays as it is here, and one taken out here since does not come back. Call with git
+    fetched. Returns (df, [what was taken in, or kept as here])."""
+    global merged_with
+    base, blob = base or mapping_base(), git('rev-parse', f'{there}:{MAPPING}')
+    if not base or git('rev-parse', base) == blob:
+        merged_with = blob
         return df, []
     videos = lambda t: {v for cell in t['videos'] for v in add_video._parse_flat_list_cell(cell)}  # noqa: E731
-    remote = pd.read_csv(io.StringIO(git('show', f'origin/main:{MAPPING}')))
-    new_there = videos(remote) - videos(pd.read_csv(io.StringIO(git('show', f'{base}:{MAPPING}'))))
-    return add_videos(df, have, remote, 'GitHub', only=new_there)
+    remote = pd.read_csv(io.StringIO(git('show', f'{there}:{MAPPING}')))
+    old = pd.read_csv(io.StringIO(git('show', base)))
+    df, taken = add_videos(df, have, remote, 'GitHub', only=videos(remote) - videos(old))
+    was, now, here = video_segments(old), video_segments(remote), video_segments(df)
+    for v, (place, segs, _, _) in now.items():
+        if v not in was or v not in here or segs in (was[v][1], here[v][1]) or place != was[v][0]:
+            continue
+        if here[v][1] != was[v][1]:
+            taken.append(f'{v} (its segments changed here and on GitHub: kept as here)')
+            continue
+        i, k = here[v][2], here[v][3]
+        for c, val in zip(NESTED, segs):
+            cell = add_video._safe_literal_eval(df.at[i, c], [])
+            cell[k] = list(val)
+            df.at[i, c] = add_video.compact_nested_list(cell)
+        taken.append(f'{v} (segments from GitHub)')
+    merged_with = blob
+    return df, taken
 
 
 def mapping_changes():
@@ -397,8 +455,9 @@ def renumber_ids(df):
     return changed
 
 
-def push_mapping():
-    """mapping.csv as it is here, pushed to GitHub. Returns a message."""
+def push_mapping(title='Update mapping.csv: reviewed batches', extra=()):
+    """mapping.csv as it is here, with what reached GitHub meanwhile taken in first, pushed to GitHub with the files
+    extra (the traffic index job: its log). Returns a message."""
     with ps.plan_lock(add_video.FILE_PATH):  # not halfway through an Apply
         git('fetch', '-q', 'origin', 'main')
         df = add_video.load_csv(add_video.FILE_PATH)
@@ -407,8 +466,8 @@ def push_mapping():
         if pulled or renumber_ids(df):
             add_video.save_csv(df, add_video.FILE_PATH)
         body = mapping_changes()
-        commit = commit_to_github([MAPPING], 'Update mapping.csv: reviewed batches' + (f'\n\n{body}' if body else ''))
-    first = f'{len(pulled)} videos added to mapping.csv on GitHub taken in first. ' if pulled else ''
+        commit = commit_to_github([MAPPING, *extra], title + (f'\n\n{body}' if body else ''))
+    first = f'From GitHub first: {"; ".join(pulled[:10])}{" …" if len(pulled) > 10 else ""}. ' if pulled else ''
     return first + (f'Pushed the mapping to GitHub (commit {commit[:8]}).' if commit else
                     'Nothing to push: GitHub has this mapping already.')
 
@@ -439,7 +498,7 @@ def merge_mapping_files():
         body = mapping_changes()
         commit = commit_to_github([MAPPING, *names], f'Update mapping.csv: {what}; ' + ', '.join(names)
                                   + ' to match it' + (f'\n\n{body}' if body else ''))
-    return ((f'{len(pulled)} videos added to mapping.csv on GitHub taken in first. ' if pulled else '')
+    return ((f'From GitHub first: {"; ".join(pulled[:10])}{" …" if len(pulled) > 10 else ""}. ' if pulled else '')
             + f'Merged {what}' + (': ' + ', '.join(added[:20]) + (' …' if len(added) > 20 else '') if added else '')
             + (f'. Pushed (commit {commit[:8]}).' if commit else '. GitHub had all of it already.'))
 
