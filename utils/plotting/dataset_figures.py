@@ -288,6 +288,32 @@ def _country_map(df: pl.DataFrame, value: str, title: str, scale: str, name: str
     _save(_style(fig, margin=dict(l=0, r=0, t=10, b=0)), name)
 
 
+def _europe_map(df: pl.DataFrame, df_mapping: pl.DataFrame, value: str, title: str, scale: str, name: str, fmt,
+                *, log: bool = False, top: float | None = None):
+    """Europe's countries labelled with their `value` (name and value printed on each, as the continent footage maps),
+    those with at least MIN_HOURS of footage (column hours); `fmt`: value -> label (None: Maps._fmt_value). `df`: iso3,
+    name (flag and country), hover, hours, value. `top`: the colour scale ends at this quantile (an outlier would
+    leave all other countries one colour); higher values get its colour, their labels say the value.
+    Countries also in Asia (Russia, Türkiye) show their whole value, labelled at their European localities."""
+    from utils.plotting.maps import Maps  # lazy: only these maps need its CARTO key
+    loc = df_mapping.drop_nulls(["lat", "lon"])
+    split = set(loc.group_by("iso3").agg(pl.col("continent").n_unique()).filter(pl.col("continent") > 1)["iso3"])
+    anchors = (loc.filter(pl.col("continent") == "Europe").group_by("iso3", maintain_order=True)
+                  .agg(pl.mean("lat"), pl.mean("lon")))
+    d = (df.filter(pl.col("hours") >= MIN_HOURS).join(anchors, on="iso3")
+           .with_columns(pl.when(pl.col("iso3").is_in(split)).then(pl.col("name") + " (whole country)")
+                         .otherwise(pl.col("name")).alias("name")))
+    owners = {}  # a small country inside another (Monaco in France) must not colour the other's outline
+    for iso3, lon, lat in loc.select("iso3", "lon", "lat").iter_rows():
+        owners.setdefault(iso3, []).append((lon, lat))
+    if d.height:
+        Maps().footage_map(df=d.to_pandas(), location_col="iso3", locationmode="ISO-3", scope="world",
+                           label_col="name", value_col=value, view=Maps.CONTINENT_VIEWS["Europe"],
+                           anchor_labels=sorted(split), colorbar_title=title, owner_points=owners,
+                           color_scale=area_figures.visible_scale(scale), file_name=name, log=log, fmt=fmt,
+                           value_range=(d[value].min(), d[value].quantile(top)) if top else None)
+
+
 GDP_PER_CAPITA = "NY.GDP.PCAP.PP.CD"  # World Bank: GDP per person at purchasing-power parity, current int. $
 WEALTH_COLOURS = {"above": "#C8504A", "near": "#BDBDB0", "below": "#6C79C9"}  # as in The Economist's chart
 
@@ -750,6 +776,9 @@ def _country_figures(df_mapping, seg, flag, cty_hover):
     # 3) share of night-time footage per country; countries with too little footage are grey (share unreliable)
     night = seg.group_by("iso3", "country", maintain_order=True).agg(HOURS, NIGHT_PCT.alias("night_pct"))
     _country_map(night.join(cty_hover, on="iso3"), "night_pct", "Night footage (%)", "Blues", "map_night_share")
+    named = pl.concat_str([flag, pl.col("country")], separator=" ").alias("name")
+    _europe_map(night.join(cty_hover, on="iso3").with_columns(named), df_mapping, "night_pct", "Night footage (%)",
+                "Blues", "map_night_share_europe", lambda v: f"{v:.0f}%")
 
     # footage per million inhabitants: coverage relative to country size
     per_capita = (seg.group_by("iso3", "country", maintain_order=True).agg(HOURS)
@@ -757,6 +786,8 @@ def _country_figures(df_mapping, seg, flag, cty_hover):
                      .with_columns((pl.col("hours") / pl.col("population_country") * 1e6).alias("per_million")))
     _country_map(per_capita.join(cty_hover, on="iso3"), "per_million", "Hours per million people", "YlOrRd",
                  "map_footage_per_capita", log=True)
+    _europe_map(per_capita.join(cty_hover, on="iso3").with_columns(named), df_mapping, "per_million",
+                "Hours per million people", "YlOrRd", "map_footage_per_capita_europe", None, log=True)
 
     # footage per person against wealth, as The Economist's innovation chart: bubbles sized by population, coloured
     # by how far each country is from what its wealth predicts (a least-squares line on the log scales)
@@ -1289,6 +1320,8 @@ DETECTION_FIGURES = {
                               "than 10 hours of footage are grey).",
     "map_pedestrians_per_minute": "Pedestrians per minute of footage per country (unique tracked persons; countries "
                                   "with less than 10 analysed hours are grey).",
+    "map_pedestrians_per_minute_europe": "Pedestrians per minute of footage per European country (countries with at "
+                                         "least 10 analysed hours; Russia and Türkiye whole).",
     "dot_pedestrians_per_minute": "Pedestrians per minute of footage per country, with a 95% bootstrap interval over "
                                   "its localities (countries with at least 10 analysed hours in at least 3 "
                                   "localities).",
@@ -1355,6 +1388,10 @@ DETECTION_FIGURES = {
                                        "is less than an analysed hour within 100 km.",
     "map_walkable_minutes_europe": "Walkable street minutes in Europe: the share of analysed minutes with at least 2 "
                                    "pedestrians and at most 10 cars per minute, smoothed over about 50 km.",
+    "map_walkable_minutes_countries_europe": "Walkable street minutes per European country: the share of analysed "
+                                             "minutes with at least 2 pedestrians and at most 10 cars per minute "
+                                             "(countries with at least 10 analysed hours; Russia and Türkiye whole; "
+                                             "the colours end at the 95th percentile, higher shares get the darkest).",
     "map_motorcycle_share_europe": "Motorcycles as a share of detected vehicles in Europe, smoothed over about 50 km.",
     "map_bicycles_smoothed_europe": "Bicycles per minute in Europe, smoothed over about 50 km.",
     "scatter_locality_pedestrians_vs_population": "Pedestrians per minute per locality against its population "
@@ -1436,6 +1473,7 @@ def detection_figures(df_mapping: pl.DataFrame, det: pl.DataFrame, classes: list
     # one random stream for all bootstraps, drawn in this order: the same intervals on every run
     rng = np.random.default_rng(0)
     total = _coverage_maps(seg, country, person, cty_hover)
+    _europe_detection_maps(d, df_mapping, country, classes)
     ci = _country_intervals(d, country, person, rng)
     _interval_widths(d, locality, person, flag, rng)
     _walkable_scatter(locality, classes, flag)
@@ -1468,6 +1506,21 @@ def _coverage_maps(seg, country, person, cty_hover) -> pl.DataFrame:
     # countries with under MIN_HOURS of analysed footage grey: a rate from a few minutes is noise
     _country_map(country, person, "Pedestrians per minute", "YlOrRd", "map_pedestrians_per_minute")
     return total
+
+
+def _europe_detection_maps(d, df_mapping, country, classes):
+    """Pedestrians per minute and walkable street minutes (area_figures.walkable) per European country, labelled
+    (countries with at least MIN_HOURS of analysed footage)."""
+    person = classes[0]
+    _europe_map(country, df_mapping, person, "Pedestrians per minute", "YlOrRd", "map_pedestrians_per_minute_europe",
+                lambda v: f"{v:.1f}")
+    if "Cars" not in classes:
+        return
+    is_walkable = area_figures.walkable(pl.col(person) / pl.col("minutes"), pl.col("Cars") / pl.col("minutes"))
+    walkable = (d.group_by("iso3", maintain_order=True)
+                 .agg((pl.col("minutes").filter(is_walkable).sum() / pl.sum("minutes") * 100).alias("walkable")))
+    _europe_map(country.join(walkable, on="iso3"), df_mapping, "walkable", "Walkable street minutes (%)", "YlGn",
+                "map_walkable_minutes_countries_europe", lambda v: f"{v:.1f}%", top=0.95)
 
 
 def _country_intervals(d, country, person, rng) -> pl.DataFrame:

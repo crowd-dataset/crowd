@@ -417,10 +417,10 @@ class Maps:
     def footage_map(self, df, *, location_col, locationmode, scope, label_col=None, value_col="footage_h",
                     callouts=None, view=None, anchor_labels=None, colorbar_title="Footage (hours)",
                     color_scale="YlOrRd", value_range=None, owner_points=None, file_name="map_footage",
-                    save_final=True):
+                    save_final=True, log=True, fmt=None):
         """
-        Choropleth of regions (US states or countries) on a log colour scale, labelled with each region's name and
-        value.
+        Choropleth of regions (US states or countries) on a log colour scale (or a linear one), labelled with each
+        region's name and value.
 
         With `view` (country maps), labels are placed automatically without overlaps: inside the country if it fits,
         otherwise next to a dot coloured like the country, or with a leader line if there is no room next to the dot.
@@ -447,16 +447,20 @@ class Maps:
                 with each other (e.g., all continents) so a colour means the same value on each. Default: this map's.
             file_name (str): Name of the saved file (without extension).
             save_final (bool): Passed to `save_plotly_figure`.
+            log (bool): Log colour scale (only positive values shown); False: linear (shares, rates).
+            fmt (callable|None): Value -> label text; default `_fmt_value`.
         """
         label_col = label_col or location_col
-        df = df[df[value_col] > 0].sort_values(value_col, ascending=False).copy()
+        df = df[df[value_col] > 0 if log else df[value_col].notna()].sort_values(value_col, ascending=False).copy()
         if df.empty:
-            logger.warning(f"{file_name}: no positive {value_col}, map not made.")
+            logger.warning(f"{file_name}: no {'positive ' if log else ''}{value_col}, map not made.")
             return
-        # Log colour scale: a few regions hold most of the footage, which would wash out the rest.
-        df["log_value"] = np.log10(df[value_col])
-        lo, hi = np.log10(value_range) if value_range else (df["log_value"].min(), df["log_value"].max())
-        df["value_text"] = [self._fmt_value(v) for v in df[value_col]]
+        # Log colour scale: a few regions hold most of the footage, which would wash out the rest. The column keeps
+        # its name on a linear scale.
+        df["log_value"] = np.log10(df[value_col]) if log else df[value_col]
+        lo, hi = ((np.log10(value_range) if log else value_range) if value_range
+                  else (df["log_value"].min(), df["log_value"].max()))
+        df["value_text"] = [(fmt or self._fmt_value)(v) for v in df[value_col]]
         rows = df.set_index(location_col, drop=False)
 
         fig = px.choropleth(df, locations=location_col, locationmode=locationmode, scope=scope, color="log_value",
@@ -551,5 +555,6 @@ class Maps:
         )
         if not view:
             fig.update_geos(domain=dict(x=[0, 1], y=[0, MAP_TOP_SHARE]))
-        fig.update_layout(coloraxis_colorbar=dict(**colorbar_top(colorbar_title), **self._log_ticks(lo, hi)))
+        fig.update_layout(coloraxis_colorbar=dict(**colorbar_top(colorbar_title),
+                                                  **(self._log_ticks(lo, hi) if log else {})))
         io_class.save_plotly_figure(fig, file_name, save_final=save_final)

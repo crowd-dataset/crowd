@@ -1063,8 +1063,14 @@ Amount of footage per country against country indicators, with the Spearman rank
 [![Share of footage recorded at night per country](figures/map_night_share.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/map_night_share.html)
 Share of footage recorded at night per country. Countries with less than 10 hours of footage are grey, as their share is not reliable.
 
+[![Share of footage recorded at night per European country](figures/map_night_share_europe.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/map_night_share_europe.html)
+Share of footage recorded at night per European country, printed on each (countries with at least 10 hours of footage; Russia and Türkiye whole).
+
 [![Footage per million inhabitants per country](figures/map_footage_per_capita.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/map_footage_per_capita.html)
 Hours of footage per million inhabitants per country: coverage relative to country size (log scale; countries with less than 10 hours of footage are grey).
+
+[![Footage per million inhabitants per European country](figures/map_footage_per_capita_europe.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/map_footage_per_capita_europe.html)
+Hours of footage per million inhabitants per European country, printed on each (log scale; countries with at least 10 hours of footage; Russia and Türkiye whole).
 
 [![Footage per million people against GDP per person per country](figures/bubble_footage_per_capita_gdp.png)](https://htmlpreview.github.io/?https://github.com/crowd-dataset/crowd/blob/main/figures/bubble_footage_per_capita_gdp.html)
 Hours of footage per million people against GDP per person (both log scales; circle size: population), coloured by whether a country has more than twice, about, or less than half the footage its wealth predicts (the dotted least-squares line). GDP per person at purchasing-power parity is the World Bank's latest value.

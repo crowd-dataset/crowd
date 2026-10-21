@@ -734,6 +734,11 @@ def _field_maps(locs: pl.DataFrame):
                    name, "Europe: grey where there is too little footage nearby", calls, fmt=".1f")
 
 
+def walkable(pedestrians: pl.Expr, cars: pl.Expr) -> pl.Expr:
+    """Walkable street minutes: segments with at least 2 pedestrians and at most 10 cars per minute (the rates)."""
+    return (pedestrians >= 2) & (cars <= 10)
+
+
 def _detection_field_maps(d: pl.DataFrame, df_mapping: pl.DataFrame, flags: dict, classes: list):
     """Pedestrians per minute, walkable street minutes, motorcycle share and bicycles per minute as smoothed maps
     of Europe (`d`: one row per analysed segment with id, minutes and a count column per class)."""
@@ -741,12 +746,11 @@ def _detection_field_maps(d: pl.DataFrame, df_mapping: pl.DataFrame, flags: dict
     seg = d.with_columns((pl.col(person) / pl.col("minutes")).alias("_p"),
                          (pl.col("Cars") / pl.col("minutes")).alias("_c") if "Cars" in classes else pl.lit(0.0)
                          .alias("_c"))
-    # walkable street minutes: segments with at least 2 pedestrians and at most 10 cars per minute
-    walkable = (pl.col("_p") >= 2) & (pl.col("_c") <= 10)
+    is_walkable = walkable(pl.col("_p"), pl.col("_c"))
     vehicles = [c for c in ("Cars", "Bicycles", "Motorcycles", "Buses", "Trucks") if c in classes]
     per_loc = (seg.group_by("id", maintain_order=True).agg(
         pl.sum("minutes").alias("weight"), (pl.col(person).sum() / pl.sum("minutes")).alias("pedestrians"),
-        (pl.col("minutes").filter(walkable).sum() / pl.sum("minutes") * 100).alias("walkable"),
+        (pl.col("minutes").filter(is_walkable).sum() / pl.sum("minutes") * 100).alias("walkable"),
         *([(pl.col("Motorcycles").sum() / pl.sum_horizontal(*[pl.col(c).sum() for c in vehicles]) * 100)
            .alias("motorcycles")] if "Motorcycles" in classes else []),
         *([(pl.col("Bicycles").sum() / pl.sum("minutes")).alias("bicycles")] if "Bicycles" in classes else []))
