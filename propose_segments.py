@@ -3747,30 +3747,36 @@ def _language(code):
     return getattr(lang, 'name', None) or code
 
 
-def shown_english(text):
+def shown_english(text, keep=()):
     """(text in English, the name of its language) for the review page, ('', '') when Google Translate finds it
-    English already, or does not answer (asked again next time, after SHOWN_PAUSE_S when it refused). Kept in
-    SHOWN_TRANSLATIONS."""
+    English already, or does not answer (asked again next time, after SHOWN_PAUSE_S when it refused). The names in
+    keep (the video's localities) stay as written: Google made Ätran "Eating" (xm3AthgwvB0; user, 2026-10-22). Kept
+    in SHOWN_TRANSLATIONS."""
     text = (text or '').strip()
     if not text:
         return '', ''
+    keep = sorted({k for k in keep if k and k in text}, key=len, reverse=True)
+    key = text + ('\x00' + '|'.join(keep) if keep else '')
     with _SHOWN_LOCK, contextlib.suppress(OSError, ValueError), open(SHOWN_TRANSLATIONS) as f:
         known = json.load(f)
-        if text in known:
-            out, lang = known[text]
+        if key in known:
+            out, lang = known[key]
             return _shown(out, text), lang
+    asked = text
+    for i, k in enumerate(keep):  # placeholders Google leaves alone
+        asked = asked.replace(k, f'§{i}§')
     if time.time() < _SHOWN_PAUSE[0]:
         return '', ''
     try:
         # Google's two free endpoints: the second answers while the first refuses (429; user, 2026-10-20:
         # wBWyY5C32uo's title stayed untranslated)
-        r = requests.post('https://translate.googleapis.com/translate_a/single', timeout=20, data={'q': text[:5000]},
+        r = requests.post('https://translate.googleapis.com/translate_a/single', timeout=20, data={'q': asked[:5000]},
                           params={'client': 'gtx', 'sl': 'auto', 'tl': 'en', 'dt': 't'})
         if r.ok:
             data = r.json()
             out, code = ''.join(part[0] for part in data[0] if part and part[0]), data[2]
         else:
-            r = requests.post('https://translate.googleapis.com/translate_a/t', timeout=20, data={'q': text[:5000]},
+            r = requests.post('https://translate.googleapis.com/translate_a/t', timeout=20, data={'q': asked[:5000]},
                               params={'client': 'gtx', 'sl': 'auto', 'tl': 'en'})
             if r.status_code == 429:
                 _SHOWN_PAUSE[0] = time.time() + SHOWN_PAUSE_S
@@ -3778,6 +3784,8 @@ def shown_english(text):
                 return '', ''
             first = r.json()[0]  # [English, language], or English alone
             out, code = (first[0], first[1]) if isinstance(first, list) else (first, None)
+        for i, k in enumerate(keep):
+            out = out.replace(f'§{i}§', k)
         out = _shown(out, text)
         lang = _language(code) if out else ''
     except (requests.RequestException, ValueError, IndexError, TypeError):
@@ -3788,7 +3796,7 @@ def shown_english(text):
                 known = json.load(f)
         except (OSError, ValueError):
             known = {}
-        known[text] = [out, lang]
+        known[key] = [out, lang]
         with contextlib.suppress(OSError):
             with open(SHOWN_TRANSLATIONS + '.tmp', 'w') as f:
                 json.dump(known, f, ensure_ascii=False)
@@ -8428,13 +8436,15 @@ def review(plan_path, port=None):
         if re.fullmatch(r'[\w-]{11}', video_id) and os.path.exists(path):
             with open(path) as f:
                 meta = json.load(f)
-        title = next((p.get('title') for p in load() if p['video'] == video_id), meta.get('title'))
+        p = next((p for p in load() if p['video'] == video_id), {})
+        title = p.get('title') or meta.get('title')
+        keep = [e['locality'][0] for e in p.get('entries', []) if e.get('locality')]  # the town names as written
         names = [name for _, name in video_chapters(meta)]
-        joined, lang = shown_english('\n'.join(names)) if names else ('', '')  # one request for them all
+        joined, lang = shown_english('\n'.join(names), keep) if names else ('', '')  # one request for them all
         both = [(en, lang) for en in joined.split('\n')]
         if len(both) != len(names):
-            both = [shown_english(name) for name in names]
-        return jsonify(title=shown_english(title), description=shown_english(meta.get('description')),
+            both = [shown_english(name, keep) for name in names]
+        return jsonify(title=shown_english(title, keep), description=shown_english(meta.get('description'), keep),
                        chapters=[[t, name, en.strip(), lang] for (t, name), (en, lang)
                                  in zip(video_chapters(meta), both)])
 
