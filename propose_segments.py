@@ -7660,9 +7660,18 @@ async function saveLocality(el) {
   const country = box.querySelector('.loc-country').value;
   const status = box.querySelector('.locstatus');
   if (!locality || !country) { status.textContent = '⚠ not set: give a locality and a country'; return; }
-  // the mapping writes a state for these countries: wait for it instead of refusing the town typed first
+  // the mapping writes a state for these countries: without one typed, a best guess is filled in, to check (user,
+  // 2026-10-22: offered, not refused)
   if (!state && STATE_COUNTRIES.includes(country)) {
-    status.textContent = '⚠ add the state (e.g. PA) to save';
+    status.textContent = 'guessing the state…';
+    let guess = {};
+    try {
+      guess = await (await fetch('state_guess?' + new URLSearchParams({ locality, country }))).json();
+    } catch (e) {}
+    if (!guess.state) { status.textContent = '⚠ no state found: add it (e.g. PA) to save'; return; }
+    box.querySelector('.loc-state').value = guess.state;
+    await saveLocality(el);
+    status.textContent = `state ${guess.state} guessed from ${guess.source}: check it · ${status.textContent}`;
     return;
   }
   const res = await fetch('locality', { method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -8500,6 +8509,25 @@ def review(plan_path, port=None):
         country = common.correct_country(country)
         data = add_video.get_locality_data(locality, common.get_iso2_country_code(country), state)
         return add_video.get_coordinates(locality, state, country, data)
+
+    @app.route('/state_guess')
+    def state_guess():
+        """A state for a locality typed without one, in a country the mapping writes them for: a best guess to check,
+        not a refusal (user, 2026-10-22). The mapping's locality of that name in the country (the one with the most
+        videos), else the state OpenStreetMap puts it in, as the mapping writes it."""
+        locality, country = request.args.get('locality', '').strip(), request.args.get('country', '')
+        rows = add_video.load_csv(add_video.FILE_PATH)
+        rows = rows[rows['country'] == country]
+        named = rows[rows['state'].notna() & (rows['locality'].map(_name_key) == _name_key(locality))]
+        if len(named):
+            best = max(named.itertuples(), key=lambda r: len(add_video._parse_flat_list_cell(r.videos)))
+            return jsonify(state=best.state, source='the mapping')
+        try:
+            hit = _nominatim('geocode', f'{locality}, {country}', addressdetails=True, language='en', timeout=15)
+        except Exception:  # the lookups raise anything from network errors to missing fields
+            hit = None
+        state = _mapping_state(hit.raw.get('address', {}).get('state'), rows, country) if hit else None
+        return jsonify(state=state, source='OpenStreetMap')
 
     @app.route('/where')
     def where():
