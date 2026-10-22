@@ -767,8 +767,11 @@ class Youtube_Helper:
         3. Writes the subclip to the output_path using the H.264 video codec and AAC audio codec.
         4. Closes the video file to free up resources.
         """
-        # Load the video and create a subclip using the provided start and end times.
-        video_clip = VideoFileClip(input_path).subclip(start_time, end_time)
+        # Load the video and create a subclip using the provided start and end times, at most to a second before the
+        # file's end: YouTube rounds a length to whole seconds, so a mapping's end can run past the downloaded file,
+        # and MoviePy fails reading past it (Bsyh0B6MCt8: 4325 s for a 4321.3 s file failed every round, 2026-10-22)
+        video_clip = VideoFileClip(input_path)
+        video_clip = video_clip.subclip(start_time, min(end_time, max(video_clip.duration - 1, start_time + 1)))
 
         # Ensure the output directory exists
         os.makedirs(os.path.dirname(output_path), exist_ok=True)

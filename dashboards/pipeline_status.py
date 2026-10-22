@@ -34,7 +34,7 @@ DOWNLOADER = ('lin4080', '~/Documents/GitHub/pedestrians-in-youtube/_output/down
 # the nightly inventory of the video files (tools/video_inventory.py): its machine and summary (the rows: .csv)
 INVENTORY = ('lin4080', '~/crowd-counts/_output/video_inventory.json')
 PROBLEMS = {'duplicate': 'also in an earlier folder', 'unreadable': 'no video stream: broken or partial',
-            'short': "over 5 s shorter than its last segment's end", 'unused': 'in no mapping'}
+            'short': "over 1 s shorter than its last segment's end", 'unused': 'in no mapping'}
 HOST = os.environ.get('REVIEW_HOST', '127.0.0.1')
 STUCK_MIN = sw.STUCK_MIN
 # each machine's YouTube cookies, {host: {email, file, dir}} (file: cookies-NAME.txt in dir, cookies.txt a link to it):

@@ -3,8 +3,10 @@ and what is wrong with it:
 
     duplicate   the same video in another folder too (the copy in the earlier folder of the list is kept)
     unreadable  ffprobe finds no video stream in it (a broken or partial file)
-    short       over 5 s shorter than the end of its last segment (cut off while downloading, or the mapping's
-                end time is past the end of the video)
+    short       over 1 s shorter than the end of its last segment (cut off while downloading, or the mapping's
+                end time is past the end of the video: YouTube rounds a length to whole seconds; main.py detects to
+                a second before a segment's end, so less than that is harmless; was 5 s until 2026-10-22, when
+                1,013 segments 0-4 s past their file were trimmed)
     unused      in no mapping (mapping.csv or a mapping-NAME.csv): removed from the dataset, or never added
 
     python -m tools.video_inventory --config ~/Documents/GitHub/pedestrians-in-youtube/config
@@ -87,7 +89,7 @@ def problems(files, ends):
         seen.add(r['video'])
         if r['duration'] == '':
             p.append('unreadable')
-        elif r['video'] in ends and float(r['duration']) < ends[r['video']] - 5:
+        elif r['video'] in ends and float(r['duration']) < ends[r['video']] - 1:
             p.append('short')
         if r['video'] not in ends:
             p.append('unused')
