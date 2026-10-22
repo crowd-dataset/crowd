@@ -1248,6 +1248,9 @@ def propose(sig, p=PARAMS):
                     continue
             keep[a:b] = False
             notes.append(f'{label} {a / FPS:.0f}-{b / FPS:.0f}s')
+    for a, b in np.asarray(sig.get('rear', np.zeros((0, 2)))).reshape(-1, 2):  # see rear_camera
+        keep[int(a * FPS):int(b * FPS)] = False
+        notes.append(f'rear camera {int(a) // 60}:{int(a) % 60:02d}-{int(b) // 60}:{int(b) % 60:02d}')
     for a, b in aerial_runs(sig):
         keep[int(a * FPS):int(b * FPS)] = False
         notes.append(f'drone footage {a:.0f}-{b:.0f}s')
@@ -2582,6 +2585,54 @@ def _ocr_run(paths, boxes=False):
         return out
 
 
+# a dashcam switching to its rear camera for a few seconds, its caption saying so at the bottom left (drivetuber's
+# DDPAI Z50: "DDPAI Z50 Rear" for "DDPAI Z50 4K"; user, 2026-10-22: l7fnWSPOLfg 17:00-17:09, 22% of that video): read
+# every REAR_STEP_S on the 720p video when the opening's text names such a camera, or the batch had rear views before
+REAR_HINT = re.compile(r'\bDDPAI\b|\b[Rr]ear\b')
+REAR_WORD = re.compile(r'\b[rR][eE][aA][rRtT]\b')
+REAR_MARK, REAR_STEP_S = 'rear_camera.mark', 2
+
+
+def rear_camera(video_id):
+    """[[start s, end s]] where the caption at the bottom left says "Rear" (the first line: x 0-32%, y 90.5-95.5%
+    of the picture, white text read black on white), None when not read."""
+    if not shutil.which('tesseract'):
+        return None
+    w = tempfile.mkdtemp(prefix='crowd_rear_')
+    try:
+        _yt_dlp('-q', '-f', 'bv*[height<=720][ext=mp4]/bv*[height<=720]', '-o', os.path.join(w, 'v.%(ext)s'),
+                _url(video_id))
+        path = next(os.path.join(w, n) for n in os.listdir(w) if n.startswith('v.'))
+        subprocess.run(['ffmpeg', '-v', 'error', '-i', path, '-vf',
+                        f"fps=1/{REAR_STEP_S},crop=iw*0.32:ih*0.05:0:ih*0.905,scale=-2:120,format=gray,"
+                        "lut=y='if(gt(val\\,170)\\,0\\,255)'", os.path.join(w, 'c%06d.png')],
+                       capture_output=True, timeout=4 * 3600)
+        os.remove(path)
+        shots = sorted(n for n in os.listdir(w) if n.startswith('c'))
+
+        def read(n):
+            return bool(REAR_WORD.search(subprocess.run(['tesseract', os.path.join(w, n), 'stdout', '--psm', '7'],
+                                                        capture_output=True, text=True, timeout=60).stdout))
+        with ThreadPoolExecutor(8) as pool:
+            rear = list(pool.map(read, shots))
+        runs, start = [], None
+        for k, r in enumerate(rear + [False]):
+            if r and start is None:
+                start = k * REAR_STEP_S
+            elif not r and start is not None:
+                runs.append([max(0.0, start - REAR_STEP_S / 2 - 1), k * REAR_STEP_S - REAR_STEP_S / 2 + 1])
+                start = None
+        print(f'  rear camera: {len(runs)} stretches', flush=True)
+        return runs
+    except BotCheck:
+        raise
+    except (RuntimeError, StopIteration, OSError, subprocess.TimeoutExpired) as e:
+        print(f'  rear camera not read: {e}', flush=True)
+        return None
+    finally:
+        shutil.rmtree(w, ignore_errors=True)
+
+
 def opening_texts(video_id, start=1, upto=61, step=None, keep_dir=None):
     """{second: [texts]} EasyOCR reads in the frames of the video's 720p stream every `step` (CAPTION_STEP_S)
     seconds from `start` to `upto`; None without the OCR environment or the stream. keep_dir: the frames with text
@@ -3281,6 +3332,13 @@ def analyse_video(video_id, out_dir, meta=None, signs=False):
         # read once: highlight captions and town labels (their frames kept for screen_locality)
         texts = opening_texts(video_id, keep_dir=os.path.join(out_dir, f'{video_id}_open.tmp'))
         sig['screen_text'] = np.array(json.dumps({f'{t:.0f}': x for t, x in (texts or {}).items()}))
+        # a dashcam that shows its rear camera now and then, captioned so (see rear_camera)
+        mark = os.path.join(out_dir, REAR_MARK)
+        if REAR_HINT.search(' '.join(' '.join(x) for x in (texts or {}).values())) or os.path.exists(mark):
+            rear = rear_camera(video_id)
+            sig['rear'] = np.array(rear or [], float).reshape(-1, 2)
+            if rear:
+                open(mark, 'w').close()
         sig['labelled_montage'] = np.array(caption_end(video_id, sig, texts) or (
             end if end is not None and montage_label(video_id, end) else 0), float)
         if signs and (m := map_frame(video_id, texts)):  # a map of the drive in the opening
