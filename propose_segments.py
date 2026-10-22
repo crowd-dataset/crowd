@@ -4846,10 +4846,12 @@ def _hit_locality(hit, df, countries, at=None, named=False):
     known.update({_name_key(a): r for aka, r in zip(rows['locality_aka'], rows.itertuples()) if isinstance(aka, str)
                   for a in aka.strip('[]').split(',') if a.strip() and _name_key(a) not in known})
     # a region is the locality only where localities have no state (an emirate): New York State is not New York City
+    # ... "Greater London" is London (HWvlP4BKxJ0: OpenStreetMap's area for Holborn and Edgware; user, 2026-10-22)
     for name in ((town,) if town else () if with_state else (region,)):
-        if name and _name_key(name) in known:
-            r = known[_name_key(name)]
-            return [r.locality, r.state if isinstance(r.state, str) else None, r.country]
+        for n in (name, re.sub(r'(?i)^greater\s+', '', name or '')):
+            if n and _name_key(n) in known:
+                r = known[_name_key(n)]
+                return [r.locality, r.state if isinstance(r.state, str) else None, r.country]
     if town and at and (metro := _metro_city(town, at, rows, state)):
         return metro
     # a new locality is spelled one way whichever source named it, as most of the mapping does: St. Clair
