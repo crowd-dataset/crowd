@@ -4785,7 +4785,9 @@ def _osm_place(phrase, country_codes, near=None, reach_km=None):
     # a county or a municipality is no locality ("Suffolk" in "Coram in Suffolk"), and a place OpenStreetMap files
     # under no town, or under its municipality only, is the town itself (v7XHCQBdl4w: the suburb Motetema, its
     # "city" the Elias Motsoaledi Local Municipality; udVi6qOYvNI: Kwaggafontein; user, 2026-10-20)
-    if town and re.search(r'\b(?:County|Municipality)$', town):
+    # ... nor a province or region ("Province of Småland": B2kJDCoBv6w; user, 2026-10-22)
+    if town and re.search(r'\b(?:County|Municipality|Province|Region|Prefecture|Oblast|Län)$'
+                          r'|^(?:Province|Region|County|Prefecture) of\b', town):
         town = None
     if not town and r.raw.get('class') == 'place' and _name_key(_osm_name(r.raw)) in (
             wanted, _name_key(phrase.split(',')[0])):  # "Kwaggafontein, Mpumalanga" is Kwaggafontein
