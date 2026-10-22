@@ -979,6 +979,9 @@ REAR_SPREAD, FRONT_SPREAD = -0.2, 0.5
 
 
 SHOT_MIN_S, SIDE_SHOT = 20, 'a side view for a whole shot'  # see propose
+# a stop at the kerb this long is cut, not a hint: reviewers cut 500 of the 724 of 60 s or more, about half of the
+# shorter ones (user, 2026-10-22: dqOYZTqmCG8, 9ol5sRj8R54 parked)
+KERB_CUT_S = 60
 
 
 def propose(sig, p=PARAMS):
@@ -1065,8 +1068,12 @@ def propose(sig, p=PARAMS):
         keep[int(a * FPS):int(b * FPS)] = False
         notes.append(f'in a parking lot {int(a) // 60}:{int(a) % 60:02d}-{int(b) // 60}:{int(b) % 60:02d}')
     for a, b in np.asarray(sig.get('kerb', np.zeros((0, 2)))).reshape(-1, 2):  # see kerb_stops
-        notes.append(f'stopped at the kerb? {int(a) // 60}:{int(a) % 60:02d}-{int(b) // 60}:{int(b) % 60:02d}: cut it '
-                     'if parked, keep a wait in traffic')
+        at = f'{int(a) // 60}:{int(a) % 60:02d}-{int(b) // 60}:{int(b) % 60:02d}'
+        if b - a >= KERB_CUT_S:  # parked, most likely: see KERB_CUT_S
+            keep[int(a * FPS):int(b * FPS)] = False
+            notes.append(f'parked at the kerb {at}')
+        else:
+            notes.append(f'stopped at the kerb? {at}: cut it if parked, keep a wait in traffic')
     for a, b in np.asarray(sig.get('chapter_cuts', np.zeros((0, 2)))).reshape(-1, 2):  # see chapter_cuts
         keep[int(a * FPS):int(b * FPS)] = False
         notes.append(f'not the drive by its chapter {int(a) // 60}:{int(a) % 60:02d}-{int(b) // 60}:{int(b) % 60:02d}'
