@@ -122,7 +122,7 @@ def worker(host):
         y = json.loads(paused)
     except ValueError:
         y = {}
-    if y.get('paused'):  # wsl_yield.py made way for someone using the Windows PC: not stalled (and no alert)
+    if sw.yielded(y, host):  # wsl_yield.py made way for someone using the Windows PC: not stalled (and no alert)
         w.update(state='paused', paused=dict(why=y.get('why', ''), since=y.get('since')))
     return w
 

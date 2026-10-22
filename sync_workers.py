@@ -29,7 +29,7 @@ WORKERS = {'lin5080': 'queue phase 5 (highway videos to redo), then 2 (new uploa
            'mini': 'queue phases 1 and 3: the other half of wsl5090\'s (--rows 1/2 --phases 1,3)',
            # a second worker on lin5080 (user, 2026-10-18: its GPU had room), in its own folder
            'lin5080b': 'queue phase 6 (new uploads of the channels added from the mapping)',
-           # and one on wsl5090 (user, 2026-10-18), paused with the first while someone uses win5090 (wsl_yield.py)
+           # and one on wsl5090 (user, 2026-10-18), paused while win5090 is used, the first going on (wsl_yield.py)
            'wsl5090b': 'queue phase 5, then 2: the other half of lin5080\'s (--queue-rows 1/2)'}
 REMOTE = 'crowd-routine'       # the repository on each worker, relative to its home
 # a worker that is not REMOTE on the machine of its name: (ssh alias, folder)
@@ -39,6 +39,12 @@ PLACES = {'lin5080b': ('lin5080', 'crowd-routine-2'), 'wsl5090b': ('wsl5090', 'c
 def place(host):
     """(ssh alias, folder) of a worker."""
     return PLACES.get(host, (host, REMOTE))
+
+
+def yielded(y, host):
+    """Whether wsl_yield.py (its state y, ~/.wsl_yield.json) paused this worker: not the one in the folder it keeps
+    going while Windows is used (half the GPU; user, 2026-10-22)."""
+    return bool(y.get('paused')) and not (y.get('keeps') or '').endswith('/' + place(host)[1])
 
 
 def ssh(host, command):
@@ -131,7 +137,7 @@ def check_workers():
             y = json.loads(ssh(host, 'cat ~/.wsl_yield.json 2>/dev/null || echo "{}"'))
         except (subprocess.CalledProcessError, ValueError):
             y = {}
-        if y.get('paused'):
+        if yielded(y, host):
             report.append({'host': host, 'ok': True, 'what': f'paused: {y.get("why", "")[:120]}'})
             continue
         m = machines.get(alias) or {}
