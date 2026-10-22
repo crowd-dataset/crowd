@@ -4104,6 +4104,12 @@ def guess_locality(title, country, df):
     # no Shenandoah, PA (30bJBAaRl8M)
     if inside and loc and loc[2] == 'United States' and (states := title_states(title)) and loc[1] not in states:
         return None
+    # ... or its English, written in another script (YfpHOO4dj2g: "Киев в снежных заторах" is Kyiv; user, 2026-10-22),
+    # unless that is a drive between places, which goes by its route: of 19 reviewed titles so located 17 right
+    letters = re.findall(r'[^\W\d_]', title or '')
+    latin = sum(c.isascii() or '\u00c0' <= c <= '\u024f' for c in letters) / max(len(letters), 1)
+    if loc is None and latin < 0.5 and (en := english(title)) and not any(r.search(en) for r in FROM_TO):
+        loc = guess_locality(en, country, df)
     return loc
 
 
