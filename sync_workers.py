@@ -42,9 +42,11 @@ def place(host):
 
 
 def yielded(y, host):
-    """Whether wsl_yield.py (its state y, ~/.wsl_yield.json) paused this worker: not the one in the folder it keeps
-    going while Windows is used (half the GPU; user, 2026-10-22)."""
-    return bool(y.get('paused')) and not (y.get('keeps') or '').endswith('/' + place(host)[1])
+    """Whether wsl_yield.py (its state y, ~/.wsl_yield.json) paused this worker: not one in a folder it keeps going
+    while Windows is used ("keeps": both workers since 2026-10-22, user; once a single folder)."""
+    keeps = y.get('keeps') or []
+    keeps = [keeps] if isinstance(keeps, str) else keeps
+    return bool(y.get('paused')) and not any(k.endswith('/' + place(host)[1]) for k in keeps)
 
 
 def ssh(host, command):
