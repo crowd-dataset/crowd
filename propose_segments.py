@@ -979,6 +979,26 @@ REAR_SPREAD, FRONT_SPREAD = -0.2, 0.5
 
 
 SHOT_MIN_S, SIDE_SHOT = 20, 'a side view for a whole shot'  # see propose
+# a side view by the flow that CLIP sees as the road ahead is kept (user, 2026-10-22: 1zoB_Rie-KE 9:06-10:24, a car
+# turning along a winding road): SIDE_FRAMES frames of each, the middle of their scores for SIDE_SCENES' first 7 at
+# SIDE_FORWARD or more. On reviewed videos that keeps 43 of 49 such cuts the reviewers approved anyway (92 of 100
+# min); of a sample of 170 they left cut, 89 (166 min) look ahead to CLIP too: tunnels, bridges, highways, dark roads
+SIDE_SCENES = (['a road ahead seen through a car windshield', 'a winding road ahead seen from a car',
+                'a car turning at an intersection, seen through the windshield',
+                'a city street seen from a driving car',
+                'a highway seen from a car', 'a residential street seen from a car', 'traffic ahead on a road',
+                'a view out of the side window of a moving car', 'houses at the roadside seen from a car side window',
+                'parked cars seen from the side window of a car', 'a passenger looking out of a car window'], 7)
+SIDE_FRAMES, SIDE_FORWARD = 6, 0.8
+SIDE_CUT = re.compile(rf'(?:camera not facing forward|{SIDE_SHOT}|camera turned to the side \([^)]*\)) (\d+)-(\d+)s')
+
+
+def side_forward_track(path, sig, work_dir):
+    """[(start s, end s)] of the side views propose cuts that CLIP sees as the road ahead (see SIDE_FORWARD)."""
+    stretches = [(int(a), int(b)) for a, b in SIDE_CUT.findall('; '.join(propose(sig)[1]))]
+    return _clip_stretches(path, stretches, work_dir, SIDE_SCENES, SIDE_FRAMES, SIDE_FORWARD)
+
+
 # a stop at the kerb this long is cut, not a hint: reviewers cut 500 of the 724 of 60 s or more, about half of the
 # shorter ones (user, 2026-10-22: dqOYZTqmCG8, 9ol5sRj8R54 parked)
 KERB_CUT_S = 60
@@ -1246,6 +1266,12 @@ def propose(sig, p=PARAMS):
                 if dark.mean() >= SIDEWAYS_DARK and not bool(sig.get('on_bus', False)):
                     notes.append(f'{label}? {a / FPS:.0f}-{b / FPS:.0f}s in the dark: check, cut it if so')
                     continue
+            if (label.startswith(('camera not facing', 'camera turned')) or label == SIDE_SHOT) and any(
+                    min(b / FPS, y) - max(a / FPS, x) >= (b - a) / FPS / 2
+                    for x, y in np.asarray(sig.get('side_forward', np.zeros((0, 2)))).reshape(-1, 2)):
+                notes.append(f'{label}? {a / FPS:.0f}-{b / FPS:.0f}s: CLIP sees the road ahead, kept (a winding '
+                             f'road?): check')
+                continue
             keep[a:b] = False
             notes.append(f'{label} {a / FPS:.0f}-{b / FPS:.0f}s')
     for t, x in fast_walkers(sig):  # see walk_cadence
@@ -3487,6 +3513,8 @@ def analyse_video(video_id, out_dir, meta=None, signs=False):
             sig['clock'] = np.array(clock, float)
         if stamp:
             sig['stamp'] = np.array(stamp, float)
+        sig['on_bus'] = np.array(title_vehicle(title_text(meta.get('title') or '')) == 1)
+        sig['side_forward'] = np.array(side_forward_track(path, sig, work_dir), float).reshape(-1, 2)
         contact_sheet(path, meta['duration'] or len(sig['motion']) / FPS,
                       os.path.join(out_dir, f'{video_id}.jpg'))
     finally:
