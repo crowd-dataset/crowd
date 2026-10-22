@@ -633,6 +633,25 @@ def dashboard_view(sheet_path):
     return bool(low) and np.mean(low) >= DASH_BOTTOM
 
 
+# a 360° video (user, 2026-10-22: xfRb0vRvJ2U, "skip all 360 deg videos"): 2:1 (equirectangular) and CLIP's
+# median on its contact sheet's frames PANO_SURE or more. Of the 36 2:1 videos with sheets, the 20 in 360° scored
+# 0.91-1.00, the others (MotoringMayhem's dash cams and car shows, a drive to Los Angeles) 0.29 or less
+PANO_SCENES = (['a 360 degree equirectangular panorama', 'a stretched 360 degree photo with a curved horizon',
+                'a spherical panorama of the inside of a car and the road around it',
+                'a road seen through a car windshield', 'a street seen from a driving car', 'cars on a race track',
+                'cars at a car show', 'a highway seen from a car'], 3)
+PANO_SURE = 0.6
+
+
+def pano_view(sheet_path, meta):
+    """Whether a video is filmed in 360°: see PANO_SURE."""
+    w, h = meta.get('width') or 0, meta.get('height') or 0
+    if not h or abs(w / h - 2) >= 0.02:
+        return False
+    scores = sheet_scores(sheet_path, PANO_SCENES, 'a photo of ')
+    return bool(scores) and float(np.median(scores)) >= PANO_SURE
+
+
 WALK_EDGE_S = 300  # how far into a video's start and end to look for a walk to or from the car
 
 
@@ -6681,6 +6700,8 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
                           'title names no vehicle or drive')
             elif dashboard_view(os.path.join(out_dir, f'{vid}.jpg')):
                 reason = 'filmed from inside the car: the dashboard fills the picture, not a dashcam view'
+            elif pano_view(os.path.join(out_dir, f'{vid}.jpg'), meta):
+                reason = 'a 360° video: no forward view to cut'
             elif fast := overlay_speedup(dict(np.load(sig_path))):  # the cross traffic is a note: see below
                 reason = fast
             else:
