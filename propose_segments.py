@@ -5008,6 +5008,12 @@ FROM_TO = (re.compile(r"\bfrom\s+(.+?)\s+to(?:wards?)?\s+(.+?)" + _END, re.I),
                       r"([A-ZÀ-Þ][\w'’.-]*(?: [A-ZÀ-Þ][\w'’.-]*){0,3})"),
            re.compile(r"\b(?:[Dd]rive|[Dd]riving|[Rr]oute)\s+([A-ZÀ-Þ][\w'’.-]*(?: [A-ZÀ-Þ][\w'’.-]*){0,3})\s+[–—]\s+"
                       r"([A-ZÀ-Þ][\w'’.-]*(?: [A-ZÀ-Þ][\w'’.-]*){0,3})"),
+           # ... or two names an unspaced en dash joins in a drive's title ("Scenic Drive 2026 Brufut–Tanji Rain
+           # Drive", Oj5IgOJmYk0; user, 2026-10-22); a hyphen joins one name (Wilkes-Barre)
+           re.compile(r"^(?=.*\b(?:[Dd]riv(?:e|ing)|DRIV(?:E|ING)|[Rr]oad ?[Tt]rip)\b).*?(?<![\w'’.-])"
+                      r"([A-ZÀ-Þ][\w'’.]+)–([A-ZÀ-Þ][\w'’.]+)(?![\w'’.-])"
+                      # ... not a road's name ("G3 Beijing–Taipei Expressway")
+                      r"(?!\s+(?:Express(?:way)?|Highway|Freeway|Motorway|Road|Hwy)\b)"),
            # a dash between two towns in a cab-view title or before the road's number: "[CABVIEW] Sandomierz - Lipsko
            # dk 79" (pawel314; user, 2026-10-18)
            re.compile(r"^\[CABVIEW\]\s*" + _DASH_TOWN + r"\s+[-–—]\s+" + _DASH_TOWN + r"(?:\s|$)"),
