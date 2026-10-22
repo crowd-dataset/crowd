@@ -7185,7 +7185,7 @@ header > div { min-width: 0; }
 #log { font-size: 13px; white-space: pre-wrap; max-width: 520px; }
 main { padding: 10px 20px 40px; max-width: 1400px; }
 .video { background: #fff; border: 1px solid #ddd; border-radius: 6px; padding: 12px 16px; margin: 12px 0; }
-.video, tr.seg { scroll-margin-top: 300px; }  /* land below the sticky player */
+.video, tr.seg { scroll-margin-top: calc(var(--head, 300px) + 8px); }  /* land below the sticky player */
 .video { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 380px); gap: 16px; }
 .desc { font-size: 13px; color: #333; max-height: 520px; overflow-y: auto; border-left: 1px solid #eee;
         padding-left: 12px; }
@@ -7729,6 +7729,10 @@ function nextOpen(row, otherVideo = false) {
   const after = rows.slice(i + 1), before = rows.slice(0, Math.max(i, 0));
   return (!otherVideo && [...after, ...before].find(r => mine(r) && open(r))) || after.find(open) || before.find(open);
 }
+// the sticky player's height as it is, so a video scrolled to lands below it: a fixed 300 px left the next
+// video's title under the player once the header grew (user, 2026-10-22)
+new ResizeObserver(() => document.documentElement.style.setProperty(
+  '--head', document.querySelector('header').offsetHeight + 'px')).observe(document.querySelector('header'));
 function goToNextOpen(row) {
   const next = nextOpen(row);
   if (!next) return;
