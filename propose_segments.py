@@ -3605,7 +3605,11 @@ def english(text):
     """text in English (Google Translate's free endpoint, no key; user 2026-10-11: BonBonB Phương's Vietnamese
     titles), '' when it already reads as English or the endpoint does not answer. Kept in TRANSLATIONS."""
     text = (text or '').strip()
-    if not text or ENGLISH_HINT.search(text):
+    # a few English words in a title mostly in another script do not make it English: "대전🚗 학하동에서 대전IC까지 |
+    # ... | 4K KOREA ROAD DRIVE ASMR" names Daejeon in Korean only (-skIv2BqaHY; user, 2026-10-22)
+    letters = re.findall(r'[^\W\d_]', text)
+    latin = sum(c.isascii() or '\u00c0' <= c <= '\u024f' for c in letters) / max(len(letters), 1)
+    if not text or ENGLISH_HINT.search(text) and latin >= 0.7:
         return ''
     try:
         with open(TRANSLATIONS) as f:
@@ -3617,9 +3621,15 @@ def english(text):
     try:
         r = requests.get('https://translate.googleapis.com/translate_a/single', timeout=15,
                          params={'client': 'gtx', 'sl': 'auto', 'tl': 'en', 'dt': 't', 'q': text[:1000]})
-        if not r.ok:  # refused (429: too many asks): asked again next time, not kept as English
-            return ''
-        out = ''.join(part[0] for part in r.json()[0] if part and part[0])
+        if r.ok:
+            out = ''.join(part[0] for part in r.json()[0] if part and part[0])
+        else:  # refused (429: too many asks): Google's other endpoint, else asked again next time
+            r = requests.post('https://translate.googleapis.com/translate_a/t', timeout=15, data={'q': text[:1000]},
+                              params={'client': 'gtx', 'sl': 'auto', 'tl': 'en'})
+            if not r.ok:
+                return ''
+            first = r.json()[0]
+            out = first[0] if isinstance(first, list) else first
     except (requests.RequestException, ValueError, IndexError, TypeError):
         return ''
     known[text] = out = '' if out.strip().lower() == text.lower() else out
