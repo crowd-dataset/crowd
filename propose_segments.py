@@ -1259,6 +1259,12 @@ def propose(sig, p=PARAMS):
         for a, b in _runs(bad):
             if (b - a) / FPS < min_s:
                 continue
+            # a camera tilted up is a hint, not a cut: hills and wide views with much sky read alike (vrXADqIfpLQ:
+            # 9 cuts on a Swiss mountain drive, 2:05-4:11 uphill through a town; user, 2026-10-22). Of reviewed such
+            # cuts 180 min were approved anyway; the 906 min left cut looked alike in a sample
+            if label == 'camera tilted up':
+                notes.append(f'camera tilted up? {a / FPS:.0f}-{b / FPS:.0f}s (kept: a hill?): check')
+                continue
             if label == 'camera shaking' and a > 0 and b < n:
                 # potholes and bumps mid-drive stay (QVdDzY3JaS0, vpaB7ijEuDw: the picture still flows out from
                 # the middle, spread/motion 1.3-1.4); a walk with the camera in hand does not (ifgeBqX6HXI: 0.04)
