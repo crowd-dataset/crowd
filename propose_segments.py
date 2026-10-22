@@ -7626,10 +7626,17 @@ const shownTr = (en, original, lang, html, origHtml) =>
   `data-other="${esc(origHtml || esc(original))}" onclick="flipTr(event, this)">${html || esc(en)}</span>`;
 function flipTr(e, el) {
   if (e.target.closest('a')) return;  // a time in it plays
-  const shown = el.innerHTML;
-  el.innerHTML = el.dataset.other;
-  el.dataset.other = shown;
-  el.classList.toggle('orig');
+  // text selected to copy is left as it is (user, 2026-10-22): a drag ends in a click, and a double or triple click
+  // selects a word or the line; so a single click flips only when no selection followed it
+  clearTimeout(el.flip);
+  if (e.detail > 1) return;
+  el.flip = setTimeout(() => {
+    if (String(getSelection())) return;
+    const shown = el.innerHTML;
+    el.innerHTML = el.dataset.other;
+    el.dataset.other = shown;
+    el.classList.toggle('orig');
+  }, 300);
 }
 const TIMESTAMP = /(?<![\\d:])(?:(\\d{1,2}):)?(\\d{1,2}):(\\d{2})(?![\\d:])/g;
 const playLinks = (video, text) => esc(text).replace(TIMESTAMP, (m, h, mi, se) =>
