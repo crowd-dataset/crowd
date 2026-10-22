@@ -1248,6 +1248,8 @@ def propose(sig, p=PARAMS):
                     continue
             keep[a:b] = False
             notes.append(f'{label} {a / FPS:.0f}-{b / FPS:.0f}s')
+    for t, x in fast_walkers(sig):  # see walk_cadence
+        notes.append(f'people walk at {x:.1f} steps a second at {int(t) // 60}:{int(t) % 60:02d}: sped up? check')
     for a, b in np.asarray(sig.get('rear', np.zeros((0, 2)))).reshape(-1, 2):  # see rear_camera
         keep[int(a * FPS):int(b * FPS)] = False
         notes.append(f'rear camera {int(a) // 60}:{int(a) % 60:02d}-{int(b) // 60}:{int(b) % 60:02d}')
@@ -1581,6 +1583,111 @@ def cross_traffic(path, sig, p=PARAMS):
         print(f'  YOLO tracking failed, no cross traffic check: {r.stderr.strip()[-300:]}', flush=True)
     rows = [[float(x) for x in line.split()] for line in r.stdout.splitlines() if line.strip()]
     return np.array(rows, float).reshape(-1, 3)
+
+
+# people's steps a second, by YOLO pose: walkers step 1.4-2.2 times a second whatever the camera does, so a
+# sped-up picture shows them stepping 3-8 times (user, 2026-10-21: "abnormally fast moving limb of pedestrians";
+# 2dotsMmvaqg's sped-up opening 7.9, bQj0CgOB-2c 4.2-4.3; of 59 windows of approved drives one walker read 4.5,
+# none other over 2.2). Few walkers are in view long enough, so it is a note: CADENCE_FAST or more for two walkers
+# of a window, or CADENCE_SURE for one. Read in the first CADENCE_OPEN_S and the CADENCE_STOPS longest stops (up to
+# CADENCE_WINDOW_S each) of the 720p video, on a CUDA GPU only
+CADENCE_FAST, CADENCE_SURE = 3.0, 5.0
+CADENCE_OPEN_S, CADENCE_STOPS, CADENCE_WINDOW_S = 60, 3, 20
+POSE_CODE = """
+import sys, cv2, numpy as np, torch
+from ultralytics import YOLO
+if not torch.cuda.is_available():
+    sys.exit(0)
+model = YOLO('yolo11x-pose.pt')
+for arg in sys.argv[1:]:  # a piece of the video and the second it starts at
+    path, t0 = arg.rsplit('@', 1)
+    cap = cv2.VideoCapture(path)
+    fps = cap.get(cv2.CAP_PROP_FPS) or 30
+    tracks, k = {}, 0
+    while True:
+        ok, img = cap.read()
+        if not ok:
+            break
+        r = model.track(img, persist=True, conf=0.3, classes=[0], device='cuda', verbose=False,
+                        tracker='bytetrack.yaml')[0]
+        if r.boxes.id is not None and r.keypoints is not None:
+            kp, kc = r.keypoints.xy.cpu().numpy(), r.keypoints.conf.cpu().numpy()
+            for i, box, p, c in zip(r.boxes.id.tolist(), r.boxes.xyxy.tolist(), kp, kc):
+                h = box[3] - box[1]
+                if c[15] > 0.3 and c[16] > 0.3 and h >= 40:  # both ankles
+                    tracks.setdefault(int(i), []).append((k / fps, (p[15][0] - p[16][0]) / h,
+                                                          (p[15][1] - p[16][1]) / h))
+        k += 1
+    if getattr(model, 'predictor', None) and model.predictor.trackers:
+        model.predictor.trackers[0].reset()
+    for tr in tracks.values():
+        tr = np.array(tr)
+        if len(tr) < 15 or tr[-1, 0] - tr[0, 0] < 1.0 or len(tr) < 0.7 * (tr[-1, 0] - tr[0, 0]) * fps:
+            continue
+        sig = tr[:, 1] if tr[:, 1].std() >= tr[:, 2].std() else tr[:, 2]  # the ankles' gap, across or along
+        grid = np.arange(tr[0, 0], tr[-1, 0], 1 / fps)
+        x = np.interp(grid, tr[:, 0], sig)
+        x = x - np.polyval(np.polyfit(grid, x, 1), grid)
+        if x.std() < 0.05:
+            continue  # standing, or legs too small to tell
+        n = 8 * len(x)
+        spec = np.abs(np.fft.rfft(x * np.hanning(len(x)), n))
+        freq = np.fft.rfftfreq(n, 1 / fps)
+        band = (freq >= 0.4) & (freq <= 6)
+        print(round(float(t0) + float(tr[0, 0]), 1), round(2 * float(freq[band][np.argmax(spec[band])]), 2))
+"""
+
+
+def walk_cadence(video_id, sig, p=PARAMS):
+    """[(second, steps a second)] of the walkers YOLO pose follows in the opening and the longest stops (POSE_CODE),
+    [] without a CUDA GPU or the video."""
+    if not os.path.exists(YOLO_PYTHON) or subprocess.run(
+            [YOLO_PYTHON, '-c', 'import torch, sys; sys.exit(0 if torch.cuda.is_available() else 1)'],
+            capture_output=True).returncode:
+        return []
+    moving = _rolling_median(sig['motion'], p['smooth_s'] * FPS) > p['moving_flow']
+    stops = sorted(((b - a, a / FPS) for a, b in _runs(~moving) if (b - a) / FPS >= 8 and a / FPS > CADENCE_OPEN_S),
+                   reverse=True)[:CADENCE_STOPS]
+    windows = [(0, CADENCE_OPEN_S)] + [(t, t + min(n / FPS, CADENCE_WINDOW_S)) for n, t in stops]
+    w = tempfile.mkdtemp(prefix='crowd_pose_')
+    try:
+        pieces = []
+        for k, (a, b) in enumerate(windows):
+            try:
+                _yt_dlp('-q', '-f', 'bv*[height<=720][ext=mp4]/bv*[height<=720]', '--download-sections',
+                        f'*{a:.0f}-{b:.0f}', '-o', os.path.join(w, f'p{k}.%(ext)s'), _url(video_id))
+            except RuntimeError:
+                continue
+            src = next((os.path.join(w, n) for n in os.listdir(w) if n.startswith(f'p{k}.')), None)
+            h264 = os.path.join(w, f'h{k}.mp4')  # OpenCV cannot decode AV1
+            if src and subprocess.run(['ffmpeg', '-v', 'error', '-y', '-i', src, '-an', '-c:v', 'libx264', '-preset',
+                                       'ultrafast', '-crf', '20', h264], capture_output=True,
+                                      timeout=900).returncode == 0:
+                pieces.append(f'{h264}@{a:.1f}')
+        if not pieces:
+            return []
+        r = subprocess.run([YOLO_PYTHON, '-c', POSE_CODE, *pieces], capture_output=True, text=True, cwd=HERE,
+                           timeout=3600)
+        return [[float(x) for x in line.split()] for line in r.stdout.splitlines() if len(line.split()) == 2]
+    except BotCheck:
+        raise
+    except (OSError, subprocess.TimeoutExpired, ValueError) as e:
+        print(f'  walking pace not read: {e}', flush=True)
+        return []
+    finally:
+        shutil.rmtree(w, ignore_errors=True)
+
+
+def fast_walkers(sig):
+    """[(second, steps a second)] of the windows whose walkers step too fast for a picture at normal speed: two at
+    CADENCE_FAST or more within half a minute, or one at CADENCE_SURE or more (see walk_cadence)."""
+    c = sorted(map(tuple, np.asarray(sig.get('cadence', np.zeros((0, 2)))).reshape(-1, 2).tolist()))
+    out = []
+    for t, x in c:
+        near = [y for u, y in c if abs(u - t) <= 30 and y >= CADENCE_FAST]
+        if (x >= CADENCE_SURE or x >= CADENCE_FAST and len(near) >= 2) and not (out and t - out[-1][0] <= 30):
+            out.append((t, max(near + [x])))
+    return out
 
 
 # the ghosts' tracking and the counts every URBAN_EVERY_S (urban_objects' own settings, a model of their own) in
@@ -3331,6 +3438,7 @@ def analyse_video(video_id, out_dir, meta=None, signs=False):
         sig['lots'] = np.array(parking_lots(path, sig, work_dir), float).reshape(-1, 2)
         sig['kerb'] = np.array(kerb_stops(path, sig, work_dir), float).reshape(-1, 2)
         sig['cross'] = cross_traffic(path, sig)
+        sig['cadence'] = np.array(walk_cadence(video_id, sig), float).reshape(-1, 2)
         sig['ghost'] = ghost
         sig['intro_end'] = np.array(clip_intro(path, meta.get('duration'), work_dir) or 0, float)
         sig['outro_start'] = np.array(clip_outro(path, meta.get('duration'), work_dir) or 0, float)
