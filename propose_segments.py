@@ -4080,7 +4080,15 @@ def description_locality(description, df, boilerplate):
     ("Beach", "Canon" the camera, "Phoenix") only counts written with its state, as in "Phoenix, AZ"."""
     text = '\n'.join(line for line in (description or '').splitlines()
                      if line.strip() not in boilerplate and not ADDRESS_LINE.search(line))
-    return _title_locality(text, df, exact_case=True, word_needs_state=True)
+    found = _title_locality(text, df, exact_case=True, word_needs_state=True)
+    # ... or its English, written in another script (miNXAZAqqds's Arabic "... مدينة الرياض": Riyadh; user,
+    # 2026-10-22). Not in Latin script: translated Vietnamese read "Vĩnh ..." as Vinh (9 of Ben Tre's videos); of the
+    # reviewed descriptions mostly in another script 5 named the reviewer's town so, 1 another
+    letters = re.findall(r'[^\W\d_]', text)
+    latin = sum(c.isascii() or '\u00c0' <= c <= '\u024f' for c in letters) / max(len(letters), 1)
+    if found is None and latin < 0.5 and (en := english(text)):
+        found = _title_locality(en, df, exact_case=True, word_needs_state=True)
+    return found
 
 
 CHAPTER_START = re.compile(r'^\W*(?:(\d{1,2}):)?(\d{1,2}):(\d{2})(?!\d)\W*(.+)$')
