@@ -2002,15 +2002,21 @@ INTRO_SCENES = (['a map', 'a map with a route drawn on it', 'a title card with t
                  'a dashcam view of a road', 'a view of a street from inside a car'], 4)
 
 
-def clip_intro(path, duration, work_dir, max_s=60):
-    """Seconds where an opening map, title card or logo ends (CLIP, one frame a second over the first max_s), else
+def clip_intro(path, duration, work_dir, max_s=60, start=0):
+    """Seconds where an opening map, title card or logo ends (CLIP, one frame a second over max_s from start), else
     None: ofoaWwzK3_Y shows a map with the route until 0:10 (1.00 a second, then 0.00), 4mGZZ9BGunA until 0:09;
-    videos that open on the road score 0.00. Its colours are no help: that map is no brighter than the drive."""
-    scores = _clip_scores(path, [t + 0.5 for t in range(int(min(max_s, duration or max_s)))], work_dir, INTRO_SCENES)
+    videos that open on the road score 0.00. Its colours are no help: that map is no brighter than the drive.
+    start: after a captioned montage, where the card may come up to 5 s after the caption's end (2026-10-22, CLIP
+    0.9 or more: vdERwc_KaQQ's "NIGHT DRIVE" 185-192 s, oPf8btBqKUw's "THIKA ROAD" 185-189 s, i2NS-u3bqqM's title
+    225-228 s, w5PtDLlHrVA's Google Earth 68-87 s right away)."""
+    n = int(min(max_s, duration - start if duration else max_s))
+    scores = _clip_scores(path, [start + t + 0.5 for t in range(n)], work_dir, INTRO_SCENES)
     times = sorted(scores)
-    if len(times) < 3 or scores[times[0]] < 0.9 or scores[times[1]] < 0.9:
+    first = next((i for i in range(min(6 if start else 1, len(times) - 2))
+                  if scores[times[i]] >= 0.9 and scores[times[i + 1]] >= 0.9), None)
+    if first is None:
         return None
-    end = next((t for t in times if scores[t] < 0.5), None)
+    end = next((t for t in times[first:] if scores[t] < 0.5), None)
     return None if end is None else int(end - 0.5)
 
 
@@ -2499,22 +2505,34 @@ def _stream(video_id):
 # a caption on an opening montage that says what it is (hv7ZXPUOeZ0: "Video Highlights" over 0-22 s; OCR reads it
 # rough, "Higheg ht", so a part of the word does)
 # ... or "Scenes from the Drive" over MilesofAmbience's openings (TzRtc0j1sz8 until 0:30)
-MONTAGE_LABEL = re.compile(r'high\w*ght|highl|in this video|coming up|preview|teaser|trailer|recap|best moments|'
-                           r'scenes? from|sneak peek|\bin ?s?th?is\b|this ?vide', re.I)  # OCR's "In tis", "insthis"
+# Read text box by text box (at most 6 words, letters and digits only): a word on a sign or in a sentence is no
+# caption ("Highland Av", "trailers", "...which highlights how traffic"). On the openings of all 79,176 mapping videos
+# (EasyOCR, 2026-10-22) a search of the whole frame's text flagged 1,874, this 1,686 with ~60 fewer false ones and
+# OCR's misreads kept ("higheight scenes", "inthis", "coming upnext", "In this" and "video.." as two boxes)
+MONTAGE_CAPTION = re.compile(r'^(?:\w+ ){0,2}(?:highl(?!and)\w*|high\w{0,2}ght\w*)|^(?:see |e)?in ?th[i1]s(?: \w+)?$|'
+                             r'^this video$|^coming ?up|^(?:\w+ ){0,2}previews?$|^scenes? from the drive|'
+                             r'^sneak peek|^(?:official )?trailer$|^teaser$|^recap$|^best moments$')
+
+
+def caption_hit(texts):
+    """Whether one of the texts read in a frame (EasyOCR's boxes, or tesseract's lines) is a montage's caption."""
+    return any(len(c.split()) <= 6 and MONTAGE_CAPTION.search(c)
+               for c in (re.sub(r'[^a-z0-9 ]+', '', x.lower()).strip() for x in texts))
 
 
 def montage_label(video_id, end, frames=4):
     """Whether OCR reads a highlights caption in the montage that montage_end puts before `end` seconds."""
     try:
         stream = _stream(video_id)
-        return any(MONTAGE_LABEL.search(_frame_text(stream, float(t)))
+        return any(caption_hit(_frame_text(stream, float(t)).splitlines())
                    for t in np.linspace(1.5, max(end - 1.5, 2), frames))
     except (RuntimeError, subprocess.TimeoutExpired, KeyError, ValueError) as e:
         print(f'  montage caption not read: {e}', flush=True)
         return False
 
 
-CAPTION_STEP_S, CAPTION_MAX_S = 5, 240  # the opening read every this many seconds, at most this far in
+# the opening read every this many seconds, at most this far in ("Coming Up Next" over 3:41 of i2NS-u3bqqM, 2026-10-22)
+CAPTION_STEP_S, CAPTION_MAX_S = 5, 360
 CAPTION_FIRST_S = 30  # no caption read by then: none (PF094oAMKvU's misses its first frames, read at 0:33)
 # the corners where a caption sits, small (_DpauJdKxV0: "In this video..." in italics at the bottom left, which a
 # read of the whole frame misses over a busy street): each read alone, enlarged, its white letters black on white
@@ -2921,13 +2939,13 @@ def screen_locality(texts, df, frames_dir=None):
 
 def caption_end(video_id, sig, texts=None):
     """Seconds where an opening montage captioned as one ("In this video", "Highlights", "Scenes from the Drive":
-    MONTAGE_LABEL) ends, else 0: OCR on a frame every CAPTION_STEP_S from 3 s while the caption shows, then the
+    caption_hit) ends, else 0: OCR on a frame every CAPTION_STEP_S from 3 s while the caption shows, then the
     first strong jump (scene score 0.1) after its last frame (_caption_text; three misses in a row end it).
     PF094oAMKvU joins its highlights with dissolves, so
     montage_end finds no cuts, but "In this video" shows until the drive starts at 1:30.5 (user, 2026-10-13). No
     caption in the first CAPTION_FIRST_S: no montage (six reads per video)."""
     if texts:  # EasyOCR's reads (opening_texts), read on while the caption still shows at their end
-        hits = [t for t in sorted(texts) if MONTAGE_LABEL.search(' '.join(texts[t]))]
+        hits = [t for t in sorted(texts) if caption_hit(texts[t])]
         if not hits or hits[0] > CAPTION_FIRST_S:
             return 0
         last = hits[0]
@@ -2938,7 +2956,7 @@ def caption_end(video_id, sig, texts=None):
         if last >= max(texts) - CAPTION_STEP_S and (more := opening_texts(video_id, max(texts) + CAPTION_STEP_S,
                                                                           CAPTION_MAX_S)):
             for t in sorted(more):
-                if MONTAGE_LABEL.search(' '.join(more[t])):
+                if caption_hit(more[t]):
                     last = t
                 elif t - last > 3 * CAPTION_STEP_S:
                     break
@@ -2951,7 +2969,7 @@ def caption_end(video_id, sig, texts=None):
         # "In this video..." at 0:33 and 1:25): it may miss two frames in a row
         last, misses = None, 0
         for t in np.arange(1, CAPTION_MAX_S, CAPTION_STEP_S):
-            if MONTAGE_LABEL.search(_caption_text(stream, float(t))):
+            if caption_hit(_caption_text(stream, float(t)).splitlines()):
                 last, misses = float(t), 0
                 continue
             misses += 1
@@ -3341,6 +3359,11 @@ def analyse_video(video_id, out_dir, meta=None, signs=False):
                 open(mark, 'w').close()
         sig['labelled_montage'] = np.array(caption_end(video_id, sig, texts) or (
             end if end is not None and montage_label(video_id, end) else 0), float)
+        # a title card, channel promo or map often follows the montage (4 of 8 long "Coming Up Next" openings,
+        # 2026-10-22: "THIKA ROAD", "SUBSCRIBE", Google Earth for 5-25 s): the drive starts after it
+        cap = int(sig['labelled_montage'])
+        if cap and (after := clip_intro(path, meta.get('duration'), work_dir, max_s=30, start=cap)):
+            sig['labelled_montage'] = np.array(after, float)
         if signs and (m := map_frame(video_id, texts)):  # a map of the drive in the opening
             sig['map_labels'], sig['map_line'] = np.array(json.dumps(m[0])), np.array(m[1], float)
         if signs and (read := read_signs(video_id, duration=meta.get('duration'))):
