@@ -5493,6 +5493,10 @@ FROM_TO = (re.compile(r"\bfrom\s+(.+?)\s+to(?:wards?)?\s+(.+?)" + _END, re.I),
            # dk 79" (pawel314; user, 2026-10-18)
            re.compile(r"^\[CABVIEW\]\s*" + _DASH_TOWN + r"\s+[-–—]\s+" + _DASH_TOWN + r"(?:\s|$)"),
            re.compile(_DASH_TOWN + r"\s+[-–—]\s+" + _DASH_TOWN + r"\s+(?:dk|dw|DK|DW)\s*\d"),
+           # ... or a drive "between A & B", in that order (eBSIeJBDivI: Timonium, then Hampton; zaxIUU9kpBg; user,
+           # 2026-10-23); not a round trip, nor "the Real Local Life Between Matunga & Central"
+           re.compile(rf"^(?!.*\b(?i:round[- ]?trip)\b).*?\b(?i:driv(?:e|ing)|road|highway|route)\b[^|]{{0,40}}?"
+                      rf"\b(?i:between)\s+({_ARROW_TO})\s+(?:&|and)\s+({_ARROW_TO})"),
            re.compile(r"\b(?:[Dd]esde|de)\s+(?:el |la )?(.+?)\s+(?:hasta|hacia|a|al)\s+(?:el |la )?(.+?)" + _END),
            re.compile(r"^(?:el |la )?(.+?)\s+(?:hasta|hacia|a|al)\s+(?:el |la )?(.+?)" + _END))
 MAJOR_TOWN_KM = 10    # a small place counts for the nearest bigger one this close
