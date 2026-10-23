@@ -4875,7 +4875,8 @@ def _nominatim(method, *args, **kwargs):
     "locationiq_api_key" (2 a second); else, or when LocationIQ refuses (its daily 5,000 are used up), through the
     public Nominatim at most once a second across every process on this computer (its usage policy; a channel run
     and a review page may ask at the same time). When Nominatim answers "too many requests" a batch job asks again
-    after 1, 2 and 4 minutes; a review page gives up at once (GeocoderRateLimited), as it waits with the plan locked."""
+    after 1, 2 and 4 minutes; a review page gives up at once (GeocoderRateLimited), as it waits with the plan
+    locked."""
     if IN_REVIEW_PAGE[0] and (key := _locationiq_key()):
         time.sleep(0.5)
         try:
