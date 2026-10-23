@@ -2505,7 +2505,10 @@ GPS_LABELLED = re.compile(r'(?i)(?<![a-z])[li1|]at(?:itude)?\b\W{0,3}(-?\d{1,2}[
                           r'(?<![a-z])(?:[li1|]on|[li1|]ng|[li1|]ong|[li1|]ongitude)\b\W{0,3}(-?\d{1,3}[.,]\d{3,})')
 # ... and longitude first: "2025-11-07 18:09:50 / W71.6076,N10.64399" (0LGFvfuUhjw, Maracaibo; user, 2026-10-23)
 GPS_LON_FIRST = re.compile(r'(?<![A-Za-z])([EW])\s*(\d{1,3}[.,]\d{3,})\s*[,;/]?\s*([NS])\s*(\d{1,2}[.,]\d{3,})')
-GPS_SIGNED = re.compile(r'(?<![\d.])(-?\d{1,2}\.\d{4,})(?:\s*[,;]?\s+|\s*(?=-))(-?\d{1,3}\.\d{4,})(?!\d|\.\d)')
+# on one line: OCR's lines are read apart (a corner strip's "1.6482" after the frame's "10.6686" made 342 of
+# Maracaibo's segments Ghana's, 2026-10-23)
+GPS_SIGNED = re.compile(r'(?<![\d.])(-?\d{1,2}\.\d{4,})(?:[ \t]*[,;]?[ \t]+|[ \t]*(?=-))'
+                        r'(-?\d{1,3}\.\d{4,})(?!\d|\.\d)')
 
 
 # OCR's letters for digits and a space after the point, by a hemisphere's letter: "N03. 085395 ElOI. 490958" is
