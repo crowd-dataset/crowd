@@ -834,8 +834,8 @@ def new_locality_row(locality, state, country, locality_aka=None, near=None, at=
         'locality_aka': f"[{','.join(aka)}]",  # as the mapping writes it
         'country': country,
         'iso3': iso3_code,
-        'lat': lat,
-        'lon': lon,
+        'lat': None if lat is None else round(float(lat), 7),  # as the mapping keeps them: 7 decimals
+        'lon': None if lon is None else round(float(lon), 7),
         'state': state,
         'videos': [],
         'time_of_day': [],
