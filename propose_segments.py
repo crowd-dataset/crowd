@@ -3080,13 +3080,19 @@ def label_on_sign(frame, name):
     return score is None or score[0] >= LABEL_SIGN
 
 
+# a direction on the screen names where the road leads, not where the car is (wfzJ3YoZFeM: a navigation app's
+# "Richtung Magdeburg" on Tempelhofer Damm in Berlin; user, 2026-10-22)
+DIRECTION = re.compile(r'\b(?:richtung|richting|direction|towards?|vers|direcci[oó]n|direzione|kierunek|sm[eě]r)\b.*',
+                       re.I)
+
+
 def screen_locality(texts, df, frames_dir=None):
     """([locality, state, country], second) of the mapping locality a label in the opening names most often
     (QcYf2VZqS-Y: "Sacramento" at 0:26; _DpauJdKxV0: "LOS ANGELES 4K"), else None. With the frames (frames_dir:
     SECOND.png, opening_texts' keep_dir) only labels on a road sign or a caption count (label_on_sign)."""
     seen = {}
     for t in sorted(texts or {}):
-        if (loc := _title_locality(' '.join(texts[t]), df)):
+        if (loc := _title_locality(' '.join(DIRECTION.sub('', x) for x in texts[t]), df)):
             seen.setdefault(tuple(loc), []).append(t)
     for loc, times in sorted(seen.items(), key=lambda kv: -len(kv[1])):
         frames = [p for t in times if frames_dir and os.path.exists(p := os.path.join(frames_dir, f'{t:.0f}.png'))]
