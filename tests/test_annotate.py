@@ -140,3 +140,81 @@ def test_missing_sample_files_are_reported(client, tmp_path):
     a.load(tmp_path / "nowhere", tmp_path / "out2")
     assert len(a.MISSING) == 3
     assert b"Sample files not found" in c.get("/").data and b"audit_frames.csv" in c.get("/").data
+
+
+def test_frame_beyond_the_end_of_the_video_says_why(client):
+    c, _ = client
+    a.TASKS["frames"].append({"sample_id": "far", "continent": "Asia", "tod": "day", "video_id": VID, "start_s": "1.0",
+                              "timestamp_s": "100.0", "contributor": "x", "locality": "X", "processed_end_s": "3.0"})
+    r = c.get("/frame/far.jpg")
+    assert r.status_code == 422 and b"could read frame" in r.data and VID.encode() in r.data
+
+
+def test_ffmpeg_reads_the_frame_when_opencv_cannot(client, monkeypatch):
+    c, _ = client
+
+    class Broken:  # OpenCV that cannot decode the file
+        def __init__(self, *args):
+            pass
+
+        def set(self, *args):
+            return False
+
+        def read(self):
+            return False, None
+
+        def release(self):
+            pass
+
+        def get(self, *args):
+            return 0.0
+
+    monkeypatch.setattr(a.cv2, "VideoCapture", Broken)
+    a.INFO[VID] = {"fps": float(FPS), "width": 64, "height": 48}
+    r = c.get("/frame/frame_ASI_day_001.jpg")
+    assert r.status_code == 200
+    img = cv2.imdecode(np.frombuffer(r.data, np.uint8), cv2.IMREAD_GRAYSCALE)
+    assert abs(float(img.mean()) - 2 * 45) < 12  # frame 45, as with OpenCV
+
+
+def test_relative_folders_work(client, monkeypatch):
+    """Started without --cache, the cache folder is a relative path; Flask must not look for it in release/."""
+    c, tmp = client
+    monkeypatch.chdir(tmp)
+    a.CFG["cache"] = "rel_cache"
+    r = c.get("/frame/frame_ASI_day_001.jpg")
+    assert r.status_code == 200 and (tmp / "rel_cache" / "frames" / "frame_ASI_day_001.jpg").is_file()
+
+
+def test_unexpected_errors_are_shown_as_a_reason_not_a_500(client, monkeypatch):
+    c, _ = client
+
+    def boom(*args):
+        raise RuntimeError("something odd")
+
+    monkeypatch.setattr(a, "extract_frame", boom)
+    r = c.get("/frame/frame_ASI_day_002.jpg")
+    assert r.status_code == 422 and b"RuntimeError: something odd" in r.data
+
+
+def test_review_page_gives_the_detectors_boxes_and_the_verdicts_are_scored(client):
+    c, tmp = client
+    meta = c.get("/api/review/frame_ASI_day_001").get_json()
+    assert meta["has_detections"] and meta["k"] == 16
+    assert [(b["c"], b["v"]) for b in meta["preds"]] == [("person", "correct")]  # the car at 0.3 is not shown
+    box = meta["preds"][0]
+    wrong = {**box, "v": "wrong_class", "t": "bicycle"}
+    c.post("/api/review/frame_ASI_day_001", json={"status": "done", "k": 16, "preds": [wrong],
+                                                  "missed": [{"c": "car", "x": 0.2, "y": 0.2, "w": 0.1, "h": 0.1}]})
+    c.post("/api/review/frame_ASI_day_002", json={"status": "done", "k": 31, "preds": [], "missed": []})
+    rows = list(csv.DictReader(open(tmp / "out" / "box_review.csv")))
+    assert [(r["kind"], r["class"], r["verdict"], r["true_class"]) for r in rows] == [
+        ("pred", "person", "wrong_class", "bicycle"), ("missed", "car", "missed", "car"), ("none", "none", "none", "")]
+    per = e.review_counts(rows)["frame_ASI_day_001"]
+    assert per["person"] == (0, 1, 0)       # a false positive for the predicted class
+    assert per["bicycle"] == (0, 0, 1)      # and a miss for the true class
+    assert per["car"] == (0, 0, 1)          # the missed car
+    frames = {r["sample_id"]: r for r in csv.DictReader(open(tmp / "audit_frames.csv"))}
+    out = e.summarise_counts(frames, e.review_counts(rows), [("all", lambda r: "all")])
+    person = next(r for r in out if r["class"] == "person")
+    assert person["precision"] == 0.0 and person["recall"] != person["recall"] and "ap50" not in person  # recall: nan

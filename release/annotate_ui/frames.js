@@ -22,7 +22,10 @@ async function show(){const it=items[idx];$('#pos').textContent=(idx+1)+' / '+it
  boxes=(meta.saved&&meta.saved.boxes)||[];mode=(meta.saved&&meta.saved.mode)||'blind';sel=-1;
  if(!meta.available){img.removeAttribute('src');cv.width=cv.height=0;
   $('#msg').innerHTML='Video '+meta.row.video_id+' is not on this machine. <button onclick="dl()">Download it with yt-dlp</button> or skip.';return}
- img.onload=draw;img.src='/frame/'+encodeURIComponent(it.id)+'.jpg?'+Date.now()}
+ const fr=await fetch('/frame/'+encodeURIComponent(it.id)+'.jpg');
+ if(!fr.ok){img.removeAttribute('src');cv.width=cv.height=0;boxes=[];draw();
+  $('#msg').innerHTML='<b style="color:#b00020">This frame cannot be shown.</b> '+(await fr.text())+' <br>Skip it (S).';return}
+ img.onload=draw;img.src=URL.createObjectURL(await fr.blob())}
 async function dl(){$('#msg').textContent='Downloading...';const r=await jpost('/api/download/'+items[idx].row.video_id,{});
  if(r.ok)show();else $('#msg').textContent='Download failed: '+r.error}
 async function save(status,none){if(status==='done'&&!none&&!boxes.length&&!confirm('No boxes: save as a frame without objects?'))return;

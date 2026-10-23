@@ -1,0 +1,27 @@
+<div class="row"><div class="panel" style="flex:3;min-width:560px">
+<div id="msg" class="small"></div>
+<div style="position:relative;display:inline-block"><img id="img" style="max-width:100%;display:block">
+<canvas id="cv" style="position:absolute;left:0;top:0;cursor:crosshair"></canvas></div></div>
+<div class="panel" style="flex:1;min-width:300px"><h3>Check the boxes</h3>
+<p class="small">The boxes are the detector's (confidence &ge; 0.7). Each counts as <b>correct</b> unless you change it.
+Click a box, then press <span class="k">X</span> if there is no such object there (false positive), or the key of the
+class it really is (<span class="k">1-6</span>) if the class is wrong. Then look for any person, bicycle, car,
+motorcycle, bus or truck that has <b>no</b> box (missed): press its class key first (nothing selected), then drag a
+box around it. Look at every box and at the whole frame before you press Enter.</p>
+<div class="chips" id="chips"></div>
+<p class="small">Next drawn box (missed object): <b id="cls"></b></p>
+<table class="small" style="border-collapse:collapse">
+<tr><td><span style="color:#2da44e">&#9632;</span> correct</td><td><b id="n_c">0</b></td></tr>
+<tr><td><span style="color:#d1242f">&#9632;</span> false positive</td><td><b id="n_f">0</b></td></tr>
+<tr><td><span style="color:#f58231">&#9632;</span> wrong class</td><td><b id="n_w">0</b></td></tr>
+<tr><td><span style="color:#1f6feb">&#9632;</span> missed (drawn)</td><td><b id="n_m">0</b></td></tr></table><p>
+<button class="p" onclick="save('done')">Save and next (Enter)</button>
+<button class="w" onclick="save('skipped')">Skip: unusable (S)</button></p><p>
+<button onclick="setV('false_positive')">False positive (X)</button>
+<button onclick="setV('correct')">Correct (C)</button>
+<button onclick="delSel()">Delete or reset (Del)</button></p><p>
+<button onclick="undo()">Undo last drawn box (Z)</button>
+<button onclick="go('review',show,-1)">Previous</button></p>
+<p class="small">Keys: <span class="k">1-6</span> class, <span class="k">X</span> false positive, <span class="k">C</span>
+correct, <span class="k">Del</span>, <span class="k">&larr; &rarr;</span> previous or next, <span class="k">Enter</span> save.</p>
+</div></div>

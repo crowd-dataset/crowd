@@ -3,23 +3,26 @@
     python -m release.annotate --videos /disk1/videos /disk2/videos --bbox /disk1/data/bbox /disk2/data/bbox
     python -m release.annotate --config /path/to/config     # the "videos" and "data" folders of the project config
 
-then open http://127.0.0.1:8773. Three tasks:
+then open http://127.0.0.1:8773. Four tasks:
 
     labels   re-watch a segment on YouTube and record whether its boundaries are right and what its time of day and
              platform are (the dataset's own labels are hidden, so they cannot bias the answer)
-    frames   draw boxes around the people, bicycles, cars, motorcycles, buses and trucks in a frame (taken from the
-             video file, so the videos must be on this machine; a missing one can be downloaded with yt-dlp)
+    review   see the detector's boxes on a frame (taken from the video file, so the videos must be on this machine;
+             a missing one can be downloaded with yt-dlp) and mark each box correct, a false positive or the wrong
+             class, and draw only the road users it missed
+    draw     draw all the boxes yourself, without seeing the detector's (to check the review for bias)
     clips    play a 10 s clip with the dataset's tracks drawn over it and count the tracking errors
 
 Progress is saved after every item, so the tool can be stopped and resumed. Results are written to the output folder:
-audit_labels_filled.csv (for release.audit_stats), annotations.csv (for release.evaluate_detections) and
-clip_taxonomy.csv. Only the local machine can reach the tool (127.0.0.1).
+audit_labels_filled.csv (for release.audit_stats), box_review.csv or annotations.csv (for
+release.evaluate_detections) and clip_taxonomy.csv. Only the local machine can reach the tool (127.0.0.1).
 """
 import argparse
 import csv
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import threading
@@ -42,6 +45,8 @@ LABEL_FIELDS = ["boundary_ok", "correct_start_s", "correct_end_s", "tod_audit", 
 CLIP_FIELDS = ["n_objects", "missed_objects", "false_tracks", "class_confusions", "id_switches", "fragmentations",
                "notes"]
 ANNOTATION_FIELDS = ["sample_id", "class", "x_center", "y_center", "width", "height", "frame_k", "mode", "annotator"]
+REVIEW_FIELDS = ["sample_id", "kind", "class", "confidence", "x_center", "y_center", "width", "height", "verdict",
+                 "true_class", "frame_k", "annotator"]
 
 app = Flask(__name__)
 CFG = {}
@@ -73,12 +78,13 @@ def item_id(task, row):
 
 def load(samples, out):
     """Read the three sample files and the saved state."""
-    CFG["out"] = Path(out)
+    CFG["out"] = Path(out).resolve()
     CFG["out"].mkdir(parents=True, exist_ok=True)
-    for task, name in (("labels", "audit_labels.csv"), ("frames", "audit_frames.csv"), ("clips", "audit_clips.csv")):
+    for task, name in (("labels", "audit_labels.csv"), ("review", "audit_frames.csv"), ("frames", "audit_frames.csv"),
+                       ("clips", "audit_clips.csv")):
         path = Path(samples) / name
         TASKS[task] = read_csv(path) if path.is_file() else []
-        if not path.is_file():
+        if not path.is_file() and str(path.resolve()) not in MISSING:
             MISSING.append(str(path.resolve()))
         state_file = CFG["out"] / f"{task}.json"
         STATE[task] = json.load(open(state_file, encoding="utf-8")) if state_file.is_file() else {}
@@ -98,6 +104,24 @@ def save_state(task):
             out.append({**r, **filled, "annotator": s.get("annotator", ""), "status": s.get("status", "")})
         fields = list(rows[0]) + ["annotator", "status"] if rows else []
         write_csv(CFG["out"] / "audit_labels_filled.csv", fields, out)
+    elif task == "review":
+        out = []
+        for r in rows:
+            s = STATE["review"].get(r["sample_id"])
+            if not s or s.get("status") != "done":
+                continue
+            base = {"sample_id": r["sample_id"], "frame_k": s.get("k", ""), "annotator": s.get("annotator", "")}
+            for b in s.get("preds") or []:
+                out.append({**base, "kind": "pred", "class": b["c"], "confidence": b.get("conf", ""),
+                            "x_center": b["x"], "y_center": b["y"], "width": b["w"], "height": b["h"],
+                            "verdict": b["v"], "true_class": b.get("t", "")})
+            for b in s.get("missed") or []:
+                out.append({**base, "kind": "missed", "class": b["c"], "confidence": "", "x_center": b["x"],
+                            "y_center": b["y"], "width": b["w"], "height": b["h"], "verdict": "missed",
+                            "true_class": b["c"]})
+            if not (s.get("preds") or s.get("missed")):  # a frame without detections and without missed objects
+                out.append({**base, "kind": "none", "class": "none", "verdict": "none"})
+        write_csv(CFG["out"] / "box_review.csv", REVIEW_FIELDS, out)
     elif task == "frames":
         out = []
         for r in rows:
@@ -233,6 +257,11 @@ def api_item(task, sid):
     if info:
         k = frame_number(r, info["fps"])
         meta.update({"fps": info["fps"], "width": info["width"], "height": info["height"], "k": k})
+        if task == "review":
+            meta["has_detections"] = detection_file(r) is not None
+            found = (detections(r, k, k) or {}).get(k, [])
+            meta["preds"] = [{"i": i, "c": c, "conf": conf, "x": x, "y": y, "w": w, "h": h, "v": "correct", "t": ""}
+                             for i, (_, c, x, y, w, h, conf) in enumerate(found)]
         if task == "clips":
             k1 = k + round(CLIP_S * info["fps"])
             meta.update({"k1": k1, "clip_start": float(r["clip_start_s"]), "segment_start": float(r["start_s"]),
@@ -264,6 +293,34 @@ def api_yolo(sid):
     return jsonify([{"c": c, "x": x, "y": y, "w": w, "h": h} for _, c, x, y, w, h, _ in found])
 
 
+def extract_frame(path, index, fps, out):
+    """Save frame number `index` (0-based) of a video as a JPEG; returns "" or the reason it failed.
+    OpenCV first; if it cannot read the frame (a codec or a seek it cannot handle, a truncated file), ffmpeg."""
+    cap = cv2.VideoCapture(str(path))
+    cap.set(cv2.CAP_PROP_POS_FRAMES, index)
+    ok, img = cap.read()
+    cap.release()
+    try:
+        out.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as error:
+        return (f"cannot create the cache folder {out.parent} ({error}); "
+                f"start the tool with --cache FOLDER you can write to")
+    if ok:
+        if cv2.imwrite(str(out), img, [cv2.IMWRITE_JPEG_QUALITY, 92]):
+            return ""
+        return f"cannot write {out}; start the tool with --cache FOLDER you can write to"
+    if not shutil.which("ffmpeg"):
+        return (f"OpenCV could not read frame {index} of {path}, and ffmpeg, which is tried next, is not installed "
+                f"(install it, for example: sudo apt install ffmpeg)")
+    done = subprocess.run(["ffmpeg", "-v", "error", "-y", "-ss", f"{(index + 0.5) / fps:.3f}", "-i", str(path),
+                           "-frames:v", "1", "-q:v", "2", str(out)], capture_output=True, text=True)
+    if done.returncode == 0 and out.is_file() and out.stat().st_size > 0:
+        return ""
+    out.unlink(missing_ok=True)
+    return (f"neither OpenCV nor ffmpeg could read frame {index} (about {index / fps:.0f} s) of {path}: the file may "
+            f"be truncated or too short, or use a codec they cannot decode. {done.stderr.strip()[-200:]}")
+
+
 @app.get("/frame/<sid>.jpg")
 def frame(sid):
     r = sample("frames", sid)
@@ -271,17 +328,15 @@ def frame(sid):
     if not cache.is_file():
         info = video_info(r["video_id"])
         if info is None:
-            abort(404)
+            return Response(f"video {r['video_id']} is not on this machine", status=404, mimetype="text/plain")
         index = round(float(r["start_s"]) * info["fps"]) + frame_number(r, info["fps"]) - 1
-        cap = cv2.VideoCapture(str(video_path(r["video_id"])))
-        cap.set(cv2.CAP_PROP_POS_FRAMES, index)
-        ok, img = cap.read()
-        cap.release()
-        if not ok:
-            abort(404)
-        cache.parent.mkdir(parents=True, exist_ok=True)
-        cv2.imwrite(str(cache), img, [cv2.IMWRITE_JPEG_QUALITY, 92])
-    return send_file(cache, mimetype="image/jpeg")
+        try:
+            reason = extract_frame(video_path(r["video_id"]), index, info["fps"], cache)
+        except Exception as error:  # show the reason on the page instead of an opaque server error
+            reason = f"{type(error).__name__}: {error}"
+        if reason:
+            return Response(reason, status=422, mimetype="text/plain")
+    return send_file(cache.resolve(), mimetype="image/jpeg")  # absolute: a relative path is looked up in release/
 
 
 @app.get("/video/<vid>")
@@ -289,7 +344,7 @@ def video(vid):
     path = video_path(vid)
     if path is None:
         abort(404)
-    return send_file(path, conditional=True)  # conditional: the browser seeks with range requests
+    return send_file(path.resolve(), conditional=True)  # conditional: the browser seeks with range requests
 
 
 @app.post("/api/download/<vid>")
@@ -336,7 +391,7 @@ def asset(name):
 def page(title, body, script=""):
     return Response(f"""<!doctype html><html><head><meta charset="utf-8"><title>{title}</title>
 <style>{asset("style.css")}</style></head><body><nav><a href="/">CROWD audits</a><a href="/labels">labels</a>
-<a href="/frames">frames</a><a href="/clips">clips</a></nav><main>{body}</main>
+<a href="/review">review</a><a href="/frames">draw</a><a href="/clips">clips</a></nav><main>{body}</main>
 <script>{asset("common.js")}{script}</script></body></html>""", mimetype="text/html")
 
 
@@ -347,6 +402,11 @@ def task_page(task, title):
 @app.get("/labels")
 def labels_page():
     return task_page("labels", "Label audit")
+
+
+@app.get("/review")
+def review_page():
+    return task_page("review", "Check the detections")
 
 
 @app.get("/frames")
@@ -361,12 +421,12 @@ def clips_page():
 
 def report():
     """Say how many of the samples can be worked on with the folders given."""
-    for task in ("frames", "clips"):
+    for task in ("review", "clips"):
         rows = TASKS[task]
         have = sum(1 for r in rows if video_path(r["video_id"]))
-        tracks = sum(1 for r in rows if detection_file(r)) if task == "clips" else None
+        tracks = sum(1 for r in rows if detection_file(r))
         print(f"{task}: {len(rows)} samples, video found for {have}"
-              + (f", detection file found for {tracks}" if tracks is not None else "")
+              + f", detection file found for {tracks}"
               + (" (a missing video can be downloaded from the page)" if have < len(rows) else ""))
 
 
@@ -388,7 +448,8 @@ def main():
         videos += conf.get("videos") or []
         bbox += [os.path.join(d, "bbox") for d in conf.get("data") or []]
     videos, bbox = [os.path.expanduser(d) for d in videos], [os.path.expanduser(d) for d in bbox]
-    CFG.update(videos=videos, bbox=bbox, cache=a.cache, annotator=a.annotator)
+    CFG.update(videos=[os.path.abspath(d) for d in videos], bbox=[os.path.abspath(d) for d in bbox],
+               cache=os.path.abspath(a.cache), annotator=a.annotator)
     for d in videos + bbox:
         if not os.path.isdir(d):
             print(f"warning: folder not found: {d}")

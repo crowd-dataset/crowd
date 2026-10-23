@@ -1,8 +1,20 @@
-"""Precision, recall and AP50 of the released YOLO11x detections against manual boxes on the audit frames.
+"""Precision and recall of the released YOLO11x detections on the audit frames, from a manual review or manual boxes.
 
+    python -m release.evaluate_detections box_review.csv --frames audit_frames.csv --out detection_eval.csv
     python -m release.evaluate_detections annotations.csv --frames audit_frames.csv \
         --bbox /disk1/data/bbox /disk2/data/bbox --out detection_eval.csv
 
+Two kinds of input, told apart by the header of the file:
+
+REVIEW (box_review.csv of release.annotate, the "review" page). The reviewer saw the detector's boxes
+(confidence >= 0.7) and marked each as correct, a false positive or the wrong class (with the true class), and drew
+the objects it missed. A correct box is a true positive; a false positive and a wrong class are false positives of the
+predicted class; a missed object and a wrong class are false negatives of the true class. Precision, recall and F1
+are given per class, overall and per time of day and continent, with a 95% bootstrap interval over frames. No AP is
+possible, since only the boxes above the threshold were shown. Seeing the detector's boxes can make a reviewer accept
+them too readily, so the precision can be optimistic: check it on a subset with the manual boxes below.
+
+MANUAL BOXES (annotations.csv of the "draw" page, boxes drawn without seeing the detector).
 annotations.csv has one row per manual box: sample_id (as in audit_frames.csv), class (person, bicycle, car,
 motorcycle, bus or truck; "none" marks an annotated frame without any of them), x_center, y_center, width, height
 (normalised to the frame, as in the detection files). A frame without a row is not annotated and is skipped.
@@ -19,6 +31,7 @@ import glob
 import os
 import random
 import re
+import sys
 from collections import defaultdict
 
 CLASSES = {0: "person", 1: "bicycle", 2: "car", 3: "motorcycle", 5: "bus", 7: "truck"}
@@ -96,6 +109,49 @@ def bootstrap(counts, rng, n=BOOTSTRAP):
     return out
 
 
+def review_counts(rows):
+    """{sample_id: {class: (true positives, false positives, ground-truth boxes)}} from box_review.csv rows."""
+    per = {}
+    for r in rows:
+        sid = r["sample_id"]
+        per.setdefault(sid, {c: [0, 0, 0] for c in CLASSES.values()})
+        if r["kind"] == "pred":
+            c, v, t = r["class"], r["verdict"], r.get("true_class", "")
+            if v == "correct":
+                per[sid][c][0] += 1
+                per[sid][c][2] += 1
+            else:
+                per[sid][c][1] += 1
+                if v == "wrong_class" and t in per[sid]:
+                    per[sid][t][2] += 1  # the object was there, as another class: a miss for that class
+        elif r["kind"] == "missed" and r["class"] in per[sid]:
+            per[sid][r["class"]][2] += 1
+    return {sid: {c: tuple(v) for c, v in d.items()} for sid, d in per.items()}
+
+
+def summarise_counts(frames, per, groupers):
+    """Rows of precision, recall and F1 (no AP) from per-frame, per-class counts, by group."""
+    rng = random.Random(SEED)
+    rows = []
+    for gname, key in groupers:
+        members = defaultdict(list)
+        for sid in per:
+            members[key(frames[sid])].append(sid)
+        for value, sids in sorted(members.items()):
+            for cls in (*CLASSES.values(), "all"):
+                use = list(CLASSES.values()) if cls == "all" else [cls]
+                counts = [tuple(map(sum, zip(*(per[s][c] for c in use)))) for s in sids]
+                n_gt = sum(c[2] for c in counts)
+                if n_gt == 0 and sum(c[1] for c in counts) == 0:  # no object and no detection of the class
+                    continue
+                (p, r, f), ci = prf(counts), bootstrap(counts, rng)
+                rows.append({"group": gname, "value": value, "class": cls, "frames": len(sids), "boxes": n_gt,
+                             "precision": p, "precision_lo": ci[0][0], "precision_hi": ci[0][1],
+                             "recall": r, "recall_lo": ci[1][0], "recall_hi": ci[1][1], "f1": f,
+                             "f1_lo": ci[2][0], "f1_hi": ci[2][1]})
+    return rows
+
+
 def predictions(row, bbox_dirs):
     """[(class name, confidence, box)] of the detection file frame that a sample row points to. bbox_dirs is a folder
     or a list of folders (each is searched, and its bbox subfolder); None if no folder has the file."""
@@ -155,12 +211,21 @@ def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("annotations", help="annotations.csv written by release.annotate (or made by hand)")
     p.add_argument("--frames", default="paper/response/audit_frames.csv", help="the sample of frames")
-    p.add_argument("--bbox", nargs="+", required=True, help="any number of folders with the detection CSV files")
+    p.add_argument("--bbox", nargs="+", default=[], help="any number of folders with the detection CSV files "
+                                                         "(only for manual boxes: a review has the boxes in its file)")
     p.add_argument("--out", default="detection_eval.csv")
     a = p.parse_args()
     bbox_dirs = [os.path.expanduser(d) for d in a.bbox]
     with open(a.frames, newline="", encoding="utf-8") as f:
         frames = {r["sample_id"]: r for r in csv.DictReader(f)}
+    groupers = [("all", lambda r: "all"), ("tod", lambda r: r["tod"]), ("continent", lambda r: r["continent"])]
+    with open(a.annotations, newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        if "verdict" in (reader.fieldnames or []):  # a review of the detector's boxes
+            rows = summarise_counts(frames, review_counts(list(reader)), groupers)
+            return write_and_print(rows, a.out)
+    if not bbox_dirs:
+        sys.exit("manual boxes are scored against the detection files: give --bbox")
     gts = defaultdict(list)
     with open(a.annotations, newline="", encoding="utf-8") as f:
         for r in csv.DictReader(f):
@@ -177,17 +242,20 @@ def main():
             preds[sid] = predictions(row, bbox_dirs)
             if preds[sid] is None:
                 print(f"no detection file for {sid} ({row['video_id']}_{row['start_s']})")
-    rows = evaluate(frames, gts, preds, [("all", lambda r: "all"), ("tod", lambda r: r["tod"]),
-                                         ("continent", lambda r: r["continent"])])
-    with open(a.out, "w", newline="", encoding="utf-8") as f:
+    write_and_print(evaluate(frames, gts, preds, groupers), a.out)
+
+
+def write_and_print(rows, out):
+    with open(out, "w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=list(rows[0]), lineterminator="\n")
         w.writeheader()
         w.writerows({k: (f"{v:.4f}" if isinstance(v, float) else v) for k, v in r.items()} for r in rows)
     for r in rows:
         if r["group"] == "all":
+            ap = f"  AP50 {r['ap50']:.3f}" if "ap50" in r else ""
             print(f"{r['class']:10} boxes {r['boxes']:5}  P {r['precision']:.3f}  R {r['recall']:.3f}  "
-                  f"F1 {r['f1']:.3f}  AP50 {r['ap50']:.3f}")
-    print(f"wrote {a.out}")
+                  f"F1 {r['f1']:.3f}{ap}")
+    print(f"wrote {out}")
 
 
 if __name__ == "__main__":
