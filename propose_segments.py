@@ -5566,7 +5566,7 @@ def drive_ends(title, df, home=None):
     m = next((m for r in FROM_TO if (m := r.search(title or ''))), None)
     if not m:
         return None
-    if home and any(c != home[2] for c in title_countries(title)):
+    if home and any(c != home[2] for c in title_countries(title) + [c for c in [pair_country(title)] if c]):
         home = None  # the title names another country ("Ponce a Juana Diaz,Puerto Rico"): it is there, however far
     countries = {common.get_iso2_country_code(common.correct_country(c)): c for c in df['country'].dropna().unique()}
     countries.pop(None, None)
@@ -6010,8 +6010,39 @@ def route_localities(title, df, home=None, max_km=None, map_path=None, via_names
 
 
 def title_reach(df, in_reach, title):
-    """in_reach and the countries a title names: "Cayey a Gurabo, Puerto Rico" from a New York channel."""
-    return in_reach | df['country'].isin(title_countries(title))
+    """in_reach and the countries a title names: "Cayey a Gurabo, Puerto Rico" from a New York channel; and the one
+    a drive between two of its localities is in (pair_country)."""
+    return in_reach | df['country'].isin(title_countries(title) + [c for c in [pair_country(title)] if c])
+
+
+PAIR_KM = 150  # see pair_country
+
+
+@lru_cache(maxsize=2)
+def _localities_by_name(_mtime_ns):
+    """{name key: [(country, lat, lon)]} of the mapping's localities, read again when the file changes."""
+    out = {}
+    for r in add_video.load_csv(add_video.FILE_PATH).itertuples():
+        out.setdefault(_name_key(r.locality), []).append((r.country, r.lat, r.lon))
+    return out
+
+
+@lru_cache(maxsize=4096)
+def pair_country(title):
+    """The country a drive "from A to B" is in when its two ends are localities of the mapping there, within PAIR_KM
+    of each other, and in no other country: "Driving from Radom to Szydłowiec" is in Poland, however far the
+    channel's home (EXRXAZcUzFU, a channel in Spain; user, 2026-10-23). None otherwise, and when the title names a
+    country or a US state."""
+    m = next((m for r in FROM_TO if (m := r.search(english_states(title or '')))), None)
+    # a country or US state the title names decides ("York to Manchester, Pennsylvania" is no drive in England)
+    if not m or title_countries(title) or any(re.search(rf'\b{re.escape(n)}\b', title, re.I)
+                                              for n in add_video.US_STATE_CODES):
+        return None
+    keys = [_name_key(m.group(k).strip(' ,')) for k in (1, 2)]
+    where = _localities_by_name(add_video._mtime_ns(add_video.FILE_PATH))
+    at = [where.get(k, ()) for k in keys]
+    found = {a[0] for a in at[0] for b in at[1] if a[0] == b[0] and _km(a[1], a[2], b[1], b[2]) <= PAIR_KM}
+    return next(iter(found)) if len(found) == 1 and keys[0] != keys[1] else None
 
 
 def split_routes(plan_path):
