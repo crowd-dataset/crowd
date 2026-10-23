@@ -3999,7 +3999,26 @@ COUNTRY_ALIASES = {'Turkey': 'Türkiye', 'Czech Republic': 'Czechia', 'Ivory Coa
                    'Nederländerna': 'Netherlands', 'Belgien': 'Belgium', 'Dänemark': 'Denmark', 'Danmark': 'Denmark',
                    'Schweden': 'Sweden', 'Sverige': 'Sweden', 'Norwegen': 'Norway', 'Norge': 'Norway',
                    'Finnland': 'Finland', 'Russland': 'Russia', 'Ryssland': 'Russia', 'Litauen': 'Lithuania',
-                   'Lettland': 'Latvia', 'Estland': 'Estonia', 'Bosnien': 'Bosnia and Herzegovina'}
+                   'Lettland': 'Latvia', 'Estland': 'Estonia', 'Bosnien': 'Bosnia and Herzegovina',
+                   # the countries' own, Romance and other everyday names (sFkpN_MHn34: "… by Car • Italia 2022" was
+                   # looked up as a place and found in Brazil, the channel's home; user, 2026-10-23)
+                   'Italia': 'Italy', 'Italie': 'Italy', 'Itália': 'Italy', 'España': 'Spain', 'Espanha': 'Spain',
+                   'Espagne': 'Spain', 'Spagna': 'Spain', 'Alemania': 'Germany', 'Alemanha': 'Germany',
+                   'Allemagne': 'Germany', 'Germania': 'Germany', 'Francia': 'France', 'França': 'France',
+                   'Brasil': 'Brazil', 'Brésil': 'Brazil', 'México': 'Mexico', 'Messico': 'Mexico', 'Polska': 'Poland',
+                   'Polonia': 'Poland', 'Pologne': 'Poland', 'Česko': 'Czechia', 'Česká republika': 'Czechia',
+                   'Chequia': 'Czechia', 'Nederland': 'Netherlands', 'Países Bajos': 'Netherlands', 'Suomi': 'Finland',
+                   'Finlandia': 'Finland', 'Hrvatska': 'Croatia', 'Croacia': 'Croatia', 'Srbija': 'Serbia',
+                   'România': 'Romania', 'Rumania': 'Romania', 'Rumunia': 'Romania', 'Magyarország': 'Hungary',
+                   'Hungría': 'Hungary', 'Belgique': 'Belgium', 'België': 'Belgium', 'Bélgica': 'Belgium',
+                   'Suisse': 'Switzerland', 'Svizzera': 'Switzerland', 'Suiza': 'Switzerland', 'Suíça': 'Switzerland',
+                   'Grecia': 'Greece', 'Grèce': 'Greece', 'Grécia': 'Greece', 'Ελλάδα': 'Greece', 'Eesti': 'Estonia',
+                   'Latvija': 'Latvia', 'Lietuva': 'Lithuania', 'Slovensko': 'Slovakia', 'Slovenija': 'Slovenia',
+                   'Shqipëria': 'Albania', 'Ísland': 'Iceland', 'Japón': 'Japan', 'Japão': 'Japan',
+                   'Giappone': 'Japan', 'Japon': 'Japan', 'Estados Unidos': 'United States',
+                   'Reino Unido': 'United Kingdom', 'Royaume-Uni': 'United Kingdom', 'Marruecos': 'Morocco',
+                   'Maroc': 'Morocco', 'Perú': 'Peru', 'Panamá': 'Panama', 'Turquía': 'Türkiye', 'Turquia': 'Türkiye',
+                   'Turquie': 'Türkiye', 'Россия': 'Russia', 'Україна': 'Ukraine', 'Ukraina': 'Ukraine'}
 
 
 def title_countries(title):
@@ -4672,7 +4691,9 @@ NOT_PLACE = {'around', 'across', 'through', 'along', 'near', 'inside',
              'let', 'lets', "let's", 'let’s', 'join', 'watch', 'enjoy', 'come',
              # "| No Music" ends every title of some channels: "Music, California" was San Diego (0iaHhzw0VhQ)
              'music', 'commentary', 'narration', 'talking'} | DEMONYMS | CONTINENTS
-PLACE_JOINERS = {'al', 'el', 'de', 'del', 'la', 'le', 'of', 'the', 'bin', 'bu', 'van', 'von', 'da', 'do', 'dos'}
+# Italian ones too ("Madonna della Corona", sFkpN_MHn34; not "di": Indonesian for "in", "Berkendara di Kota Malang")
+PLACE_JOINERS = {'al', 'el', 'de', 'del', 'la', 'le', 'of', 'the', 'bin', 'bu', 'van', 'von', 'da', 'do', 'dos',
+                 'della', 'delle', 'dello', 'degli', 'dei'}
 
 
 # "...from A to B in the Bronx, New York (2026)": the place after the last "in" holds the whole drive, when no
