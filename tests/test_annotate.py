@@ -58,7 +58,7 @@ def client(tmp_path):
            {**common, "sample_id": "frame_ASI_day_002", "timestamp_s": "2.0", "url": "u"}])
     write(tmp_path / "audit_clips.csv", [*fields, "clip_start_s", "url"],
           [{**common, "sample_id": "clip_ASI_day_001", "clip_start_s": "1.5", "url": "u"}])
-    a.TASKS.clear(), a.STATE.clear(), a.INFO.clear()
+    a.TASKS.clear(), a.STATE.clear(), a.INFO.clear(), a.MISSING.clear()
     a.BBOX.update(index=None, time=0.0)
     a.CFG.update(videos=[str(videos_a), str(videos_b)], bbox=[str(bbox_a), str(bbox_b)], cache=str(tmp_path / "cache"),
                  annotator="Tester")
@@ -132,3 +132,11 @@ def test_scoring_finds_detection_files_in_several_folders(client):
     folders = [str(tmp / "disk2" / "data"), str(tmp / "disk1" / "data")]
     assert e.predictions(row, folders)[0][:2] == ("person", 0.9)
     assert e.predictions(row, [str(tmp / "disk2" / "data")]) is None
+
+
+def test_missing_sample_files_are_reported(client, tmp_path):
+    c, _ = client
+    a.MISSING.clear()
+    a.load(tmp_path / "nowhere", tmp_path / "out2")
+    assert len(a.MISSING) == 3
+    assert b"Sample files not found" in c.get("/").data and b"audit_frames.csv" in c.get("/").data

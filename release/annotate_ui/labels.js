@@ -2,7 +2,7 @@ let row={},player,ready=false,pending=null;
 function onYouTubeIframeAPIReady(){ready=true;if(pending)load(pending)}
 function load(r){if(!ready){pending=r;return}
  if(!player){player=new YT.Player('player',{width:'100%',height:'420',videoId:r.video_id,
-  playerVars:{start:Math.floor(r.start_s),rel:0}})}
+  playerVars:{start:Math.floor(r.start_s),rel:0},events:{onReady:()=>seek(row.start_s)}})}
  else player.loadVideoById({videoId:r.video_id,startSeconds:r.start_s})}
 function seek(t){if(player)player.seekTo(t,true)}
 document.querySelectorAll('input[name=b]').forEach(e=>e.onchange=()=>{$('#fix').style.display=e.value==='n'&&e.checked?'block':'none'});

@@ -4,6 +4,7 @@ runs_mt
 _output/
 check_videos_report.json
 corrupt_videos.txt
+paper
 
 # Video and data folders
 video/

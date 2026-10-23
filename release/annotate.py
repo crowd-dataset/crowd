@@ -49,6 +49,7 @@ LOCK = threading.Lock()
 TASKS = {}  # task -> list of sample rows (dicts)
 STATE = {}  # task -> id -> saved answer
 INFO = {}   # video id -> {fps, width, height} read from the file
+MISSING = []  # sample files that were not found
 
 
 # ------------------------------------------------------------------------------------------------ files
@@ -77,6 +78,8 @@ def load(samples, out):
     for task, name in (("labels", "audit_labels.csv"), ("frames", "audit_frames.csv"), ("clips", "audit_clips.csv")):
         path = Path(samples) / name
         TASKS[task] = read_csv(path) if path.is_file() else []
+        if not path.is_file():
+            MISSING.append(str(path.resolve()))
         state_file = CFG["out"] / f"{task}.json"
         STATE[task] = json.load(open(state_file, encoding="utf-8")) if state_file.is_file() else {}
 
@@ -311,7 +314,14 @@ def index():
     counts = "".join(
         f'<li><a href="/{t}">{t}</a>: {count(t, "done")} of {len(TASKS[t])} done, {count(t, "skipped")} skipped</li>'
         for t in TASKS)
-    return page("CROWD audits", f"<h1>CROWD audits</h1><p>Annotator: <b>{CFG.get('annotator') or 'not set'}</b></p>"
+    items = "".join(f"<li>{m}</li>" for m in MISSING)
+    warn = (
+        '<div class="panel" style="border-color:#b00020;color:#b00020"><b>Sample files not found</b>, so there is '
+        "nothing to work on. Copy audit_labels.csv, audit_frames.csv and audit_clips.csv to the folder below, or "
+        f"start the tool with --samples FOLDER (the folder with the three files):<ul>{items}</ul></div>"
+    ) if MISSING else ""
+    return page("CROWD audits", f"{warn}<h1>CROWD audits</h1>"
+                                f"<p>Annotator: <b>{CFG.get('annotator') or 'not set'}</b></p>"
                                 f"<ul>{counts}</ul><p>Results: <code>{CFG['out']}</code></p>")
 
 
@@ -383,6 +393,8 @@ def main():
         if not os.path.isdir(d):
             print(f"warning: folder not found: {d}")
     load(a.samples, a.out)
+    for m in MISSING:
+        print(f"warning: sample file not found: {m}\n  (started in {os.getcwd()}; use --samples FOLDER)")
     report()
     print(f"Open http://127.0.0.1:{a.port}  (results in {a.out})")
     app.run(host="127.0.0.1", port=a.port, debug=False, threaded=True)

@@ -10,13 +10,13 @@ style="color:#b00020;font-weight:700"></span>.</p></div>
 <p class="small">Watch the start and the end. Are the boundaries right (continuous driving, no cut, advertisement or
 speed change inside, no wrong stretch included)? The dataset's time-of-day and platform labels are hidden: decide
 yourself.</p>
-<label>Boundaries correct?</label><label><input type="radio" name="b" value="y"> yes</label>
-<label><input type="radio" name="b" value="n"> no</label>
-<div id="fix" style="display:none"><label>Correct start (s)</label><input id="cs"><label>Correct end (s)</label>
-<input id="ce"></div>
-<label>Time of day</label><select id="tod"><option value="">-</option><option>day</option><option>night</option></select>
-<label>Platform the video is filmed from</label><select id="pf"></select>
-<label>Notes</label><textarea id="nt" rows="2"></textarea><p>
+<label>Boundaries correct?</label><label class="opt"><input type="radio" name="b" value="y" autocomplete="off"> yes</label>
+<label class="opt"><input type="radio" name="b" value="n" autocomplete="off"> no</label>
+<div id="fix" style="display:none"><label>Correct start (s)</label><input id="cs" autocomplete="off"><label>Correct end (s)</label>
+<input id="ce" autocomplete="off"></div>
+<label>Time of day</label><select id="tod" autocomplete="off"><option value="">-</option><option>day</option><option>night</option></select>
+<label>Platform the video is filmed from</label><select id="pf" autocomplete="off"></select>
+<label>Notes</label><textarea id="nt" rows="2" autocomplete="off"></textarea><p>
 <button class="p" onclick="save('done')">Save and next (Enter)</button>
 <button class="w" onclick="save('skipped')">Skip: video unavailable</button>
 <button onclick="go('labels',show,-1)">Previous</button></p></div></div>

@@ -9,3 +9,4 @@ box-sizing:border-box}.k{font-family:monospace;background:#eef;padding:1px 4px;b
 .chips span{display:inline-block;padding:2px 8px;margin:2px;border-radius:10px;color:#fff;font-size:13px}
 #bar{height:8px;background:#dde;border-radius:4px;overflow:hidden}#bar div{height:8px;background:#2da44e}
 .small{color:#57606a;font-size:13px}.num{width:70px}
+input[type=radio]{width:auto;margin:0 6px 0 0}label.opt{font-weight:400;display:flex;align-items:center}
