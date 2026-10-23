@@ -4524,9 +4524,11 @@ def _title_locality(title, df, exact_case=False, word_needs_state=False):
              and not ((title[a:b].lower() in add_video.US_STATE_CODES
                        or title[a:b] in add_video.US_STATE_CODES.values()) and re.search(r'\w\s*,\s*$', title[:a]))}
     # a title naming a US state is in it: Davenport, FL is a namesake of the one in "Davenport, Iowa", and
-    # Philadelphia, MS of the one in "Philadelphia, Pennsylvania"
+    # Philadelphia, MS of the one in "Philadelphia, Pennsylvania" ("Washington DC" is no Washington State:
+    # WTgD6zV2Vzs; user, 2026-10-22)
     states = {code for name, code in add_video.US_STATE_CODES.items()
-              if re.search(rf'\b{re.escape(name)}\b', title, re.I) or re.search(rf',\s*{code}\b', title)}
+              if re.search(rf'\b{re.escape(name)}\b(?!,? ?D\.? ?C\b)', title, re.I)
+              or re.search(rf',\s*{code}\b', title)}
     if states:
         found = {loc for loc in found if loc[2] != 'United States' or not loc[1] or loc[1] in states}
     if len(found) > 1 and len({loc[0] for loc in found}) == 1:  # namesakes: a big city beats small towns
