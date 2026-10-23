@@ -1238,7 +1238,12 @@ def propose(sig, p=PARAMS):
         if 'street' in sig:  # signals saved before the highway check have no street trace
             street = np.repeat(sig['street'], URBAN_EVERY_S * FPS)[:n]
             street = np.pad(street, (0, n - len(street)), mode='edge')
-            problems.append(('highway driving', (_rolling_mean(street, 60 * FPS) < p['street_objects']) & day))
+            # ... at night too when the title names an expressway (TEv8a56vgQg, "Midnight Drive - South China
+            # Expressway - Guangzhou 4K", was proposed as Guangzhou all through; user, 2026-10-23): CLIP's
+            # town scenes keep the streets of a town in
+            night_too = bool(sig.get('highway_title', False))
+            problems.append(('highway driving', (_rolling_mean(street, 60 * FPS) < p['street_objects'])
+                             & (day | night_too)))
     if 'shift_y' in sig:
         problems.append(('camera shaking', _rolling_median(_jitter(sig), 30 * FPS) > p['shake_jitter']))
     if 'object_y' in sig:
@@ -3601,6 +3606,9 @@ HIGHWAY_TITLE = re.compile(r'(?i:road ?trip|\bhighways?\b|\bfreeways?\b|\bhwy\b|
                            r'|(?<!via )\binterstates?\b)'
                            r'|(?<![Vv]ia )(?:\b[Ii]nterstate[- ]?|\bI[- ]?|\bi[- ])\d{1,3}\b'
                            r'|\bU\.?S\.?(?:\s?Route|\s?Rte\.?)?[- ]?\d{1,3}\b')  # US Route 9 (KD6ylENdMzA), US-101
+# ... and the expressways of a title (not a ring road, a city's own: user, 2026-10-23), for the highway check at night
+EXPRESSWAY_TITLE = re.compile(r'(?i:\bexpressways?\b|\bexpwy\b|\bexpy\b|\btollway\b|\bautoroutes?\b|\bautopistas?\b'
+                              r'|\bautostrad[ae]\b)|高速')
 # walks and rides on boats are no vehicle type the dataset takes; a title that also says drive keeps the video.
 # "Inside" is a walk through a building (8xybXtQ0LgA, "Inside Planet Hollywood Shop": none of 23 such titles kept)
 # and "Waking Tour", "Waling Tour" are typos of a walk (1pNtxLv45JI, AW7T4eSiVRk)
@@ -4050,6 +4058,8 @@ def load_signals(sig_path, title):
     """A video's saved signals, with on_bus set from its title (see propose's side views)."""
     sig = dict(np.load(sig_path))
     sig['on_bus'] = np.array(title_vehicle(title_text(title or '')) == 1)
+    # an expressway in the title: the highway check at night too (see propose)
+    sig['highway_title'] = np.array(bool(EXPRESSWAY_TITLE.search(title_text(title or ''))))
     return sig
 
 
@@ -5406,7 +5416,10 @@ FROM_TO = (re.compile(r"\bfrom\s+(.+?)\s+to(?:wards?)?\s+(.+?)" + _END, re.I),
            re.compile(r"^(?!(?:Welcome|Back|Return|Road|Guide|Dusk|Dawn|Day|Night|"
                       r"Sunset|Sunrise|Morning|Evening|Sea)\b)"
                       r"([A-Z][\w'’.-]*(?: [A-Z][\w'’.-]*){0,3})\s+[Tt]o\s+([A-Z][\w'’.-]*(?: [A-Z][\w'’.-]*){0,3})"
-                      r"(?:\s+via\s+[^|–—:(]+?)?\s*(?:\s[-–—|]\s|\||:|\(|$)"),
+                      r"(?:\s+via\s+[^|–—:(]+?)?\s*(?:\s[-–—|]\s|\||:|\(|$"
+                      # ... or before the numbered road it takes: "Markham to Brooklin Ontario Highway 7 Tour Thru
+                      # My Dash Cam" (hykezh8ls8k; user, 2026-10-23)
+                      r"|\s(?=(?:[Hh]ighway|HIGHWAY|[Hh]wy|[Rr]oute|I|US|SR)[- ]?\d{1,3}\b))"),
            # ... or such a piece after a dash, bar or colon: "Driving Germany 4K - Werder to Berlin" (XfTNDV_nagE),
            # also with the road it takes: "| Boulder City to Las Vegas via I-11, 215 & I-15 |" (zMU7Qt6yijA)
            # ... a town may have its state ("| Council Bluffs, Iowa to Omaha, Nebraska |", BPgWe0tYG0g) and the pair
@@ -5657,7 +5670,10 @@ def drive_ends(title, df, home=None):
                 other = alone
             a, b = (big, other) if i == 0 else (other, big)
             break
-    end = b and _hit_locality(b, df, countries)
+    # an end the title names as it is is that place, not the bigger town nearby a village counts for (fw3zM-XDdkM:
+    # "TĂLMACIU to CISNĂDIOARA" ends in Cisnădioara, 434 people, not in Cisnădie 3 km off; user, 2026-10-23)
+    as_named = [bool(x and x[0] and _name_key(x[0]) == _name_key(p)) for x, p in ((a, first), (b, last))]
+    end = b and _hit_locality(b, df, countries, named=as_named[1])
     # "…to West Farms in the Bronx", "…hasta el Barrio Portugues en Adjuntas": the drive ends in that place, and a
     # namesake of the end elsewhere (another Barrio Portugués) is not it
     if area := re.match(r"\s*(?:in|en)\s+(?:the\s+)?([A-Z][\w'’.-]*(?: [A-Z][\w'’.-]*){0,3})", title[m.end(2):]):
@@ -5672,7 +5688,25 @@ def drive_ends(title, df, home=None):
                 a = None
         if c and (in_c := _hit_locality(c, df, countries)) and end != in_c:
             b, end = c, in_c
-    return (a, a and _hit_locality(a, df, countries)), (b, end)
+    start = a and _hit_locality(a, df, countries, named=as_named[0])
+    # ... and a mapping locality of the name the title writes, near the place found, is it (hykezh8ls8k: "to Brooklin
+    # Ontario" is the mapping's Brooklin, which OpenStreetMap files under Whitby; user, 2026-10-23)
+    start, end = (_written_locality(x, hit, df) or loc for x, hit, loc in ((first, a, start), (last, b, end)))
+    return (a, start), (b, end)
+
+
+def _written_locality(phrase, hit, df, km=15):
+    """[locality, state, country] of the one mapping locality within km of a hit whose name the phrase is or begins
+    with ("Brooklin Ontario"), else None."""
+    if not (hit and phrase):
+        return None
+    key = _name_key(phrase)
+    rows = df[[bool(n) and (key == n or key.startswith(n + ' ')) for n in df['locality'].map(_name_key)]]
+    rows = rows[[_km(hit[4], hit[5], float(la), float(lo)) <= km for la, lo in zip(rows['lat'], rows['lon'])]]
+    if len(rows) != 1:
+        return None
+    r = rows.iloc[0]
+    return [r['locality'], r['state'] if isinstance(r['state'], str) else None, r['country']]
 
 
 def area_city(title, df, home=None, near=None):
@@ -5766,6 +5800,33 @@ DESC_DRIVE = re.compile(rf"(?:📍\s*)?(?i:(?:location|route|drive|driving|road 
                         rf"({_DESC_PLACE})(\s*\([^)]*\))?\s*(,.*)?$")
 
 
+def _no_emoji(text):
+    """text with its emoji, flags and pictographs (with the joiners and variation selectors between them) as the
+    bars that part a title's pieces: "🚗 TĂLMACIU to CISNĂDIOARA 🇷🇴 | Rural" is "TĂLMACIU to CISNĂDIOARA | Rural"."""
+    kinds = [unicodedata.category(c) for c in text]
+    out = ''.join(' | ' if k in ('So', 'Sk', 'Cs', 'Co') else '' if k == 'Cf' or 0xFE00 <= ord(c) <= 0xFE0F else c
+                  for c, k in zip(text, kinds))
+    out = re.sub(r'\s*\|(?:\s*\|)+', ' |', re.sub(r'\s+', ' ', out))
+    return out.strip(' |')
+
+
+# the places a drive passes, after "via" anywhere in its title: "| Rural Transylvania via Sadu & Cisnădie (POV)"
+# (fw3zM-XDdkM; user, 2026-10-23: Cisnădie, the bigger town near the end, was left to the reviewer); roads ("via
+# I-11, 215 & I-15") are none
+_VIA_PLACE = r"[A-ZÀ-ÞŁŚŻŹĆŃČŘŠŽĚŮ][\w'’.-]*(?: [A-ZÀ-ÞŁŚŻŹĆŃČŘŠŽĚŮ][\w'’.-]*){0,2}"
+TITLE_VIA = re.compile(rf"\bvia\s+({_VIA_PLACE}(?:\s*(?:,|&|\band\b)\s*{_VIA_PLACE})*)")
+
+
+def title_via(title):
+    """[places] a drive's title names after "via", in order, else []: no road, number, region or ordinary word."""
+    names = [x.strip() for m in TITLE_VIA.finditer(_no_emoji(title or ''))
+             for x in re.split(r'\s*(?:,|&|\band\b)\s*', m.group(1)) if x.strip()]
+    if any(re.search(r'\d', x) or ROAD.search(x) or ordinary(x.split()[0]) or _name_key(x) in
+           _region_and_country_keys() for x in names):
+        return []
+    return names
+
+
 def drive_title(title, description):
     """What names a drive "from A to B": the title, else the first of the description's first DRIVE_LINES lines that
     does ("Location: Minokamo to Yaotsu,Gifu,Japan" under "Drive in Japan | Rain Sounds Therapy", qBRUPhoFeTQ;
@@ -5773,6 +5834,13 @@ def drive_title(title, description):
     title = title or ''
     if any(r.search(english_states(title)) for r in FROM_TO):
         return title
+    # ... with its emoji and flags taken out: "🚗 TĂLMACIU to CISNĂDIOARA 🇷🇴 | Rural Transylvania" (fw3zM-XDdkM; user,
+    # 2026-10-23: a drive between two towns, proposed as Tălmaciu all through)
+    # ... whose ends are names, not words the bars now part ("Most Difficult Cities To Drive 🚗 In America")
+    bare = _no_emoji(title)
+    if bare != title and (m := next((m for r in FROM_TO if (m := r.search(english_states(bare)))), None)) \
+            and not any(ordinary((m.group(i).split() or ['the'])[0]) for i in (1, 2)):
+        return bare
     # ... or its English (njJZB0I801I: "od Sarajeva do Konjica - do Bradine autoputem"; user, 2026-10-22)
     # whose ends are still in the title as written ('Sara' in "Sarajeva"): a translated sentence fits the pattern too
     # ("Saying no is also a way to move forward")
@@ -5845,14 +5913,16 @@ def _along(path, n):
     return [tuple(p[min(int(np.searchsorted(d, f)), len(p) - 1)]) for f in np.linspace(0, d[-1], n + 1)]
 
 
-def route_localities(title, df, home=None, max_km=None, map_path=None, via_names=None):
+def route_localities(title, df, home=None, max_km=None, map_path=None, via_names=None, stop_names=None):
     """([(share of the drive where it starts, where it ends, locality)], the route for a map) along the car route
     of a drive "from A to B" through two different towns, else ([], None). The towns on the way are looked up on
     OpenStreetMap every 1/ROUTE_SAMPLES of the driving time, so the borders are an estimate that assumes the video
     follows that route at an even pace. max_km: A and B are at most this far apart (as the crow flies); farther
     means one of them is a namesake (Bear Creek near Baltimore for Bear Creek Village, PA). map_path: the route a
     map in the video shows (map_route): followed instead of the fastest one, its ends A and B when the title's are
-    not found (OkEXG95VyKk: Newport to Manhattan, from a channel whose home is Cusco)."""
+    not found (OkEXG95VyKk: Newport to Manhattan, from a channel whose home is Cusco). via_names: the stops a title
+    lists (place_list), whose first and last stand in for A and B when those are not found; stop_names: places the
+    route only passes (title_via)."""
     ends = drive_ends(title, df, home)
     if not ends and not map_path:
         return [], None
@@ -5879,7 +5949,7 @@ def route_localities(title, df, home=None, max_km=None, map_path=None, via_names
     while vias and not (b and end):
         if h := _osm_place(vias.pop(), tuple(sorted(countries))):
             b, end = h, _hit_locality(h, df, countries)
-    via_names = vias
+    via_names = vias + list(stop_names or [])
     if not (start and end) or max_km and _km(a[4], a[5], b[4], b[5]) > max_km:
         return [], None
     if start == end:  # a drive within one locality (between its neighbourhoods): one stretch, no route needed
@@ -5897,6 +5967,12 @@ def route_localities(title, df, home=None, max_km=None, map_path=None, via_names
                       if (h := _osm_reverse(round(lat, 4), round(lon, 4))) else None
                       for lat, lon in points[1:-1]] + [end]
     points = [a[4:6]] + list(points[1:-1]) + [b[4:6]]
+    # near an end that is a place of its own in the town OpenStreetMap files it under, that town is the end
+    # (hykezh8ls8k: the drive into Brooklin was Whitby from 46:11; user, 2026-10-23)
+    for hit, loc in ((a, start), (b, end)):
+        if hit and loc and hit[0] and _name_key(hit[0]) != _name_key(loc[0]):
+            locs = [loc if x and _name_key(x[0]) == _name_key(hit[0]) and _km(*pt, *hit[4:6]) <= 15 else x
+                    for x, pt in zip(locs, points)]
     out, stops, town = [], [], start
     for i, loc in enumerate(locs):
         town = loc or town  # a point in no town is still in the one before
@@ -5976,7 +6052,8 @@ def split_route(p, df, home=None, sig_path=None):
     t1 = max(s['end'] for s in segs)
     sig = np.load(sig_path) if sig_path and os.path.exists(sig_path) else {}
     shares, route = route_localities(p.get('drive_title') or p.get('title'), df, home, max_km=t1 / 3600 * MAX_KMH,
-                                     map_path=map_route(sig, df), via_names=p.get('drive_via'))
+                                     map_path=map_route(sig, df), via_names=p.get('drive_via'),
+                                     stop_names=p.get('drive_stops'))
     if not shares:
         return False
     if all(loc is None for _, _, loc in shares):
@@ -6239,7 +6316,25 @@ def ends_in_towns(stretches, segs, title, df, home=None):
     if end and loc_at(max(last['end'] - 1, 0)) is None and last is not first:
         cut = last['start']
         out = [(a, min(b, cut), loc) for a, b, loc in out if a < cut] + [(cut, float('inf'), end)]
+    # ... and so are a short first and last segment (END_PIECE_S) that rural or highway footage left out (a gap of
+    # ROLE_GAP_S or more) parts from the rest: the border the driving time estimates fell inside them (fw3zM-XDdkM:
+    # 19:16-20:52, after the road into Cisnădioara, was Cisnădie, and Tălmaciu ended at 2:58 of 3:52; user,
+    # 2026-10-23). Of 254 reviewed drives split along a route this changes 6: 4 better (+222 s), 2 worse (-57 s); with
+    # no limit a long end piece through the next town too (Yonkers to New York City: -318 s)
+    order = sorted(segs, key=lambda x: x['start'])
+
+    def end_piece(seg):
+        return seg['end'] - seg['start'] <= END_PIECE_S
+    if start and len(order) > 1 and order[1]['start'] - order[0]['end'] >= ROLE_GAP_S and end_piece(order[0]):
+        cut = order[0]['end']
+        out = [(0, cut, start)] + [(max(a, cut), b, loc) for a, b, loc in out if b > cut]
+    if end and len(order) > 1 and order[-1]['start'] - order[-2]['end'] >= ROLE_GAP_S and end_piece(order[-1]):
+        cut = order[-1]['start']
+        out = [(a, min(b, cut), loc) for a, b, loc in out if a < cut] + [(cut, float('inf'), end)]
     return out
+
+
+END_PIECE_S = 300  # a first or last segment this short, across a gap, is in the drive's start or end town
 
 
 def _locality_anchor(loc, df):
@@ -7013,7 +7108,12 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
             'video': vid, 'title': meta['title'], 'analysed': analysed,
             **({'drive_title': dt} if (dt := drive_title(meta['title'], meta.get('description'))) != meta['title']
                else {}),
-            **({'drive_via': stops[1:-1]} if (stops := place_list(meta['title'])) and len(stops) > 2 else {}),
+            **({'drive_via': stops[1:-1]} if (stops := place_list(meta['title'])) and len(stops) > 2
+               # ... or after "via" in the title of a drive between towns (title_via): stops on the way only, never
+               # an end in place of one not found (ILw__0NlXys: "Percetakan Negara to Masjid Istiqlal ... via
+               # Paseban" would start in the Special Capital Region of Jakarta)
+               else {'drive_stops': via} if (via := title_via(meta['title']))
+               and any(r.search(english_states(dt)) for r in FROM_TO) else {}),
             'entries': [{'locality': locality, 'guessed': locality is not None, 'segments': segments}],
             'vehicle_type': 0 if vt is None else vt, 'upload_date': meta['upload_date'], 'channel_id': ch,
             'note': '; '.join(filter(None, ['; '.join(notes), walk_batch(plan), vehicle_note])),
