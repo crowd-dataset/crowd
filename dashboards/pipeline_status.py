@@ -214,6 +214,72 @@ def paces(rows, now):
     return dict(started=(rows[0]['left'] - rows[-1]['left']) / days, added=added / days, reviewed=reviewed / days)
 
 
+# the steps of adding videos, in the order the workers take them (run_channels.py, refresh_queue.py), each with its
+# progress (user, 2026-10-23)
+QUEUE_PHASES = [((1,), 'Refresh 1: subscriptions, new uploads'),
+                ((2,), "Refresh 2: the sheet's processed channels, new uploads"),
+                ((3,), "Refresh 3: the sheet's unfinished channels, every video"),
+                ((4, 5), 'Refresh 4-5: highway-titled videos left out before, analysed after all'),
+                ((6,), 'Refresh 6: channels added to the sheet from the mapping, new uploads')]
+HELD = [('us', 'deferred:us:', 'Held back: US videos of channels elsewhere'),
+        ('multi_city', 'deferred:', 'Held back: drives through several localities'),
+        ('long', 'deferred:long:', 'Held back: videos over an hour (the very last)')]
+FINISHED = ('reviewed', 'marked', 'rejected', 'duplicate')
+SHEET_S = 3600
+sheet = {'at': 0, 'rows': None}  # the channels sheet as last read, at most every SHEET_S
+
+
+def steps(state, queue):
+    """[{title, done, total, unit, parts: [(what, how many)], now: a worker on it}] of the steps of adding videos,
+    in order."""
+    if time.time() - sheet['at'] > SHEET_S:
+        sheet['at'] = time.time()
+        try:
+            sheet['rows'] = rc.sheet_rows()
+        except Exception:  # requests' errors: the step keeps its last count, or is left out
+            pass
+
+    def channels(title, keys, extra=()):
+        status = [state.get(k, {}).get('status', 'not started') for k in keys]
+        hosts = sorted({state[k].get('host', 'mini') for k in keys if state.get(k, {}).get('status') == 'processing'})
+        count = lambda *s: sum(x in s for x in status)  # noqa: E731
+        parts = [('being processed', f"{count('processing')} ({', '.join(hosts)})") if hosts else None,
+                 ('to review', count('to review')), ('not started', count('not started')),
+                 ('needs country / error', count('needs country', 'error'))] + list(extra)
+        return dict(title=title, done=count(*FINISHED), total=len(keys), unit='channels',
+                    parts=[x for x in parts if x and x[1]], now=bool(hosts))
+
+    out = []
+    if (rows := sheet['rows']) is not None:
+        left = [s for _, _, s, _ in rows if s in rc.OURS]
+        out.append(dict(title="The sheet's new channels", done=len(rows) - len(left), total=len(rows), unit='rows',
+                        parts=[x for x in [('Processing', left.count('Processing')), ('blank', left.count(''))]
+                               if x[1]]))
+    queue = [q for q in queue if (q.get('country') or '').strip().lower() != 'russia']
+    for phases, title in QUEUE_PHASES:
+        if (keys := ['refresh:' + q['url'] for q in queue if q.get('phase') in phases]):
+            out.append(channels(title, keys))
+    held = {}  # kind -> {channel url: videos held back in its plan}
+    for k, c in state.items():
+        if k.startswith('deferred:'):
+            continue
+        try:
+            with open(os.path.join(rc.ROOT, c['name'], 'plan.json')) as f:
+                plan = json.load(f)
+        except (OSError, ValueError):
+            continue
+        for kind, _, _ in HELD:
+            if (n := sum(p.get('deferred') == kind for p in plan)):
+                held.setdefault(kind, {})[c.get('url') or k.removeprefix('refresh:')] = n
+    for kind, prefix, title in HELD:
+        urls = set(held.get(kind, {})) | {k[len(prefix):] for k in state if k.startswith(prefix)
+                                          and not k[len(prefix):].startswith(('us:', 'long:'))}
+        if urls:
+            out.append(channels(title, [prefix + u for u in sorted(urls)],
+                                [('videos held back', sum(held.get(kind, {}).values()))]))
+    return out
+
+
 def collect():
     state = rc.load_state()
     by_url = {(c.get('url') or k.split('refresh:', 1)[-1]): c for k, c in state.items()}
@@ -251,6 +317,7 @@ def collect():
         batches=sorted(batches, key=lambda b: -b['waiting']),
         sheet_todo=len(todo), queue=len(queue), left=left, pace=pace,
         queue_phases=sorted(collections.Counter(q.get('phase') for q in queue).items(), key=lambda x: str(x[0])),
+        steps=steps(state, queue),
         last_sync=os.path.getmtime(sw.HEALTH) if os.path.exists(sw.HEALTH) else None,
         hosts=hosts, statuses=[(s, [statuses.get((h, s), 0) for h in hosts]) for s in names])
 
@@ -352,6 +419,14 @@ border-radius:16px;background:var(--bg);color:var(--fg);font-size:13px;cursor:po
   {{ s.left }} not started{% if s.pace %} · {{ '%.1f'|format(s.pace.started) }}/day (7 days){% if s.pace.started > 0
   %} · about {{ dur(s.left / s.pace.started * 86400) }} left{% endif %}{% endif %}</span></div>
 </div>
+<h2>Adding videos: the steps in the workers' order</h2><div class="card">
+{% for p in s.steps %}<div class="row"{% if not loop.first %} style="margin-top:10px"{% endif %}>
+ <div class="head"><span><b>{{ p.title }}</b>{% if p.now %} <span class="st working">workers on it</span>{% endif %}
+ </span><span class="small muted">{{ p.done }} of {{ p.total }} {{ p.unit }} done
+ {%- if p.total %} ({{ (100 * p.done / p.total)|round|int }}%){% endif %}</span></div>
+ <div class="bar"><i style="width:{{ (100 * p.done / p.total)|round(1) if p.total else 0 }}%"></i></div>
+ <div class="small muted">{% for k, v in p.parts %}{{ k }} {{ v }}{{ ' · ' if not loop.last }}{% endfor %}</div>
+</div>{% else %}<span class="muted">nothing read yet</span>{% endfor %}</div>
 <h2>Workers</h2><div class="grid">
 {% for w in s.workers %}<div class="card">
  <div class="head"><h3>{{ w.host }}</h3><span class="st {{ w.state }}">{{ w.state }}</span></div>
