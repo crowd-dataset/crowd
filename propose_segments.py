@@ -4642,6 +4642,8 @@ DEMONYMS = {'american', 'canadian', 'mexican', 'russian', 'german', 'french', 'i
             'korean', 'indian', 'irish', 'english', 'dutch', 'polish', 'spanish', 'cuban', 'brazilian'}
 # words of titles that are no place ("Beautiful Evening Drive", "4K ASMR"); runs of capitalised words without
 # them are looked up as places ("Al Khan Beach", "Jebel Jais Mountain")
+# a continent ("Is Warsaw the Greenest Capital in Europe?" found a Europe in Bydgoszcz: kP-SF8QIlEQ)
+CONTINENTS = {'europe', 'asia', 'africa', 'oceania'}
 NOT_PLACE = {'around', 'across', 'through', 'along', 'near', 'inside',
              'drive', 'drives', 'driving', 'beautiful', 'relax', 'relaxing', 'chilled', 'morning', 'afternoon',
              'evening', 'night', 'midnight', 'sunrise', 'sun', 'rise', 'sunset', 'unedited', 'sounds', 'sound',
@@ -4659,9 +4661,7 @@ NOT_PLACE = {'around', 'across', 'through', 'along', 'near', 'inside',
              # "Let's" in a description is no San Diego (CGwuQYmG0JY)
              'let', 'lets', "let's", 'let’s', 'join', 'watch', 'enjoy', 'come',
              # "| No Music" ends every title of some channels: "Music, California" was San Diego (0iaHhzw0VhQ)
-             'music', 'commentary', 'narration', 'talking',
-             # a continent ("Is Warsaw the Greenest Capital in Europe?" found a Europe in Bydgoszcz: kP-SF8QIlEQ)
-             'europe', 'asia', 'africa', 'oceania'} | DEMONYMS
+             'music', 'commentary', 'narration', 'talking'} | DEMONYMS | CONTINENTS
 PLACE_JOINERS = {'al', 'el', 'de', 'del', 'la', 'le', 'of', 'the', 'bin', 'bu', 'van', 'von', 'da', 'do', 'dos'}
 
 
@@ -4693,6 +4693,11 @@ STREET_WORDS = {'ave', 'avenue', 'blvd', 'boulevard', 'rd', 'road', 'street', 'h
 
 
 STREETS = '|'.join(w.capitalize() for w in STREET_WORDS)
+
+
+@lru_cache(maxsize=None)
+def _country_keys():
+    return frozenset(_name_key(c) for c in COUNTRIES)
 
 
 def place_phrases(text, limit=4):
@@ -4730,7 +4735,9 @@ def place_phrases(text, limit=4):
             run = []
             continue
         # a two-letter word that joins nothing ends a name: "Orosi,Ca Cutler,Ca" names Orosi and Cutler
-        if (token[:1].isupper() and word not in NOT_PLACE and (len(token) > 2 or word in PLACE_JOINERS)
+        # ... but within a country's name: "Pretoria South Africa" is Pretoria (BdBy8VdJzjM)
+        country = run and word in CONTINENTS and _name_key(f'{run[-1]} {token}') in _country_keys()
+        if (token[:1].isupper() and (word not in NOT_PLACE or country) and (len(token) > 2 or word in PLACE_JOINERS)
                 or run and word in PLACE_JOINERS):
             run.append(token)
             continue
