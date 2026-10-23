@@ -2405,6 +2405,26 @@ def trim_lead_in(p, lead):
                  '(90% of its videos in the mapping)').lstrip('; ')
 
 
+# the opening trim_montage or trim_lead_in left out, as the note says: the full locality step proposes a video
+# again from its signals (propose(..., ONE_PLACE)), which brought it back (VI_BelZyrAE: "intro 0-43s" in the note,
+# proposed from 0:01, the reviewer started it at 0:44; of 87 reviewed videos whose trim was undone so, the reviewer
+# started 62 after it and 25 up to 20 s before it, 256 s in all; user, 2026-10-23)
+INTRO_TRIMMED = re.compile(r"intro 0-(\d+)s: (?:this channel's drives start|a montage of highlights)")
+
+
+def keep_trim(p):
+    """Start a just-proposed video again no earlier than the opening its note says was trimmed off."""
+    if not (m := INTRO_TRIMMED.search(p.get('note') or '')) or not p.get('entries'):
+        return
+    lead = int(m.group(1))
+    for e in p['entries']:
+        e['segments'] = [dict(s, start=max(s['start'], lead)) for s in e['segments'] if s['end'] > lead + 30]
+    p['entries'] = [e for e in p['entries'] if e['segments']]
+    if not p['entries']:
+        del p['entries']
+        p['exclude'] = f'nothing left after the first {lead}s, its intro'
+
+
 # the note's items that may mean rejecting the whole video, shown red on the review page (user, 2026-10-16)
 REJECT_HINT = re.compile(r'reject|sped up|slowed|few waits|the title mentions|camera on the driver\?|edited drive|'
                          r'vanished mid-picture|skips footage|time stamp in the picture jumps|walking or a handheld|'
@@ -2668,7 +2688,12 @@ def _stream(video_id):
 # (EasyOCR, 2026-10-22) a search of the whole frame's text flagged 1,874, this 1,686 with ~60 fewer false ones and
 # OCR's misreads kept ("higheight scenes", "inthis", "coming upnext", "In this" and "video.." as two boxes)
 MONTAGE_CAPTION = re.compile(r'^(?:\w+ ){0,2}(?:highl(?!and)\w*|high\w{0,2}ght\w*)|^(?:see |e)?in ?th[i1]s(?: \w+)?$|'
-                             r'^this video$|^coming ?up|^(?:\w+ ){0,2}previews?$|^scenes? from the drive|'
+                             r'^this video$|^coming ?up|'
+                             # ... or "Up Next" in a corner (VI_BelZyrAE's channel, Thailand008, until its drive
+                             # starts; EasyOCR reads "UpIext", "Up Iext", "UeIlext"): in the openings read so far, only
+                             # that channel's (user, 2026-10-23)
+                             r'^up ?next\b|^u[pe] ?[il1]{0,2}[nl]?ext$|'
+                             r'^(?:\w+ ){0,2}previews?$|^scenes? from the drive|'
                              r'^sneak peek|^(?:official )?trailer$|^teaser$|^recap$|^best moments$')
 
 
@@ -2900,6 +2925,12 @@ def read_signs(video_id, step=None, duration=None):
 # start YOLO sees as rural or highway was nearer the reviewer's start 10 times, farther 6 (the name on a shop or a
 # direction sign in town), so a hint with the sign's frame and a button, no cut. The first SIGN_HEAD_S (at most half)
 SIGN_HEAD_S, SIGN_HEAD_POP = 600, 50000
+# a sign giving the town's distance: further than this, the town is still ahead (njJZB0I801I: "Konjic 55 km" at 3:53
+# of a drive from Sarajevo); nearer, it starts about that far on at SIGN_KMH (KC1ZKnUY5PU: "St Hippolyte du Fort 2"
+# at 1:08, approved from 2:46; user, 2026-10-22). Of 12 such signs on reviewed videos the speed to the approved
+# start was 31-105 km/h, median 67
+SIGN_AHEAD_KM, SIGN_KMH = 5, 60
+SIGN_DISTANCE = re.compile(r'\s*(\d{1,3}(?:[.,]\d)?)\s*(km|m)?\s*', re.I)
 
 
 def head_signs(video_id, duration, keep_dir):
@@ -4047,6 +4078,11 @@ def title_places(title, df, home):
     home (hnldNuzdEUU: "Kissimmee … Bay Lake FL" from a New York channel is no Kissimmee near New York); with one
     state named, each place is looked up in it (FDuwYqiyOHc: "Ashland to Waterloo … Nebraska" is no Waterloo, IA)."""
     phrases, states = place_phrases(title), title_states(title)
+    # a title naming another country is there, however far from home, as in drive_ends (Eo3Zx_sPua8: "The Romanian
+    # ... 🇷🇴 | Rural Drive Macedonia - Cebza" of a channel at home in Germany was a Macedonia in Italy; user,
+    # 2026-10-22)
+    if home and any(c != home[2] for c in title_countries(title)):
+        home = None
     if not states:
         return place_localities(phrases, df, home)
     names = {code: name.title() for name, code in add_video.US_STATE_CODES.items() if len(name) > 2}
@@ -4207,6 +4243,29 @@ def _mapping_names():
 
 GENERIC_RUN = {'big', 'small', 'busy', 'city', 'town', 'street', 'streets', 'road', 'roads', 'traffic', 'noise',
                'sleep', 'sleeping', 'minute', 'hour', 'for', 'the', 'local', 'open', 'back', 'rush'}
+
+
+# subdivisions that are towns, no states (Fk-gRH664hc: "Haapsalu, Estonia" is the town, an urban municipality in
+# pycountry; user, 2026-10-22)
+TOWN_SUBDIVISION = re.compile(r'municipal|city|town|commune|borough|council|quarter', re.I)
+
+
+@lru_cache(maxsize=None)
+def provinces(country):
+    """The name keys of a country's subdivisions that are no towns (see TOWN_SUBDIVISION)."""
+    code = common.get_iso2_country_code(common.correct_country(country))
+    return frozenset(_name_key(sub.name) for sub in (code and pycountry.subdivisions.get(country_code=code)) or []
+                     if not TOWN_SUBDIVISION.search(sub.type))
+
+
+def province_key(state, country):
+    """The name key of the province a mapping state is (written as its name or its code: "QUE" is Quezon), None
+    when it is none the country's subdivisions know."""
+    if _name_key(state) in provinces(country):
+        return _name_key(state)
+    code = common.get_iso2_country_code(common.correct_country(country))
+    return next((_name_key(sub.name) for sub in (code and pycountry.subdivisions.get(country_code=code)) or []
+                 if sub.code.split('-')[1] == state and _name_key(sub.name) in provinces(country)), None)
 
 
 def ordinary(word):
@@ -4520,6 +4579,24 @@ def _title_locality(title, df, exact_case=False, word_needs_state=False):
     # a name inside a longer matched name is no place of its own: "York" in "New York" is not York, PA
     # and the state after a town's name is its state, no place of its own: "New Rochelle, New York" is not New York
     title = title or ''
+    # a town written with a province it is not in is a namesake there, and the title's town not in the mapping yet:
+    # "Candelaria Quezon" is no Candelaria, Zambales, and "San Antonio, Quezon | Padre Garcia to Tiaong" no Padre
+    # Garcia (mywhqHkbAiU, 4WAzx3TxEJ8; user, 2026-10-23)
+    # (of namesakes in several provinces the one in the province named; a name inside a longer one aside: the
+    # Burgos in "Padre Burgos, Quezon", UAaMSusWUoE)
+    wrong = set()
+    for loc, (a, b) in found:
+        if loc[2] != 'United States' and isinstance(loc[1], str) \
+                and not any(x <= a and b <= y and (x, y) != (a, b) for _, (x, y) in found) \
+                and (m := re.match(r"\s*,?\s*([^\W\d_][\w'-]*)(\s+[^\W\d_][\w'-]*)?", title[b:])) \
+                and (named := next((_name_key(p) for p in (m.group(1) + (m.group(2) or ''), m.group(1))
+                                    if _name_key(p) in provinces(loc[2])), None)) \
+                and (own := province_key(loc[1], loc[2])) and own != named:
+            if not any(o[0] == loc[0] and isinstance(o[1], str) and province_key(o[1], o[2]) == named
+                       for o, _ in found):
+                return None
+            wrong.add(loc)
+    found = {(loc, span) for loc, span in found if loc not in wrong}
     found = {loc for loc, (a, b) in found
              if not any(x <= a and b <= y and (x, y) != (a, b) for other, (x, y) in found if other != loc)
              and not any(other != loc and re.fullmatch(r',\s*', title[y:a])
@@ -4528,7 +4605,17 @@ def _title_locality(title, df, exact_case=False, word_needs_state=False):
              # a state's name or code after a comma is the state, also when the town before it is new: "Johnson City,
              # New York" and "Scarsdale, Westchester, NY" are not New York City
              and not ((title[a:b].lower() in add_video.US_STATE_CODES
-                       or title[a:b] in add_video.US_STATE_CODES.values()) and re.search(r'\w\s*,\s*$', title[:a]))}
+                       or title[a:b] in add_video.US_STATE_CODES.values()) and re.search(r'\w\s*,\s*$', title[:a]))
+             # ... and a province's name after a town's, with a comma or without, the province: "Lucban, Quezon",
+             # "Candelaria Quezon Driving Tour" are no Quezon, Nueva Ecija (TheStrollGuys; user, 2026-10-22)
+             and not (loc[2] != 'United States' and _name_key(title[a:b]) in provinces(loc[2])
+                      and re.search(r'[^\W\d_]\s*,?\s*$', title[:a])
+                      # ... when the locality is a small town in another province, not the province's city
+                      # (Kermanshah, Ben Tre, Berlin, Buenos Aires)
+                      and isinstance(loc[1], str) and _name_key(loc[1]) != _name_key(title[a:b])
+                      and float(pd.to_numeric(df.loc[(df['locality'] == loc[0]) & (df['country'] == loc[2]),
+                                                     'population_locality'], errors='coerce').max() or 0)
+                      < TITLE_CITY_POP)}
     # a title naming a US state is in it: Davenport, FL is a namesake of the one in "Davenport, Iowa", and
     # Philadelphia, MS of the one in "Philadelphia, Pennsylvania" ("Washington DC" is no Washington State:
     # WTgD6zV2Vzs; user, 2026-10-22)
@@ -4572,7 +4659,9 @@ NOT_PLACE = {'around', 'across', 'through', 'along', 'near', 'inside',
              # "Let's" in a description is no San Diego (CGwuQYmG0JY)
              'let', 'lets', "let's", 'let’s', 'join', 'watch', 'enjoy', 'come',
              # "| No Music" ends every title of some channels: "Music, California" was San Diego (0iaHhzw0VhQ)
-             'music', 'commentary', 'narration', 'talking'} | DEMONYMS
+             'music', 'commentary', 'narration', 'talking',
+             # a continent ("Is Warsaw the Greenest Capital in Europe?" found a Europe in Bydgoszcz: kP-SF8QIlEQ)
+             'europe', 'asia', 'africa', 'oceania'} | DEMONYMS
 PLACE_JOINERS = {'al', 'el', 'de', 'del', 'la', 'le', 'of', 'the', 'bin', 'bu', 'van', 'von', 'da', 'do', 'dos'}
 
 
@@ -4633,6 +4722,11 @@ def place_phrases(text, limit=4):
         # a street is no place: "3 Ave Bronx" names the Bronx, "Jerome Ave" no town Jerome ("St" only after a
         # name: "St. Clair" is Saint Clair)
         if word in STREET_WORDS or word == 'st' and run:
+            run = []
+            continue
+        # "Macalelon Border to Town Proper & Catanauan Border": the towns next door, not where the drive is
+        # (l-Z3srzA9DY is General Luna; user, 2026-10-22)
+        if word in ('border', 'boundary') and run:
             run = []
             continue
         # a two-letter word that joins nothing ends a name: "Orosi,Ca Cutler,Ca" names Orosi and Cutler
@@ -4852,6 +4946,11 @@ def _osm_place(phrase, country_codes, near=None, reach_km=None):
     a = r.raw.get('address', {})
     kind = next((k for k in ('city', 'town', 'village', 'municipality', 'hamlet') if a.get(k)), None)
     town = a.get(kind) if kind else None
+    # a village the phrase names is itself, not the town OpenStreetMap files it under (Eo3Zx_sPua8: Cebza and
+    # Macedonia, villages of Ciacova; user, 2026-10-22)
+    if (r.raw.get('class') == 'place' and _osm_type(r.raw) == 'village' and a.get('village')
+            and _name_key(a['village']) == _name_key(_osm_name(r.raw)) == wanted):
+        town, kind = a['village'], 'village'
     # ... but a boundary named as its state is the state (udVi6qOYvNI: "South Africa, Mpumalanga" is the
     # province; user, 2026-10-20: offer no regions or provinces)
     if (not town and r.raw.get('class') == 'boundary' and _osm_name(r.raw) != a.get('state')
@@ -4860,8 +4959,8 @@ def _osm_place(phrase, country_codes, near=None, reach_km=None):
     # a county or a municipality is no locality ("Suffolk" in "Coram in Suffolk"), and a place OpenStreetMap files
     # under no town, or under its municipality only, is the town itself (v7XHCQBdl4w: the suburb Motetema, its
     # "city" the Elias Motsoaledi Local Municipality; udVi6qOYvNI: Kwaggafontein; user, 2026-10-20)
-    # ... nor a province or region ("Province of Småland": B2kJDCoBv6w; user, 2026-10-22)
-    if town and re.search(r'\b(?:County|Municipality|Province|Region|Prefecture|Oblast|Län)$'
+    # ... nor a province or region ("Province of Småland": B2kJDCoBv6w; user, 2026-10-22; "Karachi Division")
+    if town and re.search(r'\b(?:County|Municipality|Province|Region|Prefecture|Oblast|Län|Division)$'
                           r'|^(?:Province|Region|County|Prefecture) of\b', town):
         town = None
     if not town and r.raw.get('class') == 'place' and _name_key(_osm_name(r.raw)) in (
@@ -4936,7 +5035,8 @@ def place_localities(phrases, df, home=None):
     codes = tuple(sorted(countries))
     states = {_name_key(sub.name): sub.name for code in codes
               for sub in pycountry.subdivisions.get(country_code=code) or []
-              if not (code == 'US' and sub.code[3:] in US_TERRITORIES)}  # Puerto Rico is a country here
+              if not (code == 'US' and sub.code[3:] in US_TERRITORIES)  # Puerto Rico is a country here
+              and not TOWN_SUBDIVISION.search(sub.type)}
     # a state of the countries searched is the state ("Atlanta, Georgia"), else "GEORGIA" in a title is the country
     country_names = {_name_key(c) for c in COUNTRIES} - set(states)
     named = {states[_name_key(p)] for p in phrases if _name_key(p) in states}
@@ -4992,7 +5092,12 @@ def place_localities(phrases, df, home=None):
         anchor = max(hits, key=lambda ph: ph[1][6])
         # a name OpenStreetMap does not know near the anchor (a small neighbourhood) says nothing: a far
         # namesake (Longwood, PA for Longwood in the Bronx) would only look like a second town
-        hits = [(p, h if p == anchor[0] else _osm_place(p, codes, anchor[1][4:6], 50)) for p, h in hits]
+        # ... but around a region (no town: a county, a province) a town of the name within REGION_KM of its middle
+        # stays (Lt-Qdy5U78E: "Östra Frölunda, Västergötland" lies 85 km from the province's; user, 2026-10-22);
+        # "York" in "Port Jefferson in Suffolk, New York" is York upstate, 430 km from Suffolk's
+        hits = [(p, h if p == anchor[0] else _osm_place(p, codes, anchor[1][4:6], 50) or (
+            h if h and not anchor[1][0] and _km(anchor[1][4], anchor[1][5], h[4], h[5]) <= REGION_KM else None))
+                for p, h in hits]
     for phrase, hit in hits:
         # the town the phrase itself names keeps its name ("Hazlet"); a sight in a town counts as usual
         # ... also with its state written after it without a comma ("Philadelphia Tennessee" is Philadelphia, not
@@ -5004,6 +5109,7 @@ def place_localities(phrases, df, home=None):
             yield loc, phrase
 
 
+REGION_KM = 150  # see place_localities
 NEARBY_PLACES = '_output/proposals/nearby_places.json'  # GeoNames answers kept between runs
 
 
@@ -5618,8 +5724,9 @@ DRIVE_LINES = 10  # a description's first lines that may name the drive
 # ... in a line of its own that is only that: "Location: Minokamo to Yaotsu,Gifu,Japan" (a sentence like "Take a ride
 # down International Drive to ..." or "Make a one time donation" is none)
 _DESC_PLACE = r"[A-ZÀ-ÞŁŚŻŹĆŃ][\w'’.-]*(?: [A-ZÀ-ÞŁŚŻŹĆŃ][\w'’.-]*){0,3}"
-DESC_DRIVE = re.compile(rf"(?i:(?:location|route|drive|driving|road ?trip)\s*:?\s*)?(?i:from\s+)?({_DESC_PLACE})"
-                        rf"(\s*\([^)]*\))?\s+(?i:to)\s+({_DESC_PLACE})(\s*\([^)]*\))?\s*(,.*)?$")
+DESC_DRIVE = re.compile(rf"(?:📍\s*)?(?i:(?:location|route|drive|driving|road ?trip)\s*:?\s*)?(?i:from\s+)?"
+                        rf"({_DESC_PLACE})(\s*\([^)]*\))?\s+(?:(?i:to)|→|->|➡\ufe0f?)\s+"
+                        rf"({_DESC_PLACE})(\s*\([^)]*\))?\s*(,.*)?$")
 
 
 def drive_title(title, description):
@@ -5629,6 +5736,12 @@ def drive_title(title, description):
     title = title or ''
     if any(r.search(english_states(title)) for r in FROM_TO):
         return title
+    # ... or its English (njJZB0I801I: "od Sarajeva do Konjica - do Bradine autoputem"; user, 2026-10-22)
+    # whose ends are still in the title as written ('Sara' in "Sarajeva"): a translated sentence fits the pattern too
+    # ("Saying no is also a way to move forward")
+    if (en := english(title)) and (m := next((m for r in FROM_TO if (m := r.search(english_states(en)))), None)) \
+            and all((_name_key(m.group(i)).split() or [''])[0][:4] in _name_key(title) for i in (1, 2)):
+        return en
     if stops := place_list(title):  # the first stop to the last (drive_via: the ones between)
         return f'from {stops[0]} to {stops[-1]}'
     # "Grevenmacher  - Trier VIRTUAL DRIVE 4K" (iTzKa42lapA; user, 2026-10-19): two places, no common word in either
@@ -5980,6 +6093,21 @@ def quiet_stretch(sig, a, b):
                 'street' in sig and np.mean(sig['street'][i:j]) < PARAMS['street_objects'])
 
 
+def sign_distance(boxes, name, height):
+    """The distance in km a sign's OCR boxes ([x, y, text, confidence]) give on the row of name, to its right,
+    else None."""
+    key = _name_key(name)
+    at = [b for b in boxes if key[:4] in (k := _name_key(str(b[2]))) or difflib.SequenceMatcher(
+        None, key, k).ratio() >= 0.8]
+    if not at:
+        return None
+    x, y = at[0][0], at[0][1]
+    near = [(abs(b[1] - y), float(m[1].replace(',', '.')) / (1000 if (m[2] or '').lower() == 'm' else 1))
+            for b in boxes if b[0] > x and abs(b[1] - y) <= 0.02 * height
+            and (m := SIGN_DISTANCE.fullmatch(str(b[2])))]
+    return min(near)[1] if near else None
+
+
 def town_sign_hint(p, sig_path, out_dir, df):
     """A drive in one town of up to SIGN_HEAD_POP: its first sign naming the town (head_signs) past its first
     segment's start, after a rural or highway stretch: that frame kept as VIDEO_townsign.jpg, p['town_sign'] =
@@ -6000,6 +6128,7 @@ def town_sign_hint(p, sig_path, out_dir, df):
                     or not quiet_stretch(sig, seg['start'], t):
                 continue
             shots = [n for n in os.listdir(keep) if n.endswith('.jpg')] if os.path.isdir(keep) else []
+            ahead = None
             if shots:  # the frame read at t (its second rounded down), 320x180 around the name where OCR read it
                 shot = os.path.join(keep, min(shots, key=lambda n: abs(float(n[:-4]) - t - 0.25)))
                 img = cv2.imread(shot)
@@ -6008,12 +6137,18 @@ def town_sign_hint(p, sig_path, out_dir, df):
                     boxes = (_ocr_run([shot], boxes=True) or [[]])[0]
                     key = _name_key(loc[0])
                     at_name = [b for b in boxes if key[:4] in _name_key(str(b[2]))] or boxes
+                    ahead = sign_distance(boxes, loc[0], h)
+                    if ahead is not None and ahead > SIGN_AHEAD_KM:  # a direction sign: not here yet
+                        continue
                     x, y = (at_name[0][0], at_name[0][1]) if at_name else (w / 2, h / 2)
                     x0, y0 = int(min(max(x - 160, 0), max(w - 320, 0))), int(min(max(y - 90, 0), max(h - 180, 0)))
                     cv2.imwrite(os.path.join(out_dir, f"{p['video']}_townsign.jpg"), img[y0:y0 + 180, x0:x0 + 320])
             p['town_sign'] = {'t': int(t), 'locality': loc[0]}
+            at = int(t + ahead / SIGN_KMH * 3600) if ahead else int(t)
             p['note'] = '; '.join(filter(None, [p.get('note'), f'a sign names {loc[0]} at {t // 60}:{t % 60:02d} '
-                                                f'after a rural or highway start: {loc[0]} starts there? check']))
+                                                f'after a rural or highway start'
+                                                + (f', {ahead:g} km on' if ahead else '')
+                                                + f': {loc[0]} starts about {at // 60}:{at % 60:02d}? check']))
             return
     finally:
         shutil.rmtree(keep, ignore_errors=True)
@@ -7092,6 +7227,9 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
                 else:
                     merged[key] = e
             p['entries'] = list(merged.values())
+    for p in new:  # the openings trimmed off stay off after the steps above proposed videos again
+        if not any(s.get('decision') or s.get('applied') for e in p.get('entries', []) for s in e['segments']):
+            keep_trim(p)
 
     def has_signals(v):
         return os.path.exists(os.path.join(out_dir, f'{v}_signals.npz'))

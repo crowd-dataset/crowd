@@ -276,6 +276,9 @@ SINGLE_CITY_FIRST = True
 # held-back drives through several localities
 US_LATER = True
 US_NAMES = ps.US_NAMES
+# refresh queue phases taken before everything else on a machine whose --phases include them (user, 2026-10-23:
+# "prioritise" phase 1, the subscriptions): before the sheet, a channel started here and US_LATER
+FIRST_PHASES = {1}
 # channels of these countries wait, "paused" in the state (user, 2026-10-16: none from Russia for now); taken off
 # the set, they go on by themselves
 PAUSED_COUNTRIES = {'russia'}
@@ -362,10 +365,10 @@ def done_before(url, sheet, state):
     return (f'row {rows[same[0]]}' if same[0] in rows else same[0]) if same else None
 
 
-def refresh_todo(state, args, any_phase=False):
+def refresh_todo(state, args, any_phase=False, only=None):
     """[(None, state key, url, country, new uploads only)] of the channels done before this machine fetches again:
     every m-th of the refresh queue (--rows k/m), one started here first; any_phase: of every phase, not only
-    --phases."""
+    --phases; only: just these phases (of --phases)."""
     try:
         with open(REFRESH_QUEUE) as f:
             queue = json.load(f)
@@ -386,6 +389,7 @@ def refresh_todo(state, args, any_phase=False):
         if (c.get('status', 'processing') == 'processing' and not c.get('host')
                 and (key in state or share is None or i % share[1] == share[0])
                 and (key in state or any_phase or args.phases is None or q.get('phase') in args.phases)
+                and (only is None or q.get('phase') in only and (args.phases is None or q.get('phase') in args.phases))
                 and (q.get('country') or '').strip().lower() != 'russia'):
             todo.append((key in state, None, key, q['url'], q.get('country') or '', q.get('new_only', True)))
     todo.sort(key=lambda t: not t[0])  # one started here first, else the queue's order (its phases)
@@ -576,7 +580,8 @@ def main():
         # (user, 2026-10-20: "assign next phase in the queue to workers when work is done automatically")
         if not queue and args.phases is not None and not args.no_queue:
             queue = going(refresh_todo(state, args, any_phase=True))
-        todo = [t for t in todo if not in_us(t)] or [t for t in queue if not in_us(t)] \
+        todo = going(refresh_todo(state, args, only=FIRST_PHASES)) \
+            or [t for t in todo if not in_us(t)] or [t for t in queue if not in_us(t)] \
             or [t for t in todo if in_us(t)] or [t for t in queue if in_us(t)] \
             or (US_LATER and going(deferred_todo(state, args, 'us'))) or going(deferred_todo(state, args)) \
             or going(deferred_todo(state, args, 'long'))  # videos over an hour: the very last (LONG_LATER_S)
