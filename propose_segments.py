@@ -4845,6 +4845,10 @@ def _region_names():
 
 
 NOMINATIM_SLOT = os.path.join(tempfile.gettempdir(), 'crowd_nominatim.slot')
+# True in a review page (review() sets it): LocationIQ's 5,000 lookups a day are kept for the review pages, and a
+# refused lookup fails at once there instead of waiting minutes (user, 2026-10-23: the GPS check and channel runs
+# used the day's 5,000 up, and Apply then waited minutes on the public Nominatim with the plan locked)
+IN_REVIEW_PAGE = [False]
 
 
 class _LocationIQ(Nominatim):
@@ -4867,11 +4871,12 @@ def _locationiq_key():
 
 
 def _nominatim(method, *args, **kwargs):
-    """A geocode or reverse call: through LocationIQ when the secret file has "locationiq_api_key" (2 a second),
-    else, or when LocationIQ refuses (its daily 5,000 are used up), through the public Nominatim at most once a
-    second across every process on this computer (its usage policy; a channel run and a review page may ask at
-    the same time). When Nominatim answers "too many requests" it is asked again after 1, 2 and 4 minutes."""
-    if key := _locationiq_key():
+    """A geocode or reverse call: in a review page (IN_REVIEW_PAGE) through LocationIQ when the secret file has
+    "locationiq_api_key" (2 a second); else, or when LocationIQ refuses (its daily 5,000 are used up), through the
+    public Nominatim at most once a second across every process on this computer (its usage policy; a channel run
+    and a review page may ask at the same time). When Nominatim answers "too many requests" a batch job asks again
+    after 1, 2 and 4 minutes; a review page gives up at once (GeocoderRateLimited), as it waits with the plan locked."""
+    if IN_REVIEW_PAGE[0] and (key := _locationiq_key()):
         time.sleep(0.5)
         try:
             return getattr(_LocationIQ(key), method)(*args, **kwargs)
@@ -4881,7 +4886,7 @@ def _nominatim(method, *args, **kwargs):
         except GeocoderServiceError as e:  # 404: LocationIQ found nothing, Nominatim may (OJm2GB-6-1E's
             if '404' not in str(e):         # "Henry Hudson Highway, New York" with all the mapping's countries)
                 raise
-    for wait in (60, 120, 240, None):
+    for wait in (None,) if IN_REVIEW_PAGE[0] else (60, 120, 240, None):
         with open(NOMINATIM_SLOT, 'a+') as slot:
             fcntl.flock(slot, fcntl.LOCK_EX)
             slot.seek(0)
@@ -4889,9 +4894,10 @@ def _nominatim(method, *args, **kwargs):
             time.sleep(max(0.0, last + 1.1 - time.time()))
             try:
                 return getattr(Nominatim(user_agent='crowd-dataset-propose-segments'), method)(*args, **kwargs)
-            except GeocoderRateLimited:
+            except GeocoderRateLimited as e:
                 if wait is None:
-                    raise
+                    raise GeocoderRateLimited('OpenStreetMap refuses lookups for now (too many requests): try again '
+                                              'in a few minutes') from e
             finally:
                 slot.seek(0)
                 slot.truncate()
@@ -8651,6 +8657,7 @@ def review(plan_path, port=None):
     from markupsafe import Markup, escape
 
     plan_dir = os.path.dirname(os.path.abspath(plan_path))
+    IN_REVIEW_PAGE[0] = True
     app = Flask(__name__)
     app.jinja_env.globals["note_html"] = note_html  # the note, its warnings in red
     app.jinja_env.globals["gap_reason"] = gap_reason  # why two segments are apart, on the split rows
@@ -9367,7 +9374,12 @@ def review(plan_path, port=None):
                         # where the route put this locality: a new locality is located there, not at a namesake
                         near = next(((lat, lon) for lat, lon, name in (p.get('route') or {}).get('stops', [])
                                      if name == e['locality'][0]), None)
+                        failed = LOOKUP_FAILURES[0]
                         near = near or (None if e.get('at') else near_others(p, e))
+                        if near is None and LOOKUP_FAILURES[0] > failed:
+                            # placed without it, a new locality may land on a namesake far away (near_others)
+                            raise RuntimeError('OpenStreetMap did not answer (too many requests or no connection); '
+                                               'press Apply again in a few minutes, or put the locality on the map')
                         apply_segments(p['video'], *e['locality'], [s], p['vehicle_type'],
                                        p['upload_date'], p['channel_id'], near, e.get('at'))
                     except Exception as ex:
