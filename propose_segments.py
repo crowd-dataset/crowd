@@ -5113,6 +5113,28 @@ def _geonames_town(phrase, state):
             'town' if int(g.get('population') or 0) >= SMALL_POP else 'village')
 
 
+@_remembered
+def _geonames_named(phrase, countries):
+    """A hit for the most populous town of SMALL_POP+ people GeoNames knows by exactly that name, or by it among its
+    other names, in the country (not the US) the phrase ends with ("Kulmim Morocco", "Kulmim, Morocco"), else
+    None."""
+    m = next((m for code, country in countries if code != 'US'
+              and (m := re.fullmatch(rf'(.+?)[\s,]+{re.escape(country)}', phrase, re.I))), None)
+    if not m:
+        return None
+    name, code = m.group(1).strip(), next(code for code, c in countries if _name_key(c) == _name_key(
+        phrase[m.end(1):].strip(' ,')))
+    r = requests.get('http://api.geonames.org/searchJSON', timeout=20, params={
+        'q': name, 'country': code, 'maxRows': 10, 'featureClass': 'P', 'style': 'FULL',
+        'username': common.get_secrets('geonames_username')}).json()
+    towns = [g for g in r.get('geonames') or [] if int(g.get('population') or 0) >= SMALL_POP and _name_key(name)
+             in {_name_key(g['name'])} | {_name_key(a['name']) for a in g.get('alternateNames') or []}]
+    if not towns:
+        return None
+    g = max(towns, key=lambda g: int(g['population']))
+    return g['name'], g.get('adminName1'), code, None, float(g['lat']), float(g['lng']), 0.5, 'town'
+
+
 OWN_NAME_PLACE = 0.4  # ... and of a town found by its name alone at the other end of such a drive
 MAJOR_PLACE = 0.65  # OpenStreetMap importance of a city known by its name alone: Atlanta 0.75, Brooklyn 0.74
 
@@ -5179,6 +5201,10 @@ def place_localities(phrases, df, home=None):
         # a borough's two centres can lie 5-10 km apart (the Bronx, Brooklyn: both in New York City)
         hits = [(p, g if (g := _geonames_town(p, next(iter(named)))) and not (h and _km(h[4], h[5], g[4], g[5]) <= 15)
                  else h) for p, h in hits]
+    # outside the US, a phrase OpenStreetMap finds no town for may be a town GeoNames knows by that name among its
+    # others: "Kulmim Morocco" is OpenStreetMap's Guelmim-Oued Noun region, GeoNames' Guelmim (FZ_79hemAMk; user,
+    # 2026-10-23)
+    hits = [(p, h if h and h[0] else _geonames_named(p, tuple(sorted(countries.items()))) or h) for p, h in hits]
     hits = [(p, h) for p, h in hits if usable(h)]
     if len(hits) > 1:
         anchor = max(hits, key=lambda ph: ph[1][6])
