@@ -46,10 +46,14 @@ a.b{display:flex;justify-content:space-between;padding:12px 16px;margin:8px 0;bo
 a.b:hover{background:#f3f6ff;border-color:#68f}
 .n{font-weight:600}.s{color:#666}.done{color:#999}
 p.ok{color:#888;margin:2px 0;font-size:13px}
-table.days{border-collapse:collapse;margin:6px 0 12px;font-size:14px}
-table.days td,table.days th{padding:3px 14px 3px 0;text-align:right}
-table.days td:first-child,table.days th:first-child{text-align:left}
-table.days tr.sum td{border-top:1px solid #ccc}
+table.days{border-collapse:collapse;margin:8px 0 14px;font-size:14px;width:100%;font-variant-numeric:tabular-nums}
+table.days td,table.days th{padding:5px 10px;text-align:right}
+table.days th{font-weight:600;color:#555;border-bottom:2px solid #ccc}
+table.days td:first-child,table.days th:first-child{text-align:left;white-space:nowrap}
+table.days tr:nth-child(even) td{background:#f6f7fa}table.days tr.we td:first-child{color:#888}
+table.days td.z{color:#c4c4c4}table.days tr.sum td{border-top:2px solid #ccc;font-weight:600;background:none}
+table.days td.bar{width:30%;text-align:left}table.days td.bar i{display:block;height:9px;border-radius:3px;
+ background:#68f;min-width:1px}
 p.load{color:#666;margin:2px 0;font-size:13px}
 p.load b.hi{color:#1b7f3b}p.load b.mid{color:#b26a00}p.load b.lo{color:#b00020}
 p.bad{color:#b00020;font-weight:600;margin:4px 0}
@@ -134,11 +138,16 @@ background:#fff;color:#222;font-size:13px;cursor:pointer}
 {% if added %}<h2>📥 Videos added per day <span class="s">(last {{ added.days|length }} days)</span></h2>
 <p class="ok">By who added them (the mapping file each first appeared in), as of {{ hm(added.built) }}; rebuilt nightly
  with the dataset figures</p>
-<table class="days"><tr><th>day</th>{% for who in added.people %}<th>{{ who }}</th>{% endfor %}<th>all</th></tr>
-{% for d in added.days %}<tr><td>{{ d.day }}</td>{% for who in added.people %}<td>{{ d.counts.get(who, 0) }}</td>
-{% endfor %}<td><b>{{ d.counts.values()|sum }}</b></td></tr>{% endfor %}
-<tr class="sum"><td>all</td>{% for who in added.people %}<td>{{ added.total.get(who, 0) }}</td>{% endfor %}
-<td><b>{{ added.total.values()|sum }}</b></td></tr></table>{% endif %}
+<table class="days"><tr><th>day</th>{% for who in added.people %}<th>{{ who }}</th>{% endfor %}<th>all</th>
+<th></th></tr>
+{% for d in added.days %}<tr{% if d.weekend %} class="we"{% endif %}><td>{{ d.label }}{% if d.partial %}
+ <span class="s">(so far)</span>{% endif %}</td>
+{% for who in added.people %}{% set n = d.counts.get(who, 0) %}<td{% if not n %} class="z"{% endif %}>
+{{- '{:,}'.format(n) if n else '–' }}</td>{% endfor %}
+{% set n = d.counts.values()|sum %}<td{% if not n %} class="z"{% endif %}><b>{{ '{:,}'.format(n) if n else '–' }}</b></td>
+<td class="bar"><i style="width:{{ (100 * n / added.most)|round(1) if added.most else 0 }}%"></i></td></tr>{% endfor %}
+<tr class="sum"><td>{{ added.days|length }} days</td>{% for who in added.people %}<td>{{ '{:,}'.format(added.total.get(who, 0))
+}}</td>{% endfor %}<td><b>{{ '{:,}'.format(added.total.values()|sum) }}</b></td><td></td></tr></table>{% endif %}
 <div id="pop"><span id="popmsg"></span>
 <button onclick="this.parentNode.style.display='none'" title="close">&times;</button></div>
 <script>
@@ -269,6 +278,11 @@ def load_added():
     except (OSError, ValueError):
         return None
     added['total'] = {who: sum(d['counts'].get(who, 0) for d in added['days']) for who in added['people']}
+    added['most'] = max((sum(d['counts'].values()) for d in added['days']), default=0)  # the longest bar
+    built = time.strftime('%Y-%m-%d', time.localtime(added['built']))
+    for d in added['days']:  # "Fri 23 Oct"; the day of the build only up to then
+        t = time.strptime(d['day'], '%Y-%m-%d')
+        d.update(label=time.strftime('%a %-d %b', t), weekend=t.tm_wday >= 5, partial=d['day'] == built)
     return added
 
 
