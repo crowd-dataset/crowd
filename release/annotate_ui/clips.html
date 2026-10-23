@@ -1,0 +1,14 @@
+<div class="row"><div class="panel" style="flex:3;min-width:560px"><div id="msg" class="small"></div>
+<div style="position:relative;display:inline-block"><video id="vd" style="max-width:100%;display:block" muted playsinline></video>
+<canvas id="cv" style="position:absolute;left:0;top:0;pointer-events:none"></canvas></div><p>
+<button onclick="toggle()">Play / pause (Space)</button> <button onclick="step(-1)">&larr; frame</button>
+<button onclick="step(1)">frame &rarr;</button> <button onclick="rate(0.25)">0.25x</button>
+<button onclick="rate(0.5)">0.5x</button> <button onclick="rate(1)">1x</button>
+<button onclick="restart()">Restart clip</button> <span class="small" id="fr"></span></p></div>
+<div class="panel" style="flex:1;min-width:280px"><h3>Tracking errors</h3>
+<p class="small">The boxes are the dataset's tracks (confidence &ge; 0.7), with <i>id:class</i>. Watch the 10 s several times and
+count: the road users in the clip, and each error of the tracker (use the +/&minus; buttons).</p>
+<div id="counters"></div><label>Notes</label><textarea id="nt" rows="2"></textarea><p>
+<button class="p" onclick="save('done')">Save and next (Enter)</button>
+<button class="w" onclick="save('skipped')">Skip: unusable</button>
+<button onclick="go('clips',show,-1)">Previous</button></p></div></div>

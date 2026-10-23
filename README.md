@@ -511,9 +511,16 @@ The code is open-source and free to use. It is aimed for, but not limited to, ac
     maps), `plotting/maps.py` (world and continent maps), `plotting/map_labels.py` (label placement),
     `plotting/hover.py` (popups shared by all figures), `plotting/io.py` (saving figures), `plotting/constants.py`.
 - `release/`: the weekly metadata update and the release files (`update_info.py`, `make_crowd_jsonl.py`,
-  `split_large_files.py`, `validation_release.py`, `weekly_metadata.sh`).
+  `split_large_files.py`, `validation_release.py`, `weekly_metadata.sh`); `make_splits.py` (the train, validation and
+  test splits and the balancing weights in `crowd_splits.csv`: grouped by channel or by locality, so no source is in two
+  splits); and the manual audits: `sample_audit.py` draws the stratified samples, `audit_stats.py` scores the label audit
+  and `evaluate_detections.py` the detections against manual boxes; `annotate.py` is the local browser tool for those
+  audits (labels, boxes in frames, tracking errors in clips), which finds the videos and detection files in any number
+  of folders.
 - `tools/`: maintenance scripts for the mapping and the data, e.g. `download_videos.py`, `video_inventory.py`,
-  `update_traffic_index.py`, `update_params.py` and `weekly_detection_counts.sh`.
+  `update_traffic_index.py`, `update_params.py` and `weekly_detection_counts.sh`; the review of cuts is
+  `detect_cuts.py` (candidates), `review_cuts.py` (the review page) and `apply_cuts.py` (splits the mapping and the
+  detection files at the confirmed cuts).
 - `dashboards/`: pages and widgets that follow the pipeline (its own README).
 - `analysis_data/`: data files the analysis reads and writes: country tables (`countries.csv`, `height_data.csv`), the
   YOLO detection counts (`detection_counts.csv.gz`) and who added which video (`video_contributors.csv`). The mapping
@@ -921,9 +928,11 @@ Video: [https://www.youtube.com/watch?v=rdx7UFXYSz0](https://www.youtube.com/wat
 ## Verification of segments
 After segments were added, they were checked again by hand. The checks were done by Md Shadab Alam, on the `main` branch, for the segments of `mapping.csv`, including the videos that other contributors of this repository added (see [Who added the videos](#who-added-the-videos)).
 
-**1. Candidate cuts.** Points inside segments where the footage may break (a jump in time, a different clip, or a part that should not be analysed) are listed in `cut_times.csv`, with the video, the segment start and the time of the candidate cut.
+**Why a manual step.** A retained segment should be one continuous, unedited stretch of driving. Watching all the footage again is not feasible, but an automatic detector of abrupt visual change can point to the few seconds where a cut is likely. The detector alone is not reliable enough to cut the data: a sudden change can be an edit, but also the entrance of a tunnel, a flash of sunlight or a passing lorry, and telling them apart needs context. So the detector proposes candidates, a person decides, and only the decisions of the person are applied. Among the candidates that could be judged so far, most were not cuts (about 59%), so splitting at every candidate would have broken many continuous segments.
 
-**2. Reviewing.** For each candidate cut, the YouTube video was played for a few seconds around the cut. The reviewer marked the candidate as `yes` (a real cut), `no` (not a cut) or `unavailable` (YouTube no longer plays or embeds the video), and could add a note. The decision and the time of the review are saved in `cut_times.csv`.
+**1. Candidate cuts.** `python -m tools.detect_cuts` runs FFmpeg scene-change detection (threshold 0.45) on the original video of each segment, over the segment only, merges times closer than 2 s, and writes the candidates to `cut_times.csv` with the video, the segment start, the frame rate and the time of the candidate. The threshold favours abrupt cuts: gradual transitions, and cuts between similar scenes, can be missed, and the detector does not find speed changes or advertisements.
+
+**2. Reviewing.** `python -m tools.review_cuts` serves a page (port 5050) that plays the YouTube video from two seconds before to two seconds after each candidate. The reviewer marks the candidate as `yes` (a real cut), `no` (not a cut) or `unavailable` (YouTube no longer plays or embeds the video), and can add a note. The decision and the time of the review are saved in `cut_times.csv`.
 
 In total, 52,838 cuts were analysed.
 
@@ -932,7 +941,7 @@ In total, 52,838 cuts were analysed.
 - **Videos that are not at normal speed.** Videos that play faster or slower than 1x (for example fast-forwarded footage or time-lapses) are not suitable, because speeds and crossing times in them are wrong. Such cases are noted, for example as `fast forward`.
 - **Advertisements in the footage.** An advertisement that was cut into the middle of a video is not footage of the road. Where one was found, it was removed from the segments by the reviewer.
 
-**4. Applying the result.** Each candidate marked `yes` splits its segment in `mapping.csv` into the part before and the part after the cut, and the detection CSV of the segment is split at the same time, so that the footage around the cut is not analysed. Segments that become too short are removed. Detection CSVs that no longer match a segment in `mapping.csv` are removed from the data folder.
+**4. Applying the result.** `python -m tools.apply_cuts` applies the candidates marked `yes`. A cut at time t splits its segment in `mapping.csv` into a part that ends at floor(t) and a part that starts at ceil(t), so one to two seconds around the cut are dropped, and parts shorter than one second are discarded. The detection CSV of the segment is split at the same frames, with frame numbers restarted at 1 and the true frame rate read from the video (not the rounded one in the file name), so the split files stay aligned. Segments that become too short are removed, and detection CSVs that no longer match a segment in `mapping.csv` are removed from the data folder.
 
 ## Description and analysis of dataset
 > **Note:** The interactive figures are displayed using `htmlpreview.github.io`, which may be blocked on some institutional or education networks. If an interactive figure does not open, try another network or download the corresponding `.html` file from the `figures` directory and open it locally in a web browser.
@@ -1377,7 +1386,7 @@ The proposal for the Kyiv video used in the `add_video.py` example above: one se
 `mapping_metadata.csv` holds the YouTube metadata of every video in the `mapping` file (title, upload date, channel, views, description, chapters), and `crowd_index.jsonl` is the same dataset as JSON Lines, one object per segment, built from `mapping.csv` and `mapping_metadata.csv` without the free-text fields (titles, descriptions, chapters). Both are refreshed every Monday at 02:00 (Amsterdam time) by `release/weekly_metadata.sh`, run by cron on a Mac mini at TU/e in a fresh shallow clone made for each run and removed after it:
 
 1. it resets the clone to the latest `main` on GitHub;
-2. `python -m release.update_info` fetches the metadata of videos added since the last run and retries the videos with missing values (offline videos in the mapping keep being retried); rows of videos no longer in the mapping are dropped;
+2. `python -m release.update_info` fetches the metadata of videos added since the last run and retries the videos with missing values (offline videos in the mapping keep being retried). Each video is written to the file as soon as it is fetched (a new video is appended as a row, so an interrupted run keeps what it has; a failed retry leaves its row as it was); rows of videos no longer in the mapping are dropped;
 3. `python -m release.make_crowd_jsonl` rebuilds `crowd_index.jsonl`;
 4. `python -m release.split_large_files split` splits a file over 99 MB into `NAME_part1.EXT`, `NAME_part2.EXT`, ... (each under 99 MB; CSV parts repeat the header), as GitHub refuses files over 100 MB;
 5. the two files (or their parts) are committed as "Weekly update of video metadata" and pushed. A file over 99 MB is never pushed: the job stops instead. When someone pushed in the meantime, the commit is replayed on top of theirs.

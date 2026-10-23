@@ -1,0 +1,20 @@
+<div class="row"><div class="panel" style="flex:3;min-width:560px">
+<div id="msg" class="small"></div>
+<div style="position:relative;display:inline-block"><img id="img" style="max-width:100%;display:block">
+<canvas id="cv" style="position:absolute;left:0;top:0;cursor:crosshair"></canvas></div></div>
+<div class="panel" style="flex:1;min-width:280px"><h3>Boxes</h3>
+<p class="small">Box <b>every</b> visible person, bicycle, car, motorcycle, bus and truck, including partly occluded and
+parked ones, as tightly as you can. A rider and the bicycle or motorcycle get separate boxes. Drag to draw; click a box
+to select it. Do not annotate other classes.</p>
+<div class="chips" id="chips"></div>
+<p>Selected class: <b id="cls"></b></p><p class="small">Boxes: <b id="nb">0</b></p><p>
+<button class="p" onclick="save('done')">Save and next (Enter)</button>
+<button onclick="save('done',true)">No objects (E)</button>
+<button class="w" onclick="save('skipped')">Skip: unusable (S)</button></p><p>
+<button onclick="undo()">Undo (Z)</button> <button onclick="delSel()">Delete selected (Del)</button>
+<button onclick="go('frames',show,-1)">Previous</button></p>
+<p><button onclick="prelabel()">Load the dataset's boxes as a start (P)</button><br>
+<span class="small">Pre-labelling is quicker but can bias you towards the detector. It is recorded for the frame
+(mode <i>prelabel</i>); use it only where you decided to.</span></p>
+<p class="small">Keys: <span class="k">1-6</span> class, <span class="k">&larr; &rarr;</span> previous or next,
+<span class="k">Enter</span> save.</p></div></div>

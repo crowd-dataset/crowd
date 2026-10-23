@@ -1,7 +1,11 @@
 # by Pavlo Bazilinskyy <pavlo.bazilinskyy@gmail.com>
 """Refresh mapping_metadata.csv: fetch title, upload date, channel, views, description and chapters (pytubefix) of
 every mapping video not in it yet, and again of those with a missing title, upload date, channel or views. Rows of
-videos no longer in the mapping are dropped (the ids of the other rows stay)."""
+videos no longer in the mapping are dropped (the ids of the other rows stay).
+
+Each video is written to the file as soon as its metadata is fetched: a new video is appended as a row (instant, also
+for a large file), so nothing is lost when a run is interrupted. A retried video is rewritten in place (the whole file,
+atomically) only when the retry succeeds, and a failed retry leaves its row as it was."""
 
 import pandas as pd
 from pytubefix import YouTube
@@ -27,7 +31,6 @@ csv_headers = [
     "id", "video", "title", "upload_date", "channel", "views", "description",
     "chapters", "segments", "date_updated"
 ]
-SAVE_EVERY = 200  # videos between saves of the file, so an interrupted manual run keeps most of its work
 socket.setdefaulttimeout(60)  # a stalled YouTube connection must not hang the weekly job forever
 
 
@@ -114,31 +117,44 @@ def get_video_info(video_id):
         }
 
 
-def save(df):
+def save(df, path=metadata_file):
     """Write df to the metadata file atomically (the weekly job pushes it); views as integers."""
+    df = df.copy()
     df["views"] = df["views"].apply(to_int_safe)
-    tmp = f"{metadata_file}.tmp"
+    tmp = f"{path}.tmp"
     df.to_csv(tmp, index=False)
-    os.replace(tmp, metadata_file)
+    os.replace(tmp, path)
 
 
-# -----------------------------------------------------
-# main
-# -----------------------------------------------------
+def ensure_trailing_newline(path):
+    """Cut a half-written last row (a run that was killed while writing it); that video is then fetched again."""
+    with open(path, "rb+") as f:
+        data = f.read()
+        if data and not data.endswith(b"\n"):
+            f.truncate(data.rfind(b"\n") + 1)
 
-if __name__ == "__main__":
 
-    df_map = pd.read_csv(common.get_configs("mapping"))
+def append_row(path, info):
+    """Append one row to the metadata file and force it to disk."""
+    with open(path, "a", newline="", encoding="utf-8") as f:
+        csv.writer(f, lineterminator="\n").writerow([info.get(h, "") for h in csv_headers])
+        f.flush()
+        os.fsync(f.fileno())
 
-    # gather all video IDs found in mapping file
-    all_video_ids = [vid for row in df_map["videos"] for vid in parse_videos(row)]
-    video_count = pd.Series(all_video_ids).value_counts().to_dict()
+
+CRITICAL_COLUMNS = ["title", "upload_date", "channel", "views"]
+
+
+def update(df_map, path=metadata_file, fetch=get_video_info):
+    """Fetch the metadata of the uploads of df_map that are not in the file yet, and retry those with missing values;
+    returns (new videos, retries that succeeded, retries that failed again)."""
+    # all video IDs found in the mapping file, with the number of locality records each is in
+    video_count = pd.Series([vid for row in df_map["videos"] for vid in parse_videos(row)]).value_counts().to_dict()
     unique_video_ids = list(video_count.keys())
 
-    # load metadata file
-    split_large_files.join(metadata_file)
-    if os.path.exists(metadata_file):
-        existing_df = pd.read_csv(metadata_file, dtype=str)
+    if os.path.exists(path):
+        ensure_trailing_newline(path)
+        existing_df = pd.read_csv(path, dtype=str)
         existing_df["id"] = existing_df["id"].astype(int)  # id must stay numeric
         last_id = existing_df["id"].max() if not existing_df.empty else 0  # before dropping: ids are never reused
         # videos no longer in the mapping (removed, or merged away) leave the file
@@ -146,72 +162,68 @@ if __name__ == "__main__":
         if gone.any():
             logger.info(f"🗑️ dropping {int(gone.sum())} videos no longer in the mapping")
             existing_df = existing_df[~gone].reset_index(drop=True)
+            save(existing_df, path)
         existing_ids = set(existing_df["video"].astype(str).tolist())
-
         logger.info(f"🗃️ found {len(existing_ids)} videos in existing metadata")
 
         # detect missing data
-        critical_cols = ["title", "upload_date", "channel", "views"]
-        failed_mask = existing_df[critical_cols].map(is_missing).any(axis=1)
+        failed_mask = existing_df[CRITICAL_COLUMNS].map(is_missing).any(axis=1)
         failed_ids = set(existing_df.loc[failed_mask, "video"].astype(str).tolist())
-
         logger.info(f"🔁 found {len(failed_ids)} videos with missing metadata")
-
     else:
-        # no file → create an empty one
-        with open(metadata_file, "w", newline="", encoding="utf-8") as f:
-            w = csv.writer(f, quoting=csv.QUOTE_MINIMAL, escapechar="\\")
-            w.writerow(csv_headers)
-
+        # no file: create one with the header
+        with open(path, "w", newline="", encoding="utf-8") as f:
+            csv.writer(f, quoting=csv.QUOTE_MINIMAL, lineterminator="\n").writerow(csv_headers)
         existing_df = pd.DataFrame(columns=csv_headers)
-        gone = pd.Series(dtype=bool)
-        existing_ids = set()
-        failed_ids = set()
-        last_id = 0
-
+        existing_ids, failed_ids, last_id = set(), set(), 0
         logger.info("📁 created new metadata file")
 
-    # determine which videos to fetch
     missing_in_metadata = [vid for vid in unique_video_ids if vid not in existing_ids]
     retry_videos = list(failed_ids)
     videos_to_fetch = missing_in_metadata + retry_videos
-
-    logger.info(
-        f"🔍 total videos to fetch: {len(videos_to_fetch)} "
-        f"({len(missing_in_metadata)} missing, {len(retry_videos)} need update)"
-    )
+    logger.info(f"🔍 total videos to fetch: {len(videos_to_fetch)} "
+                f"({len(missing_in_metadata)} missing, {len(retry_videos)} need update)")
 
     now = datetime.now().strftime("%d%m%Y")
     current_id = last_id
-
-    # ensure correct dtypes
     existing_df["video"] = existing_df["video"].astype(str)
+    added = []  # rows appended to the file in this run (existing_df holds the rows that were in it before)
+    new, retried_ok, retried_failed = 0, 0, 0
 
-    # main loop
-    for n, vid in enumerate(tqdm(videos_to_fetch), start=1):
+    for vid in tqdm(videos_to_fetch):
         vid = str(vid)
-        info = get_video_info(vid)
-
+        info = fetch(vid)
         info["segments"] = video_count.get(vid, 1)
         info["date_updated"] = now
-
-        # update or insert row
+        fetched = not any(is_missing(info.get(c)) for c in CRITICAL_COLUMNS)
         mask = existing_df["video"] == vid
 
-        if mask.any():
-            info["id"] = existing_df.loc[mask, "id"].iloc[0]
+        if mask.any():  # a retry
+            if not fetched:  # keep what the row has: a failed request must not blank its fields
+                retried_failed += 1
+                continue
             for col, val in info.items():
                 existing_df.loc[mask, col] = val
-        else:
+            rows = pd.concat([existing_df, pd.DataFrame(added, columns=csv_headers)], ignore_index=True)
+            save(rows, path)
+            retried_ok += 1
+            logger.info(f"💾 updated {vid} in the metadata file")
+        else:  # a new video: appended at once, also when the fetch failed (the next run retries it)
             current_id += 1
             info["id"] = current_id
-            existing_df = pd.concat([existing_df, pd.DataFrame([info])], ignore_index=True)
+            info["views"] = to_int_safe(info.get("views"))
+            append_row(path, info)
+            added.append({h: info.get(h, "") for h in csv_headers})
+            new += 1
+            logger.info(f"💾 added {vid} to the metadata file")
+    return new, retried_ok, retried_failed
 
-        if n % SAVE_EVERY == 0 or n == len(videos_to_fetch):
-            save(existing_df)
-            logger.info(f"💾 saved metadata after {n} of {len(videos_to_fetch)} videos")
 
-    if gone.any() and not videos_to_fetch:  # only rows dropped: save them too
-        save(existing_df)
-        logger.info("💾 saved metadata without the dropped videos")
-    logger.info("✅ all videos processed and metadata file updated.")
+# -----------------------------------------------------
+# main
+# -----------------------------------------------------
+
+if __name__ == "__main__":
+    split_large_files.join(metadata_file)  # the file may be stored in parts
+    result = update(pd.read_csv(common.get_configs("mapping")))
+    logger.info("✅ done: {} new, {} retries succeeded, {} retries failed again.", *result)

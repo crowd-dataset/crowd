@@ -1,0 +1,22 @@
+<div class="row"><div class="panel" style="flex:2;min-width:480px">
+<div id="player"></div><p>
+<button onclick="seek(row.start_s)">Go to start</button>
+<button onclick="seek(Math.max(row.start_s,row.end_s-10))">Go to 10 s before end</button>
+<button onclick="seek(row.end_s-1)">Go to the end</button></p>
+<p class="small">Segment <b id="seg"></b> of <a id="yt" target="_blank">the video</a>: start <b id="st"></b> s, end
+<b id="en"></b> s (the dataset ends the processing 1 s early). Added by <b id="by"></b><span id="same"
+style="color:#b00020;font-weight:700"></span>.</p></div>
+<div class="panel" style="flex:1;min-width:300px"><h3>Audit</h3>
+<p class="small">Watch the start and the end. Are the boundaries right (continuous driving, no cut, advertisement or
+speed change inside, no wrong stretch included)? The dataset's time-of-day and platform labels are hidden: decide
+yourself.</p>
+<label>Boundaries correct?</label><label><input type="radio" name="b" value="y"> yes</label>
+<label><input type="radio" name="b" value="n"> no</label>
+<div id="fix" style="display:none"><label>Correct start (s)</label><input id="cs"><label>Correct end (s)</label>
+<input id="ce"></div>
+<label>Time of day</label><select id="tod"><option value="">-</option><option>day</option><option>night</option></select>
+<label>Platform the video is filmed from</label><select id="pf"></select>
+<label>Notes</label><textarea id="nt" rows="2"></textarea><p>
+<button class="p" onclick="save('done')">Save and next (Enter)</button>
+<button class="w" onclick="save('skipped')">Skip: video unavailable</button>
+<button onclick="go('labels',show,-1)">Previous</button></p></div></div>
