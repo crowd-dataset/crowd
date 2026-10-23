@@ -419,14 +419,6 @@ border-radius:16px;background:var(--bg);color:var(--fg);font-size:13px;cursor:po
   {{ s.left }} not started{% if s.pace %} · {{ '%.1f'|format(s.pace.started) }}/day (7 days){% if s.pace.started > 0
   %} · about {{ dur(s.left / s.pace.started * 86400) }} left{% endif %}{% endif %}</span></div>
 </div>
-<h2>Adding videos: the steps in the workers' order</h2><div class="card">
-{% for p in s.steps %}<div class="row"{% if not loop.first %} style="margin-top:10px"{% endif %}>
- <div class="head"><span><b>{{ p.title }}</b>{% if p.now %} <span class="st working">workers on it</span>{% endif %}
- </span><span class="small muted">{{ p.done }} of {{ p.total }} {{ p.unit }} done
- {%- if p.total %} ({{ (100 * p.done / p.total)|round|int }}%){% endif %}</span></div>
- <div class="bar"><i style="width:{{ (100 * p.done / p.total)|round(1) if p.total else 0 }}%"></i></div>
- <div class="small muted">{% for k, v in p.parts %}{{ k }} {{ v }}{{ ' · ' if not loop.last }}{% endfor %}</div>
-</div>{% else %}<span class="muted">nothing read yet</span>{% endfor %}</div>
 <h2>Workers</h2><div class="grid">
 {% for w in s.workers %}<div class="card">
  <div class="head"><h3>{{ w.host }}</h3><span class="st {{ w.state }}">{{ w.state }}</span></div>
@@ -484,6 +476,14 @@ border-radius:16px;background:var(--bg);color:var(--fg);font-size:13px;cursor:po
  <td class="ell" style="max-width:420px">{{ r.title or '' }}</td><td class="n">{{ '%.1f'|format(r.mb / 1000) }} GB</td>
  <td class="muted">{{ r.drive.split('/')[3] if r.drive.startswith('/media/') else r.drive }}</td></tr>{% endfor %}
 </table></div></div>{% endif %}</div>{% endif %}
+<h2>Adding videos: the steps in the workers' order</h2><div class="card">
+{% for p in s.steps %}<div class="row"{% if not loop.first %} style="margin-top:10px"{% endif %}>
+ <div class="head"><span><b>{{ p.title }}</b>{% if p.now %} <span class="st working">workers on it</span>{% endif %}
+ </span><span class="small muted">{{ p.done }} of {{ p.total }} {{ p.unit }} done
+ {%- if p.total %} ({{ (100 * p.done / p.total)|round|int }}%){% endif %}</span></div>
+ <div class="bar"><i style="width:{{ (100 * p.done / p.total)|round(1) if p.total else 0 }}%"></i></div>
+ <div class="small muted">{% for k, v in p.parts %}{{ k }} {{ v }}{{ ' · ' if not loop.last }}{% endfor %}</div>
+</div>{% else %}<span class="muted">nothing read yet</span>{% endfor %}</div>
 {% set v = s.inventory %}{% if v %}<h2>Video files ({{ v.host }})</h2><div class="card">
 {% if v.error %}<div class="prob">inventory not readable: {{ v.error }}</div>{% else %}
  <div class="row"><b>{{ v.videos }}</b> videos, {{ v.tb }} TB · {{ v.missing }} in the mapping on no drive (the
