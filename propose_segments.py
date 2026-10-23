@@ -4894,6 +4894,36 @@ def _remembered(fn):
     return wrapper
 
 
+# a district of a city far from its middle is a place of its own: "Hengli Island Tip Nansha Guangzhou" is Nansha,
+# 45 km from Guangzhou's point, not Guangzhou (ZZLCKTlvliE; user, 2026-10-23); of 548 reviewed titles with a word
+# just before their city, the districts the reviewer kept as the city were all nearer (Queens 15 km, The Bronx 18 km)
+DISTRICT_KM = 30
+DISTRICT_TYPES = {'district', 'city_district', 'county', 'borough', 'suburb'}
+
+
+def far_district(title, loc, df):
+    """[district, state, country] when the word just before the locality's name in the title is an administrative
+    district of it (OpenStreetMap) DISTRICT_KM or more from its mapping point, else None."""
+    if not loc:
+        return None
+    m = re.search(rf"(?<![\w'])([A-Z][^\W\d_]{{3,}})[\s,]+{re.escape(loc[0])}(?!\w)", title or '')
+    if not m or m.group(1).lower() in NOT_PLACE or ordinary(m.group(1)):
+        return None
+    row = add_video.get_existing_locality_row(df, *loc)[1]
+    if row is None or not (at := _district(m.group(1), loc[0], loc[2])):
+        return None
+    return [m.group(1), loc[1], loc[2]] if _km(float(row['lat']), float(row['lon']), *at) >= DISTRICT_KM else None
+
+
+@_remembered
+def _district(name, city, country):
+    """(lat, lon) of the administrative district of that name in the city, from OpenStreetMap, else None."""
+    r = _nominatim('geocode', f'{name}, {city}, {country}', addressdetails=True, timeout=15)
+    if r is None or r.raw.get('class') != 'boundary' or r.raw.get('addresstype') not in DISTRICT_TYPES:
+        return None
+    return r.latitude, r.longitude
+
+
 LANDMARK_TYPES = {'stadium', 'arena', 'casino', 'university', 'college', 'museum', 'theatre', 'cathedral',
                   'conference_centre', 'events_venue', 'zoo', 'theme_park'}
 
@@ -6970,6 +7000,7 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
                 pop = pd.to_numeric(df['population_locality'], errors='coerce').fillna(0)
                 guess = _title_locality(meta['title'], df[pop >= BIG_CITY_ANYWHERE])
         locality = title_city(meta['title'], guess, df)
+        locality = far_district(meta['title'], locality, df) or locality
         touched.append(vid)
         plan[vid] = ({
             'video': vid, 'title': meta['title'], 'analysed': analysed,
