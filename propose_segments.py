@@ -5493,6 +5493,10 @@ FROM_TO = (re.compile(r"\bfrom\s+(.+?)\s+to(?:wards?)?\s+(.+?)" + _END, re.I),
            # dk 79" (pawel314; user, 2026-10-18)
            re.compile(r"^\[CABVIEW\]\s*" + _DASH_TOWN + r"\s+[-–—]\s+" + _DASH_TOWN + r"(?:\s|$)"),
            re.compile(_DASH_TOWN + r"\s+[-–—]\s+" + _DASH_TOWN + r"\s+(?:dk|dw|DK|DW)\s*\d"),
+           # ... or after a drive word and a colon, with "!" at the end: "Drive Georgia: Richmond Hill to Savannah!"
+           # (EewSTf-hgz8, DeceleratedTravel; user, 2026-10-23)
+           re.compile(rf"\b(?:[Dd]rive|[Dd]riving|DRIVE|DRIVING)\b[^:|]{{0,30}}:\s+({_ARROW_TO})\s+[Tt]o\s+"
+                      rf"({_ARROW_TO})[!?]+\s*$"),
            # ... or a drive "between A & B", in that order (eBSIeJBDivI: Timonium, then Hampton; zaxIUU9kpBg; user,
            # 2026-10-23); not a round trip, nor "the Real Local Life Between Matunga & Central"
            re.compile(rf"^(?!.*\b(?i:round[- ]?trip)\b).*?\b(?i:driv(?:e|ing)|road|highway|route)\b[^|]{{0,40}}?"
