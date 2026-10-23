@@ -5413,8 +5413,14 @@ def _metro_city(town, at, rows, state=None):
 # tried in this order
 # ... "Richmond to Vancouver for the First Time" ends at "for" (UEPl-VrHpr0; user, 2026-10-21)
 _END = r"\s*(?:,|\||\(|\s-\s|\s–\s|\bin\b|\ben\b|\bvia\b|\bpor\b|\bfor\b|$)"
+# the capital letters a place's name may start with, for a character class: Latin with accents, Czech and Polish
+# ones too ("🚗 Říčany → Praha Flora", "Český Brod → Hradešín": TaxipoPraze, QH5F5bcroMU; user, 2026-10-23)
+CAPITALS = 'A-Z' + ''.join(c for c in map(chr, range(0xC0, 0x250)) if c.isupper())
+# the two ends of an arrow ("Kostelec nad Černými lesy → Doubek", "Trhový Štěpánov → Zruč nad Sázavou")
+_ARROW_TO = rf"[{CAPITALS}][\w'’.-]*(?: (?:nad|pod)(?: [\w'’.-]+){{1,2}}| [{CAPITALS}][\w'’.-]*){{0,3}}"
+_ARROW_FROM = rf"[{CAPITALS}][\w'’.-]*(?: [\w'’.-]+){{0,3}}"
 # a town in a cab-view title, with a note in brackets maybe ("Sokołów Małopolski(podkarpackie)")
-_DASH_TOWN = r"([A-ZÀ-ÞŁŚŻŹĆŃ][\w'’.-]*(?: [A-ZÀ-ÞŁŚŻŹĆŃ][\w'’.-]*){0,3})(?:\s*\([^)]*\))?"
+_DASH_TOWN = rf"([{CAPITALS}][\w'’.-]*(?: [{CAPITALS}][\w'’.-]*){{0,3}})(?:\s*\([^)]*\))?"
 # ("from Gamagori City toward Toyokawa City", ER7UFbJuaq0; user, 2026-10-21)
 FROM_TO = (re.compile(r"\bfrom\s+(.+?)\s+to(?:wards?)?\s+(.+?)" + _END, re.I),
            # without "from": "Driving Lincoln to Hickman, Nebraska" (yQbYiSKgB-I), "Ashland to Waterloo Drive Tour"
@@ -5455,14 +5461,14 @@ FROM_TO = (re.compile(r"\bfrom\s+(.+?)\s+to(?:wards?)?\s+(.+?)" + _END, re.I),
            # an arrow between two places ("Ingleburn → Surry Hills | Sydney POV", AroundSydney), or a dash right after
            # a drive word ("Drive Wąchock – Starachowice", 3Xg0vN2LqKo; user, 2026-10-16); a dash elsewhere
            # separates a title's parts ("TeslaXDrive — What This Channel Is")
-           re.compile(r"(?:^|\|\s*|:\s+)([A-ZÀ-Þ][\w'’.-]*(?: [A-ZÀ-Þ][\w'’.-]*){0,3})\s*(?:→|->|⇒)\s*"
-                      r"([A-ZÀ-Þ][\w'’.-]*(?: [A-ZÀ-Þ][\w'’.-]*){0,3})"),
-           re.compile(r"\b(?:[Dd]rive|[Dd]riving|[Rr]oute)\s+([A-ZÀ-Þ][\w'’.-]*(?: [A-ZÀ-Þ][\w'’.-]*){0,3})\s+[–—]\s+"
-                      r"([A-ZÀ-Þ][\w'’.-]*(?: [A-ZÀ-Þ][\w'’.-]*){0,3})"),
+           # (a start may go on in lower case, "Praha Václavské náměstí"; an end after "nad", "pod" only)
+           re.compile(rf"(?:^|\|\s*|:\s+)({_ARROW_FROM})\s*(?:→|->|⇒)\s*({_ARROW_TO})"),
+           re.compile(rf"\b(?:[Dd]rive|[Dd]riving|[Rr]oute)\s+([{CAPITALS}][\w'’.-]*(?: [{CAPITALS}][\w'’.-]*){{0,3}})"
+                      rf"\s+[–—]\s+([{CAPITALS}][\w'’.-]*(?: [{CAPITALS}][\w'’.-]*){{0,3}})"),
            # ... or two names an unspaced en dash joins in a drive's title ("Scenic Drive 2026 Brufut–Tanji Rain
            # Drive", Oj5IgOJmYk0; user, 2026-10-22); a hyphen joins one name (Wilkes-Barre)
            re.compile(r"^(?=.*\b(?:[Dd]riv(?:e|ing)|DRIV(?:E|ING)|[Rr]oad ?[Tt]rip)\b).*?(?<![\w'’.-])"
-                      r"([A-ZÀ-Þ][\w'’.]+)–([A-ZÀ-Þ][\w'’.]+)(?![\w'’.-])"
+                      rf"([{CAPITALS}][\w'’.]+)–([{CAPITALS}][\w'’.]+)(?![\w'’.-])"
                       # ... not a road's name ("G3 Beijing–Taipei Expressway")
                       r"(?!\s+(?:Express(?:way)?|Highway|Freeway|Motorway|Road|Hwy)\b)"),
            # a dash between two towns in a cab-view title or before the road's number: "[CABVIEW] Sandomierz - Lipsko
@@ -5815,7 +5821,7 @@ ROAD_PAIR = re.compile(rf"({_DASH_WORD}(?: {_DASH_WORD}){{0,2}})\s*[-–—]\s*(
 DRIVE_LINES = 10  # a description's first lines that may name the drive
 # ... in a line of its own that is only that: "Location: Minokamo to Yaotsu,Gifu,Japan" (a sentence like "Take a ride
 # down International Drive to ..." or "Make a one time donation" is none)
-_DESC_PLACE = r"[A-ZÀ-ÞŁŚŻŹĆŃ][\w'’.-]*(?: [A-ZÀ-ÞŁŚŻŹĆŃ][\w'’.-]*){0,3}"
+_DESC_PLACE = rf"[{CAPITALS}][\w'’.-]*(?: [{CAPITALS}][\w'’.-]*){{0,3}}"
 DESC_DRIVE = re.compile(rf"(?:📍\s*)?(?i:(?:location|route|drive|driving|road ?trip)\s*:?\s*)?(?i:from\s+)?"
                         rf"({_DESC_PLACE})(\s*\([^)]*\))?\s+(?:(?i:to)|→|->|➡\ufe0f?)\s+"
                         rf"({_DESC_PLACE})(\s*\([^)]*\))?\s*(,.*)?$")
