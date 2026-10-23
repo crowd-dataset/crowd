@@ -46,6 +46,10 @@ a.b{display:flex;justify-content:space-between;padding:12px 16px;margin:8px 0;bo
 a.b:hover{background:#f3f6ff;border-color:#68f}
 .n{font-weight:600}.s{color:#666}.done{color:#999}
 p.ok{color:#888;margin:2px 0;font-size:13px}
+table.days{border-collapse:collapse;margin:6px 0 12px;font-size:14px}
+table.days td,table.days th{padding:3px 14px 3px 0;text-align:right}
+table.days td:first-child,table.days th:first-child{text-align:left}
+table.days tr.sum td{border-top:1px solid #ccc}
 p.load{color:#666;margin:2px 0;font-size:13px}
 p.load b.hi{color:#1b7f3b}p.load b.mid{color:#b26a00}p.load b.lo{color:#b00020}
 p.bad{color:#b00020;font-weight:600;margin:4px 0}
@@ -127,6 +131,14 @@ background:#fff;color:#222;font-size:13px;cursor:pointer}
 </div>
 {% if done %}<details class="done"><summary>All decided ({{ done|length }})</summary>{{ done|join(', ') }}</details>
 {%- endif %}
+{% if added %}<h2>📥 Videos added per day <span class="s">(last {{ added.days|length }} days)</span></h2>
+<p class="ok">By who added them (the mapping file each first appeared in), as of {{ hm(added.built) }}; rebuilt nightly
+ with the dataset figures</p>
+<table class="days"><tr><th>day</th>{% for who in added.people %}<th>{{ who }}</th>{% endfor %}<th>all</th></tr>
+{% for d in added.days %}<tr><td>{{ d.day }}</td>{% for who in added.people %}<td>{{ d.counts.get(who, 0) }}</td>
+{% endfor %}<td><b>{{ d.counts.values()|sum }}</b></td></tr>{% endfor %}
+<tr class="sum"><td>all</td>{% for who in added.people %}<td>{{ added.total.get(who, 0) }}</td>{% endfor %}
+<td><b>{{ added.total.values()|sum }}</b></td></tr></table>{% endif %}
 <div id="pop"><span id="popmsg"></span>
 <button onclick="this.parentNode.style.display='none'" title="close">&times;</button></div>
 <script>
@@ -242,7 +254,26 @@ def index():
             b['state'] = 'for later · ' + b['state']
     batches.sort(key=lambda b: b['name'] in later)
     return render_template_string(PAGE, batches=batches, done=done, health=health, cookies=cookies,
-                                  unapplied=unapplied)
+                                  unapplied=unapplied, added=load_added(), hm=day_time)
+
+
+ADDED = os.path.join(rc.ROOT, 'added_videos.json')  # dashboards/added_videos.py, nightly (build_dataset_page.sh)
+
+
+def load_added():
+    """The videos each person added on each of the last days (dashboards/added_videos.py), with each person's total;
+    None before its first build."""
+    try:
+        with open(ADDED) as f:
+            added = json.load(f)
+    except (OSError, ValueError):
+        return None
+    added['total'] = {who: sum(d['counts'].get(who, 0) for d in added['days']) for who in added['people']}
+    return added
+
+
+def day_time(t):
+    return time.strftime('%d %b %H:%M', time.localtime(t))
 
 
 @app.route('/open/<name>')

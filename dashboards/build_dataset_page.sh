@@ -5,6 +5,7 @@
 #    never the review repo itself: analysis.py rewrites README.md and figures/ where it runs
 # 2. analysis.py there (its own env "dataset", the Action's package versions; kaleido needs the env on PATH)
 # 3. dataset_page.py: the README's dataset sections and the figures as one page in ~/dataset-page/site
+# 4. dashboards/added_videos.py: the videos each person added in the last 10 days, for the review hub (/added)
 # Log ~/Library/Logs/dataset_page.log. EPS exports fail (no pdftops); the page uses html and png only.
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 W=$HOME/dataset-page/work; mkdir -p $W
@@ -28,4 +29,6 @@ json.dump({k: "" for k in json.load(open("default.secret"))}, open("secret", "w"
 PY
 echo "== $(date '+%F %T') analysis"
 python analysis.py 2>&1 | grep -vE "EPS format|pdftops" | tail -3
+# the videos each person added in the last 10 days, from the credits analysis.py just updated: the review hub's /added
+python "$REPO/dashboards/added_videos.py" $W "$REPO/_output/proposals/added_videos.json"
 python "$REPO/dashboards/dataset_page.py"
