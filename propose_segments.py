@@ -2503,11 +2503,25 @@ GPS_DMS = re.compile(r"([NS])\s*(\d{1,2})\s*[°*º˚]\s*(\d{2})\s*['’′`]?\s*
 # (OCR reads the l as I, 1 or |: "Iat: 24.30392", "Ion: 120.59553", aEIGIgrxOgM)
 GPS_LABELLED = re.compile(r'(?i)(?<![a-z])[li1|]at(?:itude)?\b\W{0,3}(-?\d{1,2}[.,]\d{3,})[\s\S]{0,40}?'
                           r'(?<![a-z])(?:[li1|]on|[li1|]ng|[li1|]ong|[li1|]ongitude)\b\W{0,3}(-?\d{1,3}[.,]\d{3,})')
+# ... and longitude first: "2025-11-07 18:09:50 / W71.6076,N10.64399" (0LGFvfuUhjw, Maracaibo; user, 2026-10-23)
+GPS_LON_FIRST = re.compile(r'(?<![A-Za-z])([EW])\s*(\d{1,3}[.,]\d{3,})\s*[,;/]?\s*([NS])\s*(\d{1,2}[.,]\d{3,})')
 GPS_SIGNED = re.compile(r'(?<![\d.])(-?\d{1,2}\.\d{4,})(?:\s*[,;]?\s+|\s*(?=-))(-?\d{1,3}\.\d{4,})(?!\d|\.\d)')
 
 
+# OCR's letters for digits and a space after the point, by a hemisphere's letter: "N03. 085395 ElOI. 490958" is
+# N03.085395 E101.490958 (ps81sxXVvkA's AZDOME dashcam; user, 2026-10-23); read so only when nothing else is
+GPS_OCR = re.compile(r'(?<![A-Za-z])([NSEW])\s*([\dOoIl]{1,3})([.,])\s?([\dOoIl]{4,7})(?![\w.])')
+OCR_DIGITS = str.maketrans('OoIl', '0011')
+
+
 def parse_gps(text):
-    """(lat, lon) of the first coordinates in a frame's text, else None."""
+    """(lat, lon) of the first coordinates in a frame's text, else None (see GPS_OCR)."""
+    return _parse_gps(text) or (_parse_gps(GPS_OCR.sub(
+        lambda m: m[1] + m[2].translate(OCR_DIGITS) + m[3] + m[4].translate(OCR_DIGITS), text))
+        if GPS_OCR.search(text or '') else None)
+
+
+def _parse_gps(text):
     if (m := GPS_DMS.search(text or '')) and all(int(m.group(k)) < 60 for k in (3, 7)) \
             and all(float(m.group(k).replace(',', '.')) < 60 for k in (4, 8)):
         ns, d1, m1, s1, ew, d2, m2, s2 = m.groups()
@@ -2525,6 +2539,10 @@ def parse_gps(text):
     if m := GPS_HEMI.search(text):
         g = m.groups()
         ns, la, ew, lo = g[:4] if g[0] else (g[5], g[4], g[7], g[6])
+        lat, lon = float(la.replace(',', '.')), float(lo.replace(',', '.'))
+        lat, lon = -lat if ns == 'S' else lat, -lon if ew == 'W' else lon
+    elif m := GPS_LON_FIRST.search(text):
+        ew, lo, ns, la = m.groups()
         lat, lon = float(la.replace(',', '.')), float(lo.replace(',', '.'))
         lat, lon = -lat if ns == 'S' else lat, -lon if ew == 'W' else lon
     elif m := GPS_SIGNED.search(text):
