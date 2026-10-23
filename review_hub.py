@@ -144,10 +144,12 @@ background:#fff;color:#222;font-size:13px;cursor:pointer}
  <span class="s">(so far)</span>{% endif %}</td>
 {% for who in added.people %}{% set n = d.counts.get(who, 0) %}<td{% if not n %} class="z"{% endif %}>
 {{- '{:,}'.format(n) if n else '–' }}</td>{% endfor %}
-{% set n = d.counts.values()|sum %}<td{% if not n %} class="z"{% endif %}><b>{{ '{:,}'.format(n) if n else '–' }}</b></td>
+{% set n = d.counts.values()|sum %}<td{% if not n %} class="z"{% endif %}>
+<b>{{ '{:,}'.format(n) if n else '–' }}</b></td>
 <td class="bar"><i style="width:{{ (100 * n / added.most)|round(1) if added.most else 0 }}%"></i></td></tr>{% endfor %}
-<tr class="sum"><td>{{ added.days|length }} days</td>{% for who in added.people %}<td>{{ '{:,}'.format(added.total.get(who, 0))
-}}</td>{% endfor %}<td><b>{{ '{:,}'.format(added.total.values()|sum) }}</b></td><td></td></tr></table>{% endif %}
+<tr class="sum"><td>{{ added.days|length }} days</td>
+{% for who in added.people %}<td>{{ '{:,}'.format(added.total.get(who, 0)) }}</td>{% endfor %}
+<td><b>{{ '{:,}'.format(added.total.values()|sum) }}</b></td><td></td></tr></table>{% endif %}
 <div id="pop"><span id="popmsg"></span>
 <button onclick="this.parentNode.style.display='none'" title="close">&times;</button></div>
 <script>
@@ -169,8 +171,8 @@ async function act(btn, url, question) {
   if (ok) pop.timer = setTimeout(() => { pop.style.display = 'none'; }, 15000);
 }
 </script>
-<p class="s">Updates every hour (reload for the latest). <a href="/lessons">Review lessons</a>: what the check every
-two days (03:23) found in your reviews.</p>
+<p class="s">Updates every hour (reload for the latest). <a href="/lessons">Review lessons</a>: what the nightly
+check (from 04:45, after 50 new reviews) found in your reviews, with rule changes to apply by hand.</p>
 </body></html>"""
 
 
@@ -178,12 +180,13 @@ def stop_finished_pages():
     """Stop the review pages of batches with nothing left to review: they stayed up for days (user, 2026-10-17);
     /open starts one again. Only an hour after the plan last changed: a page went offline right after its last
     decision (user, 2026-10-17). Under the locks a page writes mapping.csv and its plan with, so none stops
-    mid-Apply (a kill there truncated mapping.csv, 2026-10-05)."""
+    mid-Apply (a kill there truncated mapping.csv, 2026-10-05); in a page's order, its plan's then the mapping's:
+    the other way round a page applying waits for the mapping while this waits for its plan (2026-10-23)."""
     for name, (proc, _) in list(servers.items()):
         plan = os.path.join(rc.ROOT, name, 'plan.json')
         if proc.poll() is None and (rc.review_counts(name)[0] or time.time() - os.path.getmtime(plan) < 3600):
             continue
-        with ps.plan_lock(add_video.FILE_PATH), ps.plan_lock(plan):
+        with ps.plan_lock(plan), ps.plan_lock(add_video.FILE_PATH):
             proc.terminate()
             proc.wait()
         del servers[name]
