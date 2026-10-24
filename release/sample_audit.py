@@ -1,6 +1,6 @@
 """Stratified random samples for the manual audits of CROWD (strata: continent x time-of-day label).
 
-    python -m release.sample_audit [mapping.csv] [output folder]
+    python -m release.sample_audit [mapping.csv] [output folder] [--videos FOLDER ...] [--bbox FOLDER ...]
 
 Writes three CSV files for people to fill in, from the segments of the mapping (seed 2026, so they can be redrawn):
 
@@ -16,13 +16,20 @@ Writes three CSV files for people to fill in, from the segments of the mapping (
 The samples are worked on with release.annotate, a browser tool that saves the results in the files that
 release.audit_stats and release.evaluate_detections read.
 
+Run on the machine that has the videos and the detection files, with their folders, the frames and clips are drawn
+only from segments whose video and detection file are there. If the files already exist, the samples that can be worked
+on here are kept and only the others are replaced, with new ids (an old sample's answers can never attach to a new
+one); the label sample is made once and kept, since it needs only YouTube.
+
 The contributor column is who added the video (analysis_data/video_contributors.csv): the auditor should not be
 that person. Frames and clips are drawn with a probability proportional to the processed footage, so the samples
 describe the footage and not the segments.
 """
+import argparse
 import csv
 import os
 import random
+import re
 import sys
 from collections import defaultdict
 from pathlib import Path
@@ -105,6 +112,45 @@ def draw_times(rng, pool, k, length, used):
     return out
 
 
+BBOX_NAME = re.compile(r"^(.+)_(\d+)_(\d+(?:\.\d+)?)\.csv$")
+VIDEO_EXTENSIONS = (".mp4", ".mkv", ".webm")
+
+
+def bbox_keys(folders):
+    """The (video id, start second) of the detection files in the folders (and in their bbox subfolders)."""
+    keys = set()
+    for d in folders:
+        for folder in (Path(d).expanduser(), Path(d).expanduser() / "bbox"):
+            if folder.is_dir():
+                with os.scandir(folder) as entries:
+                    for e in entries:
+                        m = BBOX_NAME.match(e.name)
+                        if m:
+                            keys.add((m.group(1), int(m.group(2))))
+    return keys
+
+
+def video_ids(folders):
+    """The ids of the videos in the folders."""
+    found = set()
+    for d in folders:
+        folder = Path(d).expanduser()
+        if folder.is_dir():
+            with os.scandir(folder) as entries:
+                found.update(Path(e.name).stem for e in entries if e.name.endswith(VIDEO_EXTENSIONS))
+    return found
+
+
+def availability(videos, bbox):
+    """A function telling whether a sample (a dict with video_id and start_s) can be worked on with these folders:
+    its video and its detection file are there. Without folders everything counts as available."""
+    if not videos and not bbox:
+        return lambda row: True
+    keys, ids = bbox_keys(bbox), video_ids(videos)
+    return lambda row: (not bbox or (row["video_id"], int(float(row["start_s"]))) in keys) and \
+        (not videos or row["video_id"] in ids)
+
+
 def write(path, fields, rows):
     with open(path, "w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=fields, lineterminator="\n")
@@ -112,39 +158,79 @@ def write(path, fields, rows):
         w.writerows(rows)
 
 
-def main():
-    args = sys.argv[1:]
-    mapping_csv = args[0] if args else "mapping.csv"
-    out_dir = Path(args[1] if len(args) > 1 else "_output/audit")
-    out_dir.mkdir(parents=True, exist_ok=True)
-    rng = random.Random(SEED)
-    strata = by_stratum(segments(mapping_csv))
-    common = ["continent", "tod", "segment_id", "video_id", "locality", "contributor"]
+COMMON = ["continent", "tod", "segment_id", "video_id", "locality", "contributor"]
 
+
+def draw_labels(rng, strata, out_dir):
+    """The sample for the label audit (YouTube only, so it does not depend on the local files); never overwritten."""
+    path = out_dir / "audit_labels.csv"
+    if path.exists():
+        print(f"audit_labels: kept the existing {path}")
+        return
     labels = []
     for (continent, tod), pool in strata.items():
         for s in draw_segments(rng, pool, LABEL_PER_STRATUM):
-            labels.append({**{k: s[k] for k in common}, "start_s": s["start_s"], "end_s": s["end_s"],
+            labels.append({**{k: s[k] for k in COMMON}, "start_s": s["start_s"], "end_s": s["end_s"],
                            "platform": s["platform"], "url_start": url(s["video_id"], s["start_s"]),
                            "url_end": url(s["video_id"], max(s["end_s"] - 10, s["start_s"])),
                            "boundary_ok": "", "correct_start_s": "", "correct_end_s": "", "tod_audit": "",
                            "platform_audit": "", "notes": ""})
-    label_fields = [*common, "start_s", "end_s", "platform", "url_start", "url_end", "boundary_ok", "correct_start_s",
-                    "correct_end_s", "tod_audit", "platform_audit", "notes"]
-    write(out_dir / "audit_labels.csv", label_fields, labels)
+    fields = [*COMMON, "start_s", "end_s", "platform", "url_start", "url_end", "boundary_ok", "correct_start_s",
+              "correct_end_s", "tod_audit", "platform_audit", "notes"]
+    write(path, fields, labels)
+    print(f"audit_labels: {len(labels)} rows")
 
-    for name, per, length, extra in (("audit_frames", FRAMES_PER_STRATUM, 0, "timestamp_s"),
-                                     ("audit_clips", CLIPS_PER_STRATUM, CLIP_S, "clip_start_s")):
-        rows, used = [], set()
-        for (continent, tod), pool in strata.items():
-            for i, (s, t) in enumerate(draw_times(rng, pool, per, length, used), 1):
-                rows.append({"sample_id": f"{name[6:-1]}_{continent[:3].upper()}_{tod}_{i:03d}",
-                             **{k: s[k] for k in common}, "start_s": s["start_s"],
-                             "processed_end_s": s["processed_end_s"], extra: round(t, 3),
-                             "url": url(s["video_id"], t)})
-        write(out_dir / f"{name}.csv", ["sample_id", *common, "start_s", "processed_end_s", extra, "url"], rows)
-        print(f"{name}: {len(rows)} rows")
-    print(f"audit_labels: {len(labels)} rows, written to {out_dir}")
+
+def draw_times_file(rng, strata, out_dir, name, per, length, extra, available):
+    """Frames or clips: keep the existing samples that can be worked on here, and draw new ones, from the segments
+    that can, to bring each stratum back to `per`. New ids continue after the highest existing one, so the answers
+    saved for an old sample can never attach to a new one."""
+    path = out_dir / f"{name}.csv"
+    old = list(csv.DictReader(open(path, newline="", encoding="utf-8"))) if path.exists() else []
+    kept = [r for r in old if available(r)]
+    used = {r["video_id"] for r in kept}
+    prefix = name[6:-1]
+    rows, new, short = list(kept), 0, []
+    for (continent, tod), pool in strata.items():
+        stratum = f"{prefix}_{continent[:3].upper()}_{tod}_"
+        have = [r for r in kept if r["sample_id"].startswith(stratum)]
+        top = max([int(r["sample_id"][len(stratum):]) for r in old if r["sample_id"].startswith(stratum)], default=0)
+        drawn = draw_times(rng, [x for x in pool if available(x)], per - len(have), length, used)
+        for i, (s, t) in enumerate(drawn, top + 1):
+            rows.append({"sample_id": f"{stratum}{i:03d}", **{k: s[k] for k in COMMON}, "start_s": s["start_s"],
+                         "processed_end_s": s["processed_end_s"], extra: round(t, 3), "url": url(s["video_id"], t)})
+        new += len(drawn)
+        if len(have) + len(drawn) < per:
+            short.append(f"{continent} {tod}: {len(have) + len(drawn)} of {per}")
+    rows.sort(key=lambda r: r["sample_id"])
+    write(path, ["sample_id", *COMMON, "start_s", "processed_end_s", extra, "url"], rows)
+    dropped = len(old) - len(kept)
+    print(f"{name}: {len(rows)} rows ({len(kept)} kept, {dropped} dropped because their video or detection file is "
+          f"not here, {new} drawn)" + (f"; fewer available than wanted: {'; '.join(short)}" if short else ""))
+
+
+def draw_samples(mapping_csv, out_dir, videos=(), bbox=(), frames_per=FRAMES_PER_STRATUM,
+                 clips_per=CLIPS_PER_STRATUM):
+    """Draw the three samples into out_dir. The label sample is made once. The frames and clips are refilled from the
+    segments whose video and detection file are in the folders (all segments if no folders are given)."""
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    rng = random.Random(SEED)
+    strata = by_stratum(segments(mapping_csv))
+    available = availability(videos, bbox)
+    draw_labels(rng, strata, out_dir)
+    draw_times_file(rng, strata, out_dir, "audit_frames", frames_per, 0, "timestamp_s", available)
+    draw_times_file(rng, strata, out_dir, "audit_clips", clips_per, CLIP_S, "clip_start_s", available)
+
+
+def main():
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("mapping", nargs="?", default="mapping.csv")
+    p.add_argument("out", nargs="?", default="_output/audit")
+    p.add_argument("--videos", nargs="*", default=[], help="folders with {video_id}.mp4")
+    p.add_argument("--bbox", nargs="*", default=[], help="folders with the detection CSV files")
+    a = p.parse_args()
+    draw_samples(a.mapping, a.out, a.videos, a.bbox)
 
 
 if __name__ == "__main__":

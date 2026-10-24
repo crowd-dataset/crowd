@@ -36,7 +36,7 @@ async function show(){const it=items[idx];$('#pos').textContent=(idx+1)+' / '+it
  const fr=await fetch('/frame/'+encodeURIComponent(it.id)+'.jpg');
  if(!fr.ok){img.removeAttribute('src');cv.width=cv.height=0;preds=[];missed=[];
   $('#msg').innerHTML='<b style="color:#b00020">This frame cannot be shown.</b> '+(await fr.text())+' <br>Skip it (S).';return}
- if(!meta.has_detections)$('#msg').innerHTML='<b style="color:#b00020">No detection file was found for this segment, so there are no boxes to check.</b> Skip it (S), or add the folder with --bbox.';
+ if(!meta.has_detections)$('#msg').innerHTML='<b style="color:#b00020">No detection file was found for this segment, so there are no boxes to check.</b> Skip it (S), add the folder with --bbox, or restart the tool with --refill to replace this sample.';
  img.onload=draw;img.src=URL.createObjectURL(await fr.blob())}
 async function dl(){$('#msg').textContent='Downloading...';const r=await jpost('/api/download/'+items[idx].row.video_id,{});
  if(r.ok)show();else $('#msg').textContent='Download failed: '+r.error}

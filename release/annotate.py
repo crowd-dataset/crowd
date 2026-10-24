@@ -407,6 +407,10 @@ def report():
         print(f"{task}: {len(rows)} samples, video found for {have}"
               + f", detection file found for {tracks}"
               + (" (a missing video can be downloaded from the page)" if have < len(rows) else ""))
+        if tracks < len(rows):
+            print(f"  {len(rows) - tracks} of the {task} samples have no detection file here: restart with --refill "
+                  f"(and --mapping /path/to/mapping.csv) to replace them with samples that exist here; finished "
+                  f"items are kept")
 
 
 def main():
@@ -417,6 +421,10 @@ def main():
     p.add_argument("--videos", nargs="*", default=[], help="any number of folders with {video_id}.mp4")
     p.add_argument("--bbox", nargs="*", default=[], help="any number of folders with the detection CSV files")
     p.add_argument("--config", help="the project config file: its videos and data folders are added (data/bbox)")
+    p.add_argument("--refill", action="store_true",
+                   help="first replace the frame and clip samples whose video or detection file is not in these "
+                        "folders (see --mapping)")
+    p.add_argument("--mapping", default="mapping.csv", help="mapping.csv, for --refill")
     p.add_argument("--cache", default="_output/annotation_cache", help="folder for extracted frames and downloads")
     p.add_argument("--annotator", default=os.environ.get("USER", ""), help="your name, saved with every answer")
     p.add_argument("--port", type=int, default=8773)
@@ -432,6 +440,9 @@ def main():
     for d in videos + bbox:
         if not os.path.isdir(d):
             print(f"warning: folder not found: {d}")
+    if a.refill:
+        from release import sample_audit
+        sample_audit.draw_samples(a.mapping, a.samples, CFG["videos"], CFG["bbox"])
     load(a.samples, a.out)
     for m in MISSING:
         print(f"warning: sample file not found: {m}\n  (started in {os.getcwd()}; use --samples FOLDER)")
