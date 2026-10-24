@@ -3188,6 +3188,21 @@ def screen_locality(texts, df, frames_dir=None):
     return None
 
 
+# a caption saying where the drive starts: "Clips first. Uncut Drive around 4min." at 0:21 of OregonTropics'
+# 0hLvg8RhrH0, the drive at 4:00 (user, 2026-10-24); in no other of 6,708 videos' opening texts
+# (OCR reads it as "Clips first: ipgut Drive is 4min." too: after "Clips first" any short words go before the time)
+STATED_START = re.compile(r"(?i)(?:\bclips?\s*first\b.{0,40}?\bdrive\b\D{0,12}?"
+                          r"|\bdrive\s+(?:starts?|begins?)\s+(?:around|at|from|after|in)\s*)"
+                          r"(?:(\d{1,2})\s*(?:min|mins|minutes?)\b|(\d{1,2}):(\d{2}))")
+
+
+def stated_start(lines):
+    """Seconds a caption says the drive starts at (STATED_START), else None."""
+    if not (m := STATED_START.search(' '.join(lines or []))):
+        return None
+    return int(m[1]) * 60 if m[1] else int(m[2]) * 60 + int(m[3])
+
+
 def caption_end(video_id, sig, texts=None):
     """Seconds where an opening montage captioned as one ("In this video", "Highlights", "Scenes from the Drive":
     caption_hit) ends, else 0: OCR on a frame every CAPTION_STEP_S from 3 s while the caption shows, then the
@@ -3196,6 +3211,8 @@ def caption_end(video_id, sig, texts=None):
     montage_end finds no cuts, but "In this video" shows until the drive starts at 1:30.5 (user, 2026-10-13). No
     caption in the first CAPTION_FIRST_S: no montage (six reads per video)."""
     if texts:  # EasyOCR's reads (opening_texts), read on while the caption still shows at their end
+        if (said := next((x for t in sorted(texts) if (x := stated_start(texts[t]))), None)):
+            return said
         hits = [t for t in sorted(texts) if caption_hit(texts[t])]
         if not hits or hits[0] > CAPTION_FIRST_S:
             return 0
@@ -3220,7 +3237,10 @@ def caption_end(video_id, sig, texts=None):
         # "In this video..." at 0:33 and 1:25): it may miss two frames in a row
         last, misses = None, 0
         for t in np.arange(1, CAPTION_MAX_S, CAPTION_STEP_S):
-            if caption_hit(_caption_text(stream, float(t)).splitlines()):
+            lines = _caption_text(stream, float(t)).splitlines()
+            if (said := stated_start(lines)):
+                return said
+            if caption_hit(lines):
                 last, misses = float(t), 0
                 continue
             misses += 1
