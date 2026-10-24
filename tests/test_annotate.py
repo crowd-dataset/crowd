@@ -192,3 +192,17 @@ def test_review_page_gives_the_detectors_boxes_and_the_verdicts_are_scored(clien
     out = e.summarise_counts(frames, e.review_counts(rows), [("all", lambda r: "all")])
     person = next(r for r in out if r["class"] == "person")
     assert person["precision"] == 0.0 and person["recall"] != person["recall"] and "ap50" not in person  # recall: nan
+
+
+def test_traffic_lights_and_stop_signs_are_reviewed_too(client):
+    c, tmp = client
+    assert c.get("/api/review/frame_ASI_day_001").get_json()["classes"][-2:] == ["traffic light", "stop sign"]
+    rows = [{"sample_id": "s", "kind": "pred", "class": "traffic light", "verdict": "wrong_class",
+             "true_class": "stop sign"},
+            {"sample_id": "s", "kind": "missed", "class": "stop sign", "verdict": "missed", "true_class": "stop sign"}]
+    per = e.review_counts(rows)["s"]
+    assert per["traffic light"] == (0, 1, 0) and per["stop sign"] == (0, 0, 2)
+    assert len(e.CLASSES) == 8
+    clip = c.get("/api/clips/clip_ASI_day_001").get_json()
+    assert all(b[1] in ("person", "bicycle", "car", "motorcycle", "bus", "truck")
+               for frame in clip["tracks"].values() for b in frame)  # the clips page shows road users only

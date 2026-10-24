@@ -1,4 +1,4 @@
-const COL=['#e6194b','#3cb44b','#4363d8','#f58231','#911eb4','#008080'];
+const COL=['#e6194b','#3cb44b','#4363d8','#f58231','#911eb4','#008080','#9a6324','#808000'];
 const VCOL={correct:'#2da44e',false_positive:'#d1242f',wrong_class:'#f58231'};
 let classes=[],preds=[],missed=[],sel=null,cur=0,meta=null,drag=null,img=$('#img'),cv=$('#cv'),ctx=cv.getContext('2d');
 function chips(){$('#chips').innerHTML=classes.map((c,i)=>'<span style="background:'+COL[i]+';'+(i===cur?'outline:3px solid #000':'')+
@@ -45,7 +45,7 @@ async function save(status){if(status==='done'&&meta&&!meta.has_detections){aler
  it.status=status;progress();go('review',show,1)}
 window.onresize=draw;
 document.addEventListener('keydown',e=>{if(/INPUT|TEXTAREA/.test(e.target.tagName))return;
- if(e.key>='1'&&e.key<='6')pick(+e.key-1);else if(e.key==='Enter')save('done');else if(e.key==='s')save('skipped');
+ if(e.key>='1'&&e.key<='8')pick(+e.key-1);else if(e.key==='Enter')save('done');else if(e.key==='s')save('skipped');
  else if(e.key==='x')setV('false_positive');else if(e.key==='c')setV('correct');else if(e.key==='z')undo();
  else if(e.key==='Delete'||e.key==='Backspace')delSel();else if(e.key==='ArrowRight')go('review',show,1);
  else if(e.key==='ArrowLeft')go('review',show,-1)});

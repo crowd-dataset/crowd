@@ -5,8 +5,8 @@
 <div class="panel" style="flex:1;min-width:300px"><h3>Check the boxes</h3>
 <p class="small">The boxes are the detector's (confidence &ge; 0.7). Each counts as <b>correct</b> unless you change it.
 Click a box, then press <span class="k">X</span> if there is no such object there (false positive), or the key of the
-class it really is (<span class="k">1-6</span>) if the class is wrong. Then look for any person, bicycle, car,
-motorcycle, bus or truck that has <b>no</b> box (missed): press its class key first (nothing selected), then drag a
+class it really is (<span class="k">1-8</span>) if the class is wrong. Then look for any person, bicycle, car,
+motorcycle, bus, truck, traffic light or stop sign that has <b>no</b> box (missed): press its class key first (nothing selected), then drag a
 box around it. Look at every box and at the whole frame before you press Enter.</p>
 <div class="chips" id="chips"></div>
 <p class="small">Next drawn box (missed object): <b id="cls"></b></p>
@@ -22,6 +22,6 @@ box around it. Look at every box and at the whole frame before you press Enter.<
 <button onclick="delSel()">Delete or reset (Del)</button></p><p>
 <button onclick="undo()">Undo last drawn box (Z)</button>
 <button onclick="go('review',show,-1)">Previous</button></p>
-<p class="small">Keys: <span class="k">1-6</span> class, <span class="k">X</span> false positive, <span class="k">C</span>
+<p class="small">Keys: <span class="k">1-8</span> class, <span class="k">X</span> false positive, <span class="k">C</span>
 correct, <span class="k">Del</span>, <span class="k">&larr; &rarr;</span> previous or next, <span class="k">Enter</span> save.</p>
 </div></div>

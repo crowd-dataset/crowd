@@ -40,6 +40,7 @@ CLASS_NAMES = list(COCO_CLASSES.values())
 PLATFORMS = [v for k, v in sorted(VEHICLE_TYPE_NAMES.items(), key=lambda kv: str(kv[0])) if isinstance(k, int)]
 CLIP_S = 10
 THRESHOLD = 0.7  # the confidence the analyses of the dataset use
+ROAD_USER_IDS = (0, 1, 2, 3, 5, 7)  # the clips page shows the tracks of road users only (not of lights and signs)
 LABEL_FIELDS = ["boundary_ok", "correct_start_s", "correct_end_s", "tod_audit", "platform_audit", "notes"]
 CLIP_FIELDS = ["n_objects", "missed_objects", "false_tracks", "class_confusions", "id_switches", "fragmentations",
                "notes"]
@@ -190,7 +191,7 @@ def detection_file(row):
     return index.get(key)
 
 
-def detections(row, k0, k1, threshold=THRESHOLD):
+def detections(row, k0, k1, threshold=THRESHOLD, ids=tuple(COCO_CLASSES)):
     """{frame number: [[track id, class, x, y, w, h, confidence], ...]} of a detection file for frames k0..k1."""
     path = detection_file(row)
     if path is None:
@@ -198,7 +199,7 @@ def detections(row, k0, k1, threshold=THRESHOLD):
     cols = ["yolo-id", "x-center", "y-center", "width", "height", "unique-id", "confidence", "frame-count"]
     df = pd.read_csv(path, usecols=cols)[cols]
     df = df[(df["frame-count"] >= k0) & (df["frame-count"] <= k1) & (df["confidence"] >= threshold)
-            & df["yolo-id"].isin(COCO_CLASSES)]
+            & df["yolo-id"].isin(ids)]
     out = {}
     for r in df.itertuples(index=False):
         out.setdefault(int(r[7]), []).append([int(r[5]) if r[5] == r[5] else -1, COCO_CLASSES[int(r[0])],
@@ -251,7 +252,7 @@ def api_item(task, sid):
         if task == "clips":
             k1 = k + round(CLIP_S * info["fps"])
             meta.update({"k1": k1, "clip_start": float(r["clip_start_s"]), "segment_start": float(r["start_s"]),
-                         "tracks": detections(r, k, k1)})
+                         "tracks": detections(r, k, k1, ids=ROAD_USER_IDS)})
     return jsonify(meta)
 
 

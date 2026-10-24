@@ -15,7 +15,8 @@ import csv
 import random
 from collections import defaultdict
 
-CLASSES = {0: "person", 1: "bicycle", 2: "car", 3: "motorcycle", 5: "bus", 7: "truck"}
+CLASSES = {0: "person", 1: "bicycle", 2: "car", 3: "motorcycle", 5: "bus", 7: "truck", 9: "traffic light",
+           11: "stop sign"}  # COCO ids; the first six are the road users of the analyses
 BOOTSTRAP = 1000
 SEED = 2026
 
