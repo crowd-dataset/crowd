@@ -3710,15 +3710,17 @@ def channel_folder(url):
     if os.path.isdir(os.path.join(HERE, '_output', 'proposals', name)):
         return name
     cid = re.search(r'/channel/(UC[\w-]+)', url)
-    if not cid:
-        try:
-            with open(os.path.join(HERE, '_output', 'subscriptions', 'channel_ids.json')) as f:
-                cid = json.load(f).get(url.strip())  # sheet URL -> channel id (refresh_queue.py)
-        except (OSError, ValueError):
-            cid = None
-    else:
-        cid = cid.group(1)
+    cid = cid.group(1) if cid else _known_channel_id(url)
     return _channel_folders().get(cid, name) if cid else name
+
+
+def _known_channel_id(url):
+    """The channel id refresh_queue.py found for a sheet URL (_output/subscriptions/channel_ids.json), or None."""
+    try:
+        with open(os.path.join(HERE, '_output', 'subscriptions', 'channel_ids.json')) as f:
+            return json.load(f).get(url.strip())
+    except (OSError, ValueError):
+        return None
 
 
 @functools.cache
@@ -3794,9 +3796,10 @@ def list_channel_api(url):
     else:
         handle = re.search(r'/@([^/?]+)', url)
         items = _api('channels', part='id', forHandle='@' + unquote(handle.group(1))).get('items') if handle else None
-        if not items:
+        # a handle the channel gave up: its id from before (justdrivenwalk, a handle no more; user, 2026-10-24)
+        channel = items[0]['id'] if items else _known_channel_id(url)
+        if not channel:
             raise RuntimeError(f'no channel found for {url}')
-        channel = items[0]['id']
     query = parse_qs(urlparse(url).query).get('query', [None])[0]
     if query:  # search costs 100 quota units per page of 50 (10,000 a day are free)
         found = _api_pages('search', 'items', part='id', channelId=channel, q=query, type='video', maxResults=50)

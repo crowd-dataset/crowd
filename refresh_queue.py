@@ -43,6 +43,16 @@ def channel_id(url, known):
     return known[url]
 
 
+def has_uploads(channel):
+    """Whether a channel has any public video (an Offline row whose handle came back with none: Dashcamgh)."""
+    try:
+        return bool(ps._api('playlistItems', part='id', playlistId='UU' + channel[2:], maxResults=1).get('items'))
+    except RuntimeError as e:
+        if 'cannot be found' in str(e):  # a channel that never uploaded has no uploads playlist
+            return False
+        raise
+
+
 def drives(channel, share=0.3):
     """Whether a channel's latest 30 uploads are mostly drives by their titles (share of them or more)."""
     items = ps._api('playlistItems', part='snippet', playlistId='UU' + channel[2:], maxResults=30).get('items', [])
@@ -129,6 +139,13 @@ def main():
         elif status == 'Processed' and rc.COMMENTS.get(url, '').startswith('added from the mapping'):
             continue  # phase 6, below
         elif status in ('Processed', 'Offline'):
+            try:
+                if status == 'Offline' and not has_uploads(cid):  # back, but with nothing to fetch
+                    left_out.append((url, f'row {n}: offline, and the channel has no videos'))
+                    continue
+            except RuntimeError as e:
+                left_out.append((url, f'row {n}: not looked up ({e}): run this again'))
+                continue
             add(cid, url, country, f'sheet row {n}: ' + ('processed' if status == 'Processed' else 'online again'), 2)
     for cid, (n, url, status, country) in sheet.items():
         if status == 'Not finished':
