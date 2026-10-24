@@ -2168,6 +2168,29 @@ def lit_garages(path, duration, work_dir):
     return out
 
 
+# a video about a car park drives in, tours it and drives out (johnnystravel9681's "Trenchard Street Car Park,
+# Bristol": inside 2:02-6:33, half the video and lit, so neither a dark stretch nor an edge; user, 2026-10-24): with
+# such a title GARAGE_SCENES every GARAGE_EVERY_S of the whole video, runs of CAR_PARK_RUN middles of three readings
+# at GARAGE_SURE or more cut. CLIP read b2pQQrn9TfM's car park 2:05-6:15 (the reviewer cut 2:02-6:33) and
+# 8CMtjFvaUmo's 1:25-4:45 (cut 0:50-4:51), 0.00-0.40 on the drive in and out
+CAR_PARK_TITLE = re.compile(r"(?i)\b(?:car ?park|parking (?:garage|structure|deck|house)|parkade|multi[- ]?stor(?:e)?y"
+                            r" (?:car )?park|parkhaus|parkeergarage)\b")
+CAR_PARK_RUN = 3
+
+
+def car_park_stretches(path, duration, work_dir):
+    """[(start s, end s)] inside a car park, for a video whose title names one: see CAR_PARK_TITLE."""
+    times = [float(t) for t in np.arange(GARAGE_EVERY_S / 2, duration or 0, GARAGE_EVERY_S)]
+    scores = _clip_scores(path, times, work_dir, GARAGE_SCENES) if len(times) >= CAR_PARK_RUN else {}
+    ts = sorted(scores)
+    sure = [float(np.median([scores[x] for x in ts[max(0, i - 1):i + 2]])) >= GARAGE_SURE for i in range(len(ts))]
+    out = []
+    for a, b in _runs(np.array(sure)):
+        if b - a >= CAR_PARK_RUN:
+            out.append((max(0.0, ts[a] - GARAGE_EVERY_S / 2), min(float(duration), ts[b - 1] + GARAGE_EVERY_S / 2)))
+    return out
+
+
 INTRO_SCENES = (['a map', 'a map with a route drawn on it', 'a title card with text', 'a logo on a plain background',
                  'a dashcam view of a road', 'a view of a street from inside a car'], 4)
 
@@ -3554,7 +3577,9 @@ def analyse_video(video_id, out_dir, meta=None, signs=False):
             if urban.shape[1] > 4:  # a big person close by, a vehicle ahead (see walk_view)
                 sig['walk_view'] = urban[:, 3:5]
         sig['garage'] = np.array([(a, b) for a, b, _ in garage_edges(path, sig, work_dir)]
-                                 + lit_garages(path, meta.get('duration'), work_dir), float).reshape(-1, 2)
+                                 + lit_garages(path, meta.get('duration'), work_dir)
+                                 + (car_park_stretches(path, meta.get('duration'), work_dir)
+                                    if CAR_PARK_TITLE.search(meta.get('title') or '') else []), float).reshape(-1, 2)
         sig['parked'] = np.array(parked_edges(path, sig, work_dir), float).reshape(-1, 2)
         sig['lots'] = np.array(parking_lots(path, sig, work_dir), float).reshape(-1, 2)
         sig['kerb'] = np.array(kerb_stops(path, sig, work_dir), float).reshape(-1, 2)
