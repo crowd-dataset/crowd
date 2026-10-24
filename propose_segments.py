@@ -3717,6 +3717,18 @@ HIGHWAY_TITLE = re.compile(r'(?i:road ?trip|\bhighways?\b|\bfreeways?\b|\bhwy\b|
                            r'|(?<!via )\binterstates?\b)'
                            r'|(?<![Vv]ia )(?:\b[Ii]nterstate[- ]?|\bI[- ]?|\bi[- ])\d{1,3}\b'
                            r'|\bU\.?S\.?(?:\s?Route|\s?Rte\.?)?[- ]?\d{1,3}\b')  # US Route 9 (KD6ylENdMzA), US-101
+# ... and a motorway by its number, British style ("M62 - Across The Pennines", heP1o2HEadk: a map's "Manchester"
+# label at 0:06 made it Manchester all through; user, 2026-10-24: highway driving with no towns), A1(M) too; no car's
+# model ("BMW M3", "Freightliner M2"). Of 63 reviewed such titles none naming no town was approved
+MOTORWAY_TITLE = re.compile(r'(?<![\w-])M\d{1,3}(?:\s?\(M\))?(?![\w-])|\bA\d{1,4}\(M\)')
+CAR_MODEL = re.compile(r'(?i)\b(?:bmw|e\d{2}|coupe|citro[eë]n|freightliner|mercury|mercedes|tolaccea|shorts)\b')
+
+
+def motorway_title(title):
+    """Whether a title names a motorway by its number (MOTORWAY_TITLE), not a car."""
+    return bool(MOTORWAY_TITLE.search(title or '')) and not CAR_MODEL.search(title or '')
+
+
 # ... and the expressways of a title (not a ring road, a city's own: user, 2026-10-23), for the highway check at night
 EXPRESSWAY_TITLE = re.compile(r'(?i:\bexpressways?\b|\bexpwy\b|\bexpy\b|\btollway\b|\bautoroutes?\b|\bautopistas?\b'
                               r'|\bautostrad[ae]\b)|高速')
@@ -6789,8 +6801,9 @@ def locate_now(p, df, home, sig_path=None, meta=None, boilerplate=frozenset()):
                 e['locality'], e['guessed'] = list(loc), True
                 p['note'] = f"{p['note']}; locality {loc[0]} from where '{phrase}' is".lstrip('; ')
     es = p.get('entries') or []
+    # (not on a motorway's drive: its labels are a map's or the signs' places ahead, heP1o2HEadk)
     if meta and len(es) == 1 and not es[0].get('locality') and not p.get('route') and sig_path \
-            and 'screen_text' in (sig_files := np.load(sig_path)).files:
+            and not motorway_title(meta.get('title')) and 'screen_text' in (sig_files := np.load(sig_path)).files:
         # a town's name on the screen in the opening (QcYf2VZqS-Y: "Sacramento" at 0:26; user, 2026-10-13)
         texts = {float(t): x for t, x in json.loads(str(sig_files['screen_text'])).items()}
         # within the states and countries the title names: "Hatcher Pass, Alaska" is no Earth, TX from a map's
@@ -7258,7 +7271,8 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
                 notes.insert(0, f'possibly {fast}: check, it may be a fast road beside the wait')
             # a highway in the title is analysed, not left out: such drives pass through towns on the way, which
             # the rural and highway checks and a GPS overlay find (user, 2026-10-11: uVHGEdTyAXk, Galt to Tulare)
-            if hit := HIGHWAY_TITLE.search(title_text(meta['title'])):
+            if hit := (HIGHWAY_TITLE.search(title_text(meta['title']))
+                       or (motorway_title(meta['title']) and MOTORWAY_TITLE.search(meta['title']))):
                 notes.append(f"the title mentions '{hit.group(0)}': check that only driving through towns is left")
                 # ... and a short piece between two rural or highway stretches is no town on the way (1Rz63qdJN38
                 # 17:21-20:08; user, 2026-10-16): in reviewed videos with a highway title, of 31 such pieces up to
@@ -7471,7 +7485,7 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
             # a freeway drive whose only place is a region or a sight, or none: no town to give it, unless its GPS
             # overlay says (HXJ9w8h4CwA, "Southern California freeway drive" was Los Angeles; user, 2026-10-16)
             sig_path = os.path.join(out_dir, f"{p['video']}_signals.npz")
-            if (HIGHWAY_TITLE.search(p['title'] or '')
+            if ((HIGHWAY_TITLE.search(p['title'] or '') or motorway_title(p['title']))
                     and not (found and _name_key(found[0][0]) in _name_key(found[1]))
                     and not (os.path.exists(sig_path) and 'gps' in np.load(sig_path).files)):
                 p.pop('entries')
