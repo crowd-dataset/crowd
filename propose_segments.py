@@ -6455,6 +6455,9 @@ def sign_distance(boxes, name, height):
     return min(near)[1] if near else None
 
 
+SIGN_STILL = 0.015  # of the frame: a name read a second later this close to where it was is a caption
+
+
 def town_sign_hint(p, sig_path, out_dir, df):
     """A drive in one town of up to SIGN_HEAD_POP: its first sign naming the town (head_signs) past its first
     segment's start, after a rural or highway stretch: that frame kept as VIDEO_townsign.jpg, p['town_sign'] =
@@ -6487,6 +6490,15 @@ def town_sign_hint(p, sig_path, out_dir, df):
                     ahead = sign_distance(boxes, loc[0], h)
                     if ahead is not None and ahead > SIGN_AHEAD_KM:  # a direction sign: not here yet
                         continue
+                    # a label put on the video stays where it is, a sign comes closer: the name a second later in
+                    # the same place is the channel's caption (Vz_rwxoWwd4: "Fraserburgh" on top; user, 2026-10-24)
+                    later = os.path.join(keep, min(shots, key=lambda n: abs(float(n[:-4]) - t - 1.25)))
+                    if later != shot and at_name and key[:4] in _name_key(str(at_name[0][2])):
+                        again = [b for b in (_ocr_run([later], boxes=True) or [[]])[0]
+                                 if key[:4] in _name_key(str(b[2]))]
+                        if again and abs(again[0][0] - at_name[0][0]) < SIGN_STILL * w \
+                                and abs(again[0][1] - at_name[0][1]) < SIGN_STILL * h:
+                            continue
                     x, y = (at_name[0][0], at_name[0][1]) if at_name else (w / 2, h / 2)
                     x0, y0 = int(min(max(x - 160, 0), max(w - 320, 0))), int(min(max(y - 90, 0), max(h - 180, 0)))
                     cv2.imwrite(os.path.join(out_dir, f"{p['video']}_townsign.jpg"), img[y0:y0 + 180, x0:x0 + 320])
