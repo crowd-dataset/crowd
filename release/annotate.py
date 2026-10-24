@@ -3,18 +3,17 @@
     python -m release.annotate --videos /disk1/videos /disk2/videos --bbox /disk1/data/bbox /disk2/data/bbox
     python -m release.annotate --config /path/to/config     # the "videos" and "data" folders of the project config
 
-then open http://127.0.0.1:8773. Four tasks:
+then open http://127.0.0.1:8773. Three tasks:
 
     labels   re-watch a segment on YouTube and record whether its boundaries are right and what its time of day and
              platform are (the dataset's own labels are hidden, so they cannot bias the answer)
     review   see the detector's boxes on a frame (taken from the video file, so the videos must be on this machine;
              a missing one can be downloaded with yt-dlp) and mark each box correct, a false positive or the wrong
              class, and draw only the road users it missed
-    draw     draw all the boxes yourself, without seeing the detector's (to check the review for bias)
     clips    play a 10 s clip with the dataset's tracks drawn over it and count the tracking errors
 
 Progress is saved after every item, so the tool can be stopped and resumed. Results are written to the output folder:
-audit_labels_filled.csv (for release.audit_stats), box_review.csv or annotations.csv (for
+audit_labels_filled.csv (for release.audit_stats), box_review.csv (for
 release.evaluate_detections) and clip_taxonomy.csv. Only the local machine can reach the tool (127.0.0.1).
 """
 import argparse
@@ -44,7 +43,6 @@ THRESHOLD = 0.7  # the confidence the analyses of the dataset use
 LABEL_FIELDS = ["boundary_ok", "correct_start_s", "correct_end_s", "tod_audit", "platform_audit", "notes"]
 CLIP_FIELDS = ["n_objects", "missed_objects", "false_tracks", "class_confusions", "id_switches", "fragmentations",
                "notes"]
-ANNOTATION_FIELDS = ["sample_id", "class", "x_center", "y_center", "width", "height", "frame_k", "mode", "annotator"]
 REVIEW_FIELDS = ["sample_id", "kind", "class", "confidence", "x_center", "y_center", "width", "height", "verdict",
                  "true_class", "frame_k", "annotator"]
 
@@ -80,7 +78,7 @@ def load(samples, out):
     """Read the three sample files and the saved state."""
     CFG["out"] = Path(out).resolve()
     CFG["out"].mkdir(parents=True, exist_ok=True)
-    for task, name in (("labels", "audit_labels.csv"), ("review", "audit_frames.csv"), ("frames", "audit_frames.csv"),
+    for task, name in (("labels", "audit_labels.csv"), ("review", "audit_frames.csv"),
                        ("clips", "audit_clips.csv")):
         path = Path(samples) / name
         TASKS[task] = read_csv(path) if path.is_file() else []
@@ -122,18 +120,6 @@ def save_state(task):
             if not (s.get("preds") or s.get("missed")):  # a frame without detections and without missed objects
                 out.append({**base, "kind": "none", "class": "none", "verdict": "none"})
         write_csv(CFG["out"] / "box_review.csv", REVIEW_FIELDS, out)
-    elif task == "frames":
-        out = []
-        for r in rows:
-            s = STATE["frames"].get(r["sample_id"])
-            if not s or s.get("status") != "done":
-                continue
-            base = {"sample_id": r["sample_id"], "frame_k": s.get("k", ""), "mode": s.get("mode", "blind"),
-                    "annotator": s.get("annotator", "")}
-            boxes = s.get("boxes") or [{"c": "none", "x": "", "y": "", "w": "", "h": ""}]
-            out += [{**base, "class": b["c"], "x_center": b["x"], "y_center": b["y"], "width": b["w"],
-                     "height": b["h"]} for b in boxes]
-        write_csv(CFG["out"] / "annotations.csv", ANNOTATION_FIELDS, out)
     else:
         out = []
         for r in rows:
@@ -281,18 +267,6 @@ def api_save(task, sid):
     return jsonify({"ok": True})
 
 
-@app.get("/api/frames/<sid>/yolo")
-def api_yolo(sid):
-    """The dataset's boxes of the frame (confidence >= 0.7) as a starting point (pre-label mode)."""
-    r = sample("frames", sid)
-    info = video_info(r["video_id"])
-    if info is None:
-        return jsonify([])
-    k = frame_number(r, info["fps"])
-    found = (detections(r, k, k) or {}).get(k, [])
-    return jsonify([{"c": c, "x": x, "y": y, "w": w, "h": h} for _, c, x, y, w, h, _ in found])
-
-
 def extract_frame(path, index, fps, out):
     """Save frame number `index` (0-based) of a video as a JPEG; returns "" or the reason it failed.
     OpenCV first; if it cannot read the frame (a codec or a seek it cannot handle, a truncated file), ffmpeg."""
@@ -323,7 +297,7 @@ def extract_frame(path, index, fps, out):
 
 @app.get("/frame/<sid>.jpg")
 def frame(sid):
-    r = sample("frames", sid)
+    r = sample("review", sid)
     cache = Path(CFG["cache"]) / "frames" / f"{sid}.jpg"
     if not cache.is_file():
         info = video_info(r["video_id"])
@@ -360,6 +334,14 @@ def api_download(vid):
     return jsonify({"ok": ok, "error": "" if ok else (done.stderr or done.stdout)[-400:]})
 
 
+ABOUT = {  # the name and a description of each task, for the home page
+    "labels": ("Labels", "watch the segment on YouTube: are the boundaries right, and what are the time of day "
+                         "and the platform?"),
+    "review": ("Review the detections", "check the detector's boxes on a frame and draw the objects it missed"),
+    "clips": ("Tracking errors", "watch a 10 s clip with the tracks drawn and count the errors"),
+}
+
+
 def count(task, status):
     return sum(1 for s in STATE[task].values() if s.get("status") == status)
 
@@ -367,8 +349,9 @@ def count(task, status):
 @app.get("/")
 def index():
     counts = "".join(
-        f'<li><a href="/{t}">{t}</a>: {count(t, "done")} of {len(TASKS[t])} done, {count(t, "skipped")} skipped</li>'
-        for t in TASKS)
+        f'<li><a href="/{t}"><b>{ABOUT[t][0]}</b></a>: {count(t, "done")} of {len(TASKS[t])} done, '
+        f'{count(t, "skipped")} skipped<br><span class="small">{ABOUT[t][1]}</span></li>'
+        for t in ("labels", "review", "clips") if t in TASKS)
     items = "".join(f"<li>{m}</li>" for m in MISSING)
     warn = (
         '<div class="panel" style="border-color:#b00020;color:#b00020"><b>Sample files not found</b>, so there is '
@@ -391,7 +374,7 @@ def asset(name):
 def page(title, body, script=""):
     return Response(f"""<!doctype html><html><head><meta charset="utf-8"><title>{title}</title>
 <style>{asset("style.css")}</style></head><body><nav><a href="/">CROWD audits</a><a href="/labels">labels</a>
-<a href="/review">review</a><a href="/frames">draw</a><a href="/clips">clips</a></nav><main>{body}</main>
+<a href="/review">review</a><a href="/clips">clips</a></nav><main>{body}</main>
 <script>{asset("common.js")}{script}</script></body></html>""", mimetype="text/html")
 
 
@@ -407,11 +390,6 @@ def labels_page():
 @app.get("/review")
 def review_page():
     return task_page("review", "Check the detections")
-
-
-@app.get("/frames")
-def frames_page():
-    return task_page("frames", "Box annotation")
 
 
 @app.get("/clips")

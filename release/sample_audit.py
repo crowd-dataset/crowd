@@ -6,8 +6,9 @@ Writes three CSV files for people to fill in, from the segments of the mapping (
 
     audit_labels.csv      segments to re-watch: are the start and end right, and the time-of-day and platform labels
                           (columns to fill in: boundary_ok, correct_start_s, correct_end_s, tod_audit, platform_audit)
-    audit_frames.csv      frames to annotate with boxes of the six road-user classes (person, bicycle, car, motorcycle,
-                          bus, truck), for release.evaluate_detections; at most one frame per upload
+    audit_frames.csv      frames on which to check the detector's boxes and mark the objects it missed (person,
+                          bicycle, car, motorcycle, bus, truck), for release.evaluate_detections; at most one frame
+                          per upload
     audit_clips.csv       10 s clips to watch with the dataset's tracks drawn over them, counting the tracking errors
                           (missed objects, false tracks, class confusions, identity switches, fragmentations); at most
                           one clip per upload

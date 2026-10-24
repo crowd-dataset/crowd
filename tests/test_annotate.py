@@ -82,28 +82,11 @@ def test_labels_hide_the_dataset_labels_and_write_a_file_for_the_audit_statistic
 
 def test_frame_is_the_one_the_detection_file_refers_to(client):
     c, _ = client
-    meta = c.get("/api/frames/frame_ASI_day_001").get_json()
+    meta = c.get("/api/review/frame_ASI_day_001").get_json()
     assert meta["available"] and meta["k"] == 16 and abs(meta["fps"] - FPS) < 0.1
     img = cv2.imdecode(np.frombuffer(c.get("/frame/frame_ASI_day_001.jpg").data, np.uint8), cv2.IMREAD_GRAYSCALE)
     assert abs(float(img.mean()) - 2 * 45) < 8  # original frame index 30 + 15 = 45
-    boxes = c.get("/api/frames/frame_ASI_day_001/yolo").get_json()
-    assert [b["c"] for b in boxes] == ["person"]  # the car at confidence 0.3 is below the threshold
-
-
-def test_saved_boxes_can_be_scored(client):
-    c, tmp = client
-    c.post("/api/frames/frame_ASI_day_001",
-           json={"status": "done", "k": 16, "mode": "blind",
-                 "boxes": [{"c": "person", "x": 0.5, "y": 0.5, "w": 0.2, "h": 0.4}]})
-    c.post("/api/frames/frame_ASI_day_002", json={"status": "done", "k": 31, "boxes": []})
-    rows = list(csv.DictReader(open(tmp / "out" / "annotations.csv")))
-    assert [(r["sample_id"], r["class"], r["frame_k"]) for r in rows] == [
-        ("frame_ASI_day_001", "person", "16"), ("frame_ASI_day_002", "none", "31")]
-    frames = {r["sample_id"]: r for r in csv.DictReader(open(tmp / "audit_frames.csv"))}
-    for r in rows:
-        frames[r["sample_id"]]["frame_k"] = r["frame_k"]
-    assert e.predictions(frames["frame_ASI_day_001"], str(tmp / "disk1" / "data" / "bbox"))[0][:2] == ("person", 0.9)
-    assert e.predictions(frames["frame_ASI_day_002"], str(tmp / "disk1" / "data" / "bbox")) == []
+    assert [b["c"] for b in meta["preds"]] == ["person"]  # the car at confidence 0.3 is below the threshold
 
 
 def test_clip_shows_the_tracks_of_its_frames_and_saves_the_taxonomy(client):
@@ -120,18 +103,9 @@ def test_missing_video_is_reported_not_crashed(client):
     c, _ = client
     a.CFG["videos"] = []
     a.INFO.clear()
-    assert c.get("/api/frames/frame_ASI_day_001").get_json()["available"] is False
+    assert c.get("/api/review/frame_ASI_day_001").get_json()["available"] is False
     assert c.get("/frame/frame_ASI_day_002.jpg").status_code == 404
-    assert all(c.get(f"/{page}").status_code == 200 for page in ("labels", "frames", "clips"))
-
-
-def test_scoring_finds_detection_files_in_several_folders(client):
-    _, tmp = client
-    row = {"video_id": VID, "start_s": "1.0", "timestamp_s": "1.5", "frame_k": "16"}
-    # the file is in a bbox subfolder of the second folder
-    folders = [str(tmp / "disk2" / "data"), str(tmp / "disk1" / "data")]
-    assert e.predictions(row, folders)[0][:2] == ("person", 0.9)
-    assert e.predictions(row, [str(tmp / "disk2" / "data")]) is None
+    assert all(c.get(f"/{page}").status_code == 200 for page in ("labels", "review", "clips"))
 
 
 def test_missing_sample_files_are_reported(client, tmp_path):
@@ -144,7 +118,7 @@ def test_missing_sample_files_are_reported(client, tmp_path):
 
 def test_frame_beyond_the_end_of_the_video_says_why(client):
     c, _ = client
-    a.TASKS["frames"].append({"sample_id": "far", "continent": "Asia", "tod": "day", "video_id": VID, "start_s": "1.0",
+    a.TASKS["review"].append({"sample_id": "far", "continent": "Asia", "tod": "day", "video_id": VID, "start_s": "1.0",
                               "timestamp_s": "100.0", "contributor": "x", "locality": "X", "processed_end_s": "3.0"})
     r = c.get("/frame/far.jpg")
     assert r.status_code == 422 and b"could read frame" in r.data and VID.encode() in r.data

@@ -514,8 +514,8 @@ The code is open-source and free to use. It is aimed for, but not limited to, ac
   `split_large_files.py`, `validation_release.py`, `weekly_metadata.sh`); `make_splits.py` (the train, validation and
   test splits and the balancing weights in `crowd_splits.csv`: grouped by channel or by locality, so no source is in two
   splits); and the manual audits: `sample_audit.py` draws the stratified samples, `audit_stats.py` scores the label audit
-  and `evaluate_detections.py` the detections against manual boxes; `annotate.py` is the local browser tool for those
-  audits (labels, boxes in frames, tracking errors in clips), which finds the videos and detection files in any number
+  and `evaluate_detections.py` the detections from the manual review; `annotate.py` is the local browser tool for those
+  audits (labels, review of the detector's boxes in frames, tracking errors in clips), which finds the videos and detection files in any number
   of folders.
 - `tools/`: maintenance scripts for the mapping and the data, e.g. `download_videos.py`, `video_inventory.py`,
   `update_traffic_index.py`, `update_params.py` and `weekly_detection_counts.sh`; the review of cuts is
