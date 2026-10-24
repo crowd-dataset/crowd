@@ -82,6 +82,8 @@ def url(video, t):
 
 def draw_segments(rng, pool, k, used=None):
     """k segments of distinct uploads, uniformly at random, none of an upload in `used` (which grows)."""
+    if k <= 0:
+        return []
     pool = pool[:]
     rng.shuffle(pool)
     chosen = []
@@ -171,7 +173,12 @@ def draw_labels(rng, strata, out_dir, video_ok, keep_ids):
     if path.exists() and video_ok is None:
         print(f"audit_labels: kept the existing {path}")
         return
-    kept = [r for r in old if video_ok is None or video_ok(r) or r["segment_id"] in keep_ids]
+    kept = []
+    for key in {(r["continent"], r["tod"]) for r in old}:  # no more than LABEL_PER_STRATUM per stratum: answered first
+        rs = [r for r in old if (r["continent"], r["tod"]) == key
+              and (video_ok is None or video_ok(r) or r["segment_id"] in keep_ids)]
+        rs.sort(key=lambda r: r["segment_id"] not in keep_ids)
+        kept += rs[:max(LABEL_PER_STRATUM, sum(r["segment_id"] in keep_ids for r in rs))]
     used = {r["video_id"] for r in kept}
     rows, new, short = list(kept), 0, []
     for (continent, tod), pool in strata.items():

@@ -78,3 +78,16 @@ def test_answered_label_samples_stay_when_their_video_is_not_here(tmp_path):
     sa.draw_samples(mapping(tmp_path), out, videos, bbox, frames_per=1, clips_per=1, keep_ids={answered})
     ids = {r["video_id"] for r in read(out / "audit_labels.csv")}
     assert VIDS[3] in ids and VIDS[2] not in ids  # the answered one stays, the unanswered missing one is replaced
+
+
+def test_label_sample_is_trimmed_to_its_size_and_never_grows(tmp_path):
+    import csv
+    from release import sample_audit as sa
+    rows = [{"continent": "Asia", "tod": "day", "segment_id": f"v{i}_0_9", "video_id": f"v{i}", "locality": "x",
+             "contributor": "c", "start_s": "0", "end_s": "9", "platform": "Car"} for i in range(40)]
+    strata = {("Asia", "day"): [{**r, "duration_s": 9} for r in rows]}
+    sa.write(tmp_path / "audit_labels.csv", list(rows[0]), rows)
+    import random
+    sa.draw_labels(random.Random(1), strata, tmp_path, lambda r: True, {"v39_0_9"})
+    out = list(csv.DictReader(open(tmp_path / "audit_labels.csv")))
+    assert len(out) == sa.LABEL_PER_STRATUM and "v39_0_9" in {r["segment_id"] for r in out}

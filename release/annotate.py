@@ -405,12 +405,13 @@ def clips_page():
 
 
 def answered_ids(out):
-    """The ids of the samples that already have an answer (done), in any task: --refill must keep them."""
+    """The ids of the samples that already have an answer (done or skipped), in any task: --refill must keep them."""
     ids = set()
     for task in ("labels", "review", "clips"):
         path = Path(out) / f"{task}.json"
         if path.is_file():
-            ids.update(i for i, s in json.load(open(path, encoding="utf-8")).items() if s.get("status") == "done")
+            state = json.load(open(path, encoding="utf-8"))
+            ids.update(i for i, s in state.items() if s.get("status") in ("done", "skipped"))
     return ids
 
 
