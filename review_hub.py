@@ -116,7 +116,7 @@ background:#fff;color:#222;font-size:13px;cursor:pointer}
 {% else %}<p>Nothing to review.</p>{% endfor %}
 {% if unapplied %}<h2>✅ Approved, not in the mapping yet
  <span class="s">({{ unapplied|sum(attribute="count") }} segments)</span></h2>
-<p class="ok">All decided, only Apply missing: open it and press Apply (a segment without a locality needs one first)</p>
+<p class="ok">All decided, only Apply missing: open it, press Apply (a segment without a locality needs one first)</p>
 {% for u in unapplied %}<a class="b" href="/open/{{ u.name }}" target="_blank"><span class="n">{{ u.name }}</span>
  <span>{{ u.count }} approved{% if u.no_place %}, {{ u.no_place }} without a locality{% endif %}</span></a>
 {% endfor %}{% endif %}
