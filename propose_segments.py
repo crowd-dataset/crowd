@@ -6986,6 +6986,25 @@ def compass_city(loc, df, depth=3):
     return None
 
 
+@lru_cache(maxsize=64)
+def channel_places(channel_id, _mtime_ns, top=10):
+    """{total, top: [(locality, videos, percent)]} of a channel's videos in the mapping by locality, the top ones
+    first, for the review page (user, 2026-10-24: JAMPHILIPPINES143's earlier videos are 99% Manila); None without
+    any. _mtime_ns: the mapping's, so a changed mapping is counted again."""
+    if not channel_id:
+        return None
+    df = add_video.load_csv(add_video.FILE_PATH)
+    counts = Counter()
+    for vids, chans, loc, state in zip(df['videos'], df['channel'], df['locality'], df['state']):
+        n = sum(c == channel_id for c in re.findall(r'[\w-]+', str(chans)))
+        if n:
+            counts[f'{loc}, {state}' if isinstance(state, str) else loc] += n
+    total = sum(counts.values())
+    if not total:
+        return None
+    return {'total': total, 'top': [(loc, n, round(100 * n / total, 1)) for loc, n in counts.most_common(top)]}
+
+
 def merged_locality(loc, merges=None):
     """The bigger city the reviewer counts loc in (load_merges), else None."""
     m = (merges if merges is not None else load_merges()).get(_merge_key(loc))
@@ -7881,6 +7900,7 @@ input.t-start, input.t-end { width: 62px; font-size: 13px; padding: 2px 4px; }
 button.small { padding: 3px 8px; font-size: 13px; cursor: pointer;
                border: 1px solid #bbb; border-radius: 3px; background: #fafafa; }
 .channel { font-size: 16px; font-weight: 600; margin-bottom: 4px; }
+.chplaces { font-size: 12px; color: #555; margin: -2px 0 4px; max-width: 560px; }
 #vid, #clock { cursor: pointer; }
 #vid { font-family: monospace; }
 #vid-yt { text-decoration: none; }
@@ -7944,6 +7964,10 @@ background:#fff;color:#222;font-size:13px;cursor:pointer}
   <div>
     {% if channel %}<div class="channel">🚕 <a href="{{ channel.url }}" target="_blank" rel="noopener">
       {{- channel.name }}</a></div>{% endif %}
+    {% if channel_places %}<div class="chplaces" title="the localities of this channel's videos in the mapping, by
+      videos">Earlier videos ({{ '{:,}'.format(channel_places.total) }}):
+      {% for loc, n, pct in channel_places.top %}{{ loc }} {{ pct }}% ({{ '{:,}'.format(n) }})
+      {{- ' · ' if not loop.last }}{% endfor %}</div>{% endif %}
     <div class="clock">Video: <span id="vid" title="click to copy">–</span>
       <a id="vid-yt" href="#" target="_blank" rel="noopener" title="open on YouTube here">↗</a>
       <span id="vid-copied"></span></div>
@@ -9023,6 +9047,10 @@ def review(plan_path, port=None):
                          for p in plan if p['video'] in open_videos}
         return render_template_string(REVIEW_HTML, plan=plan, open_videos=open_videos, approved_hidden=approved_hidden,
                                       channel=channel_link(plan),
+                                      channel_places=channel_places(
+                                          Counter(p.get('channel_id') for p in plan if p.get('channel_id'))
+                                          .most_common(1)[0][0] if any(p.get('channel_id') for p in plan) else None,
+                                          add_video._mtime_ns(add_video.FILE_PATH)),
                                       video_country=video_country,
                                       state_countries=sorted(c for c, has in mapping.groupby('country')['state']
                                                              .agg(lambda x: x.notna().mean() > 0.5).items() if has),
