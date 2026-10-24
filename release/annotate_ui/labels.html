@@ -1,11 +1,13 @@
 <div class="row"><div class="panel" style="flex:2;min-width:480px">
 <div id="player"></div><div id="lvbox" style="display:none"></div>
-<p class="small"><span id="src"></span> <button id="alt" style="display:none"></button></p><p>
+<p class="small"><span id="src"></span> <button id="alt" style="display:none"></button></p>
+<p class="small" id="clock" style="font-size:15px"></p><p>
+<button class="p" onclick="playSegment()">Play the segment (stops at its end)</button>
 <button onclick="seek(row.start_s)">Go to start</button>
 <button onclick="seek(Math.max(row.start_s,row.end_s-10))">Go to 10 s before end</button>
 <button onclick="seek(row.end_s-1)">Go to the end</button></p>
-<p class="small">Segment <b id="seg"></b> of <a id="yt" target="_blank">the video</a>: start <b id="st"></b> s, end
-<b id="en"></b> s (the dataset ends the processing 1 s early). Added by <b id="by"></b><span id="same"
+<p class="small">Segment <b id="seg"></b> of <a id="yt" target="_blank">the video</a>: start <b id="st"></b>, end
+<b id="en"></b> (minutes:seconds as in the player, and seconds from the beginning of the video; the dataset ends the processing 1 s early). Added by <b id="by"></b><span id="same"
 style="color:#b00020;font-weight:700"></span>.</p></div>
 <div class="panel" style="flex:1;min-width:300px"><h3>Audit</h3>
 <p class="small">Watch the start and the end. Are the boundaries right (continuous driving, no cut, advertisement or
@@ -13,7 +15,7 @@ speed change inside, no wrong stretch included)? The dataset's time-of-day and p
 yourself.</p>
 <label>Boundaries correct?</label><label class="opt"><input type="radio" name="b" value="y" autocomplete="off"> yes</label>
 <label class="opt"><input type="radio" name="b" value="n" autocomplete="off"> no</label>
-<div id="fix" style="display:none"><label>Correct start (s)</label><input id="cs" autocomplete="off"><label>Correct end (s)</label>
+<div id="fix" style="display:none"><label>Correct start (as in the player, 6:55 or 1:02:05, or in seconds)</label><input id="cs" autocomplete="off" placeholder="6:55"><label>Correct end</label>
 <input id="ce" autocomplete="off"></div>
 <label>Time of day</label><select id="tod" autocomplete="off"><option value="">-</option><option>day</option><option>night</option></select>
 <label>Platform the video is filmed from</label><select id="pf" autocomplete="off"></select>
