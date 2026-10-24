@@ -206,3 +206,11 @@ def test_traffic_lights_and_stop_signs_are_reviewed_too(client):
     clip = c.get("/api/clips/clip_ASI_day_001").get_json()
     assert all(b[1] in ("person", "bicycle", "car", "motorcycle", "bus", "truck")
                for frame in clip["tracks"].values() for b in frame)  # the clips page shows road users only
+
+
+def test_home_page_counts_only_the_current_samples(client):
+    c, _ = client
+    c.post("/api/review/frame_ASI_day_001", json={"status": "done", "k": 16, "preds": [], "missed": []})
+    a.STATE["review"]["frame_OLD_REPLACED_001"] = {"status": "done"}  # an answer of a sample that --refill replaced
+    a.STATE["review"]["frame_OLD_REPLACED_002"] = {"status": "skipped"}
+    assert a.count("review", "done") == 1 and a.count("review", "skipped") == 0

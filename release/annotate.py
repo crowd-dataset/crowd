@@ -344,14 +344,19 @@ ABOUT = {  # the name and a description of each task, for the home page
 
 
 def count(task, status):
-    return sum(1 for s in STATE[task].values() if s.get("status") == status)
+    """How many of the current samples have this status (answers saved for samples that --refill replaced do not
+    count)."""
+    ids = {item_id(task, r) for r in TASKS[task]}
+    return sum(1 for sid, s in STATE[task].items() if sid in ids and s.get("status") == status)
 
 
 @app.get("/")
 def index():
     counts = "".join(
         f'<li><a href="/{t}"><b>{ABOUT[t][0]}</b></a>: {count(t, "done")} of {len(TASKS[t])} done, '
-        f'{count(t, "skipped")} skipped<br><span class="small">{ABOUT[t][1]}</span></li>'
+        f'{count(t, "skipped")} skipped'
+        + (f' (<a href="/{t}?show=skipped">go to the skipped</a>)' if count(t, "skipped") else "")
+        + f'<br><span class="small">{ABOUT[t][1]}</span></li>'
         for t in ("labels", "review", "clips") if t in TASKS)
     items = "".join(f"<li>{m}</li>" for m in MISSING)
     warn = (
