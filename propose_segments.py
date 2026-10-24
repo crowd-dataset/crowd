@@ -641,10 +641,17 @@ PANO_SCENES = (['a 360 degree equirectangular panorama', 'a stretched 360 degree
                 'a road seen through a car windshield', 'a street seen from a driving car', 'cars on a race track',
                 'cars at a car show', 'a highway seen from a car'], 3)
 PANO_SURE = 0.6
+# ... or one whose title says so, whatever its frame: KS VAGABOND 360's "360 Boston + VR" comes as 16:9
+# (Phpa4yc4AFk, 2mC7da1leAI; user, 2026-10-24); not "360p" or "Route 360". Of the 19 reviewed videos with such a
+# title, 12 were left out and 7 rejected
+PANO_TITLE = re.compile(r"(?i)(?:^|\W)360\s*(?:°|º|˚|degrees?|deg|vr|video|view|cam(?:era)?)\b|^\W*360\b(?!\s*p\b)"
+                        r"|\b360\s*\+\s*vr\b|\bvr\s*360\b|#360\w*")
 
 
 def pano_view(sheet_path, meta):
-    """Whether a video is filmed in 360°: see PANO_SURE."""
+    """Whether a video is filmed in 360°: see PANO_SURE and PANO_TITLE."""
+    if PANO_TITLE.search(meta.get('title') or ''):
+        return True
     w, h = meta.get('width') or 0, meta.get('height') or 0
     if not h or abs(w / h - 2) >= 0.02:
         return False
