@@ -5861,6 +5861,14 @@ def drive_ends(title, df, home=None):
         a, b = min(pairs, key=lambda xy: _km(xy[0][4], xy[0][5], xy[1][4], xy[1][5]))
     elif named or any(own):  # one end only: it must be in the state named
         a, b = (x if x and in_state(x, o) else None for x, o in zip((a, b), own))
+    # neither end near home: two towns of exactly those names anywhere, in one country and within PAIR_KM of each
+    # other (a Los Angeles travel channel's "Concarneau to Pont-Aven Drive in 4K", G9laDcUDDTU; user, 2026-10-24)
+    if not a and not b and home and not named and not any(own):
+        x, y = place(first), place(last)
+        if (x and y and x[2] == y[2] and _km(x[4], x[5], y[4], y[5]) <= PAIR_KM
+                and all(h[0] and h[-1] in ('town', 'city', 'village') and _name_key(h[0]) == _name_key(re.sub(
+                    r',.*', '', p)) for h, p in ((x, first), (y, last)))):
+            a, b = x, y
     # a major place by its name alone anchors the drive (x_M1WdCQ__8: "Mulholland to Hollywood" is no drive from a
     # Mulholland by Dublin to a Hollywood by Tracy: Hollywood is Los Angeles, and Mulholland Drive a road there that
     # OpenStreetMap gives no town for); the other end is looked for near it, else the drive is not split; not for a
