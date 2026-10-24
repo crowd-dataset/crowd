@@ -1,5 +1,6 @@
 <div class="row"><div class="panel" style="flex:2;min-width:480px">
-<div id="player"></div><p>
+<div id="player"></div><div id="lvbox" style="display:none"></div>
+<p class="small"><span id="src"></span> <button id="alt" style="display:none"></button></p><p>
 <button onclick="seek(row.start_s)">Go to start</button>
 <button onclick="seek(Math.max(row.start_s,row.end_s-10))">Go to 10 s before end</button>
 <button onclick="seek(row.end_s-1)">Go to the end</button></p>

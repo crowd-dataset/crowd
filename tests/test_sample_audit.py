@@ -38,7 +38,8 @@ def test_only_segments_that_exist_here_are_drawn(tmp_path):
     sa.draw_samples(mapping(tmp_path), out, videos, bbox, frames_per=5, clips_per=5)
     for name in ("audit_frames", "audit_clips"):
         assert sorted(r["video_id"] for r in read(out / f"{name}.csv")) == VIDS[:2]  # one per upload, only these
-    assert len(read(out / "audit_labels.csv")) == 4  # the label sample needs no local files
+    # the labels need only the video: v1, v2 and v3 (they can be played from the downloaded file)
+    assert sorted(r["video_id"] for r in read(out / "audit_labels.csv")) == VIDS[:3]
 
 
 def test_refill_keeps_what_works_replaces_the_rest_and_never_reuses_an_id(tmp_path):
@@ -60,10 +61,20 @@ def test_refill_keeps_what_works_replaces_the_rest_and_never_reuses_an_id(tmp_pa
     assert rows[0]["video_id"] == VIDS[0] and rows[1]["video_id"] in VIDS[1:3] and rows[1]["video_id"] != VIDS[3]
 
 
-def test_existing_label_sample_is_never_overwritten(tmp_path):
+def test_label_sample_without_folders_is_kept_and_with_folders_it_follows_the_videos(tmp_path):
     out = tmp_path / "out"
-    videos, bbox = folders(tmp_path, VIDS, VIDS)
-    sa.draw_samples(mapping(tmp_path), out, videos, bbox, frames_per=1, clips_per=1)
-    (out / "audit_labels.csv").write_text("kept\n")
-    sa.draw_samples(mapping(tmp_path), out, videos, bbox, frames_per=1, clips_per=1)
-    assert (out / "audit_labels.csv").read_text() == "kept\n"
+    sa.draw_samples(mapping(tmp_path), out, [], [], frames_per=1, clips_per=1)  # no folders: any segment
+    assert len(read(out / "audit_labels.csv")) == 4
+    (out / "audit_labels.csv").write_text("keep this\n")
+    sa.draw_samples(mapping(tmp_path), out, [], [], frames_per=1, clips_per=1)
+    assert (out / "audit_labels.csv").read_text() == "keep this\n"  # never overwritten without folders
+
+
+def test_answered_label_samples_stay_when_their_video_is_not_here(tmp_path):
+    out = tmp_path / "out"
+    sa.draw_samples(mapping(tmp_path), out, [], [], frames_per=1, clips_per=1)  # all four videos
+    answered = next(r["segment_id"] for r in read(out / "audit_labels.csv") if r["video_id"] == VIDS[3])
+    videos, bbox = folders(tmp_path, VIDS[:2], VIDS[:2])  # v4 (and v3) are not on this machine
+    sa.draw_samples(mapping(tmp_path), out, videos, bbox, frames_per=1, clips_per=1, keep_ids={answered})
+    ids = {r["video_id"] for r in read(out / "audit_labels.csv")}
+    assert VIDS[3] in ids and VIDS[2] not in ids  # the answered one stays, the unanswered missing one is replaced

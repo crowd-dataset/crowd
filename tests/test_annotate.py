@@ -214,3 +214,11 @@ def test_home_page_counts_only_the_current_samples(client):
     a.STATE["review"]["frame_OLD_REPLACED_001"] = {"status": "done"}  # an answer of a sample that --refill replaced
     a.STATE["review"]["frame_OLD_REPLACED_002"] = {"status": "skipped"}
     assert a.count("review", "done") == 1 and a.count("review", "skipped") == 0
+
+
+def test_label_page_knows_whether_the_video_is_on_this_machine(client):
+    c, _ = client
+    assert c.get(f"/api/labels/{VID}_1_4").get_json()["local"] is True  # TESTVIDEO01.mp4 is in a videos folder
+    assert c.get(f"/api/labels/{VID}_9_9").get_json()["local"] is True
+    a.CFG["videos"] = []
+    assert c.get(f"/api/labels/{VID}_1_4").get_json()["local"] is False

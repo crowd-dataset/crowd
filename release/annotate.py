@@ -238,7 +238,8 @@ def api_item(task, sid):
         hidden = {"platform", "tod", "continent"}  # the dataset's labels stay hidden while the auditor decides
         data = {k: v for k, v in r.items() if k not in hidden and k not in LABEL_FIELDS and k != "contributor"}
         data["contributor"] = r["contributor"]
-        return jsonify({"row": data, "saved": saved, "platforms": PLATFORMS, "annotator": CFG.get("annotator", "")})
+        return jsonify({"row": data, "saved": saved, "platforms": PLATFORMS, "annotator": CFG.get("annotator", ""),
+                        "local": video_path(r["video_id"]) is not None})
     info = video_info(r["video_id"])
     meta = {"row": r, "saved": saved, "available": info is not None, "classes": CLASS_NAMES}
     if info:
@@ -403,6 +404,16 @@ def clips_page():
     return task_page("clips", "Tracking errors")
 
 
+def answered_ids(out):
+    """The ids of the samples that already have an answer (done), in any task: --refill must keep them."""
+    ids = set()
+    for task in ("labels", "review", "clips"):
+        path = Path(out) / f"{task}.json"
+        if path.is_file():
+            ids.update(i for i, s in json.load(open(path, encoding="utf-8")).items() if s.get("status") == "done")
+    return ids
+
+
 def report():
     """Say how many of the samples can be worked on with the folders given."""
     for task in ("review", "clips"):
@@ -447,7 +458,7 @@ def main():
             print(f"warning: folder not found: {d}")
     if a.refill:
         from release import sample_audit
-        sample_audit.draw_samples(a.mapping, a.samples, CFG["videos"], CFG["bbox"])
+        sample_audit.draw_samples(a.mapping, a.samples, CFG["videos"], CFG["bbox"], keep_ids=answered_ids(a.out))
     load(a.samples, a.out)
     for m in MISSING:
         print(f"warning: sample file not found: {m}\n  (started in {os.getcwd()}; use --samples FOLDER)")

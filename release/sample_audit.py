@@ -80,11 +80,12 @@ def url(video, t):
     return f"https://www.youtube.com/watch?v={video}&t={int(t)}s"
 
 
-def draw_segments(rng, pool, k):
-    """k segments of distinct uploads, uniformly at random."""
+def draw_segments(rng, pool, k, used=None):
+    """k segments of distinct uploads, uniformly at random, none of an upload in `used` (which grows)."""
     pool = pool[:]
     rng.shuffle(pool)
-    chosen, used = [], set()
+    chosen = []
+    used = set() if used is None else used
     for s in pool:
         if s["video_id"] not in used:
             used.add(s["video_id"])
@@ -161,33 +162,46 @@ def write(path, fields, rows):
 COMMON = ["continent", "tod", "segment_id", "video_id", "locality", "contributor"]
 
 
-def draw_labels(rng, strata, out_dir):
-    """The sample for the label audit (YouTube only, so it does not depend on the local files); never overwritten."""
+def draw_labels(rng, strata, out_dir, video_ok, keep_ids):
+    """The sample for the label audit. Without folders it is made once and kept. With the folders of the videos
+    (video_ok), the segments whose video is not there are replaced by segments whose video is (the downloaded file can
+    be played instead of YouTube), except those that already have an answer (keep_ids)."""
     path = out_dir / "audit_labels.csv"
-    if path.exists():
+    old = list(csv.DictReader(open(path, newline="", encoding="utf-8"))) if path.exists() else []
+    if path.exists() and video_ok is None:
         print(f"audit_labels: kept the existing {path}")
         return
-    labels = []
+    kept = [r for r in old if video_ok is None or video_ok(r) or r["segment_id"] in keep_ids]
+    used = {r["video_id"] for r in kept}
+    rows, new, short = list(kept), 0, []
     for (continent, tod), pool in strata.items():
-        for s in draw_segments(rng, pool, LABEL_PER_STRATUM):
-            labels.append({**{k: s[k] for k in COMMON}, "start_s": s["start_s"], "end_s": s["end_s"],
-                           "platform": s["platform"], "url_start": url(s["video_id"], s["start_s"]),
-                           "url_end": url(s["video_id"], max(s["end_s"] - 10, s["start_s"])),
-                           "boundary_ok": "", "correct_start_s": "", "correct_end_s": "", "tod_audit": "",
-                           "platform_audit": "", "notes": ""})
+        have = sum(1 for r in kept if r["continent"] == continent and r["tod"] == tod)
+        pool = [x for x in pool if video_ok is None or video_ok(x)]
+        drawn = draw_segments(rng, pool, LABEL_PER_STRATUM - have, used)
+        for s in drawn:
+            rows.append({**{k: s[k] for k in COMMON}, "start_s": s["start_s"], "end_s": s["end_s"],
+                         "platform": s["platform"], "url_start": url(s["video_id"], s["start_s"]),
+                         "url_end": url(s["video_id"], max(s["end_s"] - 10, s["start_s"])),
+                         "boundary_ok": "", "correct_start_s": "", "correct_end_s": "", "tod_audit": "",
+                         "platform_audit": "", "notes": ""})
+        new += len(drawn)
+        if have + len(drawn) < LABEL_PER_STRATUM:
+            short.append(f"{continent} {tod}: {have + len(drawn)} of {LABEL_PER_STRATUM}")
+    rows.sort(key=lambda r: (r["continent"], r["tod"], r["segment_id"]))
     fields = [*COMMON, "start_s", "end_s", "platform", "url_start", "url_end", "boundary_ok", "correct_start_s",
               "correct_end_s", "tod_audit", "platform_audit", "notes"]
-    write(path, fields, labels)
-    print(f"audit_labels: {len(labels)} rows")
+    write(path, fields, rows)
+    print(f"audit_labels: {len(rows)} rows ({len(kept)} kept, {len(old) - len(kept)} dropped because their video is "
+          f"not here, {new} drawn)" + (f"; fewer available than wanted: {'; '.join(short)}" if short else ""))
 
 
-def draw_times_file(rng, strata, out_dir, name, per, length, extra, available):
+def draw_times_file(rng, strata, out_dir, name, per, length, extra, available, keep_ids=()):
     """Frames or clips: keep the existing samples that can be worked on here, and draw new ones, from the segments
     that can, to bring each stratum back to `per`. New ids continue after the highest existing one, so the answers
     saved for an old sample can never attach to a new one."""
     path = out_dir / f"{name}.csv"
     old = list(csv.DictReader(open(path, newline="", encoding="utf-8"))) if path.exists() else []
-    kept = [r for r in old if available(r)]
+    kept = [r for r in old if available(r) or r["sample_id"] in keep_ids]  # an answered sample stays
     used = {r["video_id"] for r in kept}
     prefix = name[6:-1]
     rows, new, short = list(kept), 0, []
@@ -210,17 +224,19 @@ def draw_times_file(rng, strata, out_dir, name, per, length, extra, available):
 
 
 def draw_samples(mapping_csv, out_dir, videos=(), bbox=(), frames_per=FRAMES_PER_STRATUM,
-                 clips_per=CLIPS_PER_STRATUM):
-    """Draw the three samples into out_dir. The label sample is made once. The frames and clips are refilled from the
-    segments whose video and detection file are in the folders (all segments if no folders are given)."""
+                 clips_per=CLIPS_PER_STRATUM, keep_ids=()):
+    """Draw the three samples into out_dir. The frames and clips are refilled from the segments whose video and
+    detection file are in the folders, and the labels from those whose video is (all segments if no folders are given);
+    samples with an answer (keep_ids) are never dropped."""
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     rng = random.Random(SEED)
     strata = by_stratum(segments(mapping_csv))
     available = availability(videos, bbox)
-    draw_labels(rng, strata, out_dir)
-    draw_times_file(rng, strata, out_dir, "audit_frames", frames_per, 0, "timestamp_s", available)
-    draw_times_file(rng, strata, out_dir, "audit_clips", clips_per, CLIP_S, "clip_start_s", available)
+    keep_ids = set(keep_ids)
+    draw_labels(rng, strata, out_dir, availability(videos, []) if videos else None, keep_ids)
+    draw_times_file(rng, strata, out_dir, "audit_frames", frames_per, 0, "timestamp_s", available, keep_ids)
+    draw_times_file(rng, strata, out_dir, "audit_clips", clips_per, CLIP_S, "clip_start_s", available, keep_ids)
 
 
 def main():

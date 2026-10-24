@@ -21,5 +21,5 @@ function go(task,show,d){const n=Math.min(items.length-1,Math.max(0,idx+d));
 function jump(status){const n=items.length;
  for(let k=1;k<=n;k++){const i=(idx+k)%n;if(items[i].status===status){idx=i;location.hash=idx;say('',false);currentShow();return}}
  say('No '+(status==='todo'?'unfinished':status)+' items left.',false)}
-document.addEventListener('keydown',e=>{if(/INPUT|TEXTAREA|SELECT/.test(e.target.tagName)||e.ctrlKey||e.metaKey)return;
+document.addEventListener('keydown',e=>{if(/INPUT|TEXTAREA|SELECT|VIDEO/.test(e.target.tagName)||e.ctrlKey||e.metaKey)return;
  if(e.key==='j')jump('todo');else if(e.key==='k')jump('skipped')});
