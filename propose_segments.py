@@ -8951,7 +8951,9 @@ def review(plan_path, port=None):
 
     @app.before_request
     def take_lock():
-        if request.method == 'POST':
+        # not Apply: it looks up new localities (WorldPop alone took minutes) and every other click on the page
+        # waited behind it (user, 2026-10-24); it takes the lock only to record each segment (mark_applied)
+        if request.method == 'POST' and request.path != '/apply':
             key = id(request._get_current_object())
             held[key] = lock = plan_lock(plan_path)
             lock.__enter__()
@@ -9571,25 +9573,47 @@ def review(plan_path, port=None):
         save(plan)
         return jsonify(ok=True)
 
+    applying = threading.Lock()  # one Apply at a time on this page (two tabs): a segment is added once
+
+    def mark_applied(video, locality, seg):
+        """The segment applied in the plan as it is now, under the plan lock (decisions made meanwhile stay); False
+        when it was changed or applied meanwhile."""
+        with plan_lock(plan_path):
+            plan = load()
+            for p in plan:
+                for e in (p.get('entries', []) if p['video'] == video else []):
+                    for s in (e['segments'] if e.get('locality') == locality else []):
+                        if (s['start'], s['end']) == (seg['start'], seg['end']) and not s.get('applied'):
+                            s['applied'] = True
+                            save(plan)
+                            return True
+        return False
+
     @app.route('/apply', methods=['POST'])
     def apply():
+        if not applying.acquire(blocking=False):
+            return jsonify(log=['an Apply is already running on this page: wait for it'],
+                           error='an Apply is already running on this page: wait for it'), 409
         log = []
         try:
             _apply(load(), log)
         except Exception as ex:  # an answer either way, or the page waits for ever
             log.append(f'stopped: {ex}')
             return jsonify(log=log, error='\n'.join(log)), 500
+        finally:
+            applying.release()
         # a group added and never used would keep its video on the page with nothing to decide (5f3r-Q3Wtrc);
         # and the rejections are done: off the page from now on, as the applied ones
-        plan = load()
-        for p in plan:
-            if 'entries' in p:
-                p['entries'] = [e for e in p['entries'] if e['segments']]
-                for e in p['entries']:
-                    for seg in e['segments']:
-                        if seg.get('decision') == 'reject':
-                            seg['done'] = True
-        save(plan)
+        with plan_lock(plan_path):
+            plan = load()
+            for p in plan:
+                if 'entries' in p:
+                    p['entries'] = [e for e in p['entries'] if e['segments']]
+                    for e in p['entries']:
+                        for seg in e['segments']:
+                            if seg.get('decision') == 'reject':
+                                seg['done'] = True
+            save(plan)
         return jsonify(log=log or ['nothing to add'])
 
     def near_others(p, e):
@@ -9632,9 +9656,11 @@ def review(plan_path, port=None):
                     except Exception as ex:
                         log.append(f"{p['video']} {s['start']}-{s['end']}: not added: {ex}")
                         continue
-                    s['applied'] = True
+                    # recorded after every segment, so a failure part way never re-applies one
+                    if not mark_applied(p['video'], e['locality'], s):
+                        log.append(f"{p['video']} {s['start']}-{s['end']}: added, but changed on the page meanwhile: "
+                                   'check it in the mapping')
                     done += 1
-                    save(plan)  # after every segment, so a failure part way never re-applies one
                 if done:
                     # city, state and country (user, 2026-10-17), and the vehicle (user, 2026-10-18)
                     log.append(f"{p['video']}: {done} segment(s) added to {', '.join(x for x in e['locality'] if x)} "

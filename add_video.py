@@ -1743,16 +1743,17 @@ def get_worldpop_population(lat, lon, km=3):
     polygon = {'type': 'Polygon', 'coordinates': [ring + ring[:1]]}
     shape = {'type': 'FeatureCollection', 'features': [{'type': 'Feature', 'properties': {}, 'geometry': polygon}]}
     params = {'dataset': 'wpgppop', 'year': 2020, 'geojson': json.dumps(shape), 'runasync': 'false'}
-    # a few tries: a refused or empty answer left Chiweta and Dong Le without a population (2026-10-16)
+    # a few tries: a refused or empty answer left Chiweta and Dong Le without a population (2026-10-16); 30 s each,
+    # as a slow WorldPop held a review page's Apply for over 6 minutes at 120 s (2026-10-24)
     for attempt in range(3):
         try:
-            r = requests.get('https://api.worldpop.org/v1/services/stats', timeout=120, params=params)
+            r = requests.get('https://api.worldpop.org/v1/services/stats', timeout=30, params=params)
             if (pop := int(round(r.json().get('data', {}).get('total_population') or 0))):
                 return pop
         except (RequestException, ValueError, AttributeError):
             pass
         if attempt < 2:
-            time.sleep(10)
+            time.sleep(5)
     return 0
 
 
