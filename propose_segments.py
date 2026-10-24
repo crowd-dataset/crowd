@@ -5160,6 +5160,14 @@ def _osm_place(phrase, country_codes, near=None, reach_km=None):
     if (r.raw.get('class') == 'place' and _osm_type(r.raw) == 'village' and a.get('village')
             and _name_key(a['village']) == _name_key(_osm_name(r.raw)) == wanted):
         town, kind = a['village'], 'village'
+    # ... and so is a town or city: "Clay Cross, Derbyshire" is Clay Cross, not the district of North East
+    # Derbyshire OpenStreetMap gives as its city (R78R_Evurd4; user, 2026-10-24)
+    # (a parish's boundary too: "Clay Cross CP", a civil parish of type town)
+    elif (r.raw.get('class') in ('place', 'boundary') and _osm_type(r.raw) in ('town', 'city')
+          and _name_key(re.sub(r' CP$', '', _osm_name(r.raw))) in (wanted, _name_key(phrase.split(',')[0]))
+          # not a state's name: "Smithtown in Suffolk,New York" names the state, not the city (Lbq-Nq1f61E)
+          and phrase.split(',')[0].strip().lower() not in add_video.US_STATE_CODES):
+        town, kind = re.sub(r' CP$', '', _osm_name(r.raw)), _osm_type(r.raw)
     # ... but a boundary named as its state is the state (udVi6qOYvNI: "South Africa, Mpumalanga" is the
     # province; user, 2026-10-20: offer no regions or provinces)
     if (not town and r.raw.get('class') == 'boundary' and _osm_name(r.raw) != a.get('state')
