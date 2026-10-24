@@ -3378,12 +3378,16 @@ def split_gps(p, df, out_dir):
                 r = df.iloc[int(km.argmin())]
                 loc = [r['locality'], None if pd.isna(r['state']) else r['state'], r['country']]
         locs.append(loc)
-    # a little rural driving at a town's edge counts for it: within GPS_EDGE_KM of its boundary (user, 2026-10-18:
-    # "some small sections on the edges of localities of rural driving can be okay")
+    # a city's suburbs count as the city (user, 2026-10-24), and a little rural driving at a town's edge as the town
+    # (user, 2026-10-18): a reading in no mapping locality, or in a town the mapping lacks that is no city of its
+    # own, counts for the mapping locality it is within metro_km of (a Sydney drive through Silverdale or
+    # Luddenham). A town of the mapping stays itself, as does a city of its own (Joondalup is not Perth)
+    fences = {}
     for i, (t, lat, lon) in enumerate(track):
-        near = [x for x in (locs[i - 1] if i else None, locs[i + 1] if i + 1 < len(locs) else None) if x]
-        if locs[i] is None and near:
-            locs[i] = next((x for x in near if (f := geofence(x, df)) and fence_km(f, lat, lon) <= GPS_EDGE_KM), None)
+        loc = locs[i]
+        if loc is None or (add_video.get_existing_locality_row(df, *loc)[1] is None
+                           and not _own_city(loc[0], (lat, lon), loc[2])):
+            locs[i] = metro_locality(lat, lon, df, fences) or loc
     for i, ((t, lat, lon), loc) in enumerate(zip(track, locs)):
         a = 0 if i == 0 else (track[i - 1][0] + t) / 2  # a border half way between two readings
         if stretches and stretches[-1][2] == loc:
@@ -3418,6 +3422,40 @@ def split_gps(p, df, out_dir):
 
 
 GPS_EDGE_KM = 2  # rural driving this close to a town's boundary still counts for the town
+GPS_METRO_MAX_KM = 60  # a city's suburbs reach at most this far past its boundary
+
+
+def metro_km(population):
+    """How far past its boundary a locality's suburbs reach (user, 2026-10-24: suburbs count as the city):
+    sqrt(population) / 30 km, from GPS_EDGE_KM to GPS_METRO_MAX_KM (Sydney, 5 M: 60; Auckland, 1.7 M: 43;
+    100,000: 10; 10,000: 3). Takes arrays too."""
+    return np.clip(np.sqrt(np.maximum(np.nan_to_num(population), 0)) / 30, GPS_EDGE_KM, GPS_METRO_MAX_KM)
+
+
+def metro_locality(lat, lon, df, fences):
+    """[locality, state, country] of the mapping locality whose boundary (lat, lon) lies inside or within metro_km
+    of, the nearest boundary first, else None. A locality without a boundary on OpenStreetMap reaches _town_km
+    from its middle. fences: boundaries looked up so far (geofence's key -> rings), added to here."""
+    pop = pd.to_numeric(df['population_locality'], errors='coerce').fillna(0).values
+    km = 6371 * np.hypot(np.radians(df['lat'].astype(float).values - lat),
+                         np.radians(df['lon'].astype(float).values - lon) * np.cos(np.radians(lat)))
+    reach = metro_km(pop)
+    best = None
+    # ponytail: boundaries only of localities whose middle is within their reach plus twice their _town_km disc; a
+    # municipality far wider than its town (farmland around it) can be missed
+    for i in np.flatnonzero(km <= reach + 2 * _town_km(pop)):
+        r = df.iloc[i]
+        loc = [r['locality'], None if pd.isna(r['state']) else r['state'], r['country']]
+        key = json.dumps(loc)
+        if key not in fences:
+            fences[key] = geofence(loc, df)
+        f = fences[key]
+        past = (0 if in_fence(f, lat, lon) else fence_km(f, lat, lon)) if f else max(0, km[i] - _town_km(pop[i]))
+        if past <= reach[i] and (best is None or past < best[0]):
+            best = (past, loc)
+    return best[1] if best else None
+
+
 GEOFENCES = os.path.join('_output', 'proposals', 'geofences.json')  # locality -> its boundary, kept per machine
 GEOFENCE_MAX_KM = 80  # a boundary wider than this is a district or a county, not a town's
 
@@ -5482,19 +5520,21 @@ def _metro_city(town, at, rows, state=None):
     big = [(_km(at[0], at[1], float(r.lat), float(r.lon)), r) for r in rows[pop >= METRO_POP].itertuples()
            if pd.notna(r.lat) and pd.notna(r.lon) and not (state and isinstance(r.state, str) and r.state != state)]
     big = [(d, r) for d, r in big if d <= METRO_KM and _name_key(r.locality) != _name_key(town)]
-    if not big:
-        return None
-    own = [p[1] for p in _nearby_places(at[0], at[1]) or [] if _name_key(p[0]) == _name_key(town)]
-    if own and max(own) >= METRO_TOWN_POP:
-        return None
-    # outside the US a town that is its own city council stays a locality of its own, its suburbs the big city's:
-    # Joondalup ("City of Joondalup"), Fremantle, Rockingham are not Perth, Craigie and Balcatta are (user,
-    # 2026-10-21: "separate cities only"). In the US the reviewer counts such cities in the big one (Long Beach,
-    # Yonkers, Bellflower)
-    if rows['country'].iloc[0] != 'United States' and _name_key(_council(*at) or '') == _name_key(town):
+    if not big or _own_city(town, at, rows['country'].iloc[0]):
         return None
     r = min(big, key=lambda dr: dr[0])[1]
     return [r.locality, r.state if isinstance(r.state, str) else None, r.country]
+
+
+def _own_city(town, at, country):
+    """Whether a town at (lat, lon) is a city of its own, not a suburb of the big city next to it: METRO_TOWN_POP
+    or more inhabitants, or outside the US its own city council: Joondalup ("City of Joondalup"), Fremantle,
+    Rockingham are not Perth, Craigie and Balcatta are (user, 2026-10-21: "separate cities only"). In the US the
+    reviewer counts such cities in the big one (Long Beach, Yonkers, Bellflower)."""
+    own = [p[1] for p in _nearby_places(at[0], at[1]) or [] if _name_key(p[0]) == _name_key(town)]
+    if own and max(own) >= METRO_TOWN_POP:
+        return True
+    return country != 'United States' and _name_key(_council(*at) or '') == _name_key(town)
 
 
 # "Driving from Hazle Township to White Haven, Pennsylvania": where a drive starts and where it ends
