@@ -28,7 +28,7 @@ import unicodedata
 import webbrowser
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
-from functools import lru_cache, wraps
+from functools import lru_cache, partial, wraps
 from threading import Timer
 from urllib.parse import parse_qs, unquote, urlparse
 
@@ -4571,14 +4571,26 @@ CHAPTER_ASIDE = re.compile(r'\b(?:proximity|close|near(?:by)?|distance|day[- ]tr
                            r'\b|\bmiles\b', re.I)
 
 
-def chapter_localities(chapters, df, near_home=None, near=None, km=150, first=None):
+# on a drive between towns a chapter naming a numbered road or a county is the open road between them, no town:
+# "Downtown Kerrville", "TX 16" 1:41, "Bandera County" 21:23, "Medina, Texas" 32:00 (ODe2OYlGuP4, DeceleratedTravel:
+# Kerrville until 21:23; user, 2026-10-24: drive between towns and chapter names list localities)
+OPEN_ROAD_CHAPTER = re.compile(r"(?i)^(?:(?:US|SR|FM|CR|TX|I|[A-Z]{1,2}|hwy|highway|route|rte|interstate"
+                               r"|state (?:road|route|highway)|county (?:road|route))[- ]?\d{1,4}\b"
+                               r"|.*\bcounty(?: line)?\b)")
+
+
+def chapter_localities(chapters, df, near_home=None, near=None, km=150, first=None, open_road=False):
     """[(start, end, locality)] stretches of a video by the localities its chapters name, or [] when none does.
     A chapter naming none (a road, a sight) is still in the locality before it; leading ones in the first named.
     near_home(name) gives a locality not in the mapping yet for a chapter that is just a place name. near=(lat,
     lon): only localities within km of it (Nqej7zmNUzI, a Yokohama drive: its "Kanazawa" is a ward of Yokohama,
-    not Kanazawa, Ishikawa). first: the locality of the chapters before the first named one (the title's)."""
+    not Kanazawa, Ishikawa). first: the locality of the chapters before the first named one (the title's).
+    open_road: a drive between towns, whose OPEN_ROAD_CHAPTER stretches have no locality."""
     locs = []
     for _, name in chapters:
+        if open_road and OPEN_ROAD_CHAPTER.match(CHAPTER_PREFIX.sub('', name.strip(' .!-'))):
+            locs.append('open road')
+            continue
         if ROAD.search(name):
             locs.append(None)
             continue
@@ -4600,15 +4612,17 @@ def chapter_localities(chapters, df, near_home=None, near=None, km=150, first=No
             loc = [r['locality'], r['state'] if isinstance(r['state'], str) else None, r['country']]
             if near and (at := _locality_anchor(loc, df)) and _km(near[0], near[1], at[3], at[4]) > km:
                 loc = None
+        # ... also with its state or country after a comma ("Medina, Texas": ODe2OYlGuP4; user, 2026-10-24)
+        place = re.sub(r",\s*[A-Z][\w'.-]*(?: [A-Z][\w'.-]*){0,2}$", '', place)
         if not loc and near_home and re.fullmatch(r"(?:[A-Z][\w'.-]*\s?){1,4}", place):
             loc = near_home(place.strip())
         locs.append(loc)
-    named = [loc for loc in locs if loc]
+    named = [loc for loc in locs if loc and loc != 'open road']
     if not named:
         return []
     out, current = [], first or named[0]
     for (start, _), loc, nxt in zip(chapters, locs, [t for t, _ in chapters[1:]] + [float('inf')]):
-        current = loc or current
+        current = None if loc == 'open road' else loc or current
         if out and out[-1][2] == current:
             out[-1] = (out[-1][0], nxt, current)
         else:
@@ -6284,6 +6298,11 @@ def split_routes(plan_path):
     return done
 
 
+def _stretch_label(a, loc):
+    """A chapter stretch for a note: its locality, or the open road between towns, and where it starts."""
+    return f"{loc[0] if loc else 'the open road (left out)'} from {a // 60}:{a % 60:02d}"
+
+
 def split_by_stretches(segments, stretches):
     """Locality groups {locality: segments} of segments cut at the (start s, end s, locality) stretches."""
     groups = {}
@@ -6614,6 +6633,11 @@ def _locality_anchor(loc, df):
     return None if row is None else (loc[0], loc[1], loc[2], float(row['lat']), float(row['lon']))
 
 
+def _route_end(name, ends):
+    """The end of a drive (a locality) that name is, else None."""
+    return next((list(e) for e in ends if _name_key(e[0]) == _name_key(name)), None)
+
+
 def town_near(name, home, df=None):
     """[locality, state, country] of the town a place of that name near the channel's home is: itself, or for
     a neighbourhood the city it is part of (Echo Park is Los Angeles). A small town not in the mapping (df) next
@@ -6867,7 +6891,7 @@ def locate_now(p, df, home, sig_path=None, meta=None, boilerplate=frozenset()):
         elif stretches:
             p['entries'] = split_by_stretches(e['segments'], stretches)
             p['note'] = (f"{p['note']}; localities from the chapters: "
-                         + ', '.join(f'{loc[0]} from {a // 60}:{a % 60:02d}' for a, _, loc in stretches)).lstrip('; ')
+                         + ', '.join(_stretch_label(a, loc) for a, _, loc in stretches)).lstrip('; ')
         elif found := description_locality(meta.get('description'), df, boilerplate):
             # far from the channel's home, the place of that name near home is meant (x_M1WdCQ__8: "Hollywood" in a
             # Los Angeles channel's description is no Hollywood, FL)
@@ -6879,7 +6903,8 @@ def locate_now(p, df, home, sig_path=None, meta=None, boilerplate=frozenset()):
             p['note'] = f"{p['note']}; locality {found[0]} from the description".lstrip('; ')
         es = p.get('entries') or []
     # not after a GPS split that left one town (kddS8sGShKA: rural until 95:30, then Laughlin): the GPS decides
-    if sig_path and len(es) == 1 and es[0].get('locality') and not p.get('route') and not es[0].get('gps'):
+    if sig_path and len(es) == 1 and es[0].get('locality') and not p.get('route') and not es[0].get('gps') \
+            and not es[0].get('chapters'):
         es[0]['segments'] = propose(load_signals(sig_path, p.get('title')), ONE_PLACE)[0]
         p['note'] = re.sub(r'; (?:rural|highway) driving \d+-\d+s', '', p['note'])
 
@@ -7471,9 +7496,16 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
         reach, at = in_reach, None if ends else _locality_anchor(titled, df)
         if ends and start and start[1]:  # in the states of its ends: no Venice, FL on a drive along the coast of LA
             reach = in_reach & df['state'].isin({start[1]} | ({ends[1][1][1]} if ends[1][1] else set()))
-        stretches = chapter_localities(video_chapters(metas[p['video']]), df[reach],
-                                       (lambda name: town_near(name, home, df)) if home and not titled else None,
-                                       near=at[3:5] if at else None, first=start or titled)
+        near_town = (lambda name: town_near(name, home, df)) if home and not titled else None
+        # a drive between towns: a chapter naming one of its ends is that end, also new to the mapping, as the
+        # reviewer counts it (Beverly Hills is Los Angeles); its numbered roads and counties are the open road between
+        # them (ODe2OYlGuP4: Kerrville, "TX 16", "Bandera County", "Medina, Texas"; user, 2026-10-24). No other town
+        # is looked up near them: on 122 reviewed drives that split metro drives into suburbs (qTnWQk7osjQ)
+        if ends and (named_ends := [merged_locality(x[1]) or x[1] for x in ends if x and x[1]]):
+            near_town = partial(_route_end, ends=named_ends)
+            reach = reach | df['country'].isin({x[2] for x in named_ends})
+        stretches = chapter_localities(video_chapters(metas[p['video']]), df[reach], near_town,
+                                       near=at[3:5] if at else None, first=start or titled, open_road=bool(ends))
         if not stretches:
             continue
         e = p['entries'][0]
@@ -7482,9 +7514,9 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
                 e['locality'], e['guessed'] = stretches[0][2], True
                 p['note'] = f"{p['note']}; locality {stretches[0][2][0]} from the chapters".lstrip('; ')
             continue
-        p['entries'] = split_by_stretches(e['segments'], stretches)
+        p['entries'] = [{**x, 'chapters': True} for x in split_by_stretches(e['segments'], stretches)]
         p['note'] = (f"{p['note']}; localities from the chapters: "
-                     + ', '.join(f'{loc[0]} from {a // 60}:{a % 60:02d}' for a, _, loc in stretches)).lstrip('; ')
+                     + ', '.join(_stretch_label(a, loc) for a, _, loc in stretches)).lstrip('; ')
     # a named place ("Sun Rise at Al Khan Beach") is in some town: look it up on OpenStreetMap
     for p in new:
         for e in p.get('entries', []):
@@ -7592,7 +7624,7 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
     for p in new:
         es, sig_path = p.get('entries', []), os.path.join(out_dir, f"{p['video']}_signals.npz")
         if (len(es) == 1 and es[0].get('locality') and not p.get('route') and os.path.exists(sig_path)
-                and not es[0].get('gps')
+                and not es[0].get('gps') and not es[0].get('chapters')  # cut by its chapters (ODe2OYlGuP4)
                 and not any(s.get('decision') or s.get('applied') for s in es[0]['segments'])):
             if (role := title_role(p['title'], es[0]['locality'])):
                 p['entries'] = by_role(propose(load_signals(sig_path, p['title']))[0], es[0]['locality'], role)
