@@ -116,7 +116,7 @@ background:#fff;color:#222;font-size:13px;cursor:pointer}
 {% else %}<p>Nothing to review.</p>{% endfor %}
 {% if unapplied %}<h2>✅ Approved, not in the mapping yet
  <span class="s">({{ unapplied|sum(attribute="count") }} segments)</span></h2>
-<p class="ok">Their review page is closed: open it and press Apply (a segment without a locality needs one first)</p>
+<p class="ok">All decided, only Apply missing: open it and press Apply (a segment without a locality needs one first)</p>
 {% for u in unapplied %}<a class="b" href="/open/{{ u.name }}" target="_blank"><span class="n">{{ u.name }}</span>
  <span>{{ u.count }} approved{% if u.no_place %}, {{ u.no_place }} without a locality{% endif %}</span></a>
 {% endfor %}{% endif %}
@@ -247,10 +247,12 @@ def index():
             cookies = json.load(r).get('cookies', [])
     except (OSError, ValueError):
         cookies = []
-    # approved, never applied, their page closed: Apply forgotten, or its answer lost in an outage (user, 2026-10-20)
+    # approved, never applied, nothing left to decide: Apply forgotten, or its answer lost in an outage (user,
+    # 2026-10-20); its page open or not (DrivingShetland's open page hid it: user, 2026-10-24); a batch with videos
+    # still to decide is in the list above
     unapplied = []
     for name in sorted(os.listdir(rc.ROOT)):
-        if name in servers and servers[name][0].poll() is None:
+        if os.path.isdir(os.path.join(rc.ROOT, name)) and rc.review_counts(name)[0]:
             continue
         count, no_place = approved_unapplied(name)
         if count:
