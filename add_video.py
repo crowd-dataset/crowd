@@ -1928,28 +1928,39 @@ def get_traffic_index_lat_lon(lat, lon):
         return None
 
 
+class LocationIQ(Nominatim):
+    """LocationIQ: Nominatim on OpenStreetMap data with a free key (5,000 requests a day, 2 a second)."""
+    geocode_path, reverse_path = '/v1/search', '/v1/reverse'
+
+    def __init__(self, key):
+        super().__init__(user_agent='crowd-dataset-propose-segments', domain='us1.locationiq.com', scheme='https')
+        self.key = key
+
+    def _construct_url(self, base_api, params):
+        return super()._construct_url(base_api, {**params, 'key': self.key})
+
+
 def get_coordinates(locality, state, country, locality_data=None):
-    """Get locality coordinates, with GeoNames fallback."""
-
-    # --- primary: Nominatim ---
-    current_time = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    geolocator = Nominatim(user_agent=f"my_geocoding_script_{current_time}")
-
+    """Get locality coordinates: LocationIQ when its key is set, then the public Nominatim (it refused mini's lookups
+    as too many, so Apply could not place Bridge of Walls; 2026-10-24), then GeoNames."""
+    if state and str(state).lower() not in ('', 'nan', 'none'):
+        location_query = f"{locality}, {state}, {country}"
+    else:
+        location_query = f"{locality}, {country}"
     try:
-        if state and str(state).lower() not in ('', 'nan', 'none'):
-            location_query = f"{locality}, {state}, {country}"
-        else:
-            location_query = f"{locality}, {country}"
-
-        location = geolocator.geocode(location_query, timeout=5)
-
-        if location:
-            return location.latitude, location.longitude
-
-        print(f"Nominatim returned no result for '{location_query}', trying fallback.")
-
-    except (GeocoderTimedOut, GeocoderUnavailable, GeocoderServiceError) as e:
-        print(f"Nominatim error for '{locality}, {country}': {e}")
+        key = common.get_secrets('locationiq_api_key')
+    except (KeyError, OSError, ValueError):
+        key = None
+    current_time = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    for name, geolocator in ([('LocationIQ', LocationIQ(key))] if key else []) + [
+            ('Nominatim', Nominatim(user_agent=f"my_geocoding_script_{current_time}"))]:
+        try:
+            location = geolocator.geocode(location_query, timeout=5)
+            if location:
+                return location.latitude, location.longitude
+            print(f"{name} returned no result for '{location_query}', trying fallback.")
+        except (GeocoderTimedOut, GeocoderUnavailable, GeocoderServiceError) as e:
+            print(f"{name} error for '{locality}, {country}': {e}")
 
     # --- fallback: extract from GeoNames locality_data if available ---
     if locality_data and isinstance(locality_data, dict):

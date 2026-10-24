@@ -4981,16 +4981,7 @@ NOMINATIM_SLOT = os.path.join(tempfile.gettempdir(), 'crowd_nominatim.slot')
 IN_REVIEW_PAGE = [False]
 
 
-class _LocationIQ(Nominatim):
-    """LocationIQ: Nominatim on OpenStreetMap data with a free key (5,000 requests a day, 2 a second)."""
-    geocode_path, reverse_path = '/v1/search', '/v1/reverse'
-
-    def __init__(self, key):
-        super().__init__(user_agent='crowd-dataset-propose-segments', domain='us1.locationiq.com', scheme='https')
-        self.key = key
-
-    def _construct_url(self, base_api, params):
-        return super()._construct_url(base_api, {**params, 'key': self.key})
+_LocationIQ = add_video.LocationIQ  # also add_video's first choice for a new locality's coordinates
 
 
 def _locationiq_key():
@@ -8822,7 +8813,9 @@ document.getElementById('apply').onclick = async () => {
   }
   document.getElementById('log').textContent = out.error || out.log.join('\\n');
   btn.disabled = false; btn.textContent = 'Apply approved segments to the mapping';
-  if (res && res.ok && !out.error) setTimeout(() => location.reload(), 4000);
+  // a segment not added keeps the log on screen: the reload hid why (Bridge of Walls, user, 2026-10-24)
+  const missed = (out.log || []).some(line => /not added|not set|changed on the page/.test(line));
+  if (res && res.ok && !out.error && !missed) setTimeout(() => location.reload(), 4000);
 };
 update();
 const resume = JSON.parse(sessionStorage.getItem('resume') || 'null');
