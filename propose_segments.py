@@ -4469,6 +4469,14 @@ def channel_boilerplate(descriptions):
     return {line for line, n in counts.items() if n >= max(3, 0.2 * len(descriptions))}
 
 
+TOWN_STATE = re.compile(r"\b([A-Z][\w'’.-]*(?: [A-Z][\w'’.-]*){0,3}),\s*([A-Z][a-z]+(?: [A-Z][a-z]+)?)\b")
+
+
+@lru_cache(maxsize=None)
+def _state_and_country_keys():
+    return frozenset(add_video.US_STATE_CODES) | frozenset(c.lower() for c in COUNTRIES)
+
+
 def description_locality(description, df, boilerplate):
     """[locality, state, country] when a video description, without the channel's boilerplate, links and
     addresses, names exactly one locality of df, else None. A place name that is also an ordinary word
@@ -7499,6 +7507,12 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
                              + ': set the locality').lstrip('; ')
                 continue
             found = next(iter(in_title.items()), None)
+            # ... a "Town, State" of the description whose town the title names first: "Mystic, Connecticut" in
+            # "Sunset in Mystic 4K Drive", not the "CITY COMPS: Newport, Rhode Island" above it (SbnPMoc4wuM; user,
+            # 2026-10-24). Of the reviewed videos located from their description it changes 3: Mystic, Dayton, Chicago
+            named = [f'{a}, {b}' for a, b in TOWN_STATE.findall(description) if b.lower() in _state_and_country_keys()
+                     and re.search(rf'\b{re.escape(a)}\b', p['title'] or '', re.I)]
+            found = found or (named and place_locality(named[:3], df[in_reach], home))
             found = found or place_locality(place_phrases(description, limit=3), df[in_reach], home)
             # a freeway drive whose only place is a region or a sight, or none: no town to give it, unless its GPS
             # overlay says (HXJ9w8h4CwA, "Southern California freeway drive" was Los Angeles; user, 2026-10-16)
