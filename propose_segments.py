@@ -5305,6 +5305,12 @@ def place_localities(phrases, df, home=None):
         # channel, not Atlanta, NV); Springfield (0.61) and Waterloo (0.56) are too many places to say
         hits = [(p, big if (big := _osm_place(p, codes)) and big[6] >= MAJOR_PLACE and (not h or h[6] < big[6] - 0.2)
                  else h) for p, h in hits]
+        # ... and with nothing of the text near home, a town or city of exactly the name anywhere in the countries:
+        # "Driving Through Lahaina in 2026" from a Los Angeles channel is Lahaina, HI (jZS06VYyHug was Anaheim, from
+        # the description's "Maui"; user, 2026-10-24)
+        if not any(h for _, h in hits):
+            hits = [(p, big if (big := _osm_place(p, codes)) and big[0] and big[-1] in ('town', 'city')
+                     and _name_key(big[0]) == _name_key(p.split(',')[0]) else h) for p, h in hits]
     if len(named) == 1 and 'US' in codes:
         # GeoNames only where OpenStreetMap found the name somewhere else (Johnson City: a hamlet 100 km away);
         # a borough's two centres can lie 5-10 km apart (the Bronx, Brooklyn: both in New York City)
