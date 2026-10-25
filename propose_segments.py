@@ -8021,6 +8021,8 @@ button.small.no, button.small.stop { background: #fbe3e3; border-color: #d98a8a;
 .seg.reject td { background: #fbe9e9; color: #888; }
 .seg.approve .yes, .seg.reject .no { font-weight: bold; border-color: #333; }
 .seg.applied td { background: #e3ecf8; }
+.seg.problem td { background: #fff3cd; box-shadow: inset 0 2px 0 #c62828, inset 0 -2px 0 #c62828; }
+#log a.problem { color: #b71c1c; }
 tr.split td { font-size: 12px; color: #777; border-top: 0; padding-top: 0; padding-bottom: 0; }
 tr.split td:first-child { max-width: 0; }  /* the reason wraps in the columns the segments set, never widens them */
 .excluded { color: #777; font-size: 14px; }
@@ -8083,8 +8085,8 @@ background:#fff;color:#222;font-size:13px;cursor:pointer}
     <div class="clock">Time: <span id="clock" title="click to copy">0:00</span> <span id="copied"></span></div>
     <div class="keys">Keys for the outlined segment (the one clicked last): <b>A</b> start here · <b>S</b> end here ·
       <b>D</b> whole video · <b>Q</b> day · <b>W</b> night · <b>F</b> split time here · <b>C</b> copy the time ·
-      <b>E</b> approve · <b>R</b> reject (both then on to the next) · <b>T</b> approve rest · <b>Y</b> reject rest
-      (of its video) · in a time box <b>↑↓</b> ±1 s, <b>←→</b> ±10 s</div>
+      <b>V</b> copy the video and time · <b>E</b> approve · <b>R</b> reject (both then on to the next) ·
+      <b>T</b> approve rest · <b>Y</b> reject rest (of its video) · in a time box <b>↑↓</b> ±1 s, <b>←→</b> ±10 s</div>
     <div id="status"></div>
     {% if waiting > open_videos | length %}<div class="keys">Showing {{ open_videos | length }} of {{ waiting }}
       videos left to decide; the next appear as you finish these.</div>{% endif %}
@@ -8461,10 +8463,19 @@ document.addEventListener('keydown', e => {
   if (e.metaKey || e.ctrlKey || e.altKey) return;
   let key = e.key.toLowerCase();
   if (!/^[a-z]$/.test(key) && /^Key[A-Z]$/.test(e.code)) key = e.code.slice(3).toLowerCase();  // Cyrillic layouts
-  if (!['a', 's', 'd', 'q', 'w', 'f', 'c', 'e', 'r', 't', 'y'].includes(key)) return;
+  if (!['a', 's', 'd', 'q', 'w', 'f', 'c', 'v', 'e', 'r', 't', 'y'].includes(key)) return;
   if (key === 'c') {  // the current time to the clipboard, as a click on it does (user, 2026-10-16)
     e.preventDefault();
     document.getElementById('clock').click();
+    return;
+  }
+  if (key === 'v') {  // the playing video and its time, as reports give them: "qecK5ZfxoY4 Time: 9:01" (2026-10-25)
+    e.preventDefault();
+    const video = ytReady && playingVideo();
+    if (!video) return;
+    copyText(`${video} Time: ${fmt(Math.floor(ytPlayer.getCurrentTime() || 0))}`);
+    document.getElementById('copied').textContent = 'video and time copied';
+    setTimeout(() => { document.getElementById('copied').textContent = ''; }, 1500);
     return;
   }
   const row = keyRow();
@@ -8932,9 +8943,41 @@ document.getElementById('apply').onclick = async () => {
   document.getElementById('log').textContent = out.error || out.log.join('\\n');
   btn.disabled = false; btn.textContent = 'Apply approved segments to the mapping';
   // a segment not added keeps the log on screen: the reload hid why (Bridge of Walls, user, 2026-10-24)
-  const missed = (out.log || []).some(line => /not added|not set|changed on the page/.test(line));
-  if (res && res.ok && !out.error && !missed) setTimeout(() => location.reload(), 4000);
+  const missed = (out.log || []).filter(line => /not added|not set|changed on the page/.test(line));
+  if (missed.length && !out.error) showProblems(missed);
+  if (res && res.ok && !out.error && !missed.length) setTimeout(() => location.reload(), 4000);
 };
+// what Apply could not add, alone in the list, each line a link to its segment, which is marked on the page; the
+// first is shown (user, 2026-10-25: a video without its locality was lost among the lines of the added ones)
+function showProblems(lines) {
+  const log = document.getElementById('log');
+  log.textContent = '';
+  const first = [];
+  for (const line of lines) {
+    const m = line.match(/^([\\w-]{11})(?: (\\d+)-(\\d+))?:/);
+    const rows = !m ? [] : [...document.querySelectorAll(`tr.seg[data-video="${m[1]}"]:not(.applied)`)].filter(r =>
+      m[2] ? +r.dataset.start === +m[2] : r.classList.contains('approve') && !entryLocality(r));
+    rows.forEach(r => r.classList.add('problem'));
+    const a = document.createElement('a');
+    a.href = '#'; a.className = 'problem'; a.textContent = line;
+    a.onclick = e => { e.preventDefault(); goToProblem(rows[0], m && m[1]); };
+    log.append(a, document.createElement('br'));
+    if (!first.length) first.push(rows[0], m && m[1]);
+  }
+  goToProblem(...first);
+}
+function entryLocality(row) {
+  const box = row.closest('.video').querySelector(`.locbox[data-entry="${row.dataset.entry}"]`);
+  return !box || (box.querySelector('.loc-name').value.trim() && box.querySelector('.loc-country').value);
+}
+function goToProblem(row, video) {
+  const el = row || (video && document.querySelector(`.video[data-video="${video}"]`));
+  if (!el) return;
+  if (row) clickedRow = row;  // the keys go on with it
+  window.scrollTo({ top: el.closest('.video').getBoundingClientRect().top + window.scrollY - 8 });
+  if (row) play(row.dataset.video, +row.dataset.start);
+  else play(video, 0);
+}
 update();
 const resume = JSON.parse(sessionStorage.getItem('resume') || 'null');
 if (resume) {
