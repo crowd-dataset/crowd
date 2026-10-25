@@ -4983,6 +4983,10 @@ def place_phrases(text, limit=4):
     for x, y in re.findall(rf"\b({word}(?: {word}){{0,3}})\s*,\s*([A-Z][\w'’]*(?: [A-Z][\w'’]*){{0,2}})", text):
         region = next((r for k in range(len(y.split()), 0, -1)
                        if (r := ' '.join(y.split()[:k])) in _region_names()), None)
+        # ... not a region of compass words that only starts a longer name: "Hamnavoe, West Burra" names no region
+        # "West" (one of Cameroon's), whose lookup gave Groningen (8zE_cRem2OY, Shetland; user, 2026-10-25)
+        if region and region != y and set(region.lower().split()) <= COMPASS_WORDS:
+            region = None
         if region:
             with_state += [x, region]
     unique = list(dict.fromkeys(p for p in phrases if len(p.split()) <= 5))
@@ -4997,6 +5001,10 @@ def place_phrases(text, limit=4):
             if op == 'replace' and i2 - i1 == j2 - j1 == 1 and renamed in out and name[:1].isupper():
                 out[out.index(renamed)] = name
     return list(dict.fromkeys(out))
+
+
+COMPASS_WORDS = {'north', 'south', 'east', 'west', 'central', 'centre', 'center', 'northern', 'southern', 'eastern',
+                 'western', 'north-east', 'north-west', 'south-east', 'south-west', 'upper', 'lower', 'far'}
 
 
 @lru_cache(maxsize=1)
