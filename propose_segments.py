@@ -1127,7 +1127,7 @@ def propose(sig, p=PARAMS):
         notes.append(f'not the drive by its chapter {int(a) // 60}:{int(a) % 60:02d}-{int(b) // 60}:{int(b) % 60:02d}'
                      ' (highlights or a preview)')
     if float(sig.get('outro_start', 0)) > 0:  # see clip_outro
-        start = int(float(sig['outro_start']))
+        start = outro_cut(sig)
         keep[start * FPS:] = False
         notes.append(f'outro from {start // 60}:{start % 60:02d} (a slideshow, map, title or end screen)')
     if float(sig.get('labelled_montage', 0)) > 0:  # see montage_label
@@ -2221,6 +2221,15 @@ OUTRO_SCENES = (['a still photograph framed with black borders', 'a slideshow of
                  'a dashcam view of a road', 'a view of a street from inside a car',
                  'the back of the car in front seen from a car', 'a car parked in a parking lot or garage',
                  'a building seen from a car window'], 6, '')
+
+
+def outro_cut(sig):
+    """Whole seconds where the outro starts: CLIP's start (a frame every 2 s), or the fade into it just before (up to
+    3 s): Rb_irkVYq5s's end screen fades in at 28:59.8, CLIP saw it at 29:01, and 12 of the channel's 17 reviewed
+    videos ended in such a fade (user, 2026-10-25)."""
+    start = float(sig['outro_start'])
+    fades = [a for a, *_ in np.asarray(sig.get('fades', np.zeros((0, 4)))).reshape(-1, 4) if start - 3 <= a <= start]
+    return int(max(fades) if fades else start)
 
 
 def clip_outro(path, duration, work_dir, max_s=120):
