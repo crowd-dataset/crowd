@@ -5886,6 +5886,8 @@ def drive_ends(title, df, home=None):
     notes = [(n.group(1) if (n := re.search(r'\(([^)]*)\)', x) or re.match(r'\s*\(([^)]*)\)', title[m.end(k):]))
               else None) for k, x in ((1, first), (2, last))]
     first, last = (re.sub(r'\s*\([^)]*\)', '', x).strip().rstrip('!?. ') for x in (first, last))
+    # nor an emoji or other symbol after it: "Glen Burnie MD 🚗" (xICbOYbkAEc) is Glen Burnie, MD
+    first, last = (re.sub(r'[^\w.)]+$', '', x) for x in (first, last))
     # nor the picture's quality: "Hollywood to Ventura 4K" ends in Ventura (lKtZ5xqatFo)
     first, last = (re.sub(r'(?:\s+(?:[2-8]K|HDR|UHD|\d+\s?fps|\d{3,4}p))+$', '', x, flags=re.I) for x in (first, last))
     # a US state's code after a town, without a comma, is its state: "Mobile AL to Panama City Beach FL" (9F47RLjPHdM);
@@ -5964,6 +5966,18 @@ def drive_ends(title, df, home=None):
     if not a and b and notes[0]:
         a = place(notes[0], b[4:6], 60)
         pairs = pairs or ([(a, b)] if a else [])
+    # "from Barclay Baltimore to Glen Burnie MD": a neighbourhood before its city's name; the city, as the title
+    # writes it, near the other end (xICbOYbkAEc; user, 2026-10-25)
+    for i, phrase in enumerate((first, last)) if not pairs else ():
+        name, qualifier = re.match(r'([^,]*)(.*)', phrase).groups()
+        other = (b, a)[i]
+        # (not a state's name: "From New Jersey To New York City" starts in no Jersey City)
+        for k in range(1, len(name.split())) if other and not (a, b)[i] and name not in _region_names() else ():
+            tail = ' '.join(name.split()[k:])
+            if (hit := place(tail + qualifier, other[4:6], 60)) and hit[0] and _name_key(hit[0]) == _name_key(tail):
+                a, b = (hit, b) if i == 0 else (a, hit)
+                pairs = [(a, b)]
+                break
     if pairs:
         a, b = min(pairs, key=lambda xy: _km(xy[0][4], xy[0][5], xy[1][4], xy[1][5]))
     elif named or any(own):  # one end only: it must be in the state named
