@@ -6221,6 +6221,9 @@ TAIL_PAIR = re.compile(r"(?i:road ?trip|drive|driving)\s+(.+?)\s*$")
 VILLAGE_MARK = re.compile(r"(?<!\S)(?:с|гр|село|град)\.?\s+(?=\w)")  # "с  Сопот": the village of Sopot
 
 
+JOINING_WORDS = {'to', 'from', 'and', 'via', 'the', 'in', 'of', 'nach', 'von', 'und', 'до', 'от', 'и'}
+
+
 def _mapping_keys():
     """The mapping's locality names as _name_key gives them, read again when the mapping changes."""
     return _mapping_keys_at(os.path.getmtime(add_video.FILE_PATH) if os.path.exists(add_video.FILE_PATH) else 0)
@@ -6248,7 +6251,8 @@ def tail_pair(title):
     parts = [p.strip() for p in re.split(r'\s+[-–—]\s+|\s{2,}', ' '.join(words[country:]).strip())]
     if len(parts) == 1 and len(parts[0].split()) == 2:
         parts = parts[0].split()
-    elif len(parts) == 1 and 2 < len(parts[0].split()) <= 5 and all(x[:1].isupper() for x in parts[0].split()):
+    elif (len(parts) == 1 and 2 < len(parts[0].split()) <= 5
+          and not {x.lower() for x in parts[0].split()} & JOINING_WORDS):
         # "Сопот Велико Търново": split where a half is a mapping locality
         w = parts[0].split()
         known = _mapping_keys()
