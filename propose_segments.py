@@ -6221,6 +6221,16 @@ TAIL_PAIR = re.compile(r"(?i:road ?trip|drive|driving)\s+(.+?)\s*$")
 VILLAGE_MARK = re.compile(r"(?<!\S)(?:с|гр|село|град)\.?\s+(?=\w)")  # "с  Сопот": the village of Sopot
 
 
+def _mapping_keys():
+    """The mapping's locality names as _name_key gives them, read again when the mapping changes."""
+    return _mapping_keys_at(os.path.getmtime(add_video.FILE_PATH) if os.path.exists(add_video.FILE_PATH) else 0)
+
+
+@lru_cache(maxsize=2)
+def _mapping_keys_at(_mtime):
+    return frozenset(_name_key(x) for x in add_video.load_csv(add_video.FILE_PATH)['locality'].dropna())
+
+
 def tail_pair(title):
     """(A, B) of a title ending in a drive word, the country's name and two towns, parted by a dash or several
     spaces, or two one-word names; else None."""
@@ -6238,6 +6248,15 @@ def tail_pair(title):
     parts = [p.strip() for p in re.split(r'\s+[-–—]\s+|\s{2,}', ' '.join(words[country:]).strip())]
     if len(parts) == 1 and len(parts[0].split()) == 2:
         parts = parts[0].split()
+    elif len(parts) == 1 and 2 < len(parts[0].split()) <= 5 and all(x[:1].isupper() for x in parts[0].split()):
+        # "Сопот Велико Търново": split where a half is a mapping locality
+        w = parts[0].split()
+        known = _mapping_keys()
+        score = {k: sum(_name_key(_latin(' '.join(x))) in known for x in (w[:k], w[k:])) for k in range(1, len(w))}
+        best = max(score.values(), default=0)
+        if best and list(score.values()).count(best) == 1:
+            k = max(score, key=score.get)
+            parts = [' '.join(w[:k]), ' '.join(w[k:])]
     if len(parts) != 2 or not all(p[:1].isupper() and not ordinary(p.split()[0].lower()) for p in parts):
         return None
     return tuple(parts)
