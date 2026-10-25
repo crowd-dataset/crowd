@@ -5595,7 +5595,22 @@ def _metro_city(town, at, rows, state=None):
     if not big or _own_city(town, at, rows['country'].iloc[0]):
         return None
     r = min(big, key=lambda dr: dr[0])[1]
+    # outside the US a town in another first-level region than the city is a town of its own: Stockerau (Lower
+    # Austria) 25 km from Vienna, a state of its own (4jR-ICbmbCU; user, 2026-10-25); as Brandenburg's towns around
+    # Berlin or Central Bohemia's around Prague
+    if (r.country != 'United States' and (here := _region_at(*at))
+            and (there := _region_at(float(r.lat), float(r.lon))) and here != there):
+        return None
     return [r.locality, r.state if isinstance(r.state, str) else None, r.country]
+
+
+@lru_cache(maxsize=None)
+def _region_at(lat, lon):
+    """The first-level region (state, province, land) a point lies in, by OpenStreetMap: its ISO code ("AT-9" for
+    Vienna, a city that is a state of its own and has no "state" in its address), else its name, else None."""
+    r = _nominatim('reverse', (round(lat, 2), round(lon, 2)), zoom=5, addressdetails=True, language='en', timeout=15)
+    a = (r.raw.get('address') or {}) if r else {}
+    return a.get('ISO3166-2-lvl4') or a.get('state') or None
 
 
 def _own_city(town, at, country):
