@@ -3630,7 +3630,20 @@ def night_from_title(segments, notes, sig, title):
     if NIGHT_TITLE.search(title_text(title)) and not DAY_TO_NIGHT_TITLE.search(title_text(title)) \
             and np.median(sig['sky']) < NIGHT_TITLE_MAX_SKY and any(not x['night'] for x in segments):
         return [dict(x, night=1) for x in segments], notes + ['night from the title']
+    # ... and a brighter stretch of such a video that CLIP's night scenes read as night is night: a lit street
+    # (CTPtvyT4O8M, "Mashhad at night": its last minute day at sky 101, CLIP 0.95; user, 2026-10-25). Of reviewed
+    # night-titled videos' day stretches at NIGHT_CLIP_SURE or more, 5 the reviewer set to night, none kept as day
+    if NIGHT_TITLE.search(title_text(title)) and not DAY_TO_NIGHT_TITLE.search(title_text(title)):
+        clip = np.asarray(sig.get('night_clip', np.zeros((0, 2)))).reshape(-1, 2)
+        lit = [x for x in segments if not x['night'] and (vals := [v for t, v in clip if x['start'] <= t <= x['end']])
+               and float(np.median(vals)) >= NIGHT_CLIP_SURE]
+        if lit:
+            return ([dict(x, night=1) if x in lit else x for x in segments],
+                    notes + [f'night from the title and the picture at {x["start"]}-{x["end"]}s' for x in lit])
     return segments, notes
+
+
+NIGHT_CLIP_SURE = 0.9
 
 
 def analyse_video(video_id, out_dir, meta=None, signs=False):
@@ -6930,7 +6943,8 @@ def locate_now(p, df, home, sig_path=None, meta=None, boilerplate=frozenset()):
     # not after a GPS split that left one town (kddS8sGShKA: rural until 95:30, then Laughlin): the GPS decides
     if sig_path and len(es) == 1 and es[0].get('locality') and not p.get('route') and not es[0].get('gps') \
             and not es[0].get('chapters'):
-        es[0]['segments'] = propose(load_signals(sig_path, p.get('title')), ONE_PLACE)[0]
+        es[0]['segments'] = night_from_title(*propose(sig := load_signals(sig_path, p.get('title')), ONE_PLACE),
+                                             sig, p.get('title'))[0]
         p['note'] = re.sub(r'; (?:rural|highway) driving \d+-\d+s', '', p['note'])
 
 
@@ -7675,7 +7689,8 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
                 p['note'] = (f"{p['note']}; the title drives {'to' if role == 'end' else 'from'} "
                              f"{es[0]['locality'][0]}: only its {role} is there, set the locality of the rest")
                 continue
-            es[0]['segments'] = propose(load_signals(sig_path, p.get('title')), ONE_PLACE)[0]
+            es[0]['segments'] = night_from_title(*propose(sig := load_signals(sig_path, p.get('title')),
+                                                          ONE_PLACE), sig, p.get('title'))[0]
             p['note'] = re.sub(r'; (?:rural|highway) driving \d+-\d+s', '', p.get('note') or '')
     # nothing names a place, neither title, description, chapters nor GPS (iHwHqW98IRQ, "Driving tour view with my
     # friends on the holiday"; user, 2026-10-19: no way to learn its locality): the channel's city when it mostly
