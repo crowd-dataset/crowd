@@ -3584,8 +3584,20 @@ def gps_jumps(sig, km=2):
 
 
 def gps_clean(track, kmh=None):
-    """The GPS track without misread positions: one a car could reach from neither of its neighbours (sLlVKNBtgYY:
-    132.0812 for 132.4xxx at 13:00, 133.2-133.4 at 54:30-56:00 between readings by 133.0)."""
+    """The GPS track without misread positions: one farther from the median of the seven readings around it than a
+    car gets in half their time (b_3399's E7BimiPegZQ: two readings in a row at 121.68 for 121.18, a digit misread
+    twice, made jumps of 50 km; user, 2026-10-25), then one a car could reach from neither of its neighbours
+    (sLlVKNBtgYY: 132.0812 for 132.4xxx at 13:00, 133.2-133.4 at 54:30-56:00 between readings by 133.0). On the
+    781 saved tracks the median drops 29 more readings of 12,893 and the jumps left go from 90 to 55."""
+    if len(track) >= 5:
+        keep = []
+        for i, x in enumerate(track):
+            w = track[max(0, i - 3):i + 4]
+            lat, lon = float(np.median([y[1] for y in w])), float(np.median([y[2] for y in w]))
+            if _km(x[1], x[2], lat, lon) <= 1 + (w[-1][0] - w[0][0]) / 2 / 3600 * (kmh or MAX_KMH * 1.5):
+                keep.append(x)
+        track = keep
+
     def reach(a, b):
         return _km(a[1], a[2], b[1], b[2]) <= 1 + abs(b[0] - a[0]) / 3600 * (kmh or MAX_KMH * 1.5)
     return [x for i, x in enumerate(track)
@@ -5499,7 +5511,8 @@ def _hit_locality(hit, df, countries, at=None, named=False):
     # a region is the locality only where localities have no state (an emirate): New York State is not New York City
     # ... "Greater London" is London (HWvlP4BKxJ0: OpenStreetMap's area for Holborn and Edgware; user, 2026-10-22)
     for name in ((town,) if town else () if with_state else (region,)):
-        for n in (name, re.sub(r'(?i)^greater\s+', '', name or '')):
+        # ... and "Taoyuan City" is the mapping's Taoyuan (b_3399's GPS split gave both; user, 2026-10-25)
+        for n in (name, re.sub(r'(?i)^greater\s+', '', name or ''), re.sub(r'(?i)\s+city$', '', name or '')):
             if n and _name_key(n) in known:
                 r = known[_name_key(n)]
                 return [r.locality, r.state if isinstance(r.state, str) else None, r.country]
