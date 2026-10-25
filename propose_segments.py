@@ -5523,8 +5523,20 @@ def _hit_locality(hit, df, countries, at=None, named=False):
     # where the country's localities in the mapping carry a state (US-NY -> NY), the town must be in it:
     # Mount Vernon, NY is not the Mount Vernon, WA of the mapping
     with_state = rows['state'].notna().mean() > 0.5
-    state = region_code.split('-')[-1] if with_state and region_code else None
+    state = None
+    if with_state and region_code:  # as the mapping writes it: by the state's name, else where its towns are
+        state = _mapping_state(region, rows, countries[code])
+        if state not in set(rows['state']):
+            state = _mapping_region(region_code, rows, at)
     if state:
+        # ... and a town of the mapping filed under another state is still that town when it lies right there
+        # (a state it was given by hand, or none: Maturín, Venezuela)
+        named = rows[rows['locality'].map(_name_key) == _name_key(town or '')]
+        if town and at and not (named['state'] == state).any() and (
+                same := [r for r in named.itertuples() if pd.notna(r.lat)
+                         and _km(at[0], at[1], float(r.lat), float(r.lon)) <= METRO_KM]):
+            r = same[0]
+            return [r.locality, r.state if isinstance(r.state, str) else None, r.country]
         rows = rows[rows['state'] == state]
     # a US census place (unincorporated, no city of its own) next to a big city is that city: Paradise and Spring
     # Valley, NV are Las Vegas (LXKg43TMXek); a census place that is a big city itself (Honolulu) stays
@@ -5547,6 +5559,32 @@ def _hit_locality(hit, df, countries, at=None, named=False):
         return metro
     # a new locality is spelled one way whichever source named it, as most of the mapping does: St. Clair
     return [re.sub(r'^Saint ', 'St. ', town), state, countries[code]] if town else None
+
+
+def _mapping_region(region_code, rows, at=None):
+    """The mapping's state for an OpenStreetMap region ("VE-V"; rows: one country's localities): its ISO code's last
+    part ("V"), unless the country's localities mostly carry the mapping's own codes or names: then the state of
+    the nearest of them OpenStreetMap places in that region. GPS readings in Maracaibo gave Maracaibo, V next to
+    the mapping's Maracaibo, ZU (cwZByInCdXE; user, 2026-10-25), towns in Quezon "QUE" next to "Quezon"."""
+    country, code = region_code.split('-')[0], region_code.split('-')[-1]
+    labelled = rows[rows['state'].notna() & rows['lat'].notna() & rows['lon'].notna()]
+    try:
+        iso = {d.code.split('-')[-1] for d in pycountry.subdivisions.get(country_code=country) or []}
+    except (KeyError, LookupError):
+        return code
+    own = labelled[~labelled['state'].isin(iso)]
+    if at is None or len(own) * 2 <= len(labelled):
+        return code
+    seen = set()
+    for r in sorted(own.itertuples(), key=lambda r: _km(at[0], at[1], float(r.lat), float(r.lon))):
+        if r.state in seen:
+            continue
+        seen.add(r.state)
+        if len(seen) > 4:  # a few states around only: each is one lookup
+            break
+        if _region_at(float(r.lat), float(r.lon)) == region_code:
+            return r.state
+    return code
 
 
 @_remembered
@@ -5640,11 +5678,18 @@ def _region_at(lat, lon):
     return a.get('ISO3166-2-lvl4') or a.get('state') or None
 
 
+# a parish of a municipality (Venezuela, Ecuador, Portugal): a part of a town, never one of its own (user, 2026-10-25:
+# "Parroquia Idelfonso Vasquez is a suburb of Maracaibo", cwZByInCdXE)
+PARISH = re.compile(r'(?i)(?:parroquia|freguesia|parish)\b')
+
+
 def _own_city(town, at, country):
     """Whether a town at (lat, lon) is a city of its own, not a suburb of the big city next to it: METRO_TOWN_POP
     or more inhabitants, or outside the US its own city council: Joondalup ("City of Joondalup"), Fremantle,
     Rockingham are not Perth, Craigie and Balcatta are (user, 2026-10-21: "separate cities only"). In the US the
     reviewer counts such cities in the big one (Long Beach, Yonkers, Bellflower)."""
+    if PARISH.match(town):
+        return False
     own = [p[1] for p in _nearby_places(at[0], at[1]) or [] if _name_key(p[0]) == _name_key(town)]
     if own and max(own) >= METRO_TOWN_POP:
         return True
