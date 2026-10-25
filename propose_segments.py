@@ -644,7 +644,9 @@ PANO_SURE = 0.6
 # ... or one whose title says so, whatever its frame: KS VAGABOND 360's "360 Boston + VR" comes as 16:9
 # (Phpa4yc4AFk, 2mC7da1leAI; user, 2026-10-24); not "360p" or "Route 360". Of the 19 reviewed videos with such a
 # title, 12 were left out and 7 rejected
-PANO_TITLE = re.compile(r"(?i)(?:^|\W)360\s*(?:°|º|˚|degrees?|deg|vr|video|view|cam(?:era)?)\b|^\W*360\b(?!\s*p\b)"
+# "360°:" too: no word boundary after "°" before a colon (cDhMwe48JsY, "Lebanon Roads in 360°: Baalbeck"; user,
+# 2026-10-25)
+PANO_TITLE = re.compile(r"(?i)(?:^|\W)360\s*(?:°|º|˚|degrees?|deg|vr|video|view|cam(?:era)?)(?!\w)|^\W*360\b(?!\s*p\b)"
                         r"|\b360\s*\+\s*vr\b|\bvr\s*360\b|#360\w*")
 
 
