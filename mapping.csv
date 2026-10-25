@@ -10410,7 +10410,7 @@ id,locality,locality_aka,state,country,iso3,continent,lat,lon,gmp,population_loc
 10409,Kleinzell im Muhlkreis,[],,Austria,AUT,Europe,48.4558421,13.9914787,,437,9208163,4.9,,172.73,44.8,31.2,0.0,[PGFYvkkSPOg],[[0]],[[1]],[[135]],[0],[10112024],[UCzKBo3q75Ixp4WxLjM2SIDA]
 10410,Guglwald,[],,Austria,AUT,Europe,48.5908349,14.1743744,,91,9208163,4.9,,172.73,44.8,31.2,0.0,[PGFYvkkSPOg],[[0]],[[1748]],[[1804]],[0],[10112024],[UCzKBo3q75Ixp4WxLjM2SIDA]
 10411,Sarrancolin,[],,France,FRA,Europe,42.9666696,0.3781702,,721,68720337,5.1,,171.55,41.4,31.8,0.0,[T-frtGkw3XM],[[0]],[[3]],[[328]],[3],[30052025],[UC-8Mxjcgyzd9wX25prrKyxQ]
-10412,Mairie d'Aragnouet,[],,France,FRA,Europe,42.7847496,0.2091694,,0,68720337,5.1,,171.55,41.4,31.8,0.0,[T-frtGkw3XM],[[0]],[[1961]],[[2035]],[3],[30052025],[UC-8Mxjcgyzd9wX25prrKyxQ]
+10412,Aragnouet,[],,France,FRA,Europe,42.7847496,0.2091694,,270,68720337,5.1,,171.55,41.4,31.8,0.0,[T-frtGkw3XM],[[0]],[[1961]],[[2035]],[3],[30052025],[UC-8Mxjcgyzd9wX25prrKyxQ]
 10413,Tingwall,[],,United Kingdom,GBR,Europe,59.0883412,-3.0456924,,0,69487000,3.2,,171.07,40.6,32.4,0.0,[K0uEphwMTE0],[[0]],[[22]],[[183]],[0],[8082020],[UCEsR1ax_QE8_uVf72McLEHA]
 10414,Stromness,[],,United Kingdom,GBR,Europe,58.9614356,-3.2993767,,2490,69487000,3.2,,171.07,40.6,32.4,0.0,[8zE_cRem2OY],[[0]],[[10]],[[361]],[0],[4032020],[UCEsR1ax_QE8_uVf72McLEHA]
 10415,Hoswick,[],,United Kingdom,GBR,Europe,59.9980903,-1.256508,,1217,69487000,3.2,,171.07,40.6,32.4,0.0,[sz95JXSB12k],[[0]],[[605]],[[933]],[0],[5022020],[UCEsR1ax_QE8_uVf72McLEHA]
