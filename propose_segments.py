@@ -5249,6 +5249,30 @@ def abroad_is_nearest(locality, df, home, country):
                            > _km(home[3], home[4], float(row['lat']), float(row['lon'])))
 
 
+CYRILLIC = dict(zip('абвгдезийклмнопрстуфхцчшщъьюяёжэыієїґђјљњћџ',
+                    'a b v g d e z i y k l m n o p r s t u f h ts ch sh sht a y yu ya yo zh e y i ye yi g dj j lj '
+                    'nj c dz'.split()))
+
+
+def _latin(name):
+    """A name in Cyrillic written in Latin letters, as the mapping writes Bulgarian and Russian towns: Търговище is
+    Targovishte."""
+    return ''.join(CYRILLIC.get(c.lower(), c) for c in str(name or ''))
+
+
+def _same_name(a, b):
+    """Whether two names are one written two ways, in another script or transliteration: "Гложене", OpenStreetMap's
+    Glojene and the mapping's Glozhene (3JKDClTIWuc; user, 2026-10-25); Sheremetia and Sheremetya. Not a near name:
+    Ludesch is not Bludesch, East Haven not West Haven."""
+    def key(name):
+        k = _name_key(_latin(name))
+        for x, y in (('zh', 'j'), ('kh', 'h'), ('ts', 'c'), ('tz', 'c'), ('ya', 'ia'), ('yu', 'iu'), ('yo', 'io'),
+                     ('y', 'i')):
+            k = k.replace(x, y)
+        return k
+    return bool(key(a)) and key(a) == key(b)
+
+
 def _name_key(name):
     """Name compared without accents, case, punctuation or a trailing "Emirate", "City", "Province"."""
     name = unicodedata.normalize('NFKD', str(name)).encode('ascii', 'ignore').decode().lower()
@@ -5557,6 +5581,11 @@ def _hit_locality(hit, df, countries, at=None, named=False):
             if n and _name_key(n) in known:
                 r = known[_name_key(n)]
                 return [r.locality, r.state if isinstance(r.state, str) else None, r.country]
+    # ... or written another way right there: OpenStreetMap's Glojene is the mapping's Glozhene (3JKDClTIWuc)
+    if town and at and (alike := [r for r in rows.itertuples() if pd.notna(r.lat) and _same_name(r.locality, town)
+                                  and _km(at[0], at[1], float(r.lat), float(r.lon)) <= 5]):
+        r = alike[0]
+        return [r.locality, r.state if isinstance(r.state, str) else None, r.country]
     if town and at and (metro := _metro_city(town, at, rows, state)):
         return metro
     # a new locality is spelled one way whichever source named it, as most of the mapping does: St. Clair
@@ -6019,7 +6048,8 @@ def drive_ends(title, df, home=None):
             break
     # an end the title names as it is is that place, not the bigger town nearby a village counts for (fw3zM-XDdkM:
     # "TĂLMACIU to CISNĂDIOARA" ends in Cisnădioara, 434 people, not in Cisnădie 3 km off; user, 2026-10-23)
-    as_named = [bool(x and x[0] and _name_key(x[0]) == _name_key(p)) for x, p in ((a, first), (b, last))]
+    as_named = [bool(x and x[0] and (_name_key(x[0]) == _name_key(p) or _same_name(x[0], re.sub(r',.*', '', p))))
+                for x, p in ((a, first), (b, last))]
     end = b and _hit_locality(b, df, countries, named=as_named[1])
     # "…to West Farms in the Bronx", "…hasta el Barrio Portugues en Adjuntas": the drive ends in that place, and a
     # namesake of the end elsewhere (another Barrio Portugués) is not it
@@ -6048,7 +6078,8 @@ def _written_locality(phrase, hit, df, km=15):
     if not (hit and phrase):
         return None
     key = _name_key(phrase)
-    rows = df[[bool(n) and (key == n or key.startswith(n + ' ')) for n in df['locality'].map(_name_key)]]
+    rows = df[[bool(n) and (key == n or key.startswith(n + ' ') or _same_name(loc, re.sub(r',.*', '', phrase)))
+               for n, loc in zip(df['locality'].map(_name_key), df['locality'])]]
     rows = rows[[_km(hit[4], hit[5], float(la), float(lo)) <= km for la, lo in zip(rows['lat'], rows['lon'])]]
     if len(rows) != 1:
         return None
@@ -6174,6 +6205,35 @@ def title_via(title):
     return names
 
 
+# a series' title that ends in its drive's two towns after a drive word and the country's name: "01186 Bulgaria Road
+# Trip България Гложене - Алтимир", "… България Разград   Струйно", "… България Пробуда Разград" (3JKDClTIWuc; user,
+# 2026-10-25: a drive between two localities; the reviewer set both towns in 14 of the channel's videos)
+TAIL_PAIR = re.compile(r"(?i:road ?trip|drive|driving)\s+(.+?)\s*$")
+VILLAGE_MARK = re.compile(r"(?<!\S)(?:с|гр|село|град)\.?\s+(?=\w)")  # "с  Сопот": the village of Sopot
+
+
+def tail_pair(title):
+    """(A, B) of a title ending in a drive word, the country's name and two towns, parted by a dash or several
+    spaces, or two one-word names; else None."""
+    m = TAIL_PAIR.search(title or '')
+    if not m:
+        return None
+    words = VILLAGE_MARK.sub('', m[1]).split(' ')
+    country = 0  # the country's name first, in English or in the title's language ("България")
+    while country < len(words) and words[country] and (
+            _name_key(words[country]) in _country_keys()
+            or not words[country].isascii() and _name_key(english(words[country])) in _country_keys()):
+        country += 1
+    if not country:
+        return None
+    parts = [p.strip() for p in re.split(r'\s+[-–—]\s+|\s{2,}', ' '.join(words[country:]).strip())]
+    if len(parts) == 1 and len(parts[0].split()) == 2:
+        parts = parts[0].split()
+    if len(parts) != 2 or not all(p[:1].isupper() and not ordinary(p.split()[0].lower()) for p in parts):
+        return None
+    return tuple(parts)
+
+
 def drive_title(title, description):
     """What names a drive "from A to B": the title, else the first of the description's first DRIVE_LINES lines that
     does ("Location: Minokamo to Yaotsu,Gifu,Japan" under "Drive in Japan | Rain Sounds Therapy", qBRUPhoFeTQ;
@@ -6203,6 +6263,8 @@ def drive_title(title, description):
     # "Manchester-M62-Leeds" (J7_Pm8ec-28; user, 2026-10-19): two places with the road between them
     if (m := ROAD_PAIR.search(title)) and not {w.lower() for w in f'{m[1]} {m[3]}'.split()} & DASH_NOT_PLACE:
         return f'from {m[1]} to {m[3]} via {m[2]}'
+    if pair := tail_pair(title):
+        return f'from {pair[0]} to {pair[1]}'
     for line in (description or '').splitlines()[:DRIVE_LINES]:
         if (len(line) <= 150 and (m := DESC_DRIVE.match(line.strip()))  # no "Welcome to", "Talk to Me"
                 and not ordinary(m.group(1).split()[0]) and not ordinary(m.group(3).split()[0])):
