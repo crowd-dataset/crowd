@@ -3456,7 +3456,8 @@ def metro_locality(lat, lon, df, fences):
     """[locality, state, country] of the mapping locality whose boundary (lat, lon) lies inside or within metro_km
     of, the nearest boundary first, else None. A locality without a boundary on OpenStreetMap reaches _town_km
     from its middle. fences: boundaries looked up so far (geofence's key -> rings), added to here."""
-    pop = pd.to_numeric(df['population_locality'], errors='coerce').fillna(0).values
+    # floats: the mapping's Int64 column gives an IntegerArray, which np.sqrt cannot take (b_3399's run, 2026-10-25)
+    pop = pd.to_numeric(df['population_locality'], errors='coerce').astype(float).fillna(0).to_numpy()
     km = 6371 * np.hypot(np.radians(df['lat'].astype(float).values - lat),
                          np.radians(df['lon'].astype(float).values - lon) * np.cos(np.radians(lat)))
     reach = metro_km(pop)
