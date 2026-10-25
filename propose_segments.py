@@ -3461,12 +3461,17 @@ def metro_locality(lat, lon, df, fences):
     km = 6371 * np.hypot(np.radians(df['lat'].astype(float).values - lat),
                          np.radians(df['lon'].astype(float).values - lon) * np.cos(np.radians(lat)))
     reach = metro_km(pop)
+    # outside the US only a city of the reading's own first-level region (_region_at): New Taipei's districts are
+    # neither Taipei nor Taoyuan, whose boundary lies nearer (b_3399, 2026-10-25), as Stockerau is no Vienna
+    here = _region_at(lat, lon) if len(df) and df['country'].iloc[0] != 'United States' else None
     best = None
     # ponytail: boundaries only of localities whose middle is within their reach plus twice their _town_km disc; a
     # municipality far wider than its town (farmland around it) can be missed
     for i in np.flatnonzero(km <= reach + 2 * _town_km(pop)):
         r = df.iloc[i]
         loc = [r['locality'], None if pd.isna(r['state']) else r['state'], r['country']]
+        if here and (there := _region_at(float(r['lat']), float(r['lon']))) and there != here:
+            continue
         key = json.dumps(loc)
         if key not in fences:
             fences[key] = geofence(loc, df)
