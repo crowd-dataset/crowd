@@ -5398,7 +5398,9 @@ def place_localities(phrases, df, home=None):
         return (hit and hit[2] in countries and (not only or hit[2] in only)
                 and not (hit[2] == 'US' and hit[0] and hit[0] == hit[1] and hit[0] != 'New York')
                 and not (home and countries[hit[2]] != home[2] and _km(home[3], home[4], hit[4], hit[5]) > ABROAD_KM)
-                and (len(named) != 1 or hit[1] in named)
+                # (a hit whose address has no region cannot be in another: Ireland's towns have none, and "BRAY,
+                # Co. WICKLOW" was no Bray, but Wicklow from the description: gPvhOAYdRl8; user, 2026-10-26)
+                and (len(named) != 1 or hit[1] in named or hit[1] is None)
                 # ... nor the country itself, whatever its type says (C74SOaNgu0k: "Zealand, New Zealand" gave the
                 # locality New Zealand; user, 2026-10-17), unless a city-state of the mapping (Singapore, Monaco)
                 and not (_name_key(hit[0] or '') == _name_key(countries[hit[2]])
