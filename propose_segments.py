@@ -2776,7 +2776,10 @@ MONTAGE_CAPTION = re.compile(r'^(?:\w+ ){0,2}(?:highl(?!and)\w*|high\w{0,2}ght\w
                              # that channel's (user, 2026-10-23)
                              r'^up ?next\b|^u[pe] ?[il1]{0,2}[nl]?ext$|'
                              r'^(?:\w+ ){0,2}previews?$|^scenes? from the drive|'
-                             r'^sneak peek|^(?:official )?trailer$|^teaser$|^recap$|^best moments$')
+                             r'^sneak peek|^(?:official )?trailer$|^teaser$|^recap$|^best moments$|'
+                             # "In Today's Journey:" over ScenicIrelandDrives' openings (3md85O_bJxc to 0:30; user,
+                             # 2026-10-26), OCR's "Today'$" too
+                             r'^in today ?s? (?:journey|drive|trip|ride|video|episode)')
 
 
 def caption_hit(texts):
@@ -3240,8 +3243,11 @@ def caption_end(video_id, sig, texts=None):
         if (said := next((x for t in sorted(texts) if (x := stated_start(texts[t]))), None)):
             return said
         hits = [t for t in sorted(texts) if caption_hit(texts[t])]
-        if not hits or hits[0] > CAPTION_FIRST_S:
+        if hits and hits[0] > CAPTION_FIRST_S:
             return 0
+    # ... none: the corners are read too, as below, for a small caption the whole frame's read misses (bivZFxGyuYA,
+    # V-KY_DOJVys: "PREVIEW" in a corner over 0:00-0:59, which EasyOCR never read; user, 2026-10-26)
+    if texts and hits:
         last = hits[0]
         for t in hits[1:]:
             if t - last > 3 * CAPTION_STEP_S:
