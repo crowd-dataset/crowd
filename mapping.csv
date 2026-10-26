@@ -2684,7 +2684,7 @@ id,locality,locality_aka,state,country,iso3,continent,lat,lon,gmp,population_loc
 2683,Hakuba,[],Nagano,Japan,JPN,Asia,36.6981042,137.862068,,9246,123366734,3.6,,165.28,49.5,32.3,,"[KS4-QFb79TI,CwNfMSw6its]","[[0],[0]]","[[6],[0]]","[[407],[406]]","[0,0]","[15042025,8112023]","[UCSY2KoiJRZKgohPnFyxnLnA,UCUiH-1i4J24CsMkYwUwCSlQ]"
 2684,Kinasa,[],Nagano,Japan,JPN,Asia,36.6809437,138.0014425,,2140,123366734,3.6,,165.28,49.5,32.3,,[KS4-QFb79TI],[[0]],[[848]],[[975]],[0],[15042025],[UCSY2KoiJRZKgohPnFyxnLnA]
 2685,Nagano,[],Nagano,Japan,JPN,Asia,36.6485851,138.1947664,20.025,372760,123366734,3.6,,165.28,49.5,32.3,,"[KS4-QFb79TI,iOstDWRzL7U,QS7yIaECxhM]","[[0],[0],[0,0]]","[[2281],[2735],[1878,3917]]","[[2389],[4658],[3292,4546]]","[0,0,0]","[15042025,28082026,16082025]","[UCSY2KoiJRZKgohPnFyxnLnA,UCi0WWf47cCf4HoiyX19wRhg,UCi0WWf47cCf4HoiyX19wRhg]"
-2686,Azumino,[],Nagano,Japan,JPN,Asia,36.3044083,137.9054972,,94222,123366734,3.6,,165.28,49.5,32.3,,"[Wjvm9Dw-CQg,QS7yIaECxhM,SpS7D1I4Ckk]","[[0],[0],[0]]","[[1236],[6],[2746]]","[[2329],[150],[2999]]","[0,0,0]","[1062025,16082025,3012025]","[UCSY2KoiJRZKgohPnFyxnLnA,UCi0WWf47cCf4HoiyX19wRhg,UCi0WWf47cCf4HoiyX19wRhg]"
+2686,Azumino,[],Nagano,Japan,JPN,Asia,36.3044083,137.9054972,,94222,123366734,3.6,,165.28,49.5,32.3,,"[Wjvm9Dw-CQg,QS7yIaECxhM,SpS7D1I4Ckk]","[[0],[0],[0]]","[[1236],[6],[2746]]","[[2329],[150],[2983]]","[0,0,0]","[1062025,16082025,3012025]","[UCSY2KoiJRZKgohPnFyxnLnA,UCi0WWf47cCf4HoiyX19wRhg,UCi0WWf47cCf4HoiyX19wRhg]"
 2687,Nagiso,[],Nagano,Japan,JPN,Asia,35.6038092,137.6088687,,4111,123366734,3.6,,165.28,49.5,32.3,,[ry1W3dPFoNU],[[0]],[[3590]],[[3837]],[0],[1062025],[UCSY2KoiJRZKgohPnFyxnLnA]
 2688,Nakatsugawa,[],Gifu,Japan,JPN,Asia,35.4876463,137.5005402,,78930,123366734,3.6,,165.28,49.5,32.3,,[ry1W3dPFoNU],[[0]],[[4350]],[[4603]],[0],[1062025],[UCSY2KoiJRZKgohPnFyxnLnA]
 2689,Okaya,[],Nagano,Japan,JPN,Asia,36.066745,138.0495356,,52315,123366734,3.6,,165.28,49.5,32.3,,[yE8EUcJ4wbY],"[[0,0]]","[[14,950]]","[[229,2014]]",[0],[1062025],[UCSY2KoiJRZKgohPnFyxnLnA]
@@ -10048,7 +10048,7 @@ id,locality,locality_aka,state,country,iso3,continent,lat,lon,gmp,population_loc
 10047,Franklinton,[],NC,United States,USA,North America,36.1018163,-78.4580543,,2135,341784857,12.7,,170.12,38.5,41.8,19.15,[CKjq-gV30nY],"[[0,0]]","[[388,301]]","[[1218,388]]",[0],[6092026],[UCPDPB6iDcz0aI3YWHyK2tsg]
 10048,Cave City,[],KY,United States,USA,North America,37.1367544,-85.9562169,,2394,341784857,12.7,,170.12,38.5,41.8,16.33,[bKH_eOPm-pY],[[0]],[[181]],[[1170]],[0],[5092026],[UCPDPB6iDcz0aI3YWHyK2tsg]
 10049,Baxley,[],GA,United States,USA,North America,31.7773202,-82.3490533,,4440,341784857,12.7,,170.12,38.5,41.8,0.0,[_3iTOvgeQHM],"[[0,0]]","[[207,536]]","[[512,1327]]",[0],[4092026],[UCPDPB6iDcz0aI3YWHyK2tsg]
-10050,Youngsville,[],NC,United States,USA,North America,36.0247769,-78.4767034,,1217,341784857,12.7,,170.12,38.5,41.8,0.0,[c78KdS6oqRI],"[[0,0]]","[[1,419]]","[[411,758]]",[0],[31082026],[UCPDPB6iDcz0aI3YWHyK2tsg]
+10050,Youngsville,[],NC,United States,USA,North America,36.0247769,-78.4767034,,1217,341784857,12.7,,170.12,38.5,41.8,0.0,[c78KdS6oqRI],"[[0,0]]","[[1,419]]","[[411,749]]",[0],[31082026],[UCPDPB6iDcz0aI3YWHyK2tsg]
 10051,Ashville,[],OH,United States,USA,North America,39.7156186,-82.9529584,,4190,341784857,12.7,,170.12,38.5,41.8,0.0,[4paLUOVSkUM],[[0]],[[152]],[[1181]],[0],[29082026],[UCPDPB6iDcz0aI3YWHyK2tsg]
 10052,Timberville,[],VA,United States,USA,North America,38.6390069,-78.7739112,,2603,341784857,12.7,,170.12,38.5,41.8,0.0,[EmI4NzY86pY],[[0]],[[1]],[[942]],[0],[24082026],[UCPDPB6iDcz0aI3YWHyK2tsg]
 10053,Chimayo,[],NM,United States,USA,North America,36.002104,-105.929661,,3177,341784857,12.7,,170.12,38.5,41.8,0.0,[4PxmjGAJlN4],[[0]],[[2550]],[[2838]],[0],[11072025],[UC6bgfiq8Mtl-glDTQqhD1Cw]
@@ -10153,7 +10153,7 @@ id,locality,locality_aka,state,country,iso3,continent,lat,lon,gmp,population_loc
 10152,Kitakaruizawa,[],Gunma,Japan,JPN,Asia,36.471726,138.587857,,1598,123366734,3.6,,165.28,49.5,32.3,,[ywsPh6YckgU],[[0]],[[60]],[[817]],[0],[5052025],[UCi0WWf47cCf4HoiyX19wRhg]
 10153,Akaigawa,[],Hokkaidō,Japan,JPN,Asia,43.0834498,140.8135132,,1165,123366734,3.6,,165.28,49.5,32.3,,[vh8No827-Nw],[[0]],[[2921]],[[3419]],[0],[4012025],[UCi0WWf47cCf4HoiyX19wRhg]
 10154,Itoigawa,[],Niigata,Japan,JPN,Asia,37.0390341,137.8627939,,40765,123366734,3.6,,165.28,49.5,32.3,,[SpS7D1I4Ckk],[[0]],[[30]],[[640]],[0],[3012025],[UCi0WWf47cCf4HoiyX19wRhg]
-10155,Erimo,[],Hokkaidō,Japan,JPN,Asia,42.0163463,143.1487225,,4374,123366734,3.6,,165.28,49.5,32.3,,[KRCT5PFuDgM],[[0]],[[7208]],[[7269]],[0],[3012025],[UCi0WWf47cCf4HoiyX19wRhg]
+10155,Erimo,[],Hokkaidō,Japan,JPN,Asia,42.0163463,143.1487225,,4374,123366734,3.6,,165.28,49.5,32.3,,[KRCT5PFuDgM],[[0]],[[7208]],[[7252]],[0],[3012025],[UCi0WWf47cCf4HoiyX19wRhg]
 10156,Atsugacho,[],Hokkaidō,Japan,JPN,Asia,42.432497,142.218414,,1172,123366734,3.6,,165.28,49.5,32.3,,[KRCT5PFuDgM],[[0]],[[75]],[[300]],[0],[3012025],[UCi0WWf47cCf4HoiyX19wRhg]
 10157,Minokamo,[],Gifu,Japan,JPN,Asia,35.4569956,137.0218618,,56972,123366734,3.6,,165.28,49.5,32.3,,[qBRUPhoFeTQ],[[0]],[[1]],[[332]],[0],[20062025],[UCnFX7c6KTyDm_abap8NePrw]
 10158,Yaotsu,[],Gifu,Japan,JPN,Asia,35.4755935,137.141068,,11036,123366734,3.6,,165.28,49.5,32.3,,[qBRUPhoFeTQ],[[0]],[[1866]],[[1888]],[0],[20062025],[UCnFX7c6KTyDm_abap8NePrw]
