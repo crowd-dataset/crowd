@@ -783,8 +783,9 @@ def mapping_country_values(iso3):
     return {c: ('' if pd.isna(v) else v) for c, v in same.iloc[0][list(COUNTRY_COLUMNS)].items()}
 
 
+# ... and ß is ss: Hoßkirch is also Hosskirch (user, 2026-10-26)
 PLAIN_LETTERS = str.maketrans({'Đ': 'D', 'đ': 'd', 'Ø': 'O', 'ø': 'o', 'Ł': 'L', 'ł': 'l', 'ı': 'i',
-                               '’': "'", '‘': "'", 'ʻ': "'"})
+                               '’': "'", '‘': "'", 'ʻ': "'", 'ß': 'ss', 'ẞ': 'SS'})
 
 
 def new_locality_row(locality, state, country, locality_aka=None, near=None, at=None):
