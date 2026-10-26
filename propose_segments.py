@@ -152,7 +152,9 @@ def _yt_dlp(*args, timeout=None):
             with contextlib.suppress(ProcessLookupError):
                 os.killpg(proc.pid, signal.SIGKILL)  # its own session: yt-dlp and its ffmpeg
             proc.communicate()
-            raise RuntimeError(f'yt-dlp stopped after {timeout / 60:.0f} min without finishing') from None
+            msg = f'yt-dlp stopped after {timeout / 60:.0f} min without finishing'
+            print(f'  {msg}', flush=True)  # a line for run_channels.py too, which stops a batch silent for 45 min
+            raise RuntimeError(msg) from None
     if proc.returncode:
         msg = (err.strip().splitlines() or [f'yt-dlp exited with {proc.returncode}'])[-1]
         raise (BotCheck if 'not a bot' in err else RuntimeError)(msg)
