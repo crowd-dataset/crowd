@@ -1749,7 +1749,11 @@ def get_worldpop_population(lat, lon, km=3):
     for attempt in range(3):
         try:
             r = requests.get('https://api.worldpop.org/v1/services/stats', timeout=30, params=params)
-            if (pop := int(round(r.json().get('data', {}).get('total_population') or 0))):
+            # its JSON comes between PHP "Deprecated" notices in HTML, so r.json() fails: 7 Shetland and Orkney
+            # villages went in with population 0 (2026-10-26)
+            text = r.text[r.text.find('{'):]
+            answer = json.JSONDecoder().raw_decode(text)[0] if text else {}
+            if (pop := int(round(answer.get('data', {}).get('total_population') or 0))):
                 return pop
         except (RequestException, ValueError, AttributeError):
             pass
