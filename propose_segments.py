@@ -3796,7 +3796,7 @@ def motorway_title(title):
 
 # ... and the expressways of a title (not a ring road, a city's own: user, 2026-10-23), for the highway check at night
 EXPRESSWAY_TITLE = re.compile(r'(?i:\bexpressways?\b|\bexpwy\b|\bexpy\b|\btollway\b|\bautoroutes?\b|\bautopistas?\b'
-                              r'|\bautostrad[ae]\b)|高速')
+                              r'|\bautostrad[ae]\b|\bautobahn(?:en)?\b)|高速')
 # walks and rides on boats are no vehicle type the dataset takes; a title that also says drive keeps the video.
 # "Inside" is a walk through a building (8xybXtQ0LgA, "Inside Planet Hollywood Shop": none of 23 such titles kept)
 # and "Waking Tour", "Waling Tour" are typos of a walk (1pNtxLv45JI, AW7T4eSiVRk)
@@ -4256,7 +4256,9 @@ VEHICLE_TITLE = [(4, re.compile(r'\b(?:bike (?:route|ride|tour|path|lane)s?|cycl
                                 r'|(?:by|on (?:a|the)) bus|bus (?:no\.?|number|line)\s*[A-Z]{0,2}\d+'
                                 r'|bus [A-Z]{0,2}\d+[A-Z]?'
                                 # ... "Shuttle Bus 🚌 ... Upper Deck View" (zF8FDqyDUAM; user, 2026-10-21): 12 of 12
-                                r'|shuttle bus|double[- ]?decker(?: bus)?|bus(?:es)? view|upper deck)\b|🚌', re.I))]
+                                r'|shuttle bus|double[- ]?decker(?: bus)?|bus(?:es)? view|upper deck'
+                                # ... "Dubai Bus Window Views" (HHkx9oMo0v4; user, 2026-10-26)
+                                r'|bus(?:es)? (?:window|seat)s?)\b|🚌', re.I))]
 
 
 def title_vehicle(title):
@@ -4933,7 +4935,11 @@ def english_states(title):
 
 
 STREET_WORDS = {'ave', 'avenue', 'blvd', 'boulevard', 'rd', 'road', 'street', 'hwy', 'highway', 'pkwy', 'parkway',
-                'expy', 'expressway'}
+                'expy', 'expressway',
+                # a motorway in any language is no place: OpenStreetMap put "AUTOBAHN" in Kufstein (jIFOFX9h4aE,
+                # "GERMAN AUTOBAHN AT SUNSET"; user, 2026-10-26)
+                'autobahn', 'autoroute', 'autopista', 'autostrada', 'motorway', 'freeway', 'tollway', 'autocesta',
+                'autostrasse', 'autoput', 'snelweg'}
 
 
 STREETS = '|'.join(w.capitalize() for w in STREET_WORDS)
