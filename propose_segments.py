@@ -3643,18 +3643,18 @@ def night_from_title(segments, notes, sig, title):
         return [dict(x, night=1) for x in segments], notes + ['night from the title']
     # ... and a brighter stretch of such a video that CLIP's night scenes read as night is night: a lit street
     # (CTPtvyT4O8M, "Mashhad at night": its last minute day at sky 101, CLIP 0.95; user, 2026-10-25). Of reviewed
-    # night-titled videos' day stretches at NIGHT_CLIP_SURE or more, 5 the reviewer set to night, none kept as day
+    # night-titled videos' day stretches at NIGHT_TITLE_CLIP or more, 5 the reviewer set to night, none kept as day
     if NIGHT_TITLE.search(title_text(title)) and not DAY_TO_NIGHT_TITLE.search(title_text(title)):
         clip = np.asarray(sig.get('night_clip', np.zeros((0, 2)))).reshape(-1, 2)
         lit = [x for x in segments if not x['night'] and (vals := [v for t, v in clip if x['start'] <= t <= x['end']])
-               and float(np.median(vals)) >= NIGHT_CLIP_SURE]
+               and float(np.median(vals)) >= NIGHT_TITLE_CLIP]
         if lit:
             return ([dict(x, night=1) if x in lit else x for x in segments],
                     notes + [f'night from the title and the picture at {x["start"]}-{x["end"]}s' for x in lit])
     return segments, notes
 
 
-NIGHT_CLIP_SURE = 0.9
+NIGHT_TITLE_CLIP = 0.9  # see night_from_title (not NIGHT_CLIP_SURE: that one is the day/night rule's)
 
 
 def analyse_video(video_id, out_dir, meta=None, signs=False):
