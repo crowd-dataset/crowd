@@ -5744,6 +5744,14 @@ def _region_at(lat, lon):
     Vienna, a city that is a state of its own and has no "state" in its address), else its name, else None."""
     r = _nominatim('reverse', (round(lat, 2), round(lon, 2)), zoom=5, addressdetails=True, language='en', timeout=15)
     a = (r.raw.get('address') or {}) if r else {}
+    if not (a.get('ISO3166-2-lvl4') or a.get('state')) and a.get('country_code') == 'ie':
+        # Ireland has provinces (Leinster) over its counties, no states: the county, so Kilcock and Johnstown, Naas
+        # (IE-KE) and Bray (IE-WW) are towns of their own, Tallaght, Swords and Dún Laoghaire (IE-D) Dublin's
+        # (2k7ZlvIZJoA: Johnstown was Dublin; user, 2026-10-26: Kilcock, Bray kept as themselves)
+        r = _nominatim('reverse', (round(lat, 2), round(lon, 2)), zoom=10, addressdetails=True, language='en',
+                       timeout=15)
+        a = (r.raw.get('address') or {}) if r else {}
+        return a.get('ISO3166-2-lvl6') or a.get('ISO3166-2-lvl5') or None
     return a.get('ISO3166-2-lvl4') or a.get('state') or None
 
 
@@ -6295,6 +6303,51 @@ def tail_pair(title):
     return tuple(parts)
 
 
+# a Google Maps route linked in a description: "📍 Route: https://maps.app.goo.gl/khBhsZZeLgrcGwtq8" goes to
+# .../maps/dir/Johnstown Garden Centre, Johnstown, Naas, Co. Kildare/Donadea Forest Park, Donadea, .../@...
+# (2k7ZlvIZJoA, ScenicIrelandDrives: "many videos in this batch are drives between towns"; user, 2026-10-26)
+MAPS_LINK = re.compile(r'https?://(?:maps\.app\.goo\.gl/[\w-]+|goo\.gl/maps/[\w-]+'
+                       r'|(?:www\.)?google\.[a-z.]+/maps/dir/\S+)')
+MAPS_LINKS = os.path.join('_output', 'proposals', 'maps_links.json')  # short link -> where it goes, kept
+MAPS_POI = re.compile(r'(?i)\b(?:centre|center|park|forest|station|garden|mall|hotel|airport|church|school|castle|'
+                      r'beach|harbou?r|port|bridge|street|road|lane|avenue|car park|parking|shop|store|services|'
+                      r'café|cafe|pub|restaurant|museum|stadium|university|college|hospital|market|plaza|square)\b')
+
+
+def maps_stops(description):
+    """The towns of the stops of a Google Maps route linked in a description, first to last ("Johnstown, Co.
+    Kildare"): each stop's first part that names no business or sight, with its county; [] without such a link."""
+    m = MAPS_LINK.search(description or '')
+    if not m:
+        return []
+    url = m.group(0)
+    if '/maps/dir/' not in url:
+        try:
+            with open(MAPS_LINKS) as f:
+                known = json.load(f)
+        except (OSError, ValueError):
+            known = {}
+        if url not in known:
+            try:
+                known[url] = requests.head(url, allow_redirects=False, timeout=15).headers.get('location', '')
+            except requests.RequestException:
+                return []
+            with contextlib.suppress(OSError):
+                with open(MAPS_LINKS + '.tmp', 'w') as f:
+                    json.dump(known, f)
+                os.replace(MAPS_LINKS + '.tmp', MAPS_LINKS)
+        url = known[url]
+    route = re.search(r'/maps/dir/(.+?)/@', url or '')
+    out = []
+    for stop in (unquote(x.replace('+', ' ')) for x in (route.group(1).split('/') if route else []) if x):
+        parts = [x.strip() for x in stop.split(',') if x.strip() and not re.search(r'\d', x)]
+        county = next((x for x in parts if re.match(r'(?i)(?:co\.?|county) ', x)), None)
+        towns = [x for x in parts if x != county and not MAPS_POI.search(x)]
+        if towns:
+            out.append(', '.join([towns[0]] + ([county] if county else [])))
+    return out
+
+
 def drive_title(title, description):
     """What names a drive "from A to B": the title, else the first of the description's first DRIVE_LINES lines that
     does ("Location: Minokamo to Yaotsu,Gifu,Japan" under "Drive in Japan | Rain Sounds Therapy", qBRUPhoFeTQ;
@@ -6326,6 +6379,8 @@ def drive_title(title, description):
         return f'from {m[1]} to {m[3]} via {m[2]}'
     if pair := tail_pair(title):
         return f'from {pair[0]} to {pair[1]}'
+    if len(stops := maps_stops(description)) >= 2:  # a route on Google Maps linked in the description
+        return f'from {stops[0]} to {stops[-1]}'
     for line in (description or '').splitlines()[:DRIVE_LINES]:
         if (len(line) <= 150 and (m := DESC_DRIVE.match(line.strip()))  # no "Welcome to", "Talk to Me"
                 and not ordinary(m.group(1).split()[0]) and not ordinary(m.group(3).split()[0])):
@@ -8793,8 +8848,12 @@ function flipTr(e, el) {
   }, 300);
 }
 const TIMESTAMP = /(?<![\\d:])(?:(\\d{1,2}):)?(\\d{1,2}):(\\d{2})(?![\\d:])/g;
-const playLinks = (video, text) => esc(text).replace(TIMESTAMP, (m, h, mi, se) =>
-  `<a href="#" onclick="play('${video}', ${(+h || 0) * 3600 + +mi * 60 + +se}); return false;">${m}</a>`);
+const URL_RE = /https?:\\/\\/[^\\s<>"]+[^\\s<>".,;:!?)\\]]/g;
+const playLinks = (video, text) => esc(text)
+  .replace(URL_RE, u => `<a href="${u}" target="_blank" rel="noopener">${u}</a>`)
+  .replace(/(<a [^>]*>.*?<\\/a>)|(?<![\\d:])(?:(\\d{1,2}):)?(\\d{1,2}):(\\d{2})(?![\\d:])/g,
+    (m, a, h, mi, se) => a ? a :
+    `<a href="#" onclick="play('${video}', ${(+h || 0) * 3600 + +mi * 60 + +se}); return false;">${m}</a>`);
 // a video's title, description and chapter names in English (translate); the chapters again once fetched
 async function translateVideo(div) {
   const video = div.dataset.video;
@@ -9382,9 +9441,12 @@ def review(plan_path, port=None):
         with open(path) as f:
             meta = json.load(f)
         text, parts, last = meta.get('description') or '', [], 0
-        for m in re.finditer(r'(?<![\d:])(?:(\d{1,2}):)?(\d{1,2}):(\d{2})(?![\d:])', text):
-            h, mins, secs = m.groups()
+        # links open in a new tab (a route on Google Maps: 2k7ZlvIZJoA; user, 2026-10-26), timestamps play
+        link = r'(https?://[^\s<>"]+[^\s<>".,;:!?)\]])'
+        for m in re.finditer(link + r'|(?<![\d:])(?:(\d{1,2}):)?(\d{1,2}):(\d{2})(?![\d:])', text):
+            url, h, mins, secs = m.groups()
             parts += [escape(text[last:m.start()]),
+                      Markup('<a href="{}" target="_blank" rel="noopener">{}</a>').format(url, url) if url else
                       Markup('<a href="#" onclick="play(\'{}\', {}); return false;">{}</a>').format(
                           video_id, int(h or 0) * 3600 + int(mins) * 60 + int(secs), m.group(0))]
             last = m.end()
