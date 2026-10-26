@@ -19,6 +19,7 @@ import os
 import random
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -131,7 +132,11 @@ class BotCheck(RuntimeError):
     """YouTube wants a signed-in session; further requests will fail until it lifts."""
 
 
-def _yt_dlp(*args):
+def _yt_dlp(*args, timeout=None):
+    """yt-dlp's output; RuntimeError (BotCheck when YouTube asks to sign in) when it fails. timeout (s): stopped
+    after that, with the ffmpeg it runs: a clip (--download-sections) goes through ffmpeg, which can wait on a
+    stalled connection for ever (psNzTW-NFho on wsl5090b, 2026-10-26: run_channels.py stopped the silent batch
+    every 45 min, five times, and the stalled downloads stayed behind)."""
     # opt-in for when YouTube asks to sign in: YT_DLP_COOKIES=chrome (or firefox, ...) uses that browser's login,
     # or a path to a cookies.txt exported from a logged-in browser
     jar = os.environ.get('YT_DLP_COOKIES')
@@ -139,11 +144,19 @@ def _yt_dlp(*args):
     # yt-dlp solves YouTube's JavaScript challenge only with a JS runtime and uses just deno unless told,
     # so offer node: without it YouTube hands out thumbnails instead of the video
     js = ['--js-runtimes', 'node'] if shutil.which('node') else []
-    r = subprocess.run([YT_DLP, '--no-warnings', *js, *cookies, *args], capture_output=True, text=True)
-    if r.returncode:
-        msg = (r.stderr.strip().splitlines() or [f'yt-dlp exited with {r.returncode}'])[-1]
-        raise (BotCheck if 'not a bot' in r.stderr else RuntimeError)(msg)
-    return r.stdout
+    with subprocess.Popen([YT_DLP, '--no-warnings', *js, *cookies, *args], stdout=subprocess.PIPE,
+                          stderr=subprocess.PIPE, text=True, start_new_session=True) as proc:
+        try:
+            out, err = proc.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(proc.pid, signal.SIGKILL)  # its own session: yt-dlp and its ffmpeg
+            proc.communicate()
+            raise RuntimeError(f'yt-dlp stopped after {timeout / 60:.0f} min without finishing') from None
+    if proc.returncode:
+        msg = (err.strip().splitlines() or [f'yt-dlp exited with {proc.returncode}'])[-1]
+        raise (BotCheck if 'not a bot' in err else RuntimeError)(msg)
+    return out
 
 
 def _url(video_id):
@@ -1658,6 +1671,7 @@ def cross_traffic(path, sig, p=PARAMS):
 # CADENCE_WINDOW_S each) of the 720p video, on a CUDA GPU only
 CADENCE_FAST, CADENCE_SURE = 3.0, 5.0
 CADENCE_OPEN_S, CADENCE_STOPS, CADENCE_WINDOW_S = 60, 3, 20
+CLIP_TIMEOUT_S = 600  # a clip of a minute downloads in seconds: one still going after 10 min has stalled (_yt_dlp)
 POSE_CODE = """
 import sys, cv2, numpy as np, torch
 from ultralytics import YOLO
@@ -1720,7 +1734,8 @@ def walk_cadence(video_id, sig, p=PARAMS):
         for k, (a, b) in enumerate(windows):
             try:
                 _yt_dlp('-q', '-f', 'bv*[height<=720][ext=mp4]/bv*[height<=720]', '--download-sections',
-                        f'*{a:.0f}-{b:.0f}', '-o', os.path.join(w, f'p{k}.%(ext)s'), _url(video_id))
+                        f'*{a:.0f}-{b:.0f}', '-o', os.path.join(w, f'p{k}.%(ext)s'), _url(video_id),
+                        timeout=CLIP_TIMEOUT_S)
             except RuntimeError:
                 continue
             src = next((os.path.join(w, n) for n in os.listdir(w) if n.startswith(f'p{k}.')), None)
@@ -3010,7 +3025,7 @@ def head_signs(video_id, duration, keep_dir):
     os.makedirs(keep_dir, exist_ok=True)
     try:
         _yt_dlp('-q', '-f', 'bv*[height<=720][ext=mp4]/bv*[height<=720]', '--download-sections', f'*0-{upto:.0f}',
-                '-o', os.path.join(keep_dir, 'v.%(ext)s'), _url(video_id))
+                '-o', os.path.join(keep_dir, 'v.%(ext)s'), _url(video_id), timeout=2 * CLIP_TIMEOUT_S)
         path = next(os.path.join(keep_dir, n) for n in os.listdir(keep_dir) if n.startswith('v.'))
         subprocess.run(['ffmpeg', '-v', 'error', '-i', path, '-t', f'{upto:.0f}', '-vf', f'fps=1/{SIGN_STEP_S}',
                         '-q:v', '3', os.path.join(keep_dir, 's%05d.jpg')], capture_output=True, timeout=3600)
