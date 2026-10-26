@@ -6843,6 +6843,221 @@ def town_sign_hint(p, sig_path, out_dir, df):
         shutil.rmtree(keep, ignore_errors=True)
 
 
+# Towns by their entry and exit signs (Ortstafel), read on the whole video in the countries that put the town's name
+# alone on a yellow sign at its edge and cross it out where it ends (user, 2026-10-25: "build country-specific
+# recognition of signs of entering and exiting localities"; mistermehmood243's drives through Upper Swabia). On the
+# channel's 12 reviewed videos 3,798 of 4,293 approved seconds then fall under the reviewer's locality, not 3,329;
+# of 84 reviewed German and Austrian drives' entry signs 10 agree with the reviewer, 2 not (a quarter of Lucerne), 9
+# lie in footage the reviewer left out
+TOWN_SIGN_COUNTRIES = {'Germany', 'Austria', 'Switzerland'}
+SETTLEMENTS = os.path.join('_output', 'proposals', 'settlements.json')  # OpenStreetMap's places around a point, kept
+SIGN_NOT_TOWN = {'gemeinde', 'stadt', 'landkreis', 'kreis', 'ortsteil', 'stop', 'umleitung', 'ende', 'zone',
+                 'polizei', 'achtung', 'baustelle', 'bahnhof', 'zentrum', 'centrum', 'innenstadt', 'kirche', 'schule'}
+# the lines under an Ortstafel's name: its district or municipality ("Lkr. Ravensburg", "Große Kreisstadt Ravensburg")
+SIGN_DISTRICT = re.compile(r"(?i)^\W*(?:lkr|landkreis|kreis|gemeinde|gem|stadt|markt|ortsteil|ot|bezirk|bez|kanton"
+                           r"|(?:gro(?:ß|ss)e\s+)?kreisstad\w*|gro(?:ß|ss)e)\b")
+SIGN_NAME = re.compile(r"^[A-ZÄÖÜ][A-Za-zÄÖÜäöüß.\-' ]{3,}$")
+SIGN_TOWN_S = {'city': float('inf'), 'town': 900}  # the longest a town's stretch from its sign runs; a village 300 s
+
+
+def settlements(lat, lon, km=30):
+    """[[name, kind, lat, lon]] of OpenStreetMap's cities, towns, villages and hamlets within km of a point (asked
+    per 0.1 degree, kept in SETTLEMENTS); [] when Overpass does not answer."""
+    key = f'{round(lat, 1)},{round(lon, 1)},{km}'
+    with contextlib.suppress(OSError, ValueError), open(SETTLEMENTS) as f:
+        known = json.load(f)
+        if key in known:
+            return known[key]
+    query = (f'[out:json][timeout:90];node[place~"^(city|town|village|hamlet)$"]'
+             f'(around:{km * 1000},{round(lat, 1)},{round(lon, 1)});out;')
+    for attempt in range(4):
+        try:
+            r = requests.post(('https://overpass-api.de/api/interpreter',
+                               'https://overpass.private.coffee/api/interpreter')[attempt % 2],
+                              data={'data': query}, timeout=150, headers={'User-Agent': 'crowd-dataset (TU/e)'})
+            places = [[e['tags']['name'], e['tags'].get('place'), e['lat'], e['lon']] for e in r.json()['elements']
+                      if e.get('tags', {}).get('name')]
+            break
+        except (requests.RequestException, ValueError, KeyError):
+            time.sleep(20 * (attempt + 1))
+    else:
+        return []
+    with plan_lock(SETTLEMENTS):
+        try:
+            with open(SETTLEMENTS) as f:
+                known = json.load(f)
+        except (OSError, ValueError):
+            known = {}
+        known[key] = places
+        with open(SETTLEMENTS + '.tmp', 'w') as f:
+            json.dump(known, f)
+        os.replace(SETTLEMENTS + '.tmp', SETTLEMENTS)
+    return places
+
+
+def _sign_key(name):
+    return _name_key(str(name).replace('ß', 'ss'))
+
+
+def town_sign_events(read, places):
+    """[(second, 'in' or 'out', place name)] of the town signs among a video's road signs (read_signs): a town's name
+    read alone, or with its district line, no number and no other name a moment before or after, is its entry sign
+    (read twice, or exactly once, or with the district line: OCR misreads); a name read on for over 4 s is a
+    direction sign or a caption. The town's name read again with a distance or another town's is its exit sign."""
+    found = {}
+
+    def match(word):  # (place name, kind, likeness): same first letter, 0.8 alike (a letter or two misread)
+        w = _sign_key(word)
+        if w not in found:
+            best = None
+            if len(w) >= 4 and w not in SIGN_NOT_TOWN:
+                for name, kind, *_ in places:
+                    k = _sign_key(name)
+                    if k and k[0] == w[0] and abs(len(k) - len(w)) <= 3:
+                        r = 1.0 if k == w else difflib.SequenceMatcher(None, w, k).ratio()
+                        if r >= 0.8 and (best is None or r > best[2]):
+                            best = (name, kind, r)
+            found[w] = best
+        return found[w]
+
+    def wordy(x):
+        return re.search(r'[A-Za-zÄÖÜäöü]{3,}', x)
+    times = sorted(read, key=float)
+    raw = {u: list(read[u]) for u in times}
+
+    def words_at(u):  # the texts read but the sign's district line and fragments of a longer word read with them
+        ws = [x.strip(' |)(]![') for x in raw[u] if wordy(x) and not SIGN_DISTRICT.match(x)]
+        return [w for w in ws if not any(o != w and _sign_key(o).startswith(_sign_key(w)[:4]) and len(o) > len(w)
+                                         for o in ws)]
+    read = {u: words_at(u) + [x for x in raw[u] if re.search(r'\d', x)] for u in times}
+    lone = {u for u in times
+            if len([x for x in read[u] if wordy(x)]) == 1 and not any(re.search(r'\d', x) for x in read[u])}
+
+    def district_near(t0):  # the sign's district line read within a second ("Lkr. Sigmaringen")
+        return any(SIGN_DISTRICT.match(x) for u in times if abs(float(u) - t0) <= 1 for x in raw[u])
+    for u in times:  # "Ostrach" with "Sigmaringen" under it: OCR dropped the "Lkr." of the district line
+        ws = [x for x in read[u] if wordy(x)]
+        if u not in lone and len(ws) == 2 and not any(re.search(r'\d', x) for x in read[u]) \
+                and district_near(float(u)) and (first := next((x for x in ws if match(x)), None)):
+            read[u] = [first]
+            lone.add(u)
+    hits = {}
+    for u in times:
+        for x in read[u]:
+            if (m := match(x)):
+                hits.setdefault(m[0], []).append(float(u))
+
+    def span(name, t0):  # how long the name is read around t0, gaps under 1.5 s bridged
+        a = b = t0
+        for h in reversed(hits.get(name, [])):
+            if a - 1.5 <= h < a:
+                a = h
+        for h in hits.get(name, []):
+            if b < h <= b + 1.5:
+                b = h
+        return b - a
+
+    def same_sign(u, name):  # the name again, with at most one more text and no number: its district's name
+        ws = [x for x in read[u] if wordy(x)]
+        return (not any(re.search(r'\d', x) for x in read[u]) and len(ws) <= 2
+                and any((m := match(x)) and m[0] == name for x in ws))
+    out, cur = [], None
+    for u in times:
+        t = float(u)
+        if u in lone:
+            m0 = next((m for x in read[u] if (m := match(x))), None)
+            if any(v not in lone and not (m0 and same_sign(v, m0[0])) for v in times if 0 < abs(float(v) - t) <= 1):
+                continue  # a name among others a moment before or after: a direction sign or a shop
+        texts = [x.strip(' |)(]![') for x in read[u] if x.strip()]
+        words = [x for x in texts if wordy(x)]
+        number = any(re.search(r'\d|\bkm\b', x, re.I) for x in texts)
+        names = [(x, m) for x in words if (m := match(x))]
+        # (a word starting a longer one read within a second is part of it: "Eich" of "Eichstegen", 1T4v66Ec1cg)
+        part = len(words) == 1 and any(_sign_key(x) != _sign_key(words[0]) and _sign_key(x).startswith(_sign_key(
+            words[0])) for v in times if abs(float(v) - t) <= 1 for x in raw[v])
+        if len(words) == 1 and len(names) == 1 and not number and SIGN_NAME.match(words[0]) and not part:
+            name, _, likeness = names[0][1]
+            twice = any(v != u and abs(float(v) - t) <= 2 and v in lone and (m := match(read[v][0])) and m[0] == name
+                        for v in times)
+            if (likeness < 1 and not twice and not district_near(t)) or span(name, t) > 4:
+                continue
+            if not (out and out[-1][2] == name and t - out[-1][0] < 5):
+                out.append((t, 'in', name))
+            cur = name
+        elif cur and words and out:
+            here = [x for x in words if _sign_key(x)[:5] == _sign_key(cur)[:5] or (m := match(x)) and m[0] == cur]
+            if here and (number or len(names) >= 2) and t - out[-1][0] > 10:
+                out.append((t, 'out', cur))
+                cur = None
+    return out
+
+
+def town_sign_split(p, sig_path, df, home=None):
+    """A one-locality proposal in TOWN_SIGN_COUNTRIES split by its town signs (town_sign_events): each town entered
+    takes the segment its sign is in (or one starting within 30 s after it, and the segments following on without a
+    gap), until its exit sign or the next town's sign, a village at most 300 s, a town 900 (SIGN_TOWN_S); the rest
+    stays under the proposal's locality. A hamlet's sign counts only for a hamlet of the mapping (Staig, not every
+    Oberweiler passed). Returns whether it split."""
+    ents = p.get('entries') or []
+    if len(ents) != 1 or p.get('route') or ents[0].get('gps') or ents[0].get('chapters') or not sig_path \
+            or not os.path.exists(sig_path) or 'signs' not in np.load(sig_path).files:
+        return False
+    segs = sorted(ents[0]['segments'], key=lambda g: g['start'])
+    if not segs or any(g.get('decision') or g.get('applied') for g in segs):
+        return False
+    first = ents[0].get('locality')
+    country = first[2] if first else home[2] if home else None
+    if country not in TOWN_SIGN_COUNTRIES:
+        return False
+    # around the proposal's locality and the channel's home both: a first guess from a direction sign is off
+    # (ZLskCAezdYs: Sigmaringen, 35 km from the Altshausen it drives into)
+    anchors = [a[3:5] for a in ((_locality_anchor(first, df) if first else None), home) if a and a[3] is not None]
+    places = list({x[0] + str(x[2]): x for a in dict.fromkeys(anchors) for x in settlements(*a)}.values())
+    if not places:
+        return False
+    rows = df[df['country'] == country]
+    kind, pos = {x[0]: x[1] for x in places}, {x[0]: (x[2], x[3]) for x in places}
+
+    def locality(name):  # the mapping's locality of that name right there (also written another way), else new
+        for r in rows.itertuples():
+            if _same_name(r.locality, name) and _km(*pos[name], float(r.lat), float(r.lon)) <= 5:
+                return [r.locality, r.state if isinstance(r.state, str) else None, r.country]
+        return [name, None, country]
+    ev = [x for x in town_sign_events(json.loads(str(np.load(sig_path)['signs'])), places)
+          if kind.get(x[2]) != 'hamlet' or any(_same_name(n, x[2]) for n in rows['locality'])]
+    stretches = []
+    for i, (t, what, name) in enumerate(ev):
+        seg = next((g for g in segs if g['start'] - 30 <= t < g['end']), None) if what == 'in' else None
+        if not seg:
+            continue
+        end = seg['end']
+        for g in segs:  # segments that follow on without a gap: a stop or a split, still in town
+            if end <= g['start'] <= end + 5:
+                end = g['end']
+        nxt = ev[i + 1][0] if i + 1 < len(ev) else float('inf')
+        stretches.append((int(t), int(min(end, nxt, max(t, seg['start']) + SIGN_TOWN_S.get(kind.get(name), 300))),
+                          locality(name)))
+    if not stretches:
+        return False
+    towns, rest = split_by_stretches(segs, stretches), []
+    for g in segs:
+        x = g['start']
+        for a, b in sorted((max(a, g['start']), min(b, g['end'])) for a, b, _ in stretches
+                           if a < g['end'] and b > g['start']) + [(g['end'], g['end'])]:
+            if a - x >= 5:
+                rest.append({'start': int(x), 'end': int(a), 'night': g['night']})
+            x = max(x, b)
+    same = next((e for e in towns if first and e['locality'] == list(first)), None)
+    if same:
+        same['segments'] = sorted(same['segments'] + rest, key=lambda g: g['start'])
+    elif rest:
+        towns.insert(0, {**ents[0], 'segments': rest})
+    p['entries'] = towns
+    p['note'] = (f"{p.get('note') or ''}; localities from the town signs (check them): " + ', '.join(
+        f'{loc[0]} from {a // 60}:{a % 60:02d}' for a, _, loc in stretches)).lstrip('; ')
+    return True
+
+
 def note_signs(p, signs):
     """Add the towns road signs name (sign_towns), each at its first sign, to a proposal's note, once."""
     if not signs or 'road signs:' in (p.get('note') or ''):
@@ -7533,7 +7748,8 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
                 if (meta.get('duration') or 0) > 2 * 3600:  # run_channels.py waits longer for its silence
                     print(f'  long video: {int(meta["duration"]) // 60} min')
                 drive = drive_title(meta['title'], meta.get('description'))
-                analyse_video(vid, out_dir, meta, signs=any(r.search(english_states(drive)) for r in FROM_TO))
+                analyse_video(vid, out_dir, meta, signs=any(r.search(english_states(drive)) for r in FROM_TO)
+                              or country in TOWN_SIGN_COUNTRIES)  # their town signs (town_sign_split)
                 time.sleep(pause_s)  # spacing requests keeps YouTube's bot check away for longer
             failures_in_a_row = 0
         except BotCheck as e:
@@ -7738,6 +7954,10 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
             trim_montage(plan[vid], dict(np.load(sig_path)))
         if analysed and (lead := max(channel_lead_in(meta.get('channel_id'), df) or 0, batch_lead_in(plan))):
             trim_lead_in(plan[vid], lead)
+        try:
+            town_sign_split(plan[vid], sig_path, df, early[0] if early else None)
+        except Exception as e:  # a lookup gone wrong must not stop the batch
+            print(f'  town signs not used ({type(e).__name__})', flush=True)
         town_sign_hint(plan[vid], sig_path, out_dir, df)
         shutil.rmtree(os.path.join(out_dir, f'{vid}_open.tmp'), ignore_errors=True)  # screen_locality's frames
         commit([vid])  # appears in an open review page straight away
