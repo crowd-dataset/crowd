@@ -5220,6 +5220,8 @@ LANDMARK_TYPES = {'stadium', 'arena', 'casino', 'university', 'college', 'museum
 
 ROAD_KIND = re.compile(r'\b(?:highway|hwy|parkway|pkwy|expressway|expy|freeway|fwy|turnpike|tpke)\b', re.I)
 
+PLACE_AREAS = {'region', 'state', 'province', 'county', 'district', 'state_district', 'archipelago'}  # see _osm_place
+
 
 @_remembered
 def _osm_place(phrase, country_codes, near=None, reach_km=None):
@@ -5291,9 +5293,10 @@ def _osm_place(phrase, country_codes, near=None, reach_km=None):
     if town and re.search(r'\b(?:County|Municipality|Province|Region|Prefecture|Oblast|Län|Division)$'
                           r'|^(?:Province|Region|County|Prefecture) of\b', town):
         town = None
+    # (a region is no town: "Allgäu" is a place of type region, Hha1wy7hGto; user, 2026-10-27)
     if not town and r.raw.get('class') == 'place' and _name_key(_osm_name(r.raw)) in (
-            wanted, _name_key(phrase.split(',')[0])):  # "Kwaggafontein, Mpumalanga" is Kwaggafontein
-        town = _osm_name(r.raw)
+            wanted, _name_key(phrase.split(',')[0])) and _osm_type(r.raw) not in PLACE_AREAS:
+        town = _osm_name(r.raw)  # "Kwaggafontein, Mpumalanga" is Kwaggafontein
     if not town and _country_code(a) in US_TERRITORIES:  # Puerto Rico's municipios (Guayama) are its counties
         town = re.sub(r' Municipio$', '', a.get('county') or '') or None
     if town:  # OpenStreetMap calls some towns "City of Mount Vernon", "Town of Hempstead"
