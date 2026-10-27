@@ -4279,6 +4279,13 @@ VEHICLE_TITLE = [(4, re.compile(r'\b(?:bike (?:route|ride|tour|path|lane)s?|cycl
                                 r'|bus(?:es)? (?:window|seat)s?)\b|🚌', re.I))]
 
 
+# a drive in the title of a channel that mostly cycles is in a car (yeTRE5gTkJs "Morning Drive Through Amsterdam"
+# and 3 reviewed "Netherlands Drive" videos of Eleonoraswalks proposed as bicycles; user, 2026-10-27); a channel of
+# motorbikes or trucks "drives" too (17 and 21 reviewed such titles kept their channel's vehicle)
+DRIVE_TITLE = re.compile(r'\b(?:driv(?:e|es|ing)|road ?trips?|car rides?|dash ?cam|by car)\b', re.IGNORECASE)
+NON_MOTOR = {4, 6, 7, 12}  # bicycle, electric scooter, monowheel, scooter (VEHICLE_TYPES)
+
+
 def title_vehicle(title):
     """The VEHICLE_TYPES code a title names (a bicycle, a motorcycle, a bus), else None."""
     return next((vt for vt, r in VEHICLE_TITLE if r.search(title or '')), None)
@@ -7916,6 +7923,8 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
                         else f'vehicle from channel history ({share:.0%} of its videos)')
         if (title_vt := title_vehicle(title_text(meta['title']))) is not None:
             vt, vehicle_note = title_vt, f'vehicle from the title ({VEHICLE_TYPES[title_vt]})'
+        elif vt in NON_MOTOR and DRIVE_TITLE.search(title_text(meta['title'])):
+            vt, vehicle_note = 0, f'vehicle from the title (a drive; the channel mostly: {VEHICLE_TYPES[vt]})'
         if vid in reanalyse:  # keep a vehicle type picked in the review page
             vt, vehicle_note = plan[vid].get('vehicle_type', vt), 'vehicle as in the earlier proposal'
         named = title_countries(meta['title'])  # "…hacia Carolina, Puerto Rico": not San Juan, Texas
