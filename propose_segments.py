@@ -4056,7 +4056,9 @@ def _language(code):
 
 def shown_english(text, keep=()):
     """(text in English, the name of its language) for the review page, ('', '') when Google Translate finds it
-    English already, or does not answer (asked again next time, after SHOWN_PAUSE_S when it refused). The names in
+    English already, ('', None) when it does not answer (the page asks again a minute later: a-2n5VOa_so's Arabic
+    title stayed untranslated while Google refused; user, 2026-10-27; none asked for SHOWN_PAUSE_S after a
+    refusal). The names in
     keep (the video's localities) stay as written: Google made Ätran "Eating" (xm3AthgwvB0; user, 2026-10-22). Kept
     in SHOWN_TRANSLATIONS."""
     text = (text or '').strip()
@@ -4073,7 +4075,7 @@ def shown_english(text, keep=()):
     for i, k in enumerate(keep):  # placeholders Google leaves alone
         asked = asked.replace(k, f'§{i}§')
     if time.time() < _SHOWN_PAUSE[0]:
-        return '', ''
+        return '', None
     try:
         # Google's two free endpoints: the second answers while the first refuses (429; user, 2026-10-20:
         # wBWyY5C32uo's title stayed untranslated)
@@ -4088,7 +4090,7 @@ def shown_english(text, keep=()):
             if r.status_code == 429:
                 _SHOWN_PAUSE[0] = time.time() + SHOWN_PAUSE_S
             if not r.ok:
-                return '', ''
+                return '', None
             first = r.json()[0]  # [English, language], or English alone
             out, code = (first[0], first[1]) if isinstance(first, list) else (first, None)
         for i, k in enumerate(keep):
@@ -4096,7 +4098,7 @@ def shown_english(text, keep=()):
         out = _shown(out, text)
         lang = _language(code) if out else ''
     except (requests.RequestException, ValueError, IndexError, TypeError):
-        return '', ''
+        return '', None
     with _SHOWN_LOCK:
         try:
             with open(SHOWN_TRANSLATIONS) as f:
@@ -9103,11 +9105,21 @@ const playLinks = (video, text) => esc(text)
   .replace(/(<a [^>]*>.*?<\\/a>)|(?<![\\d:])(?:(\\d{1,2}):)?(\\d{1,2}):(\\d{2})(?![\\d:])/g,
     (m, a, h, mi, se) => a ? a :
     `<a href="#" onclick="play('${video}', ${(+h || 0) * 3600 + +mi * 60 + +se}); return false;">${m}</a>`);
-// a video's title, description and chapter names in English (translate); the chapters again once fetched
+// a video's title, description and chapter names in English (translate); the chapters again once fetched; a text
+// Google did not answer (its language null) is asked again a minute later, up to 10 times
+function translateLater(div) {
+  const tries = +(div.dataset.trTries || 0);
+  if (tries >= 10) return;
+  div.dataset.trTries = tries + 1;
+  setTimeout(() => translateVideo(div), 60000);
+}
 async function translateVideo(div) {
   const video = div.dataset.video;
   try {
     const tr = await (await fetch('translate/' + video)).json();
+    if (tr.title[1] === null || tr.description[1] === null || tr.chapters.some(c => c[3] === null)) {
+      translateLater(div);
+    }
     const h3 = div.querySelector('h3.vtitle');
     if (tr.title[0] && h3 && !h3.querySelector('.tr')) {
       h3.innerHTML = shownTr(tr.title[0], h3.textContent, tr.title[1]);
@@ -9123,7 +9135,7 @@ async function translateVideo(div) {
         `<div><a href="#" onclick="play('${video}', ${t}); return false;">${fmt(t)}</a> ` +
         `${en ? shownTr(en, name, lang) : esc(name)}</div>`).join('');
     }
-  } catch (e) { /* no connection: shown untranslated */ }
+  } catch (e) { translateLater(div); /* no connection: shown untranslated meanwhile */ }
 }
 // translations at once, top to bottom (user, 2026-10-20: ZYbdS5u7OR4's Vietnamese waited for every video's chapters)
 (async () => {
