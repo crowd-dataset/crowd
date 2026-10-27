@@ -8,6 +8,7 @@ from pytubefix.cli import on_progress
 from moviepy.video.io.VideoFileClip import VideoFileClip
 import cv2
 from ultralytics import YOLO  # type: ignore
+import track_ids
 from collections import defaultdict
 from typing import Optional
 import shutil
@@ -36,6 +37,7 @@ except ImportError:  # Windows: mapping.csv is rewritten without the lock
     fcntl = None
 
 logger = CustomLogger(__name__)  # use custom logger
+track_ids.install()  # a counter of track ids per thread: segments run in threads (max_workers), see track_ids.py
 logging.getLogger("ultralytics").setLevel(logging.ERROR)  # Show only errors
 
 # Consts
