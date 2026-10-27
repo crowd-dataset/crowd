@@ -369,7 +369,7 @@ class Youtube_Helper:
 
     # The file server's folders, and how long a listing of one is kept: a video missing from the server used to cost a
     # crawl of up to max_pages pages per folder, now the folder is listed once and looked up
-    FTP_ALIASES = ("tue4", "tue5")
+    FTP_ALIASES = ("tue3", "tue4", "tue5")
     FTP_INDEX_S = 3600
     _ftp_index: dict = {}  # (base URL, folder) -> (time listed, {file name in lower case: URL})
 
