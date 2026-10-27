@@ -43,9 +43,9 @@ async function show(){const it=items[idx];const d=await jget('/api/labels/'+enco
  $('#pf').innerHTML='<option value="">-</option>'+d.platforms.map(p=>'<option>'+p+'</option>').join('')+'<option>unclear</option>';
  $('#pos').textContent=(idx+1)+' / '+items.length+' ('+it.status+')';$('#seg').textContent=row.segment_id;
  $('#st').textContent=both(row.start_s);$('#en').textContent=both(row.end_s);$('#yt').href=row.url_start;
- $('#by').textContent=row.contributor;$('#same').textContent=row.contributor.toLowerCase()===(d.annotator||'').toLowerCase()?
+ $('#ttl').textContent=row.title||'';$('#txt').textContent=row.description||'(no description)';$('#desc').style.display=row.title||row.description?'block':'none';$('#by').textContent=row.contributor;$('#same').textContent=row.contributor.toLowerCase()===(d.annotator||'').toLowerCase()?
   ' (you: an independent person should audit this segment, please skip it)':'';
- const s=d.saved||{};document.querySelectorAll('input[name=b]').forEach(e=>e.checked=s.boundary_ok===e.value);
+ const s=d.saved||{};$('#prev').textContent=s.previous?'To check again. Your earlier answer: '+Object.entries(s.previous).filter(([k,v])=>v!==''&&!['status','annotator'].includes(k)).map(([k,v])=>k+' = '+v).join(', '):'';document.querySelectorAll('input[name=b]').forEach(e=>e.checked=s.boundary_ok===e.value);
  $('#fix').style.display=s.boundary_ok==='n'?'block':'none';$('#cs').value=shown(s.correct_start_s);$('#ce').value=shown(s.correct_end_s);
  $('#tod').value=s.tod_audit||'';$('#pf').value=s.platform_audit||'';$('#nt').value=s.notes||'';hasLocal=!!d.local;if(hasLocal)useLocal(row);else useYouTube(row)}
 async function save(status){const it=items[idx];const b=document.querySelector('input[name=b]:checked');

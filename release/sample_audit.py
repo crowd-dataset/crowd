@@ -164,6 +164,22 @@ def write(path, fields, rows):
 COMMON = ["continent", "tod", "segment_id", "video_id", "locality", "contributor"]
 
 
+def early_stopping_order(rng, rows, keep_ids):
+    """The answered samples first, then the others one stratum after the other in turn (random within a stratum), so
+    that stopping at any point leaves every continent and time of day about equally covered."""
+    answered = sorted((r for r in rows if r["segment_id"] in keep_ids), key=lambda r: r["segment_id"])
+    queues = defaultdict(list)
+    for r in rows:
+        if r["segment_id"] not in keep_ids:
+            queues[(r["continent"], r["tod"])].append(r)
+    for q in queues.values():
+        rng.shuffle(q)
+    rest = []
+    for i in range(max((len(q) for q in queues.values()), default=0)):
+        rest += [q[i] for _, q in sorted(queues.items()) if i < len(q)]
+    return answered + rest
+
+
 def draw_labels(rng, strata, out_dir, video_ok, keep_ids):
     """The sample for the label audit. Without folders it is made once and kept. With the folders of the videos
     (video_ok), the segments whose video is not there are replaced by segments whose video is (the downloaded file can
@@ -194,7 +210,7 @@ def draw_labels(rng, strata, out_dir, video_ok, keep_ids):
         new += len(drawn)
         if have + len(drawn) < LABEL_PER_STRATUM:
             short.append(f"{continent} {tod}: {have + len(drawn)} of {LABEL_PER_STRATUM}")
-    rows.sort(key=lambda r: (r["continent"], r["tod"], r["segment_id"]))
+    rows = early_stopping_order(rng, rows, keep_ids)
     fields = [*COMMON, "start_s", "end_s", "platform", "url_start", "url_end", "boundary_ok", "correct_start_s",
               "correct_end_s", "tod_audit", "platform_audit", "notes"]
     write(path, fields, rows)

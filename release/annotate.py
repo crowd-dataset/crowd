@@ -10,11 +10,14 @@ then open http://127.0.0.1:8773. Three tasks:
     review   see the detector's boxes on a frame (taken from the video file, so the videos must be on this machine;
              a missing one can be downloaded with yt-dlp) and mark each box correct, a false positive or the wrong
              class, and draw only the road users it missed
-    clips    play a 10 s clip with the dataset's tracks drawn over it and count the tracking errors
+    tracks   watch one track of the dataset at a time, zoomed on the object with only its box drawn
+             (release.track_audit): is the box on the same object all the time?
+             (the older "clips" page, which plays a 10 s clip with the tracks drawn, is still there)
 
 Progress is saved after every item, so the tool can be stopped and resumed. Results are written to the output folder:
-audit_labels_filled.csv (for release.audit_stats), box_review.csv (for
-release.evaluate_detections) and clip_taxonomy.csv. Only the local machine can reach the tool (127.0.0.1).
+audit_labels_filled.csv (for release.audit_stats), box_review.csv (for release.evaluate_detections),
+track_review.csv (for release.track_audit) and clip_taxonomy.csv. Only the local machine can reach the tool
+(127.0.0.1).
 """
 import argparse
 import csv
@@ -34,6 +37,7 @@ from flask import Flask, Response, abort, jsonify, request, send_file
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # top folder: release
 from release.evaluate_detections import CLASSES as COCO_CLASSES  # noqa: E402
+from release import track_audit  # noqa: E402
 from release.make_crowd_jsonl import VEHICLE_TYPE_NAMES  # noqa: E402
 
 CLASS_NAMES = list(COCO_CLASSES.values())
@@ -44,6 +48,7 @@ ROAD_USER_IDS = (0, 1, 2, 3, 5, 7)  # the clips page shows the tracks of road us
 LABEL_FIELDS = ["boundary_ok", "correct_start_s", "correct_end_s", "tod_audit", "platform_audit", "notes"]
 CLIP_FIELDS = ["n_objects", "missed_objects", "false_tracks", "class_confusions", "id_switches", "fragmentations",
                "notes"]
+TRACK_FIELDS = ["one_object", "notes"]
 REVIEW_FIELDS = ["sample_id", "kind", "class", "confidence", "x_center", "y_center", "width", "height", "verdict",
                  "true_class", "frame_k", "annotator"]
 
@@ -80,10 +85,10 @@ def load(samples, out):
     CFG["out"] = Path(out).resolve()
     CFG["out"].mkdir(parents=True, exist_ok=True)
     for task, name in (("labels", "audit_labels.csv"), ("review", "audit_frames.csv"),
-                       ("clips", "audit_clips.csv")):
+                       ("clips", "audit_clips.csv"), ("tracks", "audit_tracks.csv")):
         path = Path(samples) / name
         TASKS[task] = read_csv(path) if path.is_file() else []
-        if not path.is_file() and str(path.resolve()) not in MISSING:
+        if not path.is_file() and task != "tracks" and str(path.resolve()) not in MISSING:  # tracks: drawn at start
             MISSING.append(str(path.resolve()))
         state_file = CFG["out"] / f"{task}.json"
         STATE[task] = json.load(open(state_file, encoding="utf-8")) if state_file.is_file() else {}
@@ -121,6 +126,16 @@ def save_state(task):
             if not (s.get("preds") or s.get("missed")):  # a frame without detections and without missed objects
                 out.append({**base, "kind": "none", "class": "none", "verdict": "none"})
         write_csv(CFG["out"] / "box_review.csv", REVIEW_FIELDS, out)
+    elif task == "tracks":
+        out = []
+        for r in rows:
+            s = STATE["tracks"].get(r["sample_id"])
+            if s and s.get("status") == "done":
+                out.append({"sample_id": r["sample_id"], "continent": r["continent"], "tod": r["tod"],
+                            "track_id": r["track_id"], "class": r["class"], "n_frames": r["n_frames"],
+                            "annotator": s.get("annotator", ""), **{k: s.get(k, "") for k in TRACK_FIELDS}})
+        write_csv(CFG["out"] / "track_review.csv", ["sample_id", "continent", "tod", "track_id", "class", "n_frames",
+                                                    "annotator", *TRACK_FIELDS], out)
     else:
         out = []
         for r in rows:
@@ -208,6 +223,18 @@ def detections(row, k0, k1, threshold=THRESHOLD, ids=tuple(COCO_CLASSES)):
     return out
 
 
+TEXT = {}  # video id -> (title, description), from mapping_metadata.csv
+
+
+def video_text(vid):
+    """The title and the description of a video, which often say what it is filmed from (a car, a bus, a bike)."""
+    if not TEXT and CFG.get("metadata") and os.path.isfile(CFG["metadata"]):
+        df = pd.read_csv(CFG["metadata"], usecols=["video", "title", "description"], dtype=str).fillna("")
+        TEXT.update({v: (t, d) for v, t, d in df.itertuples(index=False)})
+        TEXT.setdefault("", ("", ""))
+    return TEXT.get(vid, ("", ""))
+
+
 def sample(task, sid):
     for r in TASKS[task]:
         if item_id(task, r) == sid:
@@ -238,9 +265,18 @@ def api_item(task, sid):
         hidden = {"platform", "tod", "continent"}  # the dataset's labels stay hidden while the auditor decides
         data = {k: v for k, v in r.items() if k not in hidden and k not in LABEL_FIELDS and k != "contributor"}
         data["contributor"] = r["contributor"]
+        data["title"], data["description"] = (x[:4000] for x in video_text(r["video_id"]))
         return jsonify({"row": data, "saved": saved, "platforms": PLATFORMS, "annotator": CFG.get("annotator", ""),
                         "local": video_path(r["video_id"]) is not None})
     info = video_info(r["video_id"])
+    if task == "tracks":
+        path = detection_file(r)
+        meta = {"row": r, "saved": saved, "available": info is not None, "has_detections": path is not None,
+                "ONE": list(track_audit.ONE.items())}
+        if info and path:
+            parts, boxes = track_audit.pieces(track_rows(path), int(r["track_id"]), info["fps"])
+            meta.update({"fps": info["fps"], "pieces": parts, "boxes": boxes, "segment_start": float(r["start_s"])})
+        return jsonify(meta)
     meta = {"row": r, "saved": saved, "available": info is not None, "classes": CLASS_NAMES}
     if info:
         k = frame_number(r, info["fps"])
@@ -315,6 +351,17 @@ def frame(sid):
     return send_file(cache.resolve(), mimetype="image/jpeg")  # absolute: a relative path is looked up in release/
 
 
+TRACK_CACHE = {}  # detection file -> (road-user rows, first frame, last frame), the last few
+
+
+def track_rows(path):
+    if path not in TRACK_CACHE:
+        if len(TRACK_CACHE) >= 3:
+            TRACK_CACHE.pop(next(iter(TRACK_CACHE)))
+        TRACK_CACHE[path] = track_audit.read_tracks(path)
+    return TRACK_CACHE[path][0]
+
+
 @app.get("/video/<vid>")
 def video(vid):
     path = video_path(vid)
@@ -340,7 +387,9 @@ ABOUT = {  # the name and a description of each task, for the home page
     "labels": ("Labels", "watch the segment on YouTube: are the boundaries right, and what are the time of day "
                          "and the platform?"),
     "review": ("Review the detections", "check the detector's boxes on a frame and draw the objects it missed"),
-    "clips": ("Tracking errors", "watch a 10 s clip with the tracks drawn and count the errors"),
+    "clips": ("Tracking errors (clips)", "watch a 10 s clip with the tracks drawn and count the errors"),
+    "tracks": ("Tracking errors", "watch one track at a time, zoomed on the object: is the box on the same object "
+                                  "all the time?"),
 }
 
 
@@ -358,7 +407,7 @@ def index():
         f'{count(t, "skipped")} skipped'
         + (f' (<a href="/{t}?show=skipped">go to the skipped</a>)' if count(t, "skipped") else "")
         + f'<br><span class="small">{ABOUT[t][1]}</span></li>'
-        for t in ("labels", "review", "clips") if t in TASKS)
+        for t in ("labels", "review", "tracks") if TASKS.get(t) or t != "tracks")
     items = "".join(f"<li>{m}</li>" for m in MISSING)
     warn = (
         '<div class="panel" style="border-color:#b00020;color:#b00020"><b>Sample files not found</b>, so there is '
@@ -381,7 +430,7 @@ def asset(name):
 def page(title, body, script=""):
     return Response(f"""<!doctype html><html><head><meta charset="utf-8"><title>{title}</title>
 <style>{asset("style.css")}</style></head><body><nav><a href="/">CROWD audits</a><a href="/labels">labels</a>
-<a href="/review">review</a><a href="/clips">clips</a></nav><main>{body}</main>
+<a href="/review">review</a><a href="/tracks">tracks</a></nav><main>{body}</main>
 <script>{asset("common.js")}{script}</script></body></html>""", mimetype="text/html")
 
 
@@ -399,6 +448,11 @@ def review_page():
     return task_page("review", "Check the detections")
 
 
+@app.get("/tracks")
+def tracks_page():
+    return task_page("tracks", "Tracking errors, track by track")
+
+
 @app.get("/clips")
 def clips_page():
     return task_page("clips", "Tracking errors")
@@ -407,7 +461,7 @@ def clips_page():
 def answered_ids(out):
     """The ids of the samples that already have an answer (done or skipped), in any task: --refill must keep them."""
     ids = set()
-    for task in ("labels", "review", "clips"):
+    for task in ("labels", "review", "clips", "tracks"):
         path = Path(out) / f"{task}.json"
         if path.is_file():
             state = json.load(open(path, encoding="utf-8"))
@@ -417,7 +471,7 @@ def answered_ids(out):
 
 def report():
     """Say how many of the samples can be worked on with the folders given."""
-    for task in ("review", "clips"):
+    for task in ("review", "tracks"):
         rows = TASKS[task]
         have = sum(1 for r in rows if video_path(r["video_id"]))
         tracks = sum(1 for r in rows if detection_file(r))
@@ -428,6 +482,27 @@ def report():
             print(f"  {len(rows) - tracks} of the {task} samples have no detection file here: restart with --refill "
                   f"(and --mapping /path/to/mapping.csv) to replace them with samples that exist here; finished "
                   f"items are kept")
+
+
+def ensure_tracks(samples):
+    """Draw the tracks to audit (audit_tracks.csv) from the clip sample, for the clips that have none yet and whose
+    detection file is here."""
+    clips, path = Path(samples) / "audit_clips.csv", Path(samples) / "audit_tracks.csv"
+    if not clips.is_file():
+        return
+    old = read_csv(path) if path.is_file() else []
+
+    def find(row):
+        found = detection_file(row)
+        return (found, float(BBOX_NAME.match(os.path.basename(found)).group(3))) if found else None
+
+    new, skipped = track_audit.draw_tracks(read_csv(clips), old, find)
+    if new:
+        write_csv(path, track_audit.FIELDS, [*old, *new])
+        print(f"audit_tracks: {len(old) + len(new)} tracks ({len(new)} drawn now)"
+              + (f"; {skipped} clips have no detection file here" if skipped else ""))
+    elif skipped:
+        print(f"audit_tracks: {skipped} clips have no detection file here, so no tracks were drawn for them")
 
 
 def main():
@@ -443,6 +518,8 @@ def main():
                         "folders (see --mapping)")
     p.add_argument("--mapping", default="mapping.csv", help="mapping.csv, for --refill")
     p.add_argument("--cache", default="_output/annotation_cache", help="folder for extracted frames and downloads")
+    p.add_argument("--metadata", default="mapping_metadata.csv",
+                   help="mapping_metadata.csv: the title and description of the video are shown on the label page")
     p.add_argument("--annotator", default=os.environ.get("USER", ""), help="your name, saved with every answer")
     p.add_argument("--port", type=int, default=8773)
     a = p.parse_args()
@@ -453,13 +530,14 @@ def main():
         bbox += [os.path.join(d, "bbox") for d in conf.get("data") or []]
     videos, bbox = [os.path.expanduser(d) for d in videos], [os.path.expanduser(d) for d in bbox]
     CFG.update(videos=[os.path.abspath(d) for d in videos], bbox=[os.path.abspath(d) for d in bbox],
-               cache=os.path.abspath(a.cache), annotator=a.annotator)
+               cache=os.path.abspath(a.cache), annotator=a.annotator, metadata=os.path.abspath(a.metadata))
     for d in videos + bbox:
         if not os.path.isdir(d):
             print(f"warning: folder not found: {d}")
     if a.refill:
         from release import sample_audit
         sample_audit.draw_samples(a.mapping, a.samples, CFG["videos"], CFG["bbox"], keep_ids=answered_ids(a.out))
+    ensure_tracks(a.samples)
     load(a.samples, a.out)
     for m in MISSING:
         print(f"warning: sample file not found: {m}\n  (started in {os.getcwd()}; use --samples FOLDER)")

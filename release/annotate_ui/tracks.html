@@ -1,0 +1,15 @@
+<div class="row"><div class="panel" style="flex:3;min-width:560px"><div id="msg" class="small"></div>
+<video id="vd" muted playsinline style="display:none"></video>
+<canvas id="cv" width="640" height="640" style="max-width:100%;background:#000;display:block"></canvas>
+<p><button onclick="toggle()">Play / pause (Space)</button> <button onclick="rate(0.5)">0.5x</button>
+<button onclick="rate(1)">1x</button> <button onclick="restart()">Restart (R)</button>
+<button id="zb" onclick="zoomed=!zoomed">Zoom on / off (Z)</button> <span class="small" id="fr"></span></p></div>
+<div class="panel" style="flex:1;min-width:300px"><h3>Track <span id="tid"></span> (<span id="cls"></span>)</h3>
+<p class="small">Only the red box is the track. Watch it and decide whether it stays on <b>one and the same object</b>
+from start to end, or at some moment jumps to another one. A long track is shown in up to three pieces (its start, middle
+and end), played in a loop; when it jumps to the next piece the box disappears for a moment.</p>
+<p id="prev" class="small" style="color:#b00020"></p><div id="q1"></div><label>Notes</label><textarea id="nt" rows="2" autocomplete="off"></textarea><p>
+<button class="p" onclick="save('done')">Save and next (Enter)</button>
+<button class="w" onclick="save('skipped')">Skip: video unusable</button>
+<button onclick="go('tracks',show,-1)">Previous</button></p>
+<p class="small">Keys: 1 same object, 2 jumps to another object, 3 not a road user, 4 cannot tell, Enter saves.</p></div></div>

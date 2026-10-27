@@ -9,7 +9,7 @@
 <p class="small">Segment <b id="seg"></b> of <a id="yt" target="_blank">the video</a>: start <b id="st"></b>, end
 <b id="en"></b> (minutes:seconds as in the player, and seconds from the beginning of the video; the dataset ends the processing 1 s early). Added by <b id="by"></b><span id="same"
 style="color:#b00020;font-weight:700"></span>.</p></div>
-<div class="panel" style="flex:1;min-width:300px"><h3>Audit</h3>
+<div class="panel" style="flex:1;min-width:300px"><h3>Audit</h3><p id="prev" class="small" style="color:#b00020"></p>
 <p class="small">Watch the start and the end. Are the boundaries right (continuous driving, no cut, advertisement or
 speed change inside, no wrong stretch included)? The dataset's time-of-day and platform labels are hidden: decide
 yourself.</p>
@@ -18,6 +18,8 @@ yourself.</p>
 <div id="fix" style="display:none"><label>Correct start (as in the player, 6:55 or 1:02:05, or in seconds)</label><input id="cs" autocomplete="off" placeholder="6:55"><label>Correct end</label>
 <input id="ce" autocomplete="off"></div>
 <label>Time of day</label><select id="tod" autocomplete="off"><option value="">-</option><option>day</option><option>night</option></select>
+<details id="desc" style="margin-top:6px"><summary class="small">Video title and description (often says what the vehicle is)</summary>
+<p><b id="ttl"></b></p><pre id="txt" style="white-space:pre-wrap;font-size:12px;max-height:200px;overflow:auto"></pre></details>
 <label>Platform the video is filmed from</label><select id="pf" autocomplete="off"></select>
 <label>Notes</label><textarea id="nt" rows="2" autocomplete="off"></textarea><p>
 <button class="p" onclick="save('done')">Save and next (Enter)</button>

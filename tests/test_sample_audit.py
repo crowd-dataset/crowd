@@ -91,3 +91,14 @@ def test_label_sample_is_trimmed_to_its_size_and_never_grows(tmp_path):
     sa.draw_labels(random.Random(1), strata, tmp_path, lambda r: True, {"v39_0_9"})
     out = list(csv.DictReader(open(tmp_path / "audit_labels.csv")))
     assert len(out) == sa.LABEL_PER_STRATUM and "v39_0_9" in {r["segment_id"] for r in out}
+
+
+def test_label_sample_is_ordered_for_stopping_early(tmp_path):
+    import random
+    from release import sample_audit as sa
+    rows = [{"continent": c, "tod": t, "segment_id": f"{c}{t}{i}"} for c in "AB" for t in ("day", "night")
+            for i in range(5)]
+    out = sa.early_stopping_order(random.Random(1), rows, {"Aday0"})
+    assert out[0]["segment_id"] == "Aday0" and len(out) == 20
+    first = {(r["continent"], r["tod"]) for r in out[1:5]}
+    assert first == {("A", "day"), ("A", "night"), ("B", "day"), ("B", "night")}

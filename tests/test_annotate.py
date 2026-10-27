@@ -6,6 +6,7 @@ import pytest
 
 from release import annotate as a
 from release import evaluate_detections as e
+from release import track_audit
 
 VID = "TESTVIDEO01"
 FPS = 30
@@ -222,3 +223,41 @@ def test_label_page_knows_whether_the_video_is_on_this_machine(client):
     assert c.get(f"/api/labels/{VID}_9_9").get_json()["local"] is True
     a.CFG["videos"] = []
     assert c.get(f"/api/labels/{VID}_1_4").get_json()["local"] is False
+
+
+def test_tracks_are_drawn_from_the_clips_shown_with_one_box_and_saved_for_the_summary(client):
+    c, tmp = client
+    long = [{"yolo-id": 0, "x-center": 0.3 + 0.004 * k, "y-center": 0.5, "width": 0.2, "height": 0.4,
+             "unique-id": i, "confidence": 0.9, "frame-count": k} for i in (7, 9) for k in range(1, 91)]
+    write(tmp / "disk1" / "data" / "bbox" / f"{VID}_1_30.csv", list(long[0]), long)  # two tracks of 3 s
+    a.BBOX.update(index=None, time=0.0)
+    a.ensure_tracks(tmp)
+    rows = a.read_csv(tmp / "audit_tracks.csv")
+    assert len(rows) == 2 and all(r["sample_id"].startswith("trk_ASI_day_001_t") for r in rows)
+    a.TASKS["tracks"] = rows
+    a.STATE["tracks"] = {}
+    sid = rows[0]["sample_id"]
+    meta = c.get(f"/api/tracks/{sid}").get_json()
+    assert meta["ONE"][0][0] == "one" and meta["pieces"] == [[1, 90]] and len(meta["boxes"]) == 90
+    c.post(f"/api/tracks/{sid}", json={"status": "done", "one_object": "switch", "notes": ""})
+    out = a.read_csv(a.CFG["out"] / "track_review.csv")
+    assert out[0]["one_object"] == "switch" and out[0]["class"] == rows[0]["class"]
+    s = track_audit.summarise(out)
+    assert s["tracks"] == 1 and s["identity_switch"][:2] == (1, 1)
+
+
+def test_a_long_track_is_shown_in_three_pieces_and_a_short_one_whole():
+    import pandas as pd
+    df = pd.DataFrame({"id": 1, "k": range(1, 1001), "x": 0.5, "y": 0.5, "w": 0.1, "h": 0.1})
+    parts, boxes = track_audit.pieces(df, 1, 30)
+    assert parts == [(1, 150), (426, 575), (851, 1000)] and len(boxes) == 1000
+    assert track_audit.pieces(df[df["k"] <= 300], 1, 30)[0] == [(1, 300)]
+
+
+def test_detections_without_a_track_id_are_not_a_track(tmp_path):
+    import pandas as pd
+    rows = [{"yolo-id": 2, "x-center": 0.5, "y-center": 0.5, "width": 0.1, "height": 0.1, "unique-id": i,
+             "confidence": 0.9, "frame-count": k} for i in (-1, 5) for k in range(1, 100)]
+    pd.DataFrame(rows).to_csv(tmp_path / "v_0_30.csv", index=False)
+    df, _, _ = track_audit.read_tracks(str(tmp_path / "v_0_30.csv"))
+    assert set(df["id"]) == {5}
