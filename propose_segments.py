@@ -1149,6 +1149,9 @@ def propose(sig, p=PARAMS):
         end = int(float(sig['labelled_montage']))
         keep[:end * FPS] = False
         notes.append(f'montage of highlights 0-{end}s (its caption says so)')
+    elif (end := rapid_montage_end(sig)) is not None:
+        keep[:end * FPS] = False
+        notes.append(f'montage of highlights 0-{end}s (a cut every second or two)')
     elif (end := montage_end(sig)) is not None:  # a hint: in most channels early cuts are something else
         notes.append(f'possible montage of highlights 0-{end}s: check where the drive starts')
     sat = sig.get('saturation')
@@ -2358,6 +2361,21 @@ def montage_end(sig, within=45, gap=20, tail=15):
         return None
     later = [float(t) for t, _, ratio in ev if run[-1] < t <= run[-1] + tail and ratio >= 15]
     return round(max(later or [run[-1]]) + 1)
+
+
+def rapid_montage_end(sig, n=5, gap=3, score=0.3, ratio=8, first=4):
+    """Seconds where an opening run of quick cuts ends, else None: at least `n` cuts (scene score `score`, `ratio`
+    times the frames around), the first within `first` seconds, each at most `gap` after the one before. A drive
+    never cuts every second or two; a montage of highlights does (Z0ZMl-Y7Ewk: a cut every 1.5 s to 0:12, too weak
+    for montage_end; user, 2026-10-27). On 6,444 reviewed videos it starts 4 later as the reviewer did (within 3 s)
+    and cuts no approved footage."""
+    ev = np.asarray(sig.get('skips', np.zeros((0, 3)))).reshape(-1, 3)
+    run = []
+    for t in sorted(float(t) for t, s, r in ev if s >= score and r >= ratio and t > 0.5):
+        if (run and t - run[-1] > gap) or (not run and t > first):
+            break
+        run.append(t)
+    return round(run[-1] + 1) if len(run) >= n else None
 
 
 def montage_channel(plan, out_dir):
