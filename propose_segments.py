@@ -6884,10 +6884,13 @@ SETTLEMENTS = os.path.join('_output', 'proposals', 'settlements.json')  # OpenSt
 SIGN_NOT_TOWN = {'gemeinde', 'stadt', 'landkreis', 'kreis', 'ortsteil', 'stop', 'umleitung', 'ende', 'zone',
                  'polizei', 'achtung', 'baustelle', 'bahnhof', 'zentrum', 'centrum', 'innenstadt', 'kirche', 'schule'}
 # the lines under an Ortstafel's name: its district or municipality ("Lkr. Ravensburg", "Große Kreisstadt Ravensburg")
-SIGN_DISTRICT = re.compile(r"(?i)^\W*(?:lkr|landkreis|kreis|gemeinde|gem|stadt|markt|ortsteil|ot|bezirk|bez|kanton"
+SIGN_DISTRICT = re.compile(r"(?i)^\W*(?:lkr|landkreis|kreis|gemeinde|gem|gde|goe|stadt|markt|ortsteil|ot|bezirk"
+                           r"|bez|kanton"
                            r"|(?:gro(?:ß|ss)e\s+)?kreisstad\w*|gro(?:ß|ss)e)\b")
 SIGN_NAME = re.compile(r"^[A-ZÄÖÜ][A-Za-zÄÖÜäöüß.\-' ]{3,}$")
 SIGN_TOWN_S = {'city': float('inf'), 'town': 900}  # the longest a town's stretch from its sign runs; a village 300 s
+SIGN_LATE_S = 30  # a segment starting this long after a sign is still in its town
+SIGN_EMPTY_LATE_S = 120  # ... in a proposal with no locality (35ao15Ju1Nk: 79 s; Gl9YlbRfD4w's 142 s was not)
 
 
 def settlements(lat, lon, km=30):
@@ -7022,6 +7025,12 @@ def town_sign_events(read, places):
     return out
 
 
+def _sign_place(word, places):
+    """The place a word read on a sign names exactly (letters only, ß as ss), else None."""
+    w = _sign_key(word)
+    return next((name for name, *_ in places if _sign_key(name) == w), None) if len(w) >= 3 else None
+
+
 def town_sign_split(p, sig_path, df, home=None):
     """A one-locality proposal in TOWN_SIGN_COUNTRIES split by its town signs (town_sign_events): each town entered
     takes the segment its sign is in (or one starting within 30 s after it, and the segments following on without a
@@ -7053,11 +7062,26 @@ def town_sign_split(p, sig_path, df, home=None):
             if _same_name(r.locality, name) and _km(*pos[name], float(r.lat), float(r.lon)) <= 5:
                 return [r.locality, r.state if isinstance(r.state, str) else None, r.country]
         return [name, None, country]
-    ev = [x for x in town_sign_events(json.loads(str(np.load(sig_path)['signs'])), places)
-          if kind.get(x[2]) != 'hamlet' or any(_same_name(n, x[2]) for n in rows['locality'])]
+    read = json.loads(str(np.load(sig_path)['signs']))
+    ev = []
+    for t, what, name in town_sign_events(read, places):
+        if kind.get(name) == 'hamlet' and not any(_same_name(n, name) for n in rows['locality']):
+            # a hamlet's sign names its Gemeinde under it: the drive is in that ("Kasernen / Gde. Berg",
+            # 35ao15Ju1Nk; user, 2026-10-27)
+            name = next((n for u in read if abs(float(u) - t) <= 1 for x in read[u]
+                         if not SIGN_DISTRICT.match(x) and (n := _sign_place(x, places)) and n != name
+                         and kind.get(n) in ('village', 'town', 'city')), None)
+            if not name:
+                continue
+        ev.append((t, what, name))
     stretches = []
     for i, (t, what, name) in enumerate(ev):
-        seg = next((g for g in segs if g['start'] - 30 <= t < g['end']), None) if what == 'in' else None
+        # with no locality to keep, a segment after a sign is in its town as long as its stretch could run: the
+        # drive entered Kasernen (Gemeinde Berg) at 13:42, its segment starts at 15:01 after a rural cut
+        # (35ao15Ju1Nk; user, 2026-10-27)
+        late = SIGN_LATE_S if first else SIGN_EMPTY_LATE_S
+        seg = next((g for g in segs if g['start'] - late <= t < g['end']
+                    and not any(t < x[0] < g['start'] for x in ev)), None) if what == 'in' else None
         if not seg:
             continue
         end = seg['end']
