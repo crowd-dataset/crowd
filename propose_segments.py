@@ -8489,6 +8489,8 @@ tr.entryhead td { border-top: 0; padding-top: 8px; }
 .locbox { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
 .locmap { flex-basis: 100%; font-size: 12px; color: #666; }
 .locmap .leafmap { width: 420px; height: 240px; border: 1px solid #ccc; margin-top: 4px; }
+.locmap .paste-at { font-size: 12px; margin-left: 6px; }
+.locmap .paste-at.bad { border-color: #c00; background: #fee; }
 /* Leaflet's own layers reach z-index 1000: keep them under the sticky player and the locality suggestions */
 .routemap, .locmap .leafmap { position: relative; z-index: 0; }
 .locbox input, .locbox select { font-size: 14px; padding: 3px 6px; }
@@ -9111,6 +9113,27 @@ async function saveLocality(el) {
                                : '✓ in the mapping';
   showMap(box, out.new);
 }
+// lat, lon as Google Maps gives them (user, 2026-10-28: the lookups are sometimes off and checked there): copied
+// from its right-click menu ("52.36760, 4.90410"), its degrees ("52°22'03.4"N 4°54'14.8"E") or a link (a place's
+// !3d...!4d..., else the view's @lat,lon)
+const DMS = String.raw`(\\d+(?:\\.\\d+)?)°\\s*(?:(\\d+(?:\\.\\d+)?)['′]\\s*)?(?:(\\d+(?:\\.\\d+)?)["″]\\s*)?`;
+function parseLatLon(text) {
+  const t = String(text).trim();
+  let m = t.match(/!3d(-?\\d+(?:\\.\\d+)?)!4d(-?\\d+(?:\\.\\d+)?)/);
+  m = m || t.match(/@(-?\\d+(?:\\.\\d+)?),(-?\\d+(?:\\.\\d+)?)/);
+  let lat, lon;
+  if (m) {
+    [lat, lon] = [+m[1], +m[2]];
+  } else if ((m = t.match(new RegExp(DMS + '([NS])[\\\\s,;]*' + DMS + '([EW])', 'i')))) {
+    const deg = (d, mi, s, h) => (+d + (+mi || 0) / 60 + (+s || 0) / 3600) * (/[SW]/i.test(h) ? -1 : 1);
+    [lat, lon] = [deg(m[1], m[2], m[3], m[4]), deg(m[5], m[6], m[7], m[8])];
+  } else if ((m = t.match(/^\\(?\\s*(-?\\d+(?:\\.\\d+)?)\\s*[,;\\s]\\s*(-?\\d+(?:\\.\\d+)?)\\s*\\)?$/))) {
+    [lat, lon] = [+m[1], +m[2]];
+  } else {
+    return null;
+  }
+  return Math.abs(lat) <= 90 && Math.abs(lon) <= 180 ? { lat, lon } : null;
+}
 async function showMap(box, isNew) {
   // a locality not in the mapping yet: where the add-video lookups put it, to check before Apply creates it
   const map = box.querySelector('.locmap');
@@ -9123,24 +9146,38 @@ async function showMap(box, isNew) {
   const res = await fetch('where?' + q);
   const out = await res.json();
   if (!res.ok) { map.textContent = '⚠ ' + out.error; return; }
-  map.innerHTML = '<span class="where"></span><div class="leafmap"></div>';
-  const where = map.querySelector('.where');
+  map.innerHTML = '<span class="where"></span> <input class="paste-at" size="30" ' +
+    'placeholder="or paste lat, lon from Google Maps" title="as Google Maps copies them: 52.36760, 4.90410; ' +
+    '52°22&#39;03.4&quot;N 4°54&#39;14.8&quot;E; or a Google Maps link"><div class="leafmap"></div>';
+  const where = map.querySelector('.where'), paste = map.querySelector('.paste-at');
   const say = (lat, lon, moved) => where.textContent =
     `new locality at ${lat.toFixed(4)}, ${lon.toFixed(4)}` +
     (moved ? ' (moved by hand)' : ': drag the marker if it is off');
   say(out.lat, out.lon, out.moved);
+  let marker = null, leaf = null;
+  const setAt = async (lat, lon) => {
+    const res = await fetch('at', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ video: box.dataset.video, entry: +box.dataset.entry, lat, lon }) });
+    if (!res.ok) { alert((await res.json()).error); return false; }
+    say(lat, lon, true);
+    return true;
+  };
+  const pasted = async () => {
+    const at = parseLatLon(paste.value);
+    if (!at) { paste.classList.add('bad'); paste.title = 'not a lat, lon: e.g. 52.36760, 4.90410'; return; }
+    paste.classList.remove('bad');
+    if (!await setAt(at.lat, at.lon)) return;
+    paste.value = '';
+    if (marker) { marker.setLatLng([at.lat, at.lon]); leaf.setView([at.lat, at.lon], Math.max(leaf.getZoom(), 12)); }
+  };
+  paste.addEventListener('paste', () => setTimeout(pasted));  // the pasted text is in the box after the event
+  paste.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); pasted(); } });
   if (!window.L) { where.textContent += ' (the map needs internet: Leaflet from unpkg.com)'; return; }
-  const leaf = L.map(map.querySelector('.leafmap'), { scrollWheelZoom: false }).setView([out.lat, out.lon], 12);
+  leaf = L.map(map.querySelector('.leafmap'), { scrollWheelZoom: false }).setView([out.lat, out.lon], 12);
   L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',
               { maxZoom: 18, attribution: '&copy; OpenStreetMap contributors' }).addTo(leaf);
-  const marker = L.marker([out.lat, out.lon], { draggable: true }).addTo(leaf);
-  marker.on('dragend', async () => {
-    const { lat, lng } = marker.getLatLng();
-    const res = await fetch('at', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ video: box.dataset.video, entry: +box.dataset.entry, lat, lon: lng }) });
-    if (!res.ok) { alert((await res.json()).error); return; }
-    say(lat, lng, true);
-  });
+  marker = L.marker([out.lat, out.lon], { draggable: true }).addTo(leaf);
+  marker.on('dragend', () => { const { lat, lng } = marker.getLatLng(); setAt(lat, lng); });
 }
 document.querySelectorAll('.locmap[data-new]').forEach(m => showMap(m.closest('.locbox'), true));
 const esc = x => String(x).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
