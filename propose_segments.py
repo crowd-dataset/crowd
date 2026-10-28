@@ -8430,7 +8430,8 @@ def apply_segments(video_id, locality, state, country, segments, vehicle_type, u
 
 
 REVIEW_HTML = """<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><title>Review proposals</title>
+<html lang="en"><head><meta charset="utf-8">
+<title>{% if channel %}{{ channel.name }} · {% endif %}Review proposals</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22>
 <text y=%22.9em%22 font-size=%2290%22>🚕</text></svg>">
 <style>

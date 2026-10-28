@@ -22,13 +22,15 @@ import run_channels as rc
 # mini ('sheet rows 1/2, no queue') is out until its new account is set up (2026-10-11)
 WORKERS = {'lin5080': 'queue phase 5 (highway videos to redo), then 2 (new uploads of processed channels): '
                       'every other channel (--queue-rows 0/2)',
-           'wsl5090': 'sheet rows 0/2, then queue phase 4 (UCxbv63aE7sg8_HzYz5KFPeA highway videos), 1 and 3',
+           # phase 6 here and phase 3 on lin5080b since 2026-10-28 (user: Shadab's runs often pause lin5080b)
+           'wsl5090': 'sheet rows 0/2, then queue phase 4 (UCxbv63aE7sg8_HzYz5KFPeA highway videos), 1 and 6',
            # account pavlo since 2026-10-12 (shadab before): ~/crowd-routine, started by cron with start_worker.sh
-           # phases 1 and 3, the half of them wsl5090 leaves (user, 2026-10-21: with phases 6, 2 it took channels
-           # wsl5090b and lin5080b took too)
-           'mini': 'queue phases 1 and 3: the other half of wsl5090\'s (--rows 1/2 --phases 1,3)',
+           # phases 1 and 6, the half of them wsl5090 leaves (user, 2026-10-21: with phases 6, 2 it took channels
+           # wsl5090b and lin5080b took too, as their shares overlapped)
+           'mini': 'queue phases 1 and 6: the other half of wsl5090\'s (--rows 1/2 --phases 1,6)',
            # a second worker on lin5080 (user, 2026-10-18: its GPU had room), in its own folder
-           'lin5080b': 'queue phase 6 (new uploads of the channels added from the mapping)',
+           # paused while Shadab's crowd-city runs use lin5080 (~/crowd_city_runs), so phase 3 (user, 2026-10-28)
+           'lin5080b': 'queue phase 3 (every video of the sheet\'s unfinished channels)',
            # and one on wsl5090 (user, 2026-10-18), paused while win5090 is used, the first going on (wsl_yield.py)
            'wsl5090b': 'queue phase 5, then 2: the other half of lin5080\'s (--queue-rows 1/2)'}
 REMOTE = 'crowd-routine'       # the repository on each worker, relative to its home
