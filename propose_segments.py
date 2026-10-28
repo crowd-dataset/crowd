@@ -3848,10 +3848,15 @@ NOT_DRIVING_TITLE = re.compile(r'\b(?:walk(?:s|ing|around|about)?|wa(?:king|ling
                                r'|subway|underground train|tram|streetcar|trolley|light rail|monorail|cable car'
                                r'|funicular|(?:train|cab|railway|rail) (?:ride|view|journey)|trains?|railways?'
                                r'|metro (?:ride|journey|line|train|exp)'
-                               r'|(?:on|from|by) (?:the |\w+ )?metro(?! area)|riding\b[^|]*\bline'
-                               # drones and flights (tam7IqTDBTU: "Downtown Long Beach from above"; of 71 such
-                               # titles none approved; user, 2026-10-15)
-                               r"|drones?|aerials?|from above|bird'?s?[- ]eye|fly(?:ing)? over|fpv)\b", re.I)
+                               r'|(?:on|from|by) (?:the |\w+ )?metro(?! area)|riding\b[^|]*\bline)\b', re.I)
+# drones and flights (tam7IqTDBTU: "Downtown Long Beach from above"; of 71 such titles none approved; user, 2026-10-15),
+# even when the title says it is a drive: "Ajmer Jaipur highway driving in a van: View from the air ... seen aerially"
+# (CHxfYbsJjDs; user, 2026-10-28; none approved of the 4 reviewed drone titles that say "driving", nor of the 48
+# reviewed titles the words added then take)
+AERIAL_TITLE = re.compile(r"\b(?:drones?|aerials?|aerially|from above|bird'?s?[- ]eye|birds?'? ?view"
+                          r"|fly(?:ing)? over|fpv|(?:from|through) the (?:air|sky|skies)"
+                          r"|from (?:a|the) (?:plane|helicopter)|helicopter (?:ride|tour|flight|view))\b",
+                          re.IGNORECASE)
 # national parks and forests have no urban driving (yHEDro64z0Y, Zion; none of 28 such titles was approved)
 NATURE_TITLE = re.compile(r'\b(?:national|state|provincial|regional) (?:park|forest|monument|seashore|recreation area'
                           r'|preserve)s?\b|\bnational parks?\b|\bwilderness\b|\bscenic byway\b', re.I)
@@ -4171,6 +4176,9 @@ def exclusion_reason(meta):
     hit = EXCLUDE_TITLE.search(title)
     if hit:
         return f"title mentions '{hit.group(0)}'"
+    hit = AERIAL_TITLE.search(title)
+    if hit:
+        return f"drone or flight footage (title mentions '{hit.group(0)}')"
     hit = NOT_DRIVING_TITLE.search(title)
     if hit and not says_drive(title):
         return f"not a drive (title mentions '{hit.group(0)}')"
