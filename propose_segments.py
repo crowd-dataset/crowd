@@ -5494,11 +5494,34 @@ def place_localities(phrases, df, home=None):
         bare = re.sub(rf'\s+(?:{"|".join(re.escape(n) for n in add_video.US_STATE_CODES)})$', '',
                       phrase.split(',')[0], flags=re.I)
         itself = hit and hit[0] and _name_key(bare) == _name_key(re.sub(r' Township$', '', hit[0]))
+        if home and hit and _km(home[3], home[4], hit[4], hit[5]) > TYPO_FAR_KM and (
+                typo := _near_home_typo(bare, df, home)):
+            yield typo, phrase
+            continue
         if usable(hit) and (loc := _hit_locality(hit, df, countries, named=bool(itself))):
             yield loc, phrase
 
 
 REGION_KM = 150  # see place_localities
+TYPO_FAR_KM, TYPO_NEAR_KM = 100, 30  # see _near_home_typo
+
+
+def _near_home_typo(name, df, home):
+    """[locality, state, country] of the mapping locality within TYPO_NEAR_KM of the channel's home that name is
+    misspelt from (0.9 alike), else None: "Althausen" in a title of a channel at home in Altshausen was the
+    Althausen near Bad Mergentheim, 174 km away (7H8ON5og2lU; user, 2026-10-28). place_localities asks only when the
+    place found lies over TYPO_FAR_KM from home: of the reviewed proposals that changes only this one."""
+    key, best = _name_key(name), None
+    for r in df[df['country'] == home[2]].itertuples():
+        k = _name_key(r.locality)
+        if k == key or _km(home[3], home[4], float(r.lat), float(r.lon)) > TYPO_NEAR_KM:
+            continue
+        ratio = difflib.SequenceMatcher(None, key, k).ratio()
+        if ratio >= 0.9 and (best is None or ratio > best[0]):
+            best = (ratio, [r.locality, r.state if isinstance(r.state, str) else None, r.country])
+    return best and best[1]
+
+
 NEARBY_PLACES = '_output/proposals/nearby_places.json'  # GeoNames answers kept between runs
 
 
