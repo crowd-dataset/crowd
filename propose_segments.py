@@ -5004,6 +5004,7 @@ def place_phrases(text, limit=4):
         return m.group(0) if street else {'Mt': 'Mount ', 'Ft': 'Fort ', 'St': 'Saint '}[m.group(1)]
     text = re.sub(r"\b(Mt|Ft|St)\.?\s+(?=[A-Z])", saint, text)
     phrases, run, before = [], [], ''
+    regions = {r.lower() for r in _region_names()}
     # a hyphen inside a word only ("Wilkes-Barre"): "Brooklyn Downtown- 15 mins" names Brooklyn (pj_63OC2rSM)
     for token in re.findall(r"[^\W\d_](?:[\w'’]|-(?=\w))*|[^\w\s]+|\d\w*", text) + ['.']:
         word = token.lower()
@@ -5038,7 +5039,10 @@ def place_phrases(text, limit=4):
         words = [w.lower() for t in run for w in re.split(r"['’]", t) if w]  # "Let's"; "I-80" stays one
         plain = not near_downtown and bool(words) and (
             all(ordinary(w) for w in words) if len(run) == 1 else all(w in GENERIC_RUN for w in words))
-        if run and not plain and (len(run) > 1 or len(run[0]) > 3):
+        # nor the end of a region's name whose first word is no place word: "York" of "New York" was York, PA
+        # (NrJkGqKNQfU: "Around Olean, Cattaraugus County, New York, USA"; user, 2026-10-28), "Mexico" of "New Mexico"
+        tail = bool(run) and f"{start_after} {' '.join(run)}".lower() in regions
+        if run and not plain and not tail and (len(run) > 1 or len(run[0]) > 3):
             phrases.append(' '.join(run))
         run = []
     # a name written with its state ("Cutler,Ca", "Dorado,Puerto Rico") is a place even when it is also a word,
@@ -5465,10 +5469,19 @@ def place_localities(phrases, df, home=None):
     # a state only qualifies the town named with it ("Palmerton, Pennsylvania"): as a place of its own it would
     # be the anchor, or match some "Pennsylvania" road in another town; the town is looked up in it
     phrases = [p for p in phrases if _name_key(p) not in states]  # a state alone is no locality
+    written = {}
     if len(named) == 1 and any(_name_key(p) not in states for p in phrases):
-        phrases = [f'{p}, {next(iter(named))}' for p in phrases]
+        written = {f'{p}, {next(iter(named))}': p for p in phrases}
+        phrases = list(written)
     # looked for nearest home, and with a state named anywhere in the country, not only within reach of home
     hits = [(p, _osm_place(p, codes, (home[3], home[4]) if home else None, 5000 if named else None)) for p in phrases]
+    # ... and as written when the name with its state is nothing to OpenStreetMap: "Elmhurst Queens, New York" is
+    # not found, "Elmhurst Queens" is New York City (usable keeps such a hit to the state named; NrJkGqKNQfU, user,
+    # 2026-10-28: "York" of "New York" had made two states named, so the names were looked up as written)
+    # (in the US only: elsewhere a name of a province's, "Pascual Subd" of Cotabato, found as written was a namesake)
+    if next(iter(named), '').lower() in add_video.US_STATE_CODES:
+        hits = [(p, h or (_osm_place(written[p], codes, (home[3], home[4]) if home else None, 5000)
+                          if p in written else None)) for p, h in hits]
     if home:  # a major city of the name beats a namesake near home (J7LDm95K-hM: Atlanta, GA for a Los Angeles
         # channel, not Atlanta, NV); Springfield (0.61) and Waterloo (0.56) are too many places to say
         hits = [(p, big if (big := _osm_place(p, codes)) and big[6] >= MAJOR_PLACE and (not h or h[6] < big[6] - 0.2)
