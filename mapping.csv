@@ -10463,9 +10463,9 @@ id,locality,locality_aka,state,country,iso3,continent,lat,lon,gmp,population_loc
 10462,Badr,[],,Egypt,EGY,Africa,30.142806,31.742824,,32940,118365995,10.1,85.29,167.73,25.2,28.5,0.0,[iA8ys5dmenU],[[0]],[[1]],[[661]],[0],[16062026],[UC3q-p1pPfoFvvObb-6-gprQ]
 10463,Al Karak,[],,Jordan,JOR,Asia,31.1847222,35.7047218,,21678,11520684,17.0,96.6,167.15,24.6,33.7,,[mB-Y6BjTgvg],"[[0,0]]","[[0,198]]","[[198,786]]",[0],[3062026],[UC3q-p1pPfoFvvObb-6-gprQ]
 10464,Kasernen,[],,Germany,DEU,Europe,47.8197991,9.6076643,,,83491249,3.8,,173.23,47.8,33.7,15.25,[35ao15Ju1Nk],[[0]],[[822]],[[1076]],[0],[9062026],[UCM9lwreu8qHhqDhReU_yIVg]
-10466,Wilhelmsdorf,[],Baden-Württemberg,Germany,DEU,Europe,47.864875,9.4255639,,4903,83491249,3.8,,173.23,47.8,33.7,0.0,"[j9cvkgja00A,3vJuwV1JvX4]","[[0],[0]]","[[103],[375]]","[[109],[399]]","[0,0]","[20052026,14052026]","[UCM9lwreu8qHhqDhReU_yIVg,UCM9lwreu8qHhqDhReU_yIVg]"
-10467,Unterweiler,[],,Germany,DEU,Europe,47.9418157,9.402513,,6841,83491249,3.8,,173.23,47.8,33.7,0.0,"[43u_9JEgg0c,PpFhCrt8cxA]","[[0],[0]]","[[156],[162]]","[[291],[462]]","[0,0]","[15052026,24042026]","[UCM9lwreu8qHhqDhReU_yIVg,UCM9lwreu8qHhqDhReU_yIVg]"
-10468,Bad Mergentheim,[],,Germany,DEU,Europe,49.4907909,9.77317,,22472,83491249,3.8,,173.23,47.8,33.7,0.0,[7H8ON5og2lU],[[0]],[[1]],[[509]],[0],[29042026],[UCM9lwreu8qHhqDhReU_yIVg]
-10469,Ebenweiler,[],,Germany,DEU,Europe,47.9013954,9.5143045,,1116,83491249,3.8,,173.23,47.8,33.7,0.0,[8w2tJyfsodc],[[0]],[[1058]],[[1076]],[0],[22042026],[UCM9lwreu8qHhqDhReU_yIVg]
-10470,Al Salt,[],,Jordan,JOR,Asia,32.0390779,35.7269843,,107874,11520684,17.0,96.6,167.15,24.6,33.7,,[A7xyVtkY-Zw],[[0]],[[1]],[[425]],[0],[7052026],[UC3q-p1pPfoFvvObb-6-gprQ]
-10471,Oberstdorf,[],,Germany,DEU,Europe,47.4104347,10.2774409,,9279,83491249,3.8,,173.23,47.8,33.7,0.0,[Hha1wy7hGto],[[0]],[[533]],[[833]],[0],[8062026],[UCM9lwreu8qHhqDhReU_yIVg]
+10465,Wilhelmsdorf,[],Baden-Württemberg,Germany,DEU,Europe,47.864875,9.4255639,,4903,83491249,3.8,,173.23,47.8,33.7,0.0,"[j9cvkgja00A,3vJuwV1JvX4]","[[0],[0]]","[[103],[375]]","[[109],[399]]","[0,0]","[20052026,14052026]","[UCM9lwreu8qHhqDhReU_yIVg,UCM9lwreu8qHhqDhReU_yIVg]"
+10466,Unterweiler,[],,Germany,DEU,Europe,47.9418157,9.402513,,6841,83491249,3.8,,173.23,47.8,33.7,0.0,"[43u_9JEgg0c,PpFhCrt8cxA]","[[0],[0]]","[[156],[162]]","[[291],[462]]","[0,0]","[15052026,24042026]","[UCM9lwreu8qHhqDhReU_yIVg,UCM9lwreu8qHhqDhReU_yIVg]"
+10467,Bad Mergentheim,[],,Germany,DEU,Europe,49.4907909,9.77317,,22472,83491249,3.8,,173.23,47.8,33.7,0.0,[7H8ON5og2lU],[[0]],[[1]],[[509]],[0],[29042026],[UCM9lwreu8qHhqDhReU_yIVg]
+10468,Ebenweiler,[],,Germany,DEU,Europe,47.9013954,9.5143045,,1116,83491249,3.8,,173.23,47.8,33.7,0.0,[8w2tJyfsodc],[[0]],[[1058]],[[1076]],[0],[22042026],[UCM9lwreu8qHhqDhReU_yIVg]
+10469,Al Salt,[],,Jordan,JOR,Asia,32.0390779,35.7269843,,107874,11520684,17.0,96.6,167.15,24.6,33.7,,[A7xyVtkY-Zw],[[0]],[[1]],[[425]],[0],[7052026],[UC3q-p1pPfoFvvObb-6-gprQ]
+10470,Oberstdorf,[],,Germany,DEU,Europe,47.4104347,10.2774409,,9279,83491249,3.8,,173.23,47.8,33.7,0.0,[Hha1wy7hGto],[[0]],[[533]],[[833]],[0],[8062026],[UCM9lwreu8qHhqDhReU_yIVg]
