@@ -151,6 +151,16 @@ WHO = 'Claude+Pavlo'  # column E (Processed by) of the channels this routine wor
 BY = f', column E (Processed by) to {WHO}'
 
 
+FROM_MAPPING = 'added from the mapping'  # Comments (column D) of the rows added from the mapping: queue phase 6
+
+
+def from_mapping(url):
+    """Whether the sheet row of url was added from the mapping (its videos were in the mapping before it was on the
+    sheet): its new uploads are queue phase 6, never a new channel of the sheet, even with column B blank (user,
+    2026-10-28: those not checked yet are blank; Olena takes them from the bottom, the machines from the top)."""
+    return COMMENTS.get(url, '').startswith(FROM_MAPPING)
+
+
 def ours(url, status):
     """Whether this routine may set the sheet row of url: blank or "Processing", or marked by it before (a channel
     found sped up after it was "Processed")."""
@@ -178,6 +188,14 @@ def write_sheet_todo(state, sheet):
              for c in state.values() if c.get('refresh') and not c.get('deferred') and c.get('url') in new
              and c['status'] in want
              and (status.get(c['url']) != want[c['status']] or PROCESSED_BY.get(c['url'], '') != WHO)]
+    # a row added from the mapping, left blank until checked: "Processing" once a machine here takes its new
+    # uploads, so Olena leaves it, then "Processed" (the review's rejections too: the channel is checked)
+    others, checked = others_channels(), {**want, 'rejected': 'Processed'}
+    todo += [{'row': now_at[c['url']], 'url': c['url'], 'status': checked[c['status']], 'by': WHO, 'comment': ''}
+             for c in state.values() if c.get('refresh') and not c.get('deferred') and c.get('url') in now_at
+             and from_mapping(c['url']) and c['status'] in checked and ours(c['url'], status)
+             and not theirs(c['url'], others)
+             and (status.get(c['url']) != checked[c['status']] or PROCESSED_BY.get(c['url'], '') != WHO)]
     if todo and os.path.exists(SHEET_KEY):  # the reviewing machine enters them itself
         try:
             todo = write_sheet(todo)
@@ -585,7 +603,7 @@ def main():
                 and not state.get(url, {}).get('host')  # a worker machine's channel
                 and (url in state or args.rows is None or n % args.rows[1] == args.rows[0])
                 and not (url not in state and country.strip().lower() == 'russia')  # Olena's (user, 2026-10-10)
-                and not theirs(url, others)
+                and not theirs(url, others) and not from_mapping(url)  # those are queue phase 6
                 and not ((args.no_new or args.refresh_only) and url not in state)]
         for c in state.values():  # a country taken off PAUSED_COUNTRIES: its channels go on
             if c.get('status') == 'paused' and (c.get('country') or '').strip().lower() not in PAUSED_COUNTRIES:

@@ -105,7 +105,8 @@ def main():
                 others.add(channel_id(url, known))
             except RuntimeError:
                 pass
-        if status not in ('Processed', 'Offline', 'Not finished'):
+        added = rc.from_mapping(url)  # left blank until a machine or Olena checks its new uploads (2026-10-28)
+        if status not in ('Processed', 'Offline', 'Not finished') and not (added and status in ('', 'Processing')):
             try:
                 listed.add(channel_id(url, known))
             except RuntimeError:
@@ -143,10 +144,10 @@ def main():
         else:
             left_out.append((url, 'subscription: its latest uploads are no drives'))
     for cid, (n, url, status, country) in sheet.items():
+        if rc.from_mapping(url) and status in ('Processed', '', 'Processing'):
+            continue  # phase 6, below
         if status == 'Processed' and not mapped[cid]:
             left_out.append((url, f'row {n}: processed, but none of its videos is in the mapping'))
-        elif status == 'Processed' and rc.COMMENTS.get(url, '').startswith('added from the mapping'):
-            continue  # phase 6, below
         elif status in ('Processed', 'Offline'):
             try:
                 if status == 'Offline' and not has_uploads(cid):  # back, but with nothing to fetch
@@ -165,8 +166,11 @@ def main():
     except (OSError, ValueError):
         pass
     for cid, (n, url, status, country) in sheet.items():
-        if status == 'Processed' and mapped[cid] and rc.COMMENTS.get(url, '').startswith('added from the mapping'):
-            add(cid, url, country, f'sheet row {n}: added from the mapping, its new uploads', 6)
+        if rc.from_mapping(url) and status in ('Processed', '', 'Processing'):
+            if mapped[cid]:
+                add(cid, url, country, f'sheet row {n}: added from the mapping, its new uploads', 6)
+            else:
+                left_out.append((url, f'row {n}: added from the mapping, but none of its videos is in it now'))
     with open(HANDLES, 'w') as f:
         json.dump(known, f, indent=1)
     with open(rc.REFRESH_QUEUE + '.tmp', 'w') as f:
