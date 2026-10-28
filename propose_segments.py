@@ -3890,6 +3890,28 @@ def usual_locality(plan, share=0.5, min_videos=5):
     return loc if n > share * total else None
 
 
+MAPPED_USUAL_SHARE = 0.9  # see mapped_usual
+
+
+def mapped_usual(channel_id, df, share=MAPPED_USUAL_SHARE, min_videos=5):
+    """[locality, state, country] of more than share of the channel's videos in the mapping (at least min_videos of
+    them), else None: a new batch of a channel has no reviews for usual_locality yet (lost394, 38 of its 39 mapped
+    videos in Chengdu: SzoUziKlB8Y, "Why Do Chinese Like to Make Money?", had no locality; user, 2026-10-28). Of
+    1,639 reviewed videos of channels over 90% in one locality (the video left out) 1,593 are there; most others
+    name their place."""
+    counts = Counter()
+    for _, row in df.iterrows():
+        n = sum(add_video._normalize_optional_text(c) == channel_id
+                for c in add_video._parse_flat_list_cell(row.get('channel', '')))
+        if n:
+            counts[(row['locality'], row['state'] if isinstance(row['state'], str) else None, row['country'])] += n
+    total = sum(counts.values())
+    if not channel_id or total < min_videos:
+        return None
+    loc, n = counts.most_common(1)[0]
+    return list(loc) if n > share * total else None
+
+
 def channel_folder(url):
     """The channel's folder name under _output/proposals: its handle or id, without the path or a query
     (UCjaZ_Lko0XB49cCs-bnlz4A?source_ve_path=... from a link copied off an embed). A channel that already has a
@@ -8091,6 +8113,7 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
                 metas[p['video']] = json.load(f)
     channels = Counter(p.get('channel_id') for p in plan.values() if p.get('channel_id'))
     home = channel_home(channels.most_common(1)[0][0], df, plan, country) if channels else None
+    mapped = mapped_usual(channels.most_common(1)[0][0], df) if channels else None
     # places a video may be in: the channel's country, abroad within reach of its home, and the countries it has
     # filmed in before (a travel channel's trips; Puerto Rico for a New York channel), not anywhere: a title's
     # "Campo Alegre" is not the one in Brazil
@@ -8210,8 +8233,8 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
             if found:
                 e['locality'], e['guessed'] = list(found[0]), True
                 p['note'] = f"{p['note']}; locality {found[0][0]} from where '{found[1]}' is".lstrip('; ')
-            elif (abroad := [c for c in title_countries(p['title']) if not (usual := usual_locality(plan))
-                             or c != usual[2]]):
+            elif (abroad := [c for c in title_countries(p['title'])
+                             if not (usual := usual_locality(plan) or mapped) or c != usual[2]]):
                 # a title naming another country is not the channel's usual place (X53fh12knn8: "Pakistan's
                 # Busiest City Karachi To Lahore" was New York; an hour cannot be Karachi to Lahore either, so it is
                 # left to the reviewer; user, 2026-10-16)
@@ -8220,6 +8243,10 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
                 e['locality'], e['guessed'] = list(usual), True
                 p['note'] = (f"{p['note']}; locality {usual[0]}: where most of this channel's reviewed videos are "
                              '(nothing in the title or description names a place: check)').lstrip('; ')
+            elif (usual := mapped):  # ... or of its videos in the mapping
+                e['locality'], e['guessed'] = list(usual), True
+                p['note'] = (f"{p['note']}; locality {usual[0]}: where nearly all this channel's videos in the "
+                             'mapping are (nothing in the title or description names a place: check)').lstrip('; ')
     # a drive "from A to B" without chapters passes through A, B and the towns between: split it along its route
     for p in new:
         sig_path = os.path.join(out_dir, f"{p['video']}_signals.npz")
