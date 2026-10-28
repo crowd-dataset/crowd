@@ -353,11 +353,17 @@ def gdp_per_capita(max_age_days: int = 30) -> pl.DataFrame | None:
 def _world_bank(code: str, max_age_days: int = 30) -> dict:
     """ISO3 -> a World Bank indicator in each country's latest year ({} when it cannot be downloaded or the reply is
     an error message)."""
+    # every year in one page: since October 2026 the API ignores mrnev=1 (latest year only) and sends all years, 18
+    # pages of 1,000, the first holding regions and few countries (the wealth figures then had none and failed)
     data = _cached_json(code, f"https://api.worldbank.org/v2/country/all/indicator/{code}",
-                        {"format": "json", "mrnev": 1, "per_page": 1000}, max_age_days)
+                        {"format": "json", "mrnev": 1, "per_page": 30000}, max_age_days)
     # a reply is [paging, rows]; an error is [{"message": ...}]
     rows = data[1] if isinstance(data, list) and len(data) > 1 and isinstance(data[1], list) else []
-    return {r["countryiso3code"]: r["value"] for r in rows if r.get("value") is not None and r.get("countryiso3code")}
+    latest = {}  # ISO3 -> (year, value)
+    for r in rows:
+        if r.get("value") is not None and (iso3 := r.get("countryiso3code")):
+            latest[iso3] = max(latest.get(iso3, ("", 0)), (r.get("date") or "", r["value"]))
+    return {k: v for k, (_, v) in latest.items()}
 
 
 def _who(code: str, dim1: str | None = None, max_age_days: int = 180) -> dict:
