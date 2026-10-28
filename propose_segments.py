@@ -7187,6 +7187,126 @@ def town_sign_split(p, sig_path, df, home=None):
     return True
 
 
+# the street names road signs give (Fuqing Rd., Jianshe Rd. N on a gantry in SzoUziKlB8Y, Chengdu; user, 2026-10-28: "is
+# it possible to map videos to cities based on detection of such signs?"): a name read with a street word after it
+# ("Bosley Ave", "Woolner Rd") or before it ("Calle 49B", "Jalan Sudirman")
+STREET_SUFFIX = {'rd': 'Road', 'road': 'Road', 'st': 'Street', 'street': 'Street', 'ave': 'Avenue', 'av': 'Avenue',
+                 'avenue': 'Avenue', 'blvd': 'Boulevard', 'boulevard': 'Boulevard', 'expwy': 'Expressway',
+                 'expressway': 'Expressway', 'hwy': 'Highway', 'highway': 'Highway', 'dr': 'Drive', 'drive': 'Drive',
+                 'ln': 'Lane', 'lane': 'Lane', 'way': 'Way', 'pkwy': 'Parkway', 'parkway': 'Parkway', 'pl': 'Place',
+                 'place': 'Place', 'ct': 'Court', 'court': 'Court', 'cres': 'Crescent', 'crescent': 'Crescent',
+                 'tce': 'Terrace', 'terrace': 'Terrace', 'sq': 'Square', 'square': 'Square', 'pike': 'Pike',
+                 'str': 'Straße', 'strasse': 'Straße', 'straße': 'Straße', 'weg': 'Weg', 'allee': 'Allee',
+                 'platz': 'Platz', 'gasse': 'Gasse', 'damm': 'Damm', 'caddesi': 'Caddesi', 'cad': 'Caddesi',
+                 'sokak': 'Sokak', 'bulvari': 'Bulvarı', 'bulvarı': 'Bulvarı', 'dajie': 'Dajie', 'jie': 'Jie',
+                 'lu': 'Lu', 'dadao': 'Dadao'}
+STREET_PREFIX = {'calle': 'Calle', 'avenida': 'Avenida', 'av': 'Avenida', 'rua': 'Rua', 'rue': 'Rue', 'via': 'Via',
+                 'viale': 'Viale', 'corso': 'Corso', 'jalan': 'Jalan', 'jl': 'Jalan', 'duong': 'Đường',
+                 'đường': 'Đường', 'ul': 'ulica', 'ulica': 'ulica', 'soi': 'Soi', 'thanon': 'Thanon',
+                 'carrera': 'Carrera', 'cra': 'Carrera', 'avenue': 'Avenue', 'boulevard': 'Boulevard'}
+STREET_NUMBERED = {'Calle', 'Carrera', 'Avenida'}  # "Calle 49B" is a name; "via 695" is no street
+STREET_DIRS = {'n': 'North', 's': 'South', 'e': 'East', 'w': 'West', 'north': 'North', 'south': 'South',
+               'east': 'East', 'west': 'West'}
+# words of a caption, a shop or a traffic sign, not of a street's name: "Community Drive Tour", "DRIVE THRU"
+STREET_NOT_NAME = re.compile(r'(?i)\b(?:tour|thru|through|real|time|scenic|community|views?|suburban|one|the|this|'
+                             r'next|exit|only|lane|left|right|keep|stop|slow|speed|limit|ahead|end|no|entry|'
+                             r'entrance|toll|parking|drive|road|street|avenue|way|north|south|east|west|via)\b')
+_STREET_WORD = r"[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ'’.-]+"
+STREET_AFTER = re.compile(rf"\b({_STREET_WORD}(?:\s+{_STREET_WORD}){{0,2}})\s+({'|'.join(STREET_SUFFIX)})\b\.?"
+                          r"(?:\s+(N|S|E|W|North|South|East|West)\b\.?)?", re.IGNORECASE)
+STREET_BEFORE = re.compile(rf"(?:^|\W)({'|'.join(STREET_PREFIX)})\.?\s+((?:\d+\s?[A-Za-z]?\b)|"
+                           rf"{_STREET_WORD}(?:\s+{_STREET_WORD}){{0,2}})", re.IGNORECASE)
+# a vote: the place where the most different street names read have a street (or a station named after one: Chengdu's
+# streets are in Chinese, its metro's "Jianshe North Road" in English too) within STREET_NEAR_KM of one point, at least
+# STREET_MIN_NAMES of them, within STREET_HOME_KM of the channel's home (else STREET_MIN_NAMES + 1), and no other place
+# as many. Of 386 reviewed videos with two names or more read (EasyOCR on GPU workers) it placed 147: 133 within 20 km
+# of the reviewer's locality (the rest mostly a suburb: Bray for Dublin, Fairfield for Sydney), 14 wrong
+STREET_NEAR_KM, STREET_MIN_NAMES, STREET_HOME_KM, STREET_MAX_NAMES = 5, 2, 150, 12
+STREET_CLASSES = {'highway', 'railway', 'public_transport'}
+
+
+def street_names(read):
+    """Counter of the street names in road signs read ({second: [texts]}): in how many frames each is read."""
+    out = Counter()
+    for texts in read.values():
+        seen = set()
+        for text in texts:
+            text = re.sub(r'[\[\](){}|:;!?=`"_*]+', ' ', text).strip()
+            for m in STREET_AFTER.finditer(text):
+                name = m.group(1).strip(" .'-")
+                if len(re.sub(r'\W', '', name)) < 4 or all(STREET_NOT_NAME.fullmatch(w) for w in name.split()):
+                    continue
+                name = ' '.join(w if w.isupper() and len(w) <= 3 else w.capitalize() for w in name.split())
+                seen.add(f'{name} {STREET_SUFFIX[m.group(2).lower()]}'
+                         + (f' {STREET_DIRS[m.group(3).lower()]}' if m.group(3) else ''))
+            for m in STREET_BEFORE.finditer(text):
+                kind, name = STREET_PREFIX[m.group(1).lower()], m.group(2).strip(" .'-")
+                if re.search(r'\d', name):
+                    if kind not in STREET_NUMBERED:
+                        continue
+                elif len(name) < 4 or all(STREET_NOT_NAME.fullmatch(w) for w in name.split()):
+                    continue
+                seen.add(f'{kind} {name.title()}')
+        out.update(seen)
+    return out
+
+
+@_remembered
+def _street_points(name, code):
+    """((lat, lon), ...) of the streets of that name in the country of ISO code (OpenStreetMap, up to 40), and of
+    stations and stops named after it."""
+    found = _nominatim('geocode', name, exactly_one=False, limit=40, country_codes=[code.lower()], language='en',
+                       timeout=20) or []
+    return tuple((r.latitude, r.longitude) for r in found if r.raw.get('class') in STREET_CLASSES)
+
+
+def street_vote(points, home=None):
+    """(lat, lon, names agreeing) of where the street names' points ({name: [(lat, lon)]}) agree (see STREET_NEAR_KM),
+    else None."""
+    if home:
+        points = {n: q for n, p in points.items()
+                  if (q := [x for x in p if _km(*x, home[0], home[1]) <= STREET_HOME_KM])}
+    need = STREET_MIN_NAMES if home else STREET_MIN_NAMES + 1
+
+    def agree(lat, lon):
+        return frozenset(n for n, p in points.items() if any(_km(lat, lon, *x) <= STREET_NEAR_KM for x in p))
+    best = max(((lat, lon, agree(lat, lon)) for p in points.values() for lat, lon in p), key=lambda x: len(x[2]),
+               default=None)
+    if not best or len(best[2]) < need:
+        return None
+    if any(_km(lat, lon, best[0], best[1]) > 3 * STREET_NEAR_KM and len(agree(lat, lon)) >= len(best[2])
+           for p in points.values() for lat, lon in p):
+        return None  # as many somewhere else
+    mid = [min(points[n], key=lambda x: _km(best[0], best[1], *x)) for n in best[2]]
+    return sum(x for x, _ in mid) / len(mid), sum(y for _, y in mid) / len(mid), sorted(best[2])
+
+
+def street_town(sig_path, df, home=None):
+    """([locality, state, country], names agreeing) the street names on a video's road signs (signs, else head_signs
+    in its signals) put it in, in the country of the channel's home; None without a home, sign text or a vote."""
+    files = np.load(sig_path).files if sig_path and os.path.exists(sig_path) else []
+    key = next((k for k in ('signs', 'head_signs') if k in files), None)
+    code = home and common.get_iso2_country_code(common.correct_country(home[2]))
+    if not key or not code:
+        return None
+    names = [n for n, _ in street_names(json.loads(str(np.load(sig_path)[key]))).most_common(STREET_MAX_NAMES)]
+    if len(names) < STREET_MIN_NAMES:
+        return None
+    points = {}
+    for n in names:
+        found = _street_points(n, code)
+        base = re.sub(r' (?:North|South|East|West)$', '', n)  # "Jianshe Road North" as "Jianshe Road" too
+        if not found and base != n:
+            found = _street_points(base, code)
+        if found:
+            points[n] = found
+    vote = street_vote(points, home[3:5])
+    if not vote or not (hit := _osm_reverse(round(vote[0], 4), round(vote[1], 4))):
+        return None
+    loc = _hit_locality((*hit[:4], vote[0], vote[1], 0.0, hit[4]), df, {hit[2]: home[2]}, vote[:2])
+    return (loc, vote[2]) if loc else None
+
+
 def note_signs(p, signs):
     """Add the towns road signs name (sign_towns), each at its first sign, to a proposal's note, once."""
     if not signs or 'road signs:' in (p.get('note') or ''):
@@ -8224,8 +8344,10 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
             # a freeway drive whose only place is a region or a sight, or none: no town to give it, unless its GPS
             # overlay says (HXJ9w8h4CwA, "Southern California freeway drive" was Los Angeles; user, 2026-10-16)
             sig_path = os.path.join(out_dir, f"{p['video']}_signals.npz")
+            # ... else the street names on its road signs (street_town)
+            streets = None if found else street_town(sig_path, df, home)
             if ((HIGHWAY_TITLE.search(p['title'] or '') or motorway_title(p['title']))
-                    and not (found and _name_key(found[0][0]) in _name_key(found[1]))
+                    and not (found and _name_key(found[0][0]) in _name_key(found[1])) and not streets
                     and not (os.path.exists(sig_path) and 'gps' in np.load(sig_path).files)):
                 p.pop('entries')
                 p['exclude'] = 'freeway drive with no town named (title, description, chapters or GPS)'
@@ -8233,6 +8355,10 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
             if found:
                 e['locality'], e['guessed'] = list(found[0]), True
                 p['note'] = f"{p['note']}; locality {found[0][0]} from where '{found[1]}' is".lstrip('; ')
+            elif streets:
+                e['locality'], e['guessed'] = list(streets[0]), True
+                p['note'] = (f"{p['note']}; locality {streets[0][0]} from the streets its road signs name "
+                             f"({', '.join(streets[1])}: check)").lstrip('; ')
             elif (abroad := [c for c in title_countries(p['title'])
                              if not (usual := usual_locality(plan) or mapped) or c != usual[2]]):
                 # a title naming another country is not the channel's usual place (X53fh12knn8: "Pakistan's
