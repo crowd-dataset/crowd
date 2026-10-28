@@ -9090,7 +9090,8 @@ async function saveLocality(el) {
     status.textContent = 'guessing the state…';
     let guess = {};
     try {
-      guess = await (await fetch('state_guess?' + new URLSearchParams({ locality, country }))).json();
+      guess = await (await fetch('state_guess?' + new URLSearchParams(
+        { locality, country, video: box.dataset.video }))).json();
     } catch (e) {}
     if (!guess.state) { status.textContent = '⚠ no state found: add it (e.g. PA) to save'; return; }
     box.querySelector('.loc-state').value = guess.state;
@@ -9137,6 +9138,9 @@ function parseLatLon(text) {
 async function showMap(box, isNew) {
   // a locality not in the mapping yet: where the add-video lookups put it, to check before Apply creates it
   const map = box.querySelector('.locmap');
+  // only the latest lookup draws: a slower one for a name typed before ("Middle Rive", MD) came back after the
+  // corrected name's and put the marker 60 km off (xKSV3YwBNrI; user, 2026-10-28)
+  const ticket = box.dataset.mapTicket = String(+(box.dataset.mapTicket || 0) + 1);
   map.innerHTML = '';
   if (!isNew) return;
   const q = new URLSearchParams({ locality: box.querySelector('.loc-name').value.trim(),
@@ -9145,6 +9149,7 @@ async function showMap(box, isNew) {
   map.textContent = 'finding it on the map…';
   const res = await fetch('where?' + q);
   const out = await res.json();
+  if (box.dataset.mapTicket !== ticket) return;
   if (!res.ok) { map.textContent = '⚠ ' + out.error; return; }
   map.innerHTML = '<span class="where"></span> <input class="paste-at" size="30" ' +
     'placeholder="or paste lat, lon from Google Maps" title="as Google Maps copies them: 52.36760, 4.90410; ' +
@@ -10033,11 +10038,18 @@ def review(plan_path, port=None):
     def state_guess():
         """A state for a locality typed without one, in a country the mapping writes them for: a best guess to check,
         not a refusal (user, 2026-10-22). The mapping's locality of that name in the country (the one with the most
-        videos), else the state OpenStreetMap puts it in, as the mapping writes it."""
+        videos), else the state OpenStreetMap puts it in, as the mapping writes it; a state the video's title names
+        first (xKSV3YwBNrI: "Essex, Maryland To Middle River, Maryland" was guessed MN; user, 2026-10-28)."""
         locality, country = request.args.get('locality', '').strip(), request.args.get('country', '')
         rows = add_video.load_csv(add_video.FILE_PATH)
         rows = rows[rows['country'] == country]
         named = rows[rows['state'].notna() & (rows['locality'].map(_name_key) == _name_key(locality))]
+        p = next((p for p in load() if p['video'] == request.args.get('video')), None)
+        in_title = title_states(p.get('title')) if p and country == 'United States' else set()
+        if len(named[named['state'].isin(in_title)]):
+            named = named[named['state'].isin(in_title)]
+        elif len(in_title) == 1:
+            return jsonify(state=next(iter(in_title)), source='the title')
         if len(named):
             best = max(named.itertuples(), key=lambda r: len(add_video._parse_flat_list_cell(r.videos)))
             return jsonify(state=best.state, source='the mapping')
