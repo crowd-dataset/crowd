@@ -7051,6 +7051,11 @@ def town_sign_split(p, sig_path, df, home=None):
     # around the proposal's locality and the channel's home both: a first guess from a direction sign is off
     # (ZLskCAezdYs: Sigmaringen, 35 km from the Altshausen it drives into)
     anchors = [a[3:5] for a in ((_locality_anchor(first, df) if first else None), home) if a and a[3] is not None]
+    # ... and around the places the title names, regions too: "Allgäu" is 120 km from the channel's home, and
+    # its "Oberstdorf" sign matched an Oberdorf near home (Hha1wy7hGto; user, 2026-10-28)
+    code = _iso2(country)
+    anchors += [h[4:6] for phrase in place_phrases(p.get('title') or '')[:3]
+                if code and (h := _osm_place(phrase, (code,))) and h[4] is not None]
     places = list({x[0] + str(x[2]): x for a in dict.fromkeys(anchors) for x in settlements(*a)}.values())
     if not places:
         return False
