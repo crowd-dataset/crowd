@@ -9,8 +9,9 @@ Phases 1 and 2 fetch the uploads newer than the channel's newest video in the ma
 it. Phase 6 (user, 2026-10-13): the new uploads of the channels added to the sheet from the mapping ("added from
 the mapping" in Comments), after phases 4 and 5 of an earlier queue, which are kept; last of all come the drives
 through several towns held back in the plans (run_channels.deferred_todo). Channels whose only country is Russia
-are Olena's and left out, as are those whose column E (Processed by) names her (run_channels.OTHERS_BY). Writes run_channels.REFRESH_QUEUE ([{url, country, name, why, phase, new_only}]) and a
-readable list beside the subscriptions.
+are Olena's and left out, as are those whose column E (Processed by) names her (run_channels.OTHERS_BY). Writes
+run_channels.REFRESH_QUEUE ([{url, country, name, why, phase, new_only}]) and a readable list beside the
+subscriptions.
 """
 import collections
 import json

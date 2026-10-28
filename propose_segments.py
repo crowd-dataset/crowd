@@ -3849,8 +3849,9 @@ NOT_DRIVING_TITLE = re.compile(r'\b(?:walk(?:s|ing|around|about)?|wa(?:king|ling
                                r'|funicular|(?:train|cab|railway|rail) (?:ride|view|journey)|trains?|railways?'
                                r'|metro (?:ride|journey|line|train|exp)'
                                r'|(?:on|from|by) (?:the |\w+ )?metro(?! area)|riding\b[^|]*\bline)\b', re.I)
-# drones and flights (tam7IqTDBTU: "Downtown Long Beach from above"; of 71 such titles none approved; user, 2026-10-15),
-# even when the title says it is a drive: "Ajmer Jaipur highway driving in a van: View from the air ... seen aerially"
+# drones and flights (tam7IqTDBTU: "Downtown Long Beach from above"; of 71 such titles none approved; user,
+# 2026-10-15), even when the title says it is a drive: "Ajmer Jaipur highway driving in a van: View from the air ...
+# seen aerially"
 # (CHxfYbsJjDs; user, 2026-10-28; none approved of the 4 reviewed drone titles that say "driving", nor of the 48
 # reviewed titles the words added then take)
 AERIAL_TITLE = re.compile(r"\b(?:drones?|aerials?|aerially|from above|bird'?s?[- ]eye|birds?'? ?view"
