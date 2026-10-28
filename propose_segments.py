@@ -5229,7 +5229,8 @@ LANDMARK_TYPES = {'stadium', 'arena', 'casino', 'university', 'college', 'museum
 
 ROAD_KIND = re.compile(r'\b(?:highway|hwy|parkway|pkwy|expressway|expy|freeway|fwy|turnpike|tpke)\b', re.I)
 
-PLACE_AREAS = {'region', 'state', 'province', 'county', 'district', 'state_district', 'archipelago'}  # see _osm_place
+PLACE_AREAS = {'region', 'state', 'province', 'county', 'district', 'state_district', 'archipelago',
+               'island'}  # see _osm_place
 
 
 @_remembered
@@ -5291,9 +5292,11 @@ def _osm_place(phrase, country_codes, near=None, reach_km=None):
           and phrase.split(',')[0].strip().lower() not in add_video.US_STATE_CODES):
         town, kind = re.sub(r' CP$', '', _osm_name(r.raw)), _osm_type(r.raw)
     # ... but a boundary named as its state is the state (udVi6qOYvNI: "South Africa, Mpumalanga" is the
-    # province; user, 2026-10-20: offer no regions or provinces)
+    # province; user, 2026-10-20: offer no regions or provinces), and an archipelago's or island's is no town
+    # either ("Madeira Portugal": cEAPRf_sBNk; user, 2026-10-28: "Madeira is island in Portugal"; of 406 reviewed
+    # title places only Maui and Margarita Island change, both changed by the reviewer)
     if (not town and r.raw.get('class') == 'boundary' and _osm_name(r.raw) != a.get('state')
-            and _osm_type(r.raw) not in ('county', 'state', 'country', 'region')):
+            and _osm_type(r.raw) not in PLACE_AREAS | {'country'}):
         town = _osm_name(r.raw)  # a municipality's own boundary has no town in its address (Little Silver, NJ)
     # a county or a municipality is no locality ("Suffolk" in "Coram in Suffolk"), and a place OpenStreetMap files
     # under no town, or under its municipality only, is the town itself (v7XHCQBdl4w: the suburb Motetema, its
