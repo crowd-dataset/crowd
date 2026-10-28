@@ -9,7 +9,7 @@ Phases 1 and 2 fetch the uploads newer than the channel's newest video in the ma
 it. Phase 6 (user, 2026-10-13): the new uploads of the channels added to the sheet from the mapping ("added from
 the mapping" in Comments), after phases 4 and 5 of an earlier queue, which are kept; last of all come the drives
 through several towns held back in the plans (run_channels.deferred_todo). Channels whose only country is Russia
-are Olena's and left out. Writes run_channels.REFRESH_QUEUE ([{url, country, name, why, phase, new_only}]) and a
+are Olena's and left out, as are those whose column E (Processed by) names her (run_channels.OTHERS_BY). Writes run_channels.REFRESH_QUEUE ([{url, country, name, why, phase, new_only}]) and a
 readable list beside the subscriptions.
 """
 import collections
@@ -74,6 +74,7 @@ def main():
     except (OSError, ValueError):
         known = {}
     queue, left_out, seen = [], [], set()
+    others = set()  # the sheet's channels marked by someone run_channels.OTHERS_BY names: theirs, whatever the status
 
     def add(cid, url, country, why, phase, new_only=True, in_sheet=True):
         if cid in seen:
@@ -90,12 +91,20 @@ def main():
         if country.strip().lower() == 'russia':
             left_out.append((url, "Russia only: Olena's"))
             return
+        if cid in others:
+            left_out.append((url, "column E (Processed by) names Olena: hers"))
+            return
         queue.append({'url': url, 'country': country, 'name': rc.channel_name(url), 'why': why, 'phase': phase,
                       'new_only': new_only, 'in_sheet': in_sheet})
 
     # the sheet's channels by id; its URLs keep the search a channel was done with (…/search?query=driving)
     sheet, listed = {}, set()  # listed: every channel the sheet has, whatever its status
     for n, url, status, country in rc.sheet_rows():
+        if any(name in rc.PROCESSED_BY.get(url, '').lower() for name in rc.OTHERS_BY):
+            try:
+                others.add(channel_id(url, known))
+            except RuntimeError:
+                pass
         if status not in ('Processed', 'Offline', 'Not finished'):
             try:
                 listed.add(channel_id(url, known))

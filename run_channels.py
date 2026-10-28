@@ -330,6 +330,30 @@ def run_chunk(url, country, chunk, single_city=False, new_only=False, deferred=F
 CHANNEL_IDS = '_output/subscriptions/channel_ids.json'  # sheet URL -> channel id (refresh_queue.py, sync_workers.py)
 NEXT_ARGS = os.path.join(ROOT, 'next_args.json')  # ["--rows", "0/2", ...]: this machine's options from its next batch
 TAKEN = os.path.join(ROOT, 'taken.json')  # the channels any machine works or worked on (sync_workers.py)
+# column E (Processed by) names whose channels no machine here touches, as Russia's (user, 2026-10-28: Olena adds
+# their videos by hand with the add_video form, taking channels from the bottom of the refresh queue)
+OTHERS_BY = ('olena',)
+
+
+def same_url(url):
+    return url.split('?')[0].rstrip('/').removesuffix('/videos').lower()
+
+
+def others_channels():
+    """(urls, channel ids, sheet URL -> id) of the sheet's channels someone in OTHERS_BY marked in column E: left
+    to them whatever their status, also one a machine here had started (the sheet as last read)."""
+    urls = {same_url(u) for u, by in PROCESSED_BY.items() if any(n in by.lower() for n in OTHERS_BY)}
+    try:
+        with open(CHANNEL_IDS) as f:
+            known = json.load(f)
+    except (OSError, ValueError):
+        known = {}
+    return urls, {cid for u, cid in known.items() if cid and same_url(u) in urls}, known
+
+
+def theirs(url, others):
+    urls, ids, known = others
+    return same_url(url) in urls or known.get(url) in ids
 
 
 def done_before(url, sheet, state):
@@ -376,14 +400,14 @@ def refresh_todo(state, args, any_phase=False, only=None):
         return []
     if args.no_queue:
         return []
-    todo, share = [], args.queue_rows or args.rows
+    todo, share, others = [], args.queue_rows or args.rows, others_channels()
     try:  # started by another machine (sync_workers.py): left to it
         with open(TAKEN) as f:
             taken = set(json.load(f)) - set(state)
     except (OSError, ValueError):
         taken = set()
     for i, q in enumerate(queue):
-        if 'refresh:' + q['url'] in taken:
+        if 'refresh:' + q['url'] in taken or theirs(q['url'], others):
             continue
         key, c = 'refresh:' + q['url'], state.get('refresh:' + q['url'], {})
         if (c.get('status', 'processing') == 'processing' and not c.get('host')
@@ -403,9 +427,10 @@ def deferred_todo(state, args, kind='multi_city'):
     reviewing machine (--no-new), which has every machine's plans."""
     if args.no_new:
         return []
-    todo, seen = [], set()
+    todo, seen, others = [], set(), others_channels()
     for key, c in list(state.items()):
         if key.startswith('deferred:') or c.get('host') or c['name'] in seen \
+                or theirs(c.get('url') or key.removeprefix('refresh:'), others) \
                 or c.get('status') in ('rejected', 'error', 'duplicate'):
             continue
         try:
@@ -553,12 +578,14 @@ def main():
         write_to_review(state)
         # the next channel from the bottom: one started here and still "Processing", else a new one with no
         # status; a channel someone else marked (even "Processing") is theirs
+        others = others_channels()
         todo = [(n, url, country) for n, url, status, country in reversed(sheet)
                 if (status == '' and url not in state or status in OURS and url in state)
                 and state.get(url, {}).get('status', 'processing') == 'processing'
                 and not state.get(url, {}).get('host')  # a worker machine's channel
                 and (url in state or args.rows is None or n % args.rows[1] == args.rows[0])
                 and not (url not in state and country.strip().lower() == 'russia')  # Olena's (user, 2026-10-10)
+                and not theirs(url, others)
                 and not ((args.no_new or args.refresh_only) and url not in state)]
         for c in state.values():  # a country taken off PAUSED_COUNTRIES: its channels go on
             if c.get('status') == 'paused' and (c.get('country') or '').strip().lower() not in PAUSED_COUNTRIES:
