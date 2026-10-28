@@ -6324,6 +6324,12 @@ _DESC_PLACE = rf"[{CAPITALS}][\w'’.-]*(?: [{CAPITALS}][\w'’.-]*){{0,3}}"
 DESC_DRIVE = re.compile(rf"(?:📍\s*)?(?i:(?:location|route|drive|driving|road ?trip)\s*:?\s*)?(?i:from\s+)?"
                         rf"({_DESC_PLACE})(\s*\([^)]*\))?\s+(?:(?i:to)|→|->|➡\ufe0f?)\s+"
                         rf"({_DESC_PLACE})(\s*\([^)]*\))?\s*(,.*)?$")
+# ... and a sentence of a drive that goes on about the day (6uh2TzBh3f0: "Driving from Aurora to Boulder Colorado on
+# New Year day"; user, 2026-10-28): only after a drive word, not "Steph Curry to LeBron James with ..."
+DESC_DRIVE_ON = re.compile(rf"(?i:(?:drive|driving|road ?trip)\s+from)\s+({_DESC_PLACE})(\s*\([^)]*\))?\s+"
+                           rf"(?i:to)\s+"
+                           rf"({_DESC_PLACE})(\s*\([^)]*\))?\s*(,[^,]*?)?"
+                           r"\s+(?i:on|during|at|for|with|after|before)\s.*$")
 
 
 def _no_emoji(text):
@@ -6484,8 +6490,8 @@ def drive_title(title, description):
     if len(stops := maps_stops(description)) >= 2:  # a route on Google Maps linked in the description
         return f'from {stops[0]} to {stops[-1]}'
     for line in (description or '').splitlines()[:DRIVE_LINES]:
-        if (len(line) <= 150 and (m := DESC_DRIVE.match(line.strip()))  # no "Welcome to", "Talk to Me"
-                and not ordinary(m.group(1).split()[0]) and not ordinary(m.group(3).split()[0])):
+        if (len(line) <= 150 and (m := DESC_DRIVE.match(line.strip()) or DESC_DRIVE_ON.match(line.strip()))
+                and not ordinary(m.group(1).split()[0]) and not ordinary(m.group(3).split()[0])):  # "Welcome to"
             return f'from {m.group(1)}{m.group(2) or ""} to {m.group(3)}{m.group(4) or ""}{m.group(5) or ""}'
     return title
 
