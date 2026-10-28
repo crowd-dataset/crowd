@@ -561,4 +561,4 @@ def review():
 
 
 if __name__ == "__main__":
-    app.run(host="127.0.0.1", debug=True, port=APP_PORT)
+    app.run(host="127.0.0.1", debug=True, use_reloader=False, port=APP_PORT)  # the reloader cannot find the script after the chdir
