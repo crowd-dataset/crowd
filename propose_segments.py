@@ -4287,6 +4287,9 @@ def title_countries(title):
     flags = [chr(ord(a) - 0x1F1E6 + 65) + chr(ord(b) - 0x1F1E6 + 65)
              for a, b in re.findall('([\U0001F1E6-\U0001F1FF])([\U0001F1E6-\U0001F1FF])', title)]
     found += [c for c in COUNTRIES if c not in found and _iso2(c) in flags]
+    # ... or a hashtag does: "Derry Raod Mississauga #canada #automobile #ontario" (zyu3kdvagkQ; user, 2026-10-29)
+    found += [c for c in COUNTRIES if c not in found
+              and re.search(rf"#{re.escape(c.replace(' ', ''))}\b", title, re.IGNORECASE)]
     return found + [c for c in pr if c not in found]
 
 
@@ -5029,6 +5032,19 @@ def place_phrases(text, limit=4):
     # in English when written in another language: every capitalised Vietnamese word is no town ("THÁNG", the
     # month, was Thắng: dFeQ32cS3WM; "Chung Cư", apartments, was Chung), and "Hà Nội" reads as Hanoi
     # ponytail: english() translates the first 1000 characters only; enough for titles and a description's top lines
+    # a hashtag repeating a word of the text is a place of its own, a region's one not written in it says where to
+    # look ("Derry Raod Mississauga #canada #automobile #ontario #mississauga": Mississauga, Ontario, the typo "Raod"
+    # no street word; zyu3kdvagkQ; user, 2026-10-29); a country or region written out is in its run already
+    # ("Brampton Ontario Canada #canada #ontario #brampton", reviewed Brampton)
+    bare = re.sub(r'#\w+', ' ', text or '')
+    regions = {r.lower() for r in _region_names()}
+    tagged = [m.group(0) for tag in dict.fromkeys(x.lower() for x in re.findall(r'#([^\W\d_]{4,})', text or ''))
+              if tag not in NOT_PLACE and not ordinary(tag) and tag not in regions
+              and _name_key(tag) not in _country_keys()
+              and (m := re.search(rf'\b{re.escape(tag)}\b', bare, re.IGNORECASE)) and m.group(0)[:1].isupper()]
+    tagged += [tag.title() for tag in dict.fromkeys(x.lower() for x in re.findall(r'#([^\W\d_]{4,})', text or ''))
+               if tag in regions and _name_key(tag) not in _country_keys()
+               and not re.search(rf'\b{re.escape(tag)}\b', bare, re.IGNORECASE)]
     written, translated = text, english(text)
     text = translated or text
     text = DISTANCE_FROM.sub(' ', english_states(text) or '')
@@ -5041,7 +5057,6 @@ def place_phrases(text, limit=4):
         return m.group(0) if street else {'Mt': 'Mount ', 'Ft': 'Fort ', 'St': 'Saint '}[m.group(1)]
     text = re.sub(r"\b(Mt|Ft|St)\.?\s+(?=[A-Z])", saint, text)
     phrases, run, before = [], [], ''
-    regions = {r.lower() for r in _region_names()}
     # a hyphen inside a word only ("Wilkes-Barre"): "Brooklyn Downtown- 15 mins" names Brooklyn (pj_63OC2rSM)
     for token in re.findall(r"[^\W\d_](?:[\w'’]|-(?=\w))*|[^\w\s]+|\d\w*", text) + ['.']:
         word = token.lower()
@@ -5112,7 +5127,7 @@ def place_phrases(text, limit=4):
                    if set(x.lower().split()[1:-1]) & NOT_PLACE and x.split()[0].lower() not in NOT_PLACE
                    and set(x.lower().split()[1:-1]) & NOT_PLACE <= SIGHT_INNER]
     unique = list(dict.fromkeys(p for p in phrases if len(p.split()) <= 5))
-    out = list(dict.fromkeys(with_state + sorted(unique, key=lambda p: -len(p.split()))))[:limit]
+    out = list(dict.fromkeys(with_state + sorted(unique, key=lambda p: -len(p.split())) + tagged))[:limit]
     # ... but a town's one-word name the translation renamed is looked for as written: the town of Lipsko in
     # "[CABVIEW] Sandomierz - Lipsko dk 79" became Leipzig, Polish for it (mqNSUmRnHog; user, 2026-10-18), and
     # OpenStreetMap knows a city by its names in other languages too
