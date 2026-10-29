@@ -6617,7 +6617,8 @@ def route_localities(title, df, home=None, max_km=None, map_path=None, via_names
     if not ends and not map_path and not link_points:
         return [], None
     m_ends = next((m for r in FROM_TO if (m := r.search(english_states(title or '')))), None)
-    named_ends = [re.sub(r'\s*\([^)]*\)', '', x).strip(' !?.') for x in m_ends.groups()[:2]] if m_ends else [None, None]
+    named_ends = ([re.sub(r'\s*\([^)]*\)', '', x).strip(' !?.') for x in m_ends.groups()[:2]] if m_ends
+                  else [None, None])
     own_ends = [None, None]  # (lat, lon) of an end that is a locality of its own at the linked route's point
     (a, start), (b, end) = ends or ((None, None), (None, None))
     countries = {common.get_iso2_country_code(common.correct_country(c)): c for c in df['country'].dropna().unique()}
@@ -7522,9 +7523,9 @@ def town_sign_split(p, sig_path, df, home=None):
     return True
 
 
-# the street names road signs give (Fuqing Rd., Jianshe Rd. N on a gantry in SzoUziKlB8Y, Chengdu; user, 2026-10-28: "is
-# it possible to map videos to cities based on detection of such signs?"): a name read with a street word after it
-# ("Bosley Ave", "Woolner Rd") or before it ("Calle 49B", "Jalan Sudirman")
+# the street names road signs give (Fuqing Rd., Jianshe Rd. N on a gantry in SzoUziKlB8Y, Chengdu; user, 2026-10-28:
+# "is it possible to map videos to cities based on detection of such signs?"): a name read with a street word after
+# it ("Bosley Ave", "Woolner Rd") or before it ("Calle 49B", "Jalan Sudirman")
 STREET_SUFFIX = {'rd': 'Road', 'road': 'Road', 'st': 'Street', 'street': 'Street', 'ave': 'Avenue', 'av': 'Avenue',
                  'avenue': 'Avenue', 'blvd': 'Boulevard', 'boulevard': 'Boulevard', 'expwy': 'Expressway',
                  'expressway': 'Expressway', 'hwy': 'Highway', 'highway': 'Highway', 'dr': 'Drive', 'drive': 'Drive',
