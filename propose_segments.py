@@ -4263,6 +4263,15 @@ COUNTRY_ALIASES = {'Turkey': 'Türkiye', 'Czech Republic': 'Czechia', 'Ivory Coa
                    'Turquie': 'Türkiye', 'Россия': 'Russia', 'Україна': 'Ukraine', 'Ukraina': 'Ukraine'}
 
 
+# words that make a country's everyday name part of a place's or a thing's: "Turkey Run", "Turkey Creek", "Turkey Lake
+# Road" (US places), "España Blvd." (Manila), "Turkey Sandwich", "Jardim Japão" (São Paulo), "Avenida Brasil"
+ALIAS_NAMED_AFTER = re.compile(r"\s+(?:Run|Creek|Lake|Hills?|Point|Island|Ridge|Hollow|Bay|Neck|Swamp|Knob|Mountains?|"
+                               r"Valley|Springs?|Branch|Fork|Pond|Cove|Avenue|Ave|Blvd|Boulevard|Street|St|Sandwich|"
+                               r"Club|Farms?|Trot)\b")
+ALIAS_NAMED_BEFORE = re.compile(r"\b(?:Jardim|Av|Avenida|Rua|Calle|Plaza|Praça|Parque|Vila|Villa|Colonia|Barrio)"
+                                r"\.?\s+$", re.IGNORECASE)
+
+
 def title_countries(title):
     """The countries of the mapping a title names, not inside a US state's name: "New Jersey" is not Jersey,
     "Atlanta, Georgia" not the country."""
@@ -4280,9 +4289,12 @@ def title_countries(title):
     # lower case: a turkey, china, a jordan
     found = [c for c in COUNTRIES if re.search(rf'\b(?:{re.escape(c)}|{re.escape(c.upper())})\b', title)]
     # ... and by the everyday name where the mapping writes another (Io1qs4lQmS4: "GIRESUN, Turkey" is in Türkiye;
-    # user, 2026-10-17); not before another name word ("Turkey Run", "Turkey Creek" are US places)
+    # user, 2026-10-17); not in a place's or a thing's name ("Turkey Run", "Turkey Creek" are US places), but before
+    # any other word ("Turkey Drive: Serik to Antalya" looked for Serik near Tehran and found Sevan, Armenia:
+    # UuMi2CWMUtI; user, 2026-10-29)
     found += [c for alias, c in COUNTRY_ALIASES.items() if c not in found
-              and re.search(rf"\b(?:{re.escape(alias)}|{re.escape(alias.upper())})\b(?!\s+[A-Z][a-z])", title)]
+              and any(not ALIAS_NAMED_BEFORE.search(title[:m.start()]) and not ALIAS_NAMED_AFTER.match(title[m.end():])
+                      for m in re.finditer(rf"\b(?:{re.escape(alias)}|{re.escape(alias.upper())})\b", title))]
     # a flag emoji names its country (OoOwyF8-T24: "Warsaw's Most Beautiful Bike Route 4K 🇵🇱" is no Warsaw, NY)
     flags = [chr(ord(a) - 0x1F1E6 + 65) + chr(ord(b) - 0x1F1E6 + 65)
              for a, b in re.findall('([\U0001F1E6-\U0001F1FF])([\U0001F1E6-\U0001F1FF])', title)]
@@ -5026,6 +5038,11 @@ SIGHT_INNER = {'village', 'night', 'historic', 'community', 'monday', 'tuesday',
                'saturday', 'sunday'}
 
 
+SEA_NAME = re.compile(r"(?:the\s+)?(?:Mediterranean|Atlantic|Pacific|Caribbean|Adriatic|Aegean|Baltic|Arctic|Ionian|"
+                      r"Tyrrhenian|Caspian|(?:Black|Red|North|Dead|Marmara) Sea|Indian Ocean)"
+                      r"(?:\s+(?:Sea|Ocean|Coast|Coastline|Riviera))?", re.IGNORECASE)
+
+
 def place_phrases(text, limit=4):
     """Runs of capitalised words in a title or description that may name a place, longest first: "Al Khan
     Beach" from "Beautiful Sun Rise at Al Khan Beach, unedited sounds". Hashtags and links are skipped."""
@@ -5126,7 +5143,9 @@ def place_phrases(text, limit=4):
     with_state += [x for x in re.findall(rf"\b((?:{word} ){{1,3}}(?:{LANDMARKS}))\b", text)
                    if set(x.lower().split()[1:-1]) & NOT_PLACE and x.split()[0].lower() not in NOT_PLACE
                    and set(x.lower().split()[1:-1]) & NOT_PLACE <= SIGHT_INNER]
-    unique = list(dict.fromkeys(p for p in phrases if len(p.split()) <= 5))
+    # (a sea's name is no place: "Beautiful Spring Drive Along the Mediterranean" was the Mediterranean
+    # Civilizations Museum in Antalya: At7MojYCb0I)
+    unique = list(dict.fromkeys(p for p in phrases if len(p.split()) <= 5 and not SEA_NAME.fullmatch(p)))
     out = list(dict.fromkeys(with_state + sorted(unique, key=lambda p: -len(p.split())) + tagged))[:limit]
     # ... but a town's one-word name the translation renamed is looked for as written: the town of Lipsko in
     # "[CABVIEW] Sandomierz - Lipsko dk 79" became Leipzig, Polish for it (mqNSUmRnHog; user, 2026-10-18), and
@@ -5992,6 +6011,10 @@ FROM_TO = (re.compile(r"\bfrom\s+(.+?)\s+to(?:wards?)?\s+(.+?)" + _END, re.I),
            # 2026-10-23); not a round trip, nor "the Real Local Life Between Matunga & Central"
            re.compile(rf"^(?!.*\b(?i:round[- ]?trip)\b).*?\b(?i:driv(?:e|ing)|road|highway|route)\b[^|]{{0,40}}?"
                       rf"\b(?i:between)\s+({_ARROW_TO})\s+(?:&|and)\s+({_ARROW_TO})"),
+           # ... or in Turkish, by the endings after the names: "Alanya’dan Antalya’ya Sürüş" (from Alanya to
+           # Antalya; At7MojYCb0I; user, 2026-10-29: the drive starts in Alanya)
+           re.compile(rf"(?<![\w'’])([{CAPITALS}][^\W\d_]+)['’](?i:n?[dt][ae]n)\s+([{CAPITALS}][^\W\d_]+)['’]"
+                      r"(?i:[yn]?[ae])(?![\w'’])"),
            re.compile(r"\b(?:[Dd]esde|de)\s+(?:el |la )?(.+?)\s+(?:hasta|hacia|a|al)\s+(?:el |la )?(.+?)" + _END),
            re.compile(r"^(?:el |la )?(.+?)\s+(?:hasta|hacia|a|al)\s+(?:el |la )?(.+?)" + _END))
 MAJOR_TOWN_KM = 10    # a small place counts for the nearest bigger one this close
@@ -6698,7 +6721,12 @@ def route_localities(title, df, home=None, max_km=None, map_path=None, via_names
         if h := _osm_place(vias.pop(), tuple(sorted(countries))):
             b, end = h, _hit_locality(h, df, countries)
     via_names = vias + list(stop_names or [])
-    if not (start and end) or max_km and _km(a[4], a[5], b[4], b[5]) > max_km:
+    # ... unless both are localities of the mapping in one country, near each other: no namesake, the video is cut
+    # or sped up (At7MojYCb0I: 115 km from Alanya to Antalya in 46 min with two cuts; user, 2026-10-29: the drive
+    # starts in Alanya)
+    pair = (start and end and start[2] == end[2] and _km(a[4], a[5], b[4], b[5]) <= PAIR_KM
+            and all(add_video.get_existing_locality_row(df, *x)[1] is not None for x in (start, end)))
+    if not (start and end) or max_km and _km(a[4], a[5], b[4], b[5]) > max_km and not pair:
         return [], None
     # a drive within one locality (between its neighbourhoods): one stretch, no route needed; but not from its town
     # far out into its countryside (ui_HRUu8IY0: Matsumoto's city reaches 25 km into the Alps, its streets end at
@@ -6893,14 +6921,23 @@ def split_route(p, df, home=None, sig_path=None):
     # and "Crossing to Wilkes-Barre" is no leg from a place called Crossing (4EOOXig8z8U, reviewed)
     chs = p.get('drive_chapters') if chapter_legs(p.get('drive_chapters')) else None
     marks = chapter_marks(chs, (route or {}).get('path'))
-    when = sign_clock(signs, (route or {}).get('path'), df, t0, t1, marks, (route or {}).get('clock'))
+    # a sign naming the province the drive starts in, as its capital is named, times nothing: "welcome to Antalya" at
+    # 3:34 of UuMi2CWMUtI is the province's border at Serik, 30 km before the city (user, 2026-10-29: the drive is
+    # between Serik and Antalya); the reviewer's note still lists it
+    timing = signs
+    first = ((route or {}).get('path') or [None])[0]
+    if first and (h := _osm_reverse(round(first[0], 4), round(first[1], 4))) and h[3]:
+        province = next((x.name for x in pycountry.subdivisions.get(country_code=h[2]) or [] if x.code == h[3]), None)
+        if province and _name_key(province) != _name_key(h[0] or ''):
+            timing = [x for x in signs if _name_key(x[1][0]) != _name_key(province)]
+    when = sign_clock(timing, (route or {}).get('path'), df, t0, t1, marks, (route or {}).get('clock'))
     stretches = [(when(a), when(b), loc) for a, b, loc in shares]
     stretches = ends_in_towns(stretches, segs, p.get('drive_title') or p.get('title'), df, home,
                               (route or {}).get('ends'))
     # a road sign welcoming the drive to a town on the way is where that town starts (OkEXG95VyKk: "Welcome to
     # the City of New Haven" at 97:15; user, 2026-10-18); every town a sign names is noted for the reviewer
     welcomed = set()
-    for t, loc, _ in [x for x in signs if x[2]]:  # a town's first such sign: later ones are inside it already
+    for t, loc, _ in [x for x in timing if x[2]]:  # a town's first such sign: later ones are inside it already
         if tuple(loc) not in welcomed:
             welcomed.add(tuple(loc))
             stretches = pin_town(stretches, t, loc)
@@ -6949,6 +6986,11 @@ def sign_towns(sig_path, towns, df, path, key='signs'):
     if not (sig_path and os.path.exists(sig_path)) or key not in np.load(sig_path).files:
         return []
     read = json.loads(str(np.load(sig_path)[key]))
+    # nothing read in the intro: a title card naming the drive's ends is no sign passed by ("Serik ... Antalya" over
+    # UuMi2CWMUtI's first 3 s put the bus in Antalya at once; user, 2026-10-29)
+    files = np.load(sig_path).files
+    intro = float(np.load(sig_path)['intro_end']) if 'intro_end' in files else 0
+    read = {t: x for t, x in read.items() if float(t) >= intro}
     # no route: the towns within SIGN_REACH_KM of the video's localities (OkEXG95VyKk read "Mobile" on an ad and a
     # "Cedar" somewhere: Mobile, AL and Cedar City, UT)
     reach = 10 if path else SIGN_REACH_KM
