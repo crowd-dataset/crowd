@@ -5014,6 +5014,15 @@ def _country_keys():
     return frozenset(_name_key(c) for c in COUNTRIES)
 
 
+# what a sight's name ends with
+LANDMARKS = ('Museum|Castle|Monastery|Abbey|Cathedral|Church|Palace|Fortress|Citadel|Zoo|Airport|Stadium|'
+             'University|Temple|Shrine|Mosque|Lighthouse|Waterfalls?|Falls|Dam|Reservoir|Gardens?|Market|Station')
+# ... and the words that end a place's name but may be inside a sight's: "Village Museum", "Night Market", not
+# "Walk Around Kandal Market" or "Amazing Drive Airport"
+SIGHT_INNER = {'village', 'night', 'historic', 'community', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday',
+               'saturday', 'sunday'}
+
+
 def place_phrases(text, limit=4):
     """Runs of capitalised words in a title or description that may name a place, longest first: "Al Khan
     Beach" from "Beautiful Sun Rise at Al Khan Beach, unedited sounds". Hashtags and links are skipped."""
@@ -5097,6 +5106,11 @@ def place_phrases(text, limit=4):
             region = None
         if region:
             with_state += [x, region]
+    # a sight's name with a word inside that ends a place's name is the sight: "the Maramures Village Museum"
+    # is in Sighetu Marmației, "Maramures" alone a county (7E8ARSyeWZk; user, 2026-10-29)
+    with_state += [x for x in re.findall(rf"\b((?:{word} ){{1,3}}(?:{LANDMARKS}))\b", text)
+                   if set(x.lower().split()[1:-1]) & NOT_PLACE and x.split()[0].lower() not in NOT_PLACE
+                   and set(x.lower().split()[1:-1]) & NOT_PLACE <= SIGHT_INNER]
     unique = list(dict.fromkeys(p for p in phrases if len(p.split()) <= 5))
     out = list(dict.fromkeys(with_state + sorted(unique, key=lambda p: -len(p.split()))))[:limit]
     # ... but a town's one-word name the translation renamed is looked for as written: the town of Lipsko in
