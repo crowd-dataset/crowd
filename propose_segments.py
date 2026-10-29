@@ -4830,6 +4830,9 @@ DISTANCE_FROM = re.compile(r"(?i:\b\d+(?:[.,]\d+)?\s*(?:km|kms|kilomet(?:er|re)s
                            r"west)(?:[- ]?(?:east|west))?\s+)?(?:of|from)\s+)[A-Z][\w'’-]*(?:\s+[A-Z][\w'’-]*)*")
 
 
+VEHICLE_WORDS = {'van', 'bus', 'car', 'cab', 'taxi', 'tram', 'truck', 'camper', 'jeep', 'rv', 'suv'}
+
+
 def _title_locality(title, df, exact_case=False, word_needs_state=False):
     title = DISTANCE_FROM.sub(' ', english_states(title) or '')
     # a small town named by an ordinary word (White, GA; Lead, SD; Happy, TX: ordinary) counts only with its state
@@ -4848,7 +4851,10 @@ def _title_locality(title, df, exact_case=False, word_needs_state=False):
                 continue
             state = row['state'] if isinstance(row['state'], str) else ''
             # (a short alias, "LA", counts in capitals only: below)
-            if not word_needs_state and len(name) > 3 and ordinary(name) and row['country'] not in named and not (
+            # ... and so does one named by a vehicle, whatever its length: "Camper Van Rental Trouble" is no Van,
+            # Türkiye (NLGGlzU0B9o; user, 2026-10-28: "Van is a type of car")
+            if not word_needs_state and (len(name) > 3 and ordinary(name) or name.lower() in VEHICLE_WORDS) \
+                    and row['country'] not in named and not (
                     state and (
                         re.search(rf'\b{re.escape(state)}\b', title or '')
                         or re.search(rf"\b{re.escape(STATE_NAMES.get(state, state).lower())}\b", low))):
@@ -5612,6 +5618,13 @@ def _urban(lat, lon):
     return places is None or any(_km(lat, lon, la, lo) <= _town_km(pop) for _, pop, la, lo in places)
 
 
+def _town_at(lat, lon):
+    """The name of the most populous GeoNames place a point is in (as _urban: within _town_km of its centre), else
+    None."""
+    inside = [p for p in _nearby_places(lat, lon) or [] if _km(lat, lon, p[2], p[3]) <= _town_km(p[1])]
+    return max(inside, key=lambda p: p[1])[0] if inside else None
+
+
 def _town_km(population):
     """How far a town reaches from its centre."""
     # ponytail: town size as a disc around its centre; a land-use or population-density map would follow real edges
@@ -5955,6 +5968,9 @@ FROM_TO = (re.compile(r"\bfrom\s+(.+?)\s+to(?:wards?)?\s+(.+?)" + _END, re.I),
 MAJOR_TOWN_KM = 10    # a small place counts for the nearest bigger one this close
 SMALL_POP = 3000      # places of fewer inhabitants (and townships) count for a bigger one nearby
 MAX_KMH = 120         # no drive in a video covers more than this many km an hour as the crow flies
+OWN_END_KM = 1.5  # such an end's own locality reaches this far along the route from its point
+LINK_END_KM = 30  # an end the title names this far from the linked route's end is a namesake: the route's end is it
+ONE_TOWN_KM = 10  # a drive between two points of one locality this far apart is routed: its countryside is left out
 ROUTE_SAMPLES = 20     # points along a route whose town is looked up (one OpenStreetMap request a second each)
 
 
@@ -6422,12 +6438,11 @@ MAPS_POI = re.compile(r'(?i)\b(?:centre|center|park|forest|station|garden|mall|h
                       r'café|cafe|pub|restaurant|museum|stadium|university|college|hospital|market|plaza|square)\b')
 
 
-def maps_stops(description):
-    """The towns of the stops of a Google Maps route linked in a description, first to last ("Johnstown, Co.
-    Kildare"): each stop's first part that names no business or sight, with its county; [] without such a link."""
+def _maps_url(description):
+    """Where the Google Maps link of a description goes (a short link followed once and kept), else None."""
     m = MAPS_LINK.search(description or '')
     if not m:
-        return []
+        return None
     url = m.group(0)
     if '/maps/dir/' not in url:
         try:
@@ -6439,13 +6454,19 @@ def maps_stops(description):
             try:
                 known[url] = requests.head(url, allow_redirects=False, timeout=15).headers.get('location', '')
             except requests.RequestException:
-                return []
+                return None
             with contextlib.suppress(OSError):
                 with open(MAPS_LINKS + '.tmp', 'w') as f:
                     json.dump(known, f)
                 os.replace(MAPS_LINKS + '.tmp', MAPS_LINKS)
         url = known[url]
-    route = re.search(r'/maps/dir/(.+?)/@', url or '')
+    return url
+
+
+def maps_stops(description):
+    """The towns of the stops of a Google Maps route linked in a description, first to last ("Johnstown, Co.
+    Kildare"): each stop's first part that names no business or sight, with its county; [] without such a link."""
+    route = re.search(r'/maps/dir/(.+?)/@', _maps_url(description) or '')
     out = []
     for stop in (unquote(x.replace('+', ' ')) for x in (route.group(1).split('/') if route else []) if x):
         parts = [x.strip() for x in stop.split(',') if x.strip() and not re.search(r'\d', x)]
@@ -6454,6 +6475,26 @@ def maps_stops(description):
         if towns:
             out.append(', '.join([towns[0]] + ([county] if county else [])))
     return out
+
+
+def maps_points(description):
+    """[(lat, lon)] of the stops of a Google Maps route linked in a description, first to last, when the link gives
+    each one's point: written as "lat,lon", or in its data (!1d lon !2d lat, in the order of the stops given by name:
+    ui_HRUu8IY0's "市営第二駐車場、〒390-1514 長野県松本市安曇", the car park at Sawando); [] otherwise."""
+    url = _maps_url(description) or ''
+    route = re.search(r'/maps/dir/(.+?)/@', url)
+    if not route:
+        return []
+    data = [(float(la), float(lo)) for lo, la in re.findall(r'!1d(-?\d+\.\d+)!2d(-?\d+\.\d+)', url)]
+    out = []
+    for stop in (unquote(x.replace('+', ' ')) for x in route.group(1).split('/') if x):
+        if m := re.fullmatch(r'\s*(-?\d{1,2}\.\d+)\s*,\s*(-?\d{1,3}\.\d+)\s*', stop):
+            out.append((float(m.group(1)), float(m.group(2))))
+        elif data:
+            out.append(data.pop(0))
+        else:
+            return []
+    return out if len(out) >= 2 and not data else []
 
 
 def drive_title(title, description):
@@ -6546,7 +6587,8 @@ def _along(path, n):
     return [tuple(p[min(int(np.searchsorted(d, f)), len(p) - 1)]) for f in np.linspace(0, d[-1], n + 1)]
 
 
-def route_localities(title, df, home=None, max_km=None, map_path=None, via_names=None, stop_names=None):
+def route_localities(title, df, home=None, max_km=None, map_path=None, via_names=None, stop_names=None,
+                     link_points=None):
     """([(share of the drive where it starts, where it ends, locality)], the route for a map) along the car route
     of a drive "from A to B" through two different towns, else ([], None). The towns on the way are looked up on
     OpenStreetMap every 1/ROUTE_SAMPLES of the driving time, so the borders are an estimate that assumes the video
@@ -6555,10 +6597,14 @@ def route_localities(title, df, home=None, max_km=None, map_path=None, via_names
     map in the video shows (map_route): followed instead of the fastest one, its ends A and B when the title's are
     not found (OkEXG95VyKk: Newport to Manhattan, from a channel whose home is Cusco). via_names: the stops a title
     lists (place_list), whose first and last stand in for A and B when those are not found; stop_names: places the
-    route only passes (title_via)."""
+    route only passes (title_via). link_points: [(lat, lon)] of the stops of the Google Maps route the description
+    links (maps_points): its first and last are A and B where those are not found or far from them."""
     ends = drive_ends(title, df, home)
-    if not ends and not map_path:
+    if not ends and not map_path and not link_points:
         return [], None
+    m_ends = next((m for r in FROM_TO if (m := r.search(english_states(title or '')))), None)
+    named_ends = [re.sub(r'\s*\([^)]*\)', '', x).strip(' !?.') for x in m_ends.groups()[:2]] if m_ends else [None, None]
+    own_ends = [None, None]  # (lat, lon) of an end that is a locality of its own at the linked route's point
     (a, start), (b, end) = ends or ((None, None), (None, None))
     countries = {common.get_iso2_country_code(common.correct_country(c)): c for c in df['country'].dropna().unique()}
     countries.pop(None, None)
@@ -6572,6 +6618,45 @@ def route_localities(title, df, home=None, max_km=None, map_path=None, via_names
                 a, start = (hit, loc) if i == 0 else (a, start)
                 b, end = (hit, loc) if i == 1 else (b, end)
         max_km = None  # the map's own route: no namesake far off
+    # the route the description links: its ends are where the drive starts and ends, whatever the title's names are
+    # to OpenStreetMap (ui_HRUu8IY0, "from Matsumoto to Sawando" by a channel from Norway: Matsumoto was looked for
+    # near Norway, and Sawando, a car park and a hot spring in Matsumoto, is no place there; user, 2026-10-28); a town
+    # the title names found near such an end keeps its name
+    elif link_points:
+        for i, (lat, lon) in ((0, link_points[0]), (1, link_points[-1])):
+            hit = (a, b)[i]
+            if hit and _km(lat, lon, hit[4], hit[5]) <= LINK_END_KM:  # the town found, from the route's own point
+                a, b = ((*hit[:4], lat, lon, *hit[6:]), b) if i == 0 else (a, (*hit[:4], lat, lon, *hit[6:]))
+            elif h := _osm_reverse(round(lat, 4), round(lon, 4)):
+                hit, loc = (*h[:4], lat, lon, 0.0, h[4]), _hit_locality(h, df, countries, (lat, lon))
+                # ... and the end the title names there is a place of its own where OpenStreetMap has only things
+                # named after it (Sawando: its bus terminal, bridge and hot spring in Matsumoto; user, 2026-10-28:
+                # "Sawando can be locality"), placed at the route's point
+                name = named_ends[i]
+                pad = OWN_END_KM / 111
+                if (loc and name and re.fullmatch(r"[A-Z][\w'’-]*(?: [A-Z][\w'’-]*){0,2}", name)
+                        and not MAPS_POI.search(name) and not NOT_LOCALITY_END.search(name) and not _town_at(lat, lon)
+                        and _name_key(name) != _name_key(loc[0])
+                        and _feature_near(name, (round(lat - pad, 3), round(lon - 1.5 * pad, 3), round(lat + pad, 3),
+                                                 round(lon + 1.5 * pad, 3)))):
+                    hit, loc = (name, *hit[1:]), [name, loc[1], loc[2]]
+                    own_ends[i] = (lat, lon)
+                a, start = (hit, loc) if i == 0 else (a, start)
+                b, end = (hit, loc) if i == 1 else (b, end)
+            # ... and an end inside a town (GeoNames, as _urban) is that town, whatever the title or OpenStreetMap
+            # call the spot: Strandhill, not its parish Killaspugbrone (ko9x6g6WNXo); Dublin, not its suburb Kylemore
+            # (9sW-0N4km08), as reviewed; Sawando, out of Matsumoto's streets, stays a place of its own
+            loc, hit = (start, end)[i], (a, b)[i]
+            where = loc[2] if loc else countries.get(hit[2]) if hit else None
+            if (where and not own_ends[i] and (town := _town_at(lat, lon))
+                    and _name_key(town) != _name_key((loc or hit)[0])):
+                rows = df[(df['country'] == where) & (df['locality'].map(_name_key) == _name_key(town))]
+                loc = ([rows.iloc[0]['locality'], rows.iloc[0]['state'] if isinstance(rows.iloc[0]['state'], str)
+                        else None, where] if len(rows) else [re.sub(r' City$', '', town), loc and loc[1], where])
+                hit = (loc[0], *hit[1:])
+                a, start = (hit, loc) if i == 0 else (a, start)
+                b, end = (hit, loc) if i == 1 else (b, end)
+        max_km = None
     if city := area_city(title, df, home, (b or a)[4:6] if (b or a) else None):
         return [(0.0, 1.0, city)], None  # "… in the Bronx": all in New York, no route (upstate has a Longwood too)
     # a listed stop OpenStreetMap does not find ("Kostelec na Labem", mbmIaHfiARc): the drive from the next one
@@ -6585,7 +6670,12 @@ def route_localities(title, df, home=None, max_km=None, map_path=None, via_names
     via_names = vias + list(stop_names or [])
     if not (start and end) or max_km and _km(a[4], a[5], b[4], b[5]) > max_km:
         return [], None
-    if start == end:  # a drive within one locality (between its neighbourhoods): one stretch, no route needed
+    # a drive within one locality (between its neighbourhoods): one stretch, no route needed; but not from its town
+    # far out into its countryside (ui_HRUu8IY0: Matsumoto's city reaches 25 km into the Alps, its streets end at
+    # Shin-Shimashima)
+    if start == end and (_km(a[4], a[5], b[4], b[5]) <= ONE_TOWN_KM or pd.to_numeric(df.loc[
+            (df['locality'] == start[0]) & (df['country'] == start[2]), 'population_locality'],
+            errors='coerce').max() >= METRO_POP):  # (a metropolis' districts are no localities: Tokyo's wards)
         return [(0.0, 1.0, start)], None
     if map_path:
         points = _along(map_path, ROUTE_SAMPLES)
@@ -6595,6 +6685,7 @@ def route_localities(title, df, home=None, max_km=None, map_path=None, via_names
         # the stops a title lists between its ends (place_list), each found within 100 km of the start, in order
         codes = tuple(sorted(countries))
         stops = tuple(h[4:6] for name in via_names or () if (h := _osm_place(name, codes, tuple(a[4:6]), 100)))
+        stops += tuple(tuple(x) for x in (link_points or [])[1:-1])  # the linked route's own stops between
         points, path = _route(a[4:6], b[4:6], ((via,) if via else ()) + stops or None) or ([], None)
     locs = [start] + [_hit_locality(h, df, countries, (lat, lon))
                       if (h := _osm_reverse(round(lat, 4), round(lon, 4))) else None
@@ -6607,10 +6698,12 @@ def route_localities(title, df, home=None, max_km=None, map_path=None, via_names
             locs = [loc if x and _name_key(x[0]) == _name_key(hit[0]) and _km(*pt, *hit[4:6]) <= 15 else x
                     for x, pt in zip(locs, points)]
     out, stops, town = [], [], start
+    owns = [(own, loc) for own, loc in zip(own_ends, (start, end)) if own]
     for i, loc in enumerate(locs):
         town = loc or town  # a point in no town is still in the one before
         point = points[min(i, len(points) - 1)]
-        here = town if _urban(*point) else None  # None: rural driving between towns, left out
+        here = next((x for own, x in owns if _km(*point, *own) <= OWN_END_KM), None) or (
+            town if _urban(*point) else None)  # None: rural driving between towns, left out
         if out and out[-1][2] == here:
             out[-1] = (out[-1][0], (i + 1) / len(locs), here)
         else:
@@ -6618,7 +6711,20 @@ def route_localities(title, df, home=None, max_km=None, map_path=None, via_names
             stops.append([round(point[0], 5), round(point[1], 5), here[0] if here else 'rural'])
     if len(out) < 2:  # every point in one locality (or all rural): a continuous drive
         return [(0.0, 1.0, out[0][2])] if out else [], None
-    return out, {'path': path or [p[:2] for p in stops], 'stops': stops}
+    path = path or [p[:2] for p in stops]
+    # where along the path each looked-up point lies, by distance: chapter_marks go on the clock by driving time
+    return out, {'path': path, 'stops': stops, 'clock': _path_shares(path, points), 'ends': [start, end],
+                 **({'at': {x[0]: [round(own[0], 6), round(own[1], 6)] for own, x in owns}} if owns else {})}
+
+
+def _path_shares(path, points):
+    """The share of a path's length (0 to 1, never back) at the point of it nearest each of points."""
+    p = np.asarray(path, float).reshape(-1, 2)
+    if len(p) < 2:
+        return []
+    d = np.r_[0, np.cumsum([_km(*p[i], *p[i + 1]) for i in range(len(p) - 1)])]
+    near = [d[int(np.argmin([_km(*x, *y) for y in p]))] / max(d[-1], 1e-9) for x in points]
+    return [round(float(x), 4) for x in np.maximum.accumulate(near)]
 
 
 def title_reach(df, in_reach, title):
@@ -6719,10 +6825,23 @@ def split_route(p, df, home=None, sig_path=None):
     if not segs or any(s.get('decision') or s.get('applied') for s in segs):
         return False
     t1 = max(s['end'] for s in segs)
+    if (legs := chapter_legs(p.get('drive_chapters'))) and split_legs(p, legs, segs, t1, df, home):
+        return True
     sig = np.load(sig_path) if sig_path and os.path.exists(sig_path) else {}
+    # a route the description links far from both ends of the town the title gives, in its country, is another
+    # drive's (2ebQ8ZKZHIw, "Heading to Kilkenny" linking a route from Kilcock into Dublin; reviewed as Kilkenny); in
+    # another country the town is a namesake and the route is right (ui_HRUu8IY0)
+    links = p.get('drive_points')
+    loc = p['entries'][0].get('locality')
+    rows = df[(df['locality'] == loc[0]) & (df['country'] == loc[2])].dropna(subset=['lat', 'lon']) if loc else []
+    if links and len(rows) and all(
+            _km(*pt, float(rows.iloc[0]['lat']), float(rows.iloc[0]['lon'])) > LINK_END_KM
+            and (h := _osm_reverse(round(pt[0], 4), round(pt[1], 4)))
+            and h[2] == common.get_iso2_country_code(common.correct_country(loc[2])) for pt in (links[0], links[-1])):
+        links = None
     shares, route = route_localities(p.get('drive_title') or p.get('title'), df, home, max_km=t1 / 3600 * MAX_KMH,
                                      map_path=map_route(sig, df), via_names=p.get('drive_via'),
-                                     stop_names=p.get('drive_stops'))
+                                     stop_names=p.get('drive_stops'), link_points=links)
     if not shares:
         return False
     if all(loc is None for _, _, loc in shares):
@@ -6740,9 +6859,14 @@ def split_route(p, df, home=None, sig_path=None):
     # where along the route it is at each second: by the towns road signs name on the way (sign_clock), else evenly
     t0 = 0
     signs = sign_towns(sig_path, [loc for _, _, loc in shares if loc], df, (route or {}).get('path'))
-    when = sign_clock(signs, (route or {}).get('path'), df, t0, t1)
+    # marks only from chapters that are the legs of the drive: "Driving through Kingston" starts on the way there,
+    # and "Crossing to Wilkes-Barre" is no leg from a place called Crossing (4EOOXig8z8U, reviewed)
+    chs = p.get('drive_chapters') if chapter_legs(p.get('drive_chapters')) else None
+    marks = chapter_marks(chs, (route or {}).get('path'))
+    when = sign_clock(signs, (route or {}).get('path'), df, t0, t1, marks, (route or {}).get('clock'))
     stretches = [(when(a), when(b), loc) for a, b, loc in shares]
-    stretches = ends_in_towns(stretches, segs, p.get('drive_title') or p.get('title'), df, home)
+    stretches = ends_in_towns(stretches, segs, p.get('drive_title') or p.get('title'), df, home,
+                              (route or {}).get('ends'))
     # a road sign welcoming the drive to a town on the way is where that town starts (OkEXG95VyKk: "Welcome to
     # the City of New Haven" at 97:15; user, 2026-10-18); every town a sign names is noted for the reviewer
     welcomed = set()
@@ -6768,7 +6892,13 @@ def split_route(p, df, home=None, sig_path=None):
         p['exclude'] = 'rural driving: the footage is between towns'
         return True
     p['route'] = route
+    for e in p['entries']:  # a new locality at the route's own point (route_localities' own ends)
+        if pt := (route or {}).get('at', {}).get(e['locality'][0]):
+            e['at'] = pt
     note_signs(p, signs)
+    # split again (a proposal's early step, then its full one): the last borders only (32 of 461 plans had both)
+    p['note'] = re.sub(r'(?:; )?localities along the route, borders estimated from driving time \(check them\): '
+                       r'[^;]*', '', p.get('note') or '')
     p['note'] = (f"{p.get('note') or ''}; localities along the route, borders estimated from driving time "
                  "(check them): " + ', '.join(f"{loc[0] if loc else 'rural (left out)'} from "
                                               f'{int(a) // 60}:{int(a) % 60:02d}'
@@ -6837,14 +6967,193 @@ def sign_towns(sig_path, towns, df, path, key='signs'):
     return sorted((int(t), loc, w) for t, loc, w in keep)
 
 
-def sign_clock(signs, path, df, t0, t1):
+def chapter_marks(chapters, path):
+    """[(second, lat, lon)] of the places chapters name along a route's path, each where the car is at that second:
+    a chapter "A to B" starts at A and ends at B where the next one starts ("Matsumoto to Shin-Shimashima" 0:48,
+    "Shin-Shimashima to Nagawado Dam" 13:30, ...: ui_HRUu8IY0; user, 2026-10-28: "chapter names also show
+    localities"), a chapter of one name is at it from its start. Found as any OpenStreetMap feature of the name (a
+    station, a dam, a bus stop) within MARK_KM of the path."""
+    p = np.asarray(path or [], float).reshape(-1, 2)
+    if len(p) < 2 or not chapters:
+        return []
+    pad = MARK_KM / 111
+    box = (round(p[:, 0].min() - pad, 3), round(p[:, 1].min() - pad, 3), round(p[:, 0].max() + pad, 3),
+           round(p[:, 1].max() + pad, 3))
+    out = []
+    for i, (t, name) in enumerate(chapters):
+        parts = [x.strip(' .!') for x in re.split(r'\s+(?:to|→|->|–|-)\s+', CHAPTER_PREFIX.sub('', str(name).strip()))]
+        ends = [(t, parts[0])] + ([(chapters[i + 1][0], parts[-1])] if len(parts) == 2 and i + 1 < len(chapters)
+                                  else [])
+        for when, place in ends:
+            if len(place) >= 3 and (pt := _feature_near(place, box)) and \
+                    min(_km(*pt, *x) for x in p) <= MARK_KM and not any(m[0] == when for m in out):
+                out.append((float(when), *pt))
+    return out
+
+
+MARK_KM = 3  # a chapter's place this close to the route marks where the drive is at its time
+
+
+@_remembered
+def _feature_near(name, box):
+    """(lat, lon) of the OpenStreetMap feature of any kind called name in box (south, west, north, east) whose
+    name is it, else None."""
+    found = _nominatim('geocode', name, exactly_one=False, limit=10, language='en', timeout=15, bounded=True,
+                       viewbox=[(box[0], box[1]), (box[2], box[3])]) or []
+    key = _name_key(name)
+    mid = ((box[0] + box[2]) / 2, (box[1] + box[3]) / 2)
+    hits = [r for r in found if key and (key in _name_key(r.address.split(',')[0]) or key in _name_key(
+        _osm_name(r.raw)))]
+    hit = min(hits, key=lambda r: _km(*mid, r.latitude, r.longitude)) if hits else None
+    return (hit.latitude, hit.longitude) if hit else None
+
+
+LEG_KM = 60  # a chapter leg's place is looked for this close to where the leg before it ended
+LEG_KMH, LEG_MIN_KM = 90, 3  # ... and no farther than this fast in the time since (Hotel Wetterhorn in Grindelwald,
+# not the one 32 km off in Hasliberg; Sawando by Nagawado Dam, not the station of that name 40 km off in Ina)
+# a leg's end that is a sight, a road's junction or a car park is no locality of its own (Nagawado Dam, Norikura JCT,
+# Pen-y-Pass, Nant Peris Park & Ride)
+NOT_LOCALITY_END = re.compile(r"(?i)\b(?:dam|jct|junction|interchange|exit|pass|trail|track|hut|glacier|lake|falls"
+                              r"|waterfall|viewpoint|summit|peak|mountain|valley|gorge|ride)\b")
+LEG_SUFFIX = re.compile(r"(?i)\s+(?:park\s*(?:&|and)\s*ride|car\s*park|parking|station|bus terminal)$")
+
+
+def chapter_legs(chapters):
+    """[(start s, end s or None, A, B)] of the chapters naming a leg "A to B", each until the next chapter starts;
+    [] unless one follows on from another (its A the other's B): "Saltburn-by-the-Sea to Loftus" 0:38, "Loftus to
+    Hinderwell" 14:30, ... (tol0zRsUB9A; user, 2026-10-28: "chapters show when car passed by localities")."""
+    legs = []
+    for i, (t, name) in enumerate(chapters or []):
+        parts = [x.strip(' .!') for x in re.split(r'\s+(?:to|→|->)\s+', CHAPTER_PREFIX.sub('', str(name).strip()),
+                                                  flags=re.IGNORECASE)]
+        if len(parts) == 2 and all(parts):
+            legs.append((float(t), float(chapters[i + 1][0]) if i + 1 < len(chapters) else None, *parts))
+    if not any(_name_key(legs[i][3]) == _name_key(legs[i + 1][2]) for i in range(len(legs) - 1)):
+        return []
+    return legs
+
+
+def _leg_point(name, codes, near=None, reach_km=LEG_KM):
+    """(lat, lon) of a chapter leg's place: the place OpenStreetMap finds by its name (without a car park or station
+    after it: "Nant Peris Park & Ride"), within reach_km of near when given, else the feature of the name nearest
+    near (a station, a dam, a bus terminal: Shin-Shimashima, Sawando); None if neither."""
+    names = list(dict.fromkeys([name, LEG_SUFFIX.sub('', name)]))
+    for x in names:
+        if (hit := _osm_place(x, codes, near, reach_km if near else None)) and (
+                not near or _km(*near, *hit[4:6]) <= reach_km):
+            return tuple(hit[4:6])
+    if near:
+        pad = round(reach_km) / 111
+        box = (round(near[0] - pad, 3), round(near[1] - 1.5 * pad, 3), round(near[0] + pad, 3),
+               round(near[1] + 1.5 * pad, 3))
+        for x in names:
+            if pt := _feature_near(x, box):
+                return pt
+    return None
+
+
+def split_legs(p, legs, segs, t1, df, home=None):
+    """Split a drive by its chapter legs (chapter_legs): their places, chained, are where the car is when each
+    chapter starts; each two found in a row are routed (route_localities, the found points as the ends) over the
+    time between them. A stretch before the first place found or after the last of a chain is that place's
+    locality when it is in a town, else none; chapters that are no legs (an intro, a hike: "PYG Track to Snowdon",
+    EwuRM2354fM) none. Returns whether it was split: not when the legs miss most of the footage or name no
+    locality."""
+    countries = {common.get_iso2_country_code(common.correct_country(c)): c for c in df['country'].dropna().unique()}
+    countries.pop(None, None)
+    codes = tuple(sorted(countries))
+    chains = []  # [[(second, name), ...]] of legs following on from each other
+    for i, (a_t, b_t, a, b) in enumerate(legs):
+        if not (chains and i and _name_key(legs[i - 1][3]) == _name_key(a) and legs[i - 1][1] == a_t):
+            chains.append([(a_t, LEG_SUFFIX.sub('', a))])
+        chains[-1].append((t1 if b_t is None else b_t, LEG_SUFFIX.sub('', b)))
+    # a leg on its own is no part of the drive: a hike after it ("PYG Track to Snowdon", "Trekking to Karasawa")
+    chains = [c for c in chains if len(c) > 2]
+    if not chains:
+        return False
+    # ... and a chapter after a chain's last leg that names only the place it reached is still there ("Country Club
+    # Hills to Harvey", then "Harvey" from 51:00 to the end: dhjX7Yn_r3Q)
+    chs = [(float(t), CHAPTER_PREFIX.sub('', str(n)).strip(' .!')) for t, n in p.get('drive_chapters') or []]
+    for c in chains:
+        k = next((k for k, (t, n) in enumerate(chs) if t == c[-1][0] and _name_key(n) == _name_key(c[-1][1])), None)
+        if k is not None:
+            c.append((chs[k + 1][0] if k + 1 < len(chs) else t1, c[-1][1]))
+    first = min(s['start'] for s in segs)
+    covered = sum(max(0, min(c[-1][0], t1) - max(c[0][0], first)) for c in chains)
+    if covered < 0.6 * (t1 - first):
+        return False
+    links = [tuple(x) for x in p.get('drive_points') or []]
+    stretches, path, stops, at, last = [], [], [], {}, None
+    since = None  # the second the last place found was passed
+    resolved = []
+    for k, chain in enumerate(chains):
+        points = []
+        for j, (when, name) in enumerate(chain):
+            if links and ((k, j) == (0, 0) or (k, j) == (len(chains) - 1, len(chain) - 1)):
+                pt = links[0] if (k, j) == (0, 0) else links[-1]  # the linked route's own ends
+            elif last:
+                pt = _leg_point(name, codes, last, max(LEG_MIN_KM, min(LEG_KM, (when - since) / 3600 * LEG_KMH)))
+            else:
+                pt = _leg_point(name, codes, (home[3], home[4]) if home else None) or _leg_point(name, codes)
+            points.append(pt)
+            last, since = (pt, when) if pt else (last, since)
+        resolved.append(points)
+    # within one metropolis, its districts are no localities of their own (YNY-RhuzExo, "Shinjuku to Kinshicho": Tokyo)
+    found_all = [pt for points in resolved for pt in points if pt]
+    pop = pd.to_numeric(df['population_locality'], errors='coerce').fillna(0)
+    if any(all(_km(*pt, float(r.lat), float(r.lon)) <= _town_km(float(r.population_locality)) for pt in found_all)
+           for r in df[pop >= METRO_POP].itertuples()):
+        return False
+    for chain, points in zip(chains, resolved):
+        found = [j for j, pt in enumerate(points) if pt]
+        for j0, j1 in zip(found, found[1:]):  # noqa: RUF007 (pairs of found places, not neighbours)
+            (t0, a), (tb, b) = chain[j0], chain[j1]
+            shares, route = route_localities(f'from {a} to {b}', df, link_points=[points[j0], points[j1]])
+            stretches += [(t0 + x * (tb - t0), t0 + y * (tb - t0), loc) for x, y, loc in shares]
+            if route:
+                path += route['path']
+                stops += route['stops']
+                at.update(route.get('at', {}))
+        for j in found[-1:]:  # after the last place found: still in its town, or on the open road
+            pt = points[j]
+            if chain[j][0] < chain[-1][0] and _urban(*pt) and (h := _osm_reverse(round(pt[0], 4), round(pt[1], 4))):
+                stretches.append((chain[j][0], chain[-1][0], _hit_locality(h, df, countries, pt)))
+    if not any(loc for _, _, loc in stretches):
+        return False
+    merged = []  # a town that goes on across a chapter's start is one stretch (Loftus 10:32-17:22, not cut at 14:30)
+    for a, b, loc in sorted(stretches, key=lambda x: x[0]):
+        if merged and merged[-1][2] == loc and a - merged[-1][1] < 1:
+            merged[-1] = (merged[-1][0], b, loc)
+        else:
+            merged.append((a, b, loc))
+    stretches = merged
+    p['entries'] = split_by_stretches(segs, stretches)
+    if not p['entries']:
+        p.pop('entries')
+        p['exclude'] = 'rural driving: the footage is between towns'
+        return True
+    for e in p['entries']:
+        if pt := at.get(e['locality'][0]):
+            e['at'] = pt
+    p['route'] = {'path': path, 'stops': stops, **({'at': at} if at else {})}
+    p['note'] = re.sub(r'(?:; )?localities along the (?:route|chapters), borders [^;]*', '', p.get('note') or '')
+    p['note'] = (f"{p['note']}; localities along the chapters, borders estimated from driving time between the "
+                 "places they name (check them): " + ', '.join(
+                     f"{loc[0] if loc else 'rural (left out)'} from {int(a) // 60}:{int(a) % 60:02d}"
+                     for a, _, loc in stretches)).lstrip('; ')
+    return True
+
+
+def sign_clock(signs, path, df, t0, t1, marks=(), clock=None):
     """f(share of the route) -> second of the video: through the towns road signs name along the route (within
     5 km of it), each at the second of its first sign naming no town nearer on the way, kept where both the share
     and the second go up; evenly from t0 to t1 between them. A drive keeps no even pace: OkEXG95VyKk takes 3.6 of
-    its 6 hours to New York and spends the rest in the city (user, 2026-10-19: the map's route)."""
+    its 6 hours to New York and spends the rest in the city (user, 2026-10-19: the map's route). marks: [(second,
+    lat, lon)] where the drive is at a second (chapter_marks), taken alike: placed by driving time, the shares the
+    route's towns are in, through clock (the path's share at each of the route's points, _path_shares)."""
     p = np.asarray(path or [], float).reshape(-1, 2)
     xs, ys = [0.0], [float(t0)]
-    if len(p) >= 2 and signs:
+    if len(p) >= 2 and (signs or marks):
         d = np.r_[0, np.cumsum([_km(*a, *b) for a, b in zip(p, p[1:])])]
         share = {}
         for _, loc, _ in signs:
@@ -6855,6 +7164,12 @@ def sign_clock(signs, path, df, t0, t1):
         for t, loc, _ in signs:
             if share.get(tuple(loc)) is not None:
                 frames.setdefault(t, []).append(share[tuple(loc)])
+        for t, lat, lon in marks:
+            km = [_km(lat, lon, *x) for x in p]
+            if min(km) <= MARK_KM:
+                at = d[int(np.argmin(km))] / d[-1]
+                frames.setdefault(t, []).append(float(np.interp(at, clock, np.linspace(0, 1, len(clock))))
+                                                if clock and len(clock) >= 2 else at)
         for t in sorted(frames):  # the town next on the way of each sign
             ahead = [f for f in frames[t] if f > xs[-1]]
             if ahead and t > ys[-1] and min(ahead) < 1:
@@ -7341,15 +7656,18 @@ def pin_town(stretches, t, loc):
     return sorted(out + [(t, end, loc)], key=lambda s: s[0])
 
 
-def ends_in_towns(stretches, segs, title, df, home=None):
+def ends_in_towns(stretches, segs, title, df, home=None, route_ends=None):
     """The stretches with the proposal's first segment in the drive's start town A and its last in the end town B
     where the route has them as rural road (wAseuJ91-S4, "Kansas City (Legends Outlets) to Lawrence, KS": the
     outlets lie beyond the disc _urban gives Kansas City; the first segment, 0:01-6:55 after the rural and highway
     cuts, is the reviewer's Kansas City, the last, 23:02-35:02, their Lawrence; user, 2026-10-13)."""
+    # ... A and B as the route found them, where it did (ko9x6g6WNXo: its linked route starts in Strandhill, which
+    # the title's "Killaspugbrone, Co. Sligo" is the parish of; reviewed)
     ends = drive_ends(title, df, home)
     if not ends or not segs:
         return stretches
     (_, start), (_, end) = ends
+    start, end = ((route_ends[0] or start), (route_ends[1] or end)) if route_ends else (start, end)
     first, last = min(segs, key=lambda x: x['start']), max(segs, key=lambda x: x['end'])
 
     def loc_at(t):
@@ -8180,16 +8498,25 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
         locality = title_city(meta['title'], guess, df)
         locality = far_district(meta['title'], locality, df) or locality
         touched.append(vid)
+        dt = drive_title(meta['title'], meta.get('description'))
+        # chapters that are the legs of a drive name its ends: "Road to Whitby" by "Saltburn-by-the-Sea to Loftus"
+        # ... "Sandsend to Whitby" (tol0zRsUB9A; user, 2026-10-28)
+        if not any(r.search(english_states(dt)) for r in FROM_TO) and (legs := chapter_legs(video_chapters(meta))):
+            dt = f'from {legs[0][2]} to {legs[-1][3]}'
         plan[vid] = ({
             'video': vid, 'title': meta['title'], 'analysed': analysed,
-            **({'drive_title': dt} if (dt := drive_title(meta['title'], meta.get('description'))) != meta['title']
-               else {}),
+            **({'drive_title': dt} if dt != meta['title'] else {}),
             **({'drive_via': stops[1:-1]} if (stops := place_list(meta['title'])) and len(stops) > 2
                # ... or after "via" in the title of a drive between towns (title_via): stops on the way only, never
                # an end in place of one not found (ILw__0NlXys: "Percetakan Negara to Masjid Istiqlal ... via
                # Paseban" would start in the Special Capital Region of Jakarta)
                else {'drive_stops': via} if (via := title_via(meta['title']))
                and any(r.search(english_states(dt)) for r in FROM_TO) else {}),
+            # the stops of the route the description links, and the chapters: where the drive is when (ui_HRUu8IY0)
+            **({'drive_points': [list(x) for x in pts]} if (pts := maps_points(meta.get('description')))
+               and any(r.search(english_states(dt)) for r in FROM_TO) else {}),
+            **({'drive_chapters': [list(x) for x in chs]} if (chs := video_chapters(meta))
+               and (any(r.search(english_states(dt)) for r in FROM_TO) or chapter_legs(chs)) else {}),
             'entries': [{'locality': locality, 'guessed': locality is not None, 'segments': segments}],
             'vehicle_type': 0 if vt is None else vt, 'upload_date': meta['upload_date'], 'channel_id': ch,
             'note': '; '.join(filter(None, ['; '.join(notes), walk_batch(plan), vehicle_note])),
