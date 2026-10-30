@@ -4883,8 +4883,11 @@ def _title_locality(title, df, exact_case=False, word_needs_state=False):
             # likewise "Mt. Lebanon" is not Lebanon, nor "Fort Lee" Lee or "Port Jefferson" Jefferson
             # and "Hampton Inn" a hotel, not Hampton (4FkZW-vMSE8), "Morris Park" a park or a neighbourhood, not
             # Morris (i5kaJ7ePcpQ), and "Upstate New York" the state (VhIUTVhXa2U)
-            pattern = (rf'(?<!\w)(?<![Nn]ew\s)(?<!Mt\.\s)(?<!Mt\s)(?<!Mount\s)(?<!Ft\.\s)(?<!Fort\s)(?<!St\.\s)'
-                       rf'(?<!Saint\s)(?<!Port\s)(?<![Uu]pstate\s){re.escape(name)}(?!\w)'
+            # nor part of a name with an apostrophe in it: "Rural roads in Lin’an" is no Lin, Albania (s4w6a0_vGfQ;
+            # user, 2026-10-30), but "Boston's streets" is Boston and "Tunnel d'Aragnouet" Aragnouet
+            pattern = (rf'(?<!\w)(?<![Nn]ew\s)(?<!Mt\.\s)(?<!Mt\s)(?<!Mount\s)(?<!Ft\.\s)(?<!Fort\s)'
+                       rf'(?<!St\.\s)(?<!Saint\s)(?<!Port\s)(?<![Uu]pstate\s){re.escape(name)}(?!\w)'
+                       rf'(?![\'’](?!s\b)\w)'
                        rf'(?!\.?\s+(?:{STREETS}|St|Inn|Park)\b(?!\s+(?:{AMBIENCE_WORDS})\b))'
                        # ... nor "White Noise" White, GA (rL6jIS8yhMI, 0SYdMalf8Yo, c3m1ExoLevo: "Nashville Road
                        # Ambience | White Noise ASMR" is Nashville; user, 2026-10-17)
@@ -7836,8 +7839,8 @@ def _mapping_state(osm_state, rows, country):
 def _town_near(name, home):
     """(town, lat, lon) of a place of that name near home: OpenStreetMap tells a town from a neighbourhood (and
     gives the city it is part of); GeoNames calls both a section of a populated place."""
-    r = _nominatim('geocode', f'{name}, {home[2]}', featuretype='settlement', addressdetails=True, timeout=15,
-                   viewbox=[(home[3] - 1, home[4] - 1), (home[3] + 1, home[4] + 1)], bounded=True)
+    r = _nominatim('geocode', f'{name}, {home[2]}', featuretype='settlement', addressdetails=True, language='en',
+                   timeout=15, viewbox=[(home[3] - 1, home[4] - 1), (home[3] + 1, home[4] + 1)], bounded=True)
     if r is None or _km(home[3], home[4], r.latitude, r.longitude) > 60:
         return None
     address = r.raw.get('address', {})
@@ -7983,6 +7986,13 @@ def one_end_city(title, df, home=None):
 
 
 IN_PLACE = re.compile(r"\b(?:in|en) (?:the )?([A-Z][\w'’.-]*(?: [A-Z][\w'’.-]*){0,3})\s*(?:,|$)")
+
+
+def not_latin(name):
+    """Whether a name has letters of another script than Latin (Chinese, Arabic, Cyrillic); a modifier letter such
+    as the okina of Faʻaʻā is neither."""
+    return isinstance(name, str) and any(unicodedata.category(c) in ('Lu', 'Ll', 'Lt', 'Lo')
+                                         and 'LATIN' not in unicodedata.name(c, '') for c in name)
 
 
 def locate_now(p, df, home, sig_path=None, meta=None, boilerplate=frozenset()):
@@ -8860,6 +8870,14 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
             p.pop('entries')
             p['exclude'] = ('nothing names a place (title, description, chapters, GPS) and the channel films in no '
                             'one city: no locality to give it')
+    for p in new:  # a state or town only in another script is not offered (s4w6a0_vGfQ: Chenjia Village, 浙江省;
+        # user, 2026-10-30: "don't offer names of localities and states in local language"); Faʻaʻā is fine
+        for e in p.get('entries', []):
+            if (loc := e.get('locality')) and not_latin(loc[0]):
+                p['note'] = f"{p.get('note') or ''}; locality {loc[0]} left out (not in Latin letters)".lstrip('; ')
+                e['locality'] = None
+            elif loc and not_latin(loc[1]):
+                e['locality'] = [loc[0], None, loc[2]]
     merges = load_merges()
     for p in new:  # a town the reviewer counts in a bigger city nearby (merged_locality): that city
         for e in p.get('entries', []):
