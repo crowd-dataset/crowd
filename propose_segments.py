@@ -311,6 +311,11 @@ WALK_PERSON_SHARE, WALK_AHEAD_SHARE = 0.03, 0.3
 # no rule caught; user, 2026-10-19): the rest get a note. Not left out, as such channels also hold approved drives
 # (OaxacaTravel 66 of 72 walks, 4 approved drives with walk-like bob): at least WALK_BATCH_N walks, WALK_BATCH_SHARE
 WALK_BATCH_N, WALK_BATCH_SHARE = 8, 0.6
+# ... and then the ones proposed before it said so (a batch is done newest first: V-JMAalV_1w, a park walk, was
+# chomogomez's first long video; user, 2026-10-30) at WALK_BATCH_BOB+ step_bob with WALK_BATCH_HI+ of their bob_track
+# readings at BOB_WALK+: of the 60 reviewed videos such batches proposed, 9 rejected and no approved one (approved:
+# 0.57 at most, then 14%; the batch rule alone would leave out 24 approved)
+WALK_BATCH_BOB, WALK_BATCH_HI = 0.55, 0.2
 
 
 def dead_channel(plan):
@@ -8991,6 +8996,20 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
             plan[p['video']] = {'video': p['video'], 'title': p['title'], 'deferred': 'us',
                                 'exclude': 'held back for later: proposed in the US (footage from outside the US '
                                            'first)'}
+    if (share := walk_share(plan)):  # a batch of walks: its earlier videos that bob like one too (WALK_BATCH_BOB)
+        for v, p in list(plan.items()):
+            if ('entries' not in p or not undecided(p) or v not in sigs or gps_drive(sigs[v])
+                    or MOVING_TITLE.search(p.get('title') or '')):
+                continue
+            bt = np.asarray(sigs[v].get('bob_track', np.zeros((0, 2)))).reshape(-1, 2)
+            if float(sigs[v].get('step_bob', 0)) < WALK_BATCH_BOB or not len(bt) \
+                    or (bt[:, 1] >= BOB_WALK).mean() < WALK_BATCH_HI:
+                continue
+            committed.setdefault(v, json.dumps(p, sort_keys=True))  # replaced only if nobody changed it since
+            plan[v] = {'video': v, 'title': p['title'], 'analysed': True,
+                       'exclude': f'probably a walk: {share[0]} of {share[1]} long videos of this batch were walks, '
+                                  f"and it bobs like one ({float(sigs[v]['step_bob']):.0%} of its shake)"}
+            touched.append(v)
     commit(touched)
     kept = sum('entries' in p for p in new)
     print(f'{len(new)} videos added or re-analysed: {kept} proposed, {len(new) - kept} excluded -> {plan_path}')
