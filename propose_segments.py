@@ -316,6 +316,15 @@ WALK_BATCH_N, WALK_BATCH_SHARE = 8, 0.6
 # readings at BOB_WALK+: of the 60 reviewed videos such batches proposed, 9 rejected and no approved one (approved:
 # 0.57 at most, then 14%; the batch rule alone would leave out 24 approved)
 WALK_BATCH_BOB, WALK_BATCH_HI = 0.55, 0.2
+# ... and, batch or not, from WALK_SHEET_FEW frames on foot with that bob (user, 2026-10-30): of 408 reviewed videos
+# at step_bob 0.5-0.65, 14 walks or rejected and no approved one (2 frames alone: 6 approved)
+WALK_SHEET_FEW = 2
+
+
+def bob_share(sig):
+    """Share of a video's bob_track readings at BOB_WALK or more, None under 6 readings."""
+    bt = np.asarray(sig.get('bob_track', np.zeros((0, 2)))).reshape(-1, 2)
+    return float((bt[:, 1] >= BOB_WALK).mean()) if len(bt) >= 6 else None
 
 
 def dead_channel(plan):
@@ -8520,6 +8529,12 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
             elif not driving and (seen := walk_view(dict(np.load(sig_path)))):
                 reason = (f'a walk, not a drive: people close by in {seen[0]:.0%} of the frames, a vehicle ahead in '
                           f'only {seen[1]:.0%}')
+            elif (not driving and n_walk >= WALK_SHEET_FEW
+                  and float(np.load(sig_path).get('step_bob', 0)) >= WALK_BATCH_BOB
+                  and (bob_share(dict(np.load(sig_path))) or 0) >= WALK_BATCH_HI):
+                reason = (f"a walk, not a drive: {n_walk} of {len(frames)} sampled frames look taken on foot and the "
+                          f"camera bobs at a walker's step rate ({float(np.load(sig_path)['step_bob']):.0%} of its "
+                          f"shake, {bob_share(dict(np.load(sig_path))):.0%} of the video at a walk's)")
             elif not driving and walk_no_stop(dict(np.load(sig_path))):
                 reason = (f"a walk, not a drive: the camera bobs at a walker's step rate "
                           f"({float(np.load(sig_path)['step_bob']):.0%} of its shake) and never stands {NO_STOP_S} s")
@@ -9005,9 +9020,7 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
             if ('entries' not in p or not undecided(p) or v not in sigs or gps_drive(sigs[v])
                     or MOVING_TITLE.search(p.get('title') or '')):
                 continue
-            bt = np.asarray(sigs[v].get('bob_track', np.zeros((0, 2)))).reshape(-1, 2)
-            if float(sigs[v].get('step_bob', 0)) < WALK_BATCH_BOB or not len(bt) \
-                    or (bt[:, 1] >= BOB_WALK).mean() < WALK_BATCH_HI:
+            if float(sigs[v].get('step_bob', 0)) < WALK_BATCH_BOB or (bob_share(sigs[v]) or 0) < WALK_BATCH_HI:
                 continue
             committed.setdefault(v, json.dumps(p, sort_keys=True))  # replaced only if nobody changed it since
             plan[v] = {'video': v, 'title': p['title'], 'analysed': True,
