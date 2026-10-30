@@ -3228,7 +3228,9 @@ def screen_locality(texts, df, frames_dir=None):
     SECOND.png, opening_texts' keep_dir) only labels on a road sign or a caption count (label_on_sign)."""
     seen = {}
     for t in sorted(texts or {}):
-        if (loc := _title_locality(' '.join(DIRECTION.sub('', x) for x in texts[t]), df)):
+        # a name of two letters is a scrap of OCR, no label: "5 W Ed e" at 0:01 was no Ed, Sweden in a drive in
+        # Agona Swedru, Ghana (o5SABYKYWjs; user, 2026-10-29); one of 76 screen labels in the plans was this short
+        if (loc := _title_locality(' '.join(DIRECTION.sub('', x) for x in texts[t]), df)) and len(loc[0]) > 2:
             seen.setdefault(tuple(loc), []).append(t)
     for loc, times in sorted(seen.items(), key=lambda kv: -len(kv[1])):
         frames = [p for t in times if frames_dir and os.path.exists(p := os.path.join(frames_dir, f'{t:.0f}.png'))]
