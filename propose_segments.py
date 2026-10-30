@@ -313,17 +313,6 @@ WALK_PERSON_SHARE, WALK_AHEAD_SHARE = 0.03, 0.3
 WALK_BATCH_N, WALK_BATCH_SHARE = 8, 0.6
 
 
-def dead_channel(plan):
-    """The number of fully analysed videos of a channel when it has DEAD_CHANNEL_MIN or more and none was proposed,
-    else 0. An exclusion counts when the plan says the video was analysed or, in older plans, when its reason is
-    not one decided before the analysis (NOT_ANALYSED)."""
-    if any(p.get('entries') for p in plan.values()):
-        return 0
-    n = sum(1 for p in plan.values() if p.get('analysed') or (p.get('exclude') and p.get('analysed') is None
-                                                              and not NOT_ANALYSED.search(p['exclude'])))
-    return n if n >= DEAD_CHANNEL_MIN else 0
-
-
 def walk_share(plan):
     """(walks, long videos) of a batch when at least WALK_BATCH_N and WALK_BATCH_SHARE of its long videos were left
     out as walks, else None."""
@@ -5855,6 +5844,11 @@ def _city_around(at, rows, town):
 METRO_POP = 1_000_000  # a city this big has a metropolitan area: towns around it count as the city
 METRO_KM = 30          # within this many km of its centre (Yonkers 25 km from Manhattan, Bellflower 20 km from LA)
 METRO_TOWN_POP = 250_000  # a town this big stays a city of its own (Newark, Jersey City)
+# ... except where a big city's council covers its whole province and the towns around it are its districts, none a
+# city of its own however big: Muratpaşa, 450,000 inhabitants, is Antalya's centre (At7MojYCb0I, UuMi2CWMUtI; user,
+# 2026-10-29: "Muratpaşa should then be Antalya"), Konak İzmir's, Çankaya Ankara's, Üsküdar Istanbul's. Another
+# province's town is still its own (Gebze, Kocaeli). Not elsewhere: reviewers keep New Cairo and Sha Tin apart
+METRO_PROVINCE = {'Türkiye'}
 
 
 TITLE_CITY_POP = 200_000  # a city a title names with towns around it is the drive's locality (Las Vegas: 650,000)
@@ -5900,9 +5894,11 @@ def _metro_city(town, at, rows, state=None):
     big = [(_km(at[0], at[1], float(r.lat), float(r.lon)), r) for r in rows[pop >= METRO_POP].itertuples()
            if pd.notna(r.lat) and pd.notna(r.lon) and not (state and isinstance(r.state, str) and r.state != state)]
     big = [(d, r) for d, r in big if d <= METRO_KM and _name_key(r.locality) != _name_key(town)]
-    if not big or _own_city(town, at, rows['country'].iloc[0]):
+    if not big:
         return None
     r = min(big, key=lambda dr: dr[0])[1]
+    if r.country not in METRO_PROVINCE and _own_city(town, at, r.country):
+        return None
     # outside the US a town in another first-level region than the city is a town of its own: Stockerau (Lower
     # Austria) 25 km from Vienna, a state of its own (4jR-ICbmbCU; user, 2026-10-25); as Brandenburg's towns around
     # Berlin or Central Bohemia's around Prague
@@ -8220,10 +8216,6 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
         print(f"Stopped early: {len(walks)} of {len(proposed)} analysed videos bob like a walker's steps: this "
               'channel films walks, so it is rejected; mark it "Rejected" in the channels sheet')
         return plan_path
-    if not deferred and only is None and (n_dead := dead_channel(plan)):
-        print(f'Stopped early: {n_dead} analysed videos and none proposed: this channel films no drives, so it '
-              'is rejected; mark it "Rejected" in the channels sheet')
-        return plan_path
 
     def undecided(p):
         return not any(s.get('decision') or s.get('applied') for e in p.get('entries', []) for s in e['segments'])
@@ -8501,14 +8493,9 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
                            'so it is rejected; mark it "Rejected" in the channels sheet')
                 break
         if reason:
-            plan[vid] = {'video': vid, 'title': meta['title'], 'exclude': reason,
-                         **({'analysed': True} if analysed else {})}
+            plan[vid] = {'video': vid, 'title': meta['title'], 'exclude': reason}
             touched.append(vid)
             commit([vid])
-            if analysed and only is None and not deferred and (n_dead := dead_channel(plan)):
-                stopped = (f'{n_dead} analysed videos and none proposed: this channel films no drives, so it is '
-                           'rejected; mark it "Rejected" in the channels sheet')
-                break
             continue
         if analysed:
             segments, notes = night_from_title(*propose(sig := load_signals(sig_path, meta.get('title'))), sig,
@@ -8974,14 +8961,6 @@ def reject_undecided(plan):
 
 WALK_HINT = "the camera bobs like a walker's steps"  # the start of propose's walk hint in a note
 WALK_CHANNEL_MIN, WALK_CHANNEL_SHARE = 20, 0.7  # analysed videos, the share with WALK_HINT: a channel of walks
-# a channel whose first DEAD_CHANNEL_MIN fully analysed videos gave no proposal films no drives (user, 2026-10-29:
-# UCIbunI2vKACwZVoZ9r2By1w, sermons and prayers, 186 analysed in days on wsl5090b, none proposed). Of 591 channels'
-# plans this stops 6 that never had a proposal (~380 analyses saved); 2 others had their first proposal later
-# (MiezProduction, OaxacaTravel: 7 of 6,943 approved videos)
-DEAD_CHANNEL_MIN = 30
-# exclusions decided before a video is analysed (title, length, ...): they do not count towards DEAD_CHANNEL_MIN
-NOT_ANALYSED = re.compile(r'title mentions|minimum|^held back|^unavailable|^could not analyse|^portrait|'
-                          r'title names|^a drive from one town|^highway driving', re.I)
 MARKED_REJECT = 2  # videos marked sped up (or with ghosts) in review that reject their channel (user, 2026-10-10)
 # plan key -> (what the review button marks, the channel's habit it shows)
 REVIEW_MARKS = {'sped_up': ('sped up', 'speeds up its drives'),
