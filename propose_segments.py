@@ -6043,6 +6043,10 @@ FROM_TO = (re.compile(r"\bfrom\s+(.+?)\s+to(?:wards?)?\s+(.+?)" + _END, re.I),
                       r"Sunset|Sunrise|Morning|Evening|Sea)\b)"
                       r"([A-Z][\w'’.-]*(?: [A-Z][\w'’.-]*){0,3})\s+[Tt]o\s+([A-Z][\w'’.-]*(?: [A-Z][\w'’.-]*){0,3})"
                       r"(?:\s+via\s+[^|–—:(]+?)?\s*(?:\s[-–—|]\s|\||:|\(|$"
+                      # ... or before a comma and words in lower case on how it goes: "Luso to Casqueira, using the
+                      # old road (N235 & unpaved roads)" (iwZUbnvT7Fc; user, 2026-10-30; a comma before a capital is
+                      # often no drive: "Ultimate Guide to Cityscape, Island Hopping", "Arriving to Dubai, The Tunnel")
+                      r"|,\s+(?=[a-z])"
                       # ... or before the numbered road it takes: "Markham to Brooklin Ontario Highway 7 Tour Thru
                       # My Dash Cam" (hykezh8ls8k; user, 2026-10-23)
                       r"|\s(?=(?:[Hh]ighway|HIGHWAY|[Hh]wy|[Rr]oute|I|US|SR)[- ]?\d{1,3}\b))"),
