@@ -4437,6 +4437,15 @@ def hashtag_locality(title, df):
     return list(hits.pop()) if len(hits) == 1 else None
 
 
+def home_state_name(loc, title, country):
+    """Whether loc (abroad) is named like a state or province of country and the title names neither its state nor
+    its country: the title then means the state (Ontario, OR for "ERIN Ontario" from a channel in Canada)."""
+    subs = pycountry.subdivisions.get(country_code=common.get_iso2_country_code(common.correct_country(country)) or '')
+    if loc[2] == country or _name_key(loc[0]) not in {_name_key(s.name) for s in subs or []}:
+        return False
+    return loc[2] not in title_countries(title) and not (loc[2] == 'United States' and loc[1] in title_states(title))
+
+
 def guess_locality(title, country, df):
     """[locality, state, country] when the title names exactly one mapping locality of that country, else None.
     A drive "from A to B in C" with C a locality is in C: neighbourhoods of a big city ("from Hollywood to Venice
@@ -5365,8 +5374,11 @@ def _osm_place(phrase, country_codes, near=None, reach_km=None):
     town = a.get(kind) if kind else None
     # a village the phrase names is itself, not the town OpenStreetMap files it under (Eo3Zx_sPua8: Cebza and
     # Macedonia, villages of Ciacova; user, 2026-10-22)
+    # ... also with its state after a comma ("PORT CARLING, Ontario": Port Carling, not Muskoka Lakes Township;
+    # YwLuJ8ElslE; user, 2026-10-30)
     if (r.raw.get('class') == 'place' and _osm_type(r.raw) == 'village' and a.get('village')
-            and _name_key(a['village']) == _name_key(_osm_name(r.raw)) == wanted):
+            and _name_key(a['village']) == _name_key(_osm_name(r.raw))
+            and _name_key(a['village']) in (wanted, _name_key(phrase.split(',')[0]))):
         town, kind = a['village'], 'village'
     # ... and so is a town or city: "Clay Cross, Derbyshire" is Clay Cross, not the district of North East
     # Derbyshire OpenStreetMap gives as its city (R78R_Evurd4; user, 2026-10-24)
@@ -5387,8 +5399,9 @@ def _osm_place(phrase, country_codes, near=None, reach_km=None):
     # under no town, or under its municipality only, is the town itself (v7XHCQBdl4w: the suburb Motetema, its
     # "city" the Elias Motsoaledi Local Municipality; udVi6qOYvNI: Kwaggafontein; user, 2026-10-20)
     # ... nor a province or region ("Province of Småland": B2kJDCoBv6w; user, 2026-10-22; "Karachi Division")
+    # ... nor Ontario's "District Municipality of Muskoka" (YwLuJ8ElslE)
     if town and re.search(r'\b(?:County|Municipality|Province|Region|Prefecture|Oblast|Län|Division)$'
-                          r'|^(?:Province|Region|County|Prefecture) of\b', town):
+                          r'|^(?:Province|Region|County|Prefecture|(?:District |Regional )?Municipality) of\b', town):
         town = None
     # (a region is no town: "Allgäu" is a place of type region, Hha1wy7hGto; user, 2026-10-27)
     if not town and r.raw.get('class') == 'place' and _name_key(_osm_name(r.raw)) in (
@@ -5513,6 +5526,10 @@ def place_localities(phrases, df, home=None):
               and not TOWN_SUBDIVISION.search(sub.type)}
     # a state of the countries searched is the state ("Atlanta, Georgia"), else "GEORGIA" in a title is the country
     country_names = {_name_key(c) for c in COUNTRIES} - set(states)
+    # a state and its country after a name only say where it is: "PORT CARLING Ontario Canada" is Port Carling in
+    # Ontario, and "Ontario Canada" no place of its own (as the best-known name it made Waterloo be looked for near
+    # it: nuq-dJSAitI, "WATERLOO Downtown Driving Tour 4K Ontario Canada"; YwLuJ8ElslE; user, 2026-10-30)
+    phrases = [x for p in phrases for x in _state_country_split(p, states, df)]
     named = {states[_name_key(p)] for p in phrases if _name_key(p) in states}
     if named:  # looked up in the countries of the states named only: LocationIQ finds "Henry Hudson Highway, New
         # York" (the parkway, OJm2GB-6-1E) in the US, and nothing when asked in every country of the mapping
@@ -5546,7 +5563,9 @@ def place_localities(phrases, df, home=None):
         country = countries[next(iter(only))]
         phrases = [p if _name_key(p) in country_names else f'{p}, {country}' for p in phrases]
     # a country's name with a state is a town ("Lebanon, Pennsylvania"), else the country ("GEORGIA" in a travel title)
-    phrases = [p for p in phrases if named or _name_key(p) not in country_names]
+    # ... but not with a state of that country ("Ontario Canada")
+    phrases = [p for p in phrases if _name_key(p) not in country_names
+               or named and common.get_iso2_country_code(common.correct_country(p)) not in codes]
     # a state only qualifies the town named with it ("Palmerton, Pennsylvania"): as a place of its own it would
     # be the anchor, or match some "Pennsylvania" road in another town; the town is looked up in it
     phrases = [p for p in phrases if _name_key(p) not in states]  # a state alone is no locality
@@ -5609,6 +5628,30 @@ def place_localities(phrases, df, home=None):
 
 
 REGION_KM = 150  # see place_localities
+
+
+def _state_country_split(phrase, states, df):
+    """[name, state, country] of a phrase ending in a state and its country ("PORT CARLING Ontario Canada"), or
+    [state, country] for those two alone, else [phrase]; states: place_localities' states by _name_key. Not a state
+    that is a city of df too: "Berlin Germany", "Dublin Ireland", "Lagos Nigeria" name the city (of 224 titles
+    with such a tail, 7 reviewed ones lost their city)."""
+    words = phrase.split()
+    for i in range(len(words) - 1):
+        for j in range(i + 1, len(words)):
+            state, country = ' '.join(words[i:j]), ' '.join(words[j:])
+            if _name_key(state) not in states or _name_key(country) not in _country_keys():
+                continue
+            code = common.get_iso2_country_code(common.correct_country(country))
+            if not any(sub.name == states[_name_key(state)] for sub in pycountry.subdivisions.get(country_code=code)
+                       or []):
+                continue
+            there = [c for c in df['country'].dropna().unique()
+                     if common.get_iso2_country_code(common.correct_country(c)) == code]
+            if not _title_locality(state, df[df['country'].isin(there)]):  # a city's other names too (Marrakech)
+                return [x for x in (' '.join(words[:i]), state, country) if x]
+    return [phrase]
+
+
 TYPO_FAR_KM, TYPO_NEAR_KM = 100, 30  # see _near_home_typo
 
 
@@ -8675,6 +8718,10 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
             reach = in_reach | df['country'].isin(title_countries(p['title']))
             found = _title_locality(p['title'], df[reach & (df['country'] != country)], exact_case=True)
             if found and home and not abroad_is_nearest(found, df, home, country):
+                found = None
+            # ... nor a town named like a state of the channel's country, its own state or country unnamed: "Village
+            # of ERIN Ontario" from Toronto is in Ontario, not Ontario, OR (54UnPX4a8EY; user, 2026-10-30)
+            if found and home and home_state_name(found, p['title'], home[2]):
                 found = None
             if not found:
                 found = description_locality(metas.get(p['video'], {}).get('description'), df[in_reach], boilerplate)
