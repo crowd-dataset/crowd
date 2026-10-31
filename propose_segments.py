@@ -4285,6 +4285,9 @@ COUNTRY_ALIASES = {'Turkey': 'Türkiye', 'Czech Republic': 'Czechia', 'Ivory Coa
                    'Latvija': 'Latvia', 'Lietuva': 'Lithuania', 'Slovensko': 'Slovakia', 'Slovenija': 'Slovenia',
                    'Shqipëria': 'Albania', 'Ísland': 'Iceland', 'Japón': 'Japan', 'Japão': 'Japan',
                    'Giappone': 'Japan', 'Japon': 'Japan', 'Estados Unidos': 'United States',
+                   # ... and by its letters: "Driving Through Vienna, Georgia | USA" was Vienna, Austria, the big
+                   # city of a title naming no country (g4BQ-NsuYEE; user, 2026-10-31)
+                   'USA': 'United States',
                    'Reino Unido': 'United Kingdom', 'Royaume-Uni': 'United Kingdom', 'Marruecos': 'Morocco',
                    'Maroc': 'Morocco', 'Perú': 'Peru', 'Panamá': 'Panama', 'Turquía': 'Türkiye', 'Turquia': 'Türkiye',
                    'Turquie': 'Türkiye', 'Россия': 'Russia', 'Україна': 'Ukraine', 'Ukraina': 'Ukraine'}
@@ -4511,6 +4514,22 @@ def guess_locality(title, country, df):
     return loc
 
 
+# a city named before a way of getting about is where the ride is: "Kingston to Chessington by London Bus 71!" of a
+# channel listed in South Africa was Somerset West, from a Kingston near Cape Town (sQDLSp-AOfg; user, 2026-10-31).
+# Of 13 reviewed titles so naming a mapping locality 12 are in it; not one after "/" or "&" ("Omaha/Council Bluffs
+# Metro Drive" is Omaha)
+TRANSIT_CITY = re.compile(r"(?<![/&])(?<![/&]\s)\b((?:[A-Z][\w'’.-]*\s+){1,3})(?:Bus(?:es)?|Trams?|Metro|Subway|"
+                          r"Underground|Overground|Trains?|Ferry|Taxis?|Cabs?|Tube|Monorail|MRT|LRT|Light Rail|"
+                          r"Streetcars?|Trolley(?:bus)?)\b")
+
+
+def transit_city(title, df):
+    """[locality, state, country] of the mapping locality named before a way of getting about (TRANSIT_CITY), anywhere,
+    else None."""
+    m = TRANSIT_CITY.search(title or '')
+    return _title_locality(m.group(1), df) if m else None
+
+
 BIG_CITY_POP = 500_000  # a city this big named in a title is meant even outside the channel's country
 
 
@@ -4572,8 +4591,31 @@ def _mapping_names():
     return {str(x).lower() for x in df.loc[big, 'locality'].dropna() if len(str(x)) >= 4 and ' ' not in str(x)}
 
 
+# a car's make or a holiday is no place on its own: "following behind a Porsche panamera" was Singapore, "first day
+# of Ramadan" the village Desa Ramadan (XDPQhHPKmbI, ohGRDRKmRvs; user, 2026-10-31), the only reviewed videos
+# located from such a word; a town of the mapping so named stays (Toyota, Lincoln)
+NOT_PLACE_ALONE = {'porsche', 'ferrari', 'lamborghini', 'nissan', 'mazda', 'subaru', 'mitsubishi', 'hyundai', 'kia',
+                   'volkswagen', 'vw', 'audi', 'bmw', 'tesla', 'chevrolet', 'chevy', 'volvo', 'peugeot', 'renault',
+                   'citroen', 'citroën', 'skoda', 'škoda', 'suzuki', 'lexus', 'maserati', 'bentley', 'mclaren',
+                   'bugatti', 'jeep', 'fiat', 'benz', 'mercedes', 'cadillac', 'dodge', 'chrysler', 'buick', 'gmc',
+                   'opel', 'cupra', 'dacia', 'infiniti', 'acura', 'polestar', 'byd', 'geely', 'proton', 'perodua',
+                   'lada', 'mahindra', 'toyota', 'honda', 'lincoln', 'ford',
+                   'ramadan', 'ramzan', 'eid', 'lebaran', 'idul', 'fitri', 'adha', 'christmas', 'xmas', 'easter',
+                   'halloween', 'thanksgiving', 'diwali', 'deepavali', 'hanukkah', 'songkran', 'nyepi', 'chuseok',
+                   'holi', 'navratri', 'nowruz'}
+
+
+@functools.cache
+def _all_mapping_names():
+    """The names of all the mapping's localities, lower case."""
+    return frozenset(str(x).lower() for x in add_video.load_csv(add_video.FILE_PATH)['locality'].dropna())
+
+
 GENERIC_RUN = {'big', 'small', 'busy', 'city', 'town', 'street', 'streets', 'road', 'roads', 'traffic', 'noise',
-               'sleep', 'sleeping', 'minute', 'hour', 'for', 'the', 'local', 'open', 'back', 'rush'}
+               'sleep', 'sleeping', 'minute', 'hour', 'for', 'the', 'local', 'open', 'back', 'rush',
+               # "Driving on a Small Island" of a channel in Guernsey was Test Valley, Hampshire (hGZmmnwo75o; user,
+               # 2026-10-31), the only reviewed videos located from such words
+               'island', 'islands', 'little', 'tiny'}
 
 
 # subdivisions that are towns, no states (Fk-gRH664hc: "Haapsalu, Estonia" is the town, an urban municipality in
@@ -5082,6 +5124,11 @@ SEA_NAME = re.compile(r"(?:the\s+)?(?:Mediterranean|Atlantic|Pacific|Caribbean|A
                       r"(?:\s+(?:Sea|Ocean|Coast|Coastline|Riviera))?", re.IGNORECASE)
 
 
+def word_alone(word):
+    """Whether a word is a car's make or a holiday and no town of the mapping (NOT_PLACE_ALONE)."""
+    return word.lower() in NOT_PLACE_ALONE and word.lower() not in _all_mapping_names()
+
+
 def place_phrases(text, limit=4):
     """Runs of capitalised words in a title or description that may name a place, longest first: "Al Khan
     Beach" from "Beautiful Sun Rise at Al Khan Beach, unedited sounds". Hashtags and links are skipped."""
@@ -5150,7 +5197,8 @@ def place_phrases(text, limit=4):
         # nor the end of a region's name whose first word is no place word: "York" of "New York" was York, PA
         # (NrJkGqKNQfU: "Around Olean, Cattaraugus County, New York, USA"; user, 2026-10-28), "Mexico" of "New Mexico"
         tail = bool(run) and f"{start_after} {' '.join(run)}".lower() in regions
-        if run and not plain and not tail and (len(run) > 1 or len(run[0]) > 3):
+        thing = len(run) == 1 and word_alone(run[0])  # NOT_PLACE_ALONE
+        if run and not plain and not tail and not thing and (len(run) > 1 or len(run[0]) > 3):
             phrases.append(' '.join(run))
         run = []
     # a name written with its state ("Cutler,Ca", "Dorado,Puerto Rico") is a place even when it is also a word,
@@ -5361,7 +5409,10 @@ def _osm_place(phrase, country_codes, near=None, reach_km=None):
     box = {}
     if near:
         deg = (reach_km or ABROAD_KM) / 111
-        box = {'viewbox': [(near[0] - deg, near[1] - deg), (near[0] + deg, near[1] + deg)], 'bounded': True}
+        # (within the globe's edges: a box past 180 degrees east finds nothing, so Toogoolawah, 95 km from a
+        # Brisbane channel's home, was not found: 5ctGFTcAT4s; user, 2026-10-31)
+        box = {'viewbox': [(max(near[0] - deg, -90), max(near[1] - deg, -180)),
+                           (min(near[0] + deg, 90), min(near[1] + deg, 180))], 'bounded': True}
     codes = set(country_codes) | ({'US'} if US_TERRITORIES & set(country_codes) else set())
     found = _nominatim('geocode', phrase, exactly_one=False, limit=10, country_codes=sorted(codes),
                        addressdetails=True, language='en', timeout=15, **box) or []
@@ -8654,7 +8705,8 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
         if vid in reanalyse:  # keep a vehicle type picked in the review page
             vt, vehicle_note = plan[vid].get('vehicle_type', vt), 'vehicle as in the earlier proposal'
         named = title_countries(meta['title'])  # "…hacia Carolina, Puerto Rico": not San Juan, Texas
-        guess = guess_locality(meta['title'], named[0] if len(named) == 1 else country, df)
+        guess = (transit_city(meta['title'], df)
+                 or guess_locality(meta['title'], named[0] if len(named) == 1 else country, df))
         if not guess and len(named) > 1:  # "Slovenia Metlika 4K | ... | LUNITO Finland" (AKJFTdnsw-I, a channel
             # naming its home): the one named country that has a town of the title (user, 2026-10-17)
             found = {tuple(g) for c in named if (g := guess_locality(meta['title'], c, df))}
@@ -11010,9 +11062,7 @@ def review(plan_path, port=None):
                 for e in (p.get('entries', []) if p['video'] == video else []):
                     for s in (e['segments'] if e.get('locality') == locality else []):
                         if (s['start'], s['end']) == (seg['start'], seg['end']) and not s.get('applied'):
-                            # when (was True before 2026-11-01): the day a video was added, for the hub's "Videos
-                            # added per day" (dashboards/added_videos.py), as a push can come the next morning
-                            s['applied'] = round(time.time())
+                            s['applied'] = True
                             save(plan)
                             return True
         return False
