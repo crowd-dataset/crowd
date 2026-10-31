@@ -11010,7 +11010,9 @@ def review(plan_path, port=None):
                 for e in (p.get('entries', []) if p['video'] == video else []):
                     for s in (e['segments'] if e.get('locality') == locality else []):
                         if (s['start'], s['end']) == (seg['start'], seg['end']) and not s.get('applied'):
-                            s['applied'] = True
+                            # when (was True before 2026-11-01): the day a video was added, for the hub's "Videos
+                            # added per day" (dashboards/added_videos.py), as a push can come the next morning
+                            s['applied'] = round(time.time())
                             save(plan)
                             return True
         return False
