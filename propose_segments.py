@@ -770,6 +770,41 @@ def inset_rectangle(frames):
     return None
 
 
+# a batch whose videos mostly show the driver in a corner shows it in its others too, faint where the inset's
+# content matches the scenery next to it (hGZmmnwo75o: the light car window beside a light sky; user, 2026-10-31):
+# where PIP_BATCH_N of a batch's videos left out as picture-in-picture share an inset, its undecided videos with
+# PIP_BORDER of both inner borders there are left out too. Over all batches only livinginguernsey has such an inset
+# (20 videos): of its others 7 rejected pass, its 4 approved and 6 other rejected ones not (approved: 0.41 at most)
+PIP_BATCH_N, PIP_BORDER = 5, 0.7
+
+
+def inset_borders(frames, rect):
+    """(vertical, horizontal): the share of an inset's inner borders (rect: x0, y0, x1, y1 in a 320x180 frame) where
+    the edge, averaged over frames, is twice that 4-8 px either side of it and over 6."""
+    f = np.stack([cv2.resize(x, (320, 180), interpolation=cv2.INTER_AREA).astype(np.float32) for x in frames])
+    gx, gy = np.abs(np.diff(f, axis=2)).mean(0), np.abs(np.diff(f, axis=1)).mean(0)
+    x0, y0, x1, y1 = rect
+    xs, ys = x1 if x0 == 0 else x0, y1 if y0 == 0 else y0
+    rows, cols = slice(y0 + 4, y1 - 4), slice(x0 + 4, x1 - 4)
+    on = gx[rows, max(xs - 2, 0):xs + 2].max(1)
+    side = np.median(np.concatenate([gx[rows, max(xs - 8, 0):max(xs - 4, 0)], gx[rows, xs + 4:xs + 8]], 1), 1)
+    vertical = ((on > 2 * side) & (on > 6)).mean()
+    on = gy[max(ys - 2, 0):ys + 2, cols].max(0)
+    side = np.median(np.concatenate([gy[max(ys - 8, 0):max(ys - 4, 0), cols], gy[ys + 4:ys + 8, cols]], 0), 0)
+    return float(vertical), float(((on > 2 * side) & (on > 6)).mean())
+
+
+def batch_inset(plan, out_dir):
+    """((x0, y0, x1, y1) to 4 px, how many) of the inset PIP_BATCH_N or more of a batch's videos left out as
+    picture-in-picture share, else None."""
+    rects = Counter()
+    for v, p in plan.items():
+        if ('picture-in-picture' in (p.get('exclude') or '')
+                and (frames := sheet_frames(os.path.join(out_dir, f'{v}.jpg'))) and (r := inset_rectangle(frames))):
+            rects[tuple(int(round(x / 4) * 4) for x in r)] += 1
+    return rects.most_common(1)[0] if rects and rects.most_common(1)[0][1] >= PIP_BATCH_N else None
+
+
 def sheet_frames(path):
     """The grey frames of a contact sheet written by contact_sheet (4 columns of 320x180)."""
     img = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
@@ -9079,6 +9114,17 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
                        'exclude': f'probably a walk: {share[0]} of {share[1]} long videos of this batch were walks, '
                                   f"and it bobs like one ({float(sigs[v]['step_bob']):.0%} of its shake)"}
             touched.append(v)
+    if (inset := batch_inset(plan, out_dir)):  # the batch's inset, faint in its other videos (PIP_BATCH_N)
+        for v, p in list(plan.items()):
+            frames = sheet_frames(os.path.join(out_dir, f'{v}.jpg')) if 'entries' in p and undecided(p) else []
+            if not frames:
+                continue
+            if min(inset_borders(frames, inset[0])) >= PIP_BORDER:
+                committed.setdefault(v, json.dumps(p, sort_keys=True))  # replaced only if nobody changed it since
+                plan[v] = {'video': v, 'title': p['title'], 'analysed': True,
+                           'exclude': 'another camera is shown in a corner of the picture (picture-in-picture, faint: '
+                                      f'where {inset[1]} videos of this batch show one)'}
+                touched.append(v)
     commit(touched)
     kept = sum('entries' in p for p in new)
     print(f'{len(new)} videos added or re-analysed: {kept} proposed, {len(new) - kept} excluded -> {plan_path}')
