@@ -28,7 +28,10 @@ json.dump(c, open("config", "w"), indent=2)
 json.dump({k: "" for k in json.load(open("default.secret"))}, open("secret", "w"), indent=2)
 PY
 echo "== $(date '+%F %T') analysis"
-python analysis.py 2>&1 | grep -vE "EPS format|pdftops" | tail -3
+# at most an hour (it takes ~5 min): on 2026-10-31 a figure export (kaleido) hung and held the build 19 h, so the
+# hub's "Videos added per day" stayed a day behind. The exports left behind by a stopped run are stopped too
+perl -e 'alarm shift; exec @ARGV' 3600 python analysis.py 2>&1 | grep -vE "EPS format|pdftops" | tail -3
+pkill -u "$USER" -f 'kaleido plotly --plotlyjs=.*/envs/dataset/' 2>/dev/null
 # the videos each person added in the last 10 days, from the credits analysis.py just updated: the review hub's /added
 python "$REPO/dashboards/added_videos.py" $W "$REPO/_output/proposals/added_videos.json"
 python "$REPO/dashboards/dataset_page.py"
