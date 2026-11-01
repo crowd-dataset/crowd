@@ -192,6 +192,21 @@ def stop_finished_pages():
         del servers[name]
 
 
+def drop_local_videos():
+    """Delete the copies of videos YouTube's embedded player would not play (ps.LOCAL_VIDEOS) of each batch whose
+    review is done: nothing left to decide, nothing approved to apply (but segments with no locality, which Apply
+    skips), its plan unchanged for an hour (user, 2026-11-01)."""
+    for name in os.listdir(rc.ROOT):
+        folder, plan = os.path.join(rc.ROOT, name, ps.LOCAL_VIDEOS), os.path.join(rc.ROOT, name, 'plan.json')
+        if not os.path.isdir(folder) or not os.path.exists(plan):
+            continue
+        approved, no_place = approved_unapplied(name)
+        if rc.review_counts(name)[0] or approved > no_place or time.time() - os.path.getmtime(plan) < 3600:
+            continue
+        shutil.rmtree(folder, ignore_errors=True)
+        print(f'{name}: deleted its copies of videos YouTube would not play here', flush=True)
+
+
 def approved_unapplied(name):
     """(approved segments of the batch not in the mapping yet, how many of them have no locality: Apply skips
     those)."""
@@ -207,6 +222,7 @@ def approved_unapplied(name):
 @app.route('/')
 def index():
     stop_finished_pages()
+    drop_local_videos()
     batches, done, seen = [], [], set()
     for url, c in sorted(rc.load_state().items(), key=lambda kv: kv[1]['status'] != 'processing'):
         if c['name'] in seen:  # a sheet row and its 'refresh:' entry share the folder (CharruaNYC twice, 2026-10-12)
