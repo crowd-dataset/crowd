@@ -5491,11 +5491,12 @@ PLACE_AREAS = {'region', 'state', 'province', 'county', 'district', 'state_distr
 
 
 @_remembered
-def _osm_place(phrase, country_codes, near=None, reach_km=None):
+def _osm_place(phrase, country_codes, near=None, reach_km=None, home=None):
     """(town, region, country code, region code, lat, lon) of an OpenStreetMap feature called phrase in those
     countries (a beach, a road, a district or a town): town is the one it lies in, region its state or emirate.
     near=(lat, lon): the nearest of the matches within reach of there, as the place a channel from there means
-    ("Longwood in the Bronx" for a New York channel, not Longwood in Boston; Cutler, CA not Cutler, IL)."""
+    ("Longwood in the Bronx" for a New York channel, not Longwood in Boston; Cutler, CA not Cutler, IL).
+    home=(lat, lon): the channel's home when looked up anywhere, for a province nearer it (below)."""
     box = {}
     if near:
         deg = (reach_km or ABROAD_KM) / 111
@@ -5525,6 +5526,7 @@ def _osm_place(phrase, country_codes, near=None, reach_km=None):
                 and (cls in ('place', 'boundary', 'tourism', 'natural', 'leisure', 'landuse') or main_road or road
                      # a landmark that names its city: T-Mobile Arena is a "building", a stadium (gkGtNPzzeJ8)
                      or r.raw.get('type') in LANDMARK_TYPES))
+    regions = [r for r in found if _osm_type(r.raw) == 'state' and _name_key(_osm_name(r.raw)) == wanted]
     found = [r for r in found if fits(r)]
     if not found:
         return None
@@ -5535,6 +5537,15 @@ def _osm_place(phrase, country_codes, near=None, reach_km=None):
         return any(r.raw.get('address', {}).get(k) for k in ('city', 'town', 'village', 'municipality'))
     r = min(found, key=lambda r: (_name_key(_osm_name(r.raw)) != wanted, not in_town(r),
                                   _km(near[0], near[1], r.latitude, r.longitude) if near else 0))
+    # a province nearer than the place found, in a country with no place of its name, is what the phrase names:
+    # "South Holland" of a Rotterdam channel is the Dutch province, not the district in Lincolnshire
+    # (Q1YPxIedkNk; user, 2026-11-01); "Utrecht" is still the city of the province of Utrecht
+    # (also when looked up anywhere: "a town of exactly the name" found it in Lincolnshire after all)
+    at = near or home
+    if at and any(_km(*at, s.latitude, s.longitude) < _km(*at, r.latitude, r.longitude)
+                  and not any(_country_code(f.raw.get('address', {})) == _country_code(s.raw.get('address', {}))
+                              and _name_key(_osm_name(f.raw)) == wanted for f in found) for s in regions):
+        return None
     a = r.raw.get('address', {})
     kind = next((k for k in ('city', 'town', 'village', 'municipality', 'hamlet') if a.get(k)), None)
     town = a.get(kind) if kind else None
@@ -5674,6 +5685,45 @@ def _geonames_named(phrase, countries):
     return g['name'], g.get('adminName1'), code, None, float(g['lat']), float(g['lng']), 0.5, 'town'
 
 
+@_remembered
+def _osm_settlements(name, code):
+    """Hits (as _osm_place's) for each town or village OpenStreetMap calls exactly name in the country (ISO code),
+    asked for a settlement: a plain search may find only a province of the name."""
+    if not name or not code:
+        return []
+    found = _nominatim('geocode', {'city': name, 'country': code}, exactly_one=False, limit=10,
+                       addressdetails=True, language='en', timeout=15) or []
+    return [(_osm_name(r.raw), r.raw.get('address', {}).get('state'), _country_code(r.raw.get('address', {})),
+             _region_code(r.raw.get('address', {})), r.latitude, r.longitude, float(r.raw.get('importance') or 0),
+             _osm_type(r.raw)) for r in found if r.raw.get('class') == 'place'
+            and _osm_type(r.raw) in ('city', 'town', 'village') and _name_key(_osm_name(r.raw)) == _name_key(name)]
+
+
+@_remembered
+def _known_province(name, code):
+    """Whether a province of the country (ISO code) known by its name alone is called name."""
+    found = _nominatim('geocode', {'state': name, 'country': code}, exactly_one=False, limit=5, addressdetails=True,
+                       language='en', timeout=15) or []
+    return any(_osm_type(r.raw) == 'state' and _name_key(_osm_name(r.raw)) == _name_key(name)
+               and float(r.raw.get('importance') or 0) >= MAJOR_PLACE for r in found)
+
+
+def _named_settlements(name, code):
+    """_osm_settlements of the name, else of its "ai" spelling; none for a province known by its name alone:
+    "Guizhou, China" is the province, not the town of Guizhou in Hubei (0IJLf30kzXM), while "Xaysomboun, Laos" is
+    the village of Xaisomboun, its province being little known (1cdmZPVMCkE; user, 2026-11-01)."""
+    if not name or not code or _known_province(name, code):
+        return []
+    return _osm_settlements(name, code) or _osm_settlements(ay_as_ai(name), code)
+
+
+def ay_as_ai(phrase):
+    """The phrase with "ay" before a consonant written "ai", as other transliterations of Lao or Thai names do
+    (Xaysomboun, Xaisomboun); word ends kept ("Bay", "Hay")."""
+    return re.sub(r'(?<=\w)ay(?=[b-df-hj-np-tv-xz])', lambda m: 'AI' if m.group().isupper() else 'ai', phrase,
+                  flags=re.IGNORECASE) if phrase else phrase
+
+
 OWN_NAME_PLACE = 0.4  # ... and of a town found by its name alone at the other end of such a drive
 MAJOR_PLACE = 0.65  # OpenStreetMap importance of a city known by its name alone: Atlanta 0.75, Brooklyn 0.74
 
@@ -5750,13 +5800,14 @@ def place_localities(phrases, df, home=None):
                           if p in written else None)) for p, h in hits]
     if home:  # a major city of the name beats a namesake near home (J7LDm95K-hM: Atlanta, GA for a Los Angeles
         # channel, not Atlanta, NV); Springfield (0.61) and Waterloo (0.56) are too many places to say
-        hits = [(p, big if (big := _osm_place(p, codes)) and big[6] >= MAJOR_PLACE and (not h or h[6] < big[6] - 0.2)
-                 else h) for p, h in hits]
+        hits = [(p, big if (big := _osm_place(p, codes, None, None, home[3:5])) and big[6] >= MAJOR_PLACE
+                 and (not h or h[6] < big[6] - 0.2) else h) for p, h in hits]
         # ... and with nothing of the text near home, a town or city of exactly the name anywhere in the countries:
         # "Driving Through Lahaina in 2026" from a Los Angeles channel is Lahaina, HI (jZS06VYyHug was Anaheim, from
         # the description's "Maui"; user, 2026-10-24)
         if not any(h for _, h in hits):
-            hits = [(p, big if (big := _osm_place(p, codes)) and big[0] and big[-1] in ('town', 'city')
+            hits = [(p, big if (big := _osm_place(p, codes, None, None, home[3:5])) and big[0]
+                     and big[-1] in ('town', 'city')
                      and _name_key(big[0]) == _name_key(p.split(',')[0]) else h) for p, h in hits]
     if len(named) == 1 and 'US' in codes:
         # GeoNames only where OpenStreetMap found the name somewhere else (Johnson City: a hamlet 100 km away);
@@ -5767,6 +5818,14 @@ def place_localities(phrases, df, home=None):
     # others: "Kulmim Morocco" is OpenStreetMap's Guelmim-Oued Noun region, GeoNames' Guelmim (FZ_79hemAMk; user,
     # 2026-10-23)
     hits = [(p, h if h and h[0] else _geonames_named(p, tuple(sorted(countries.items()))) or h) for p, h in hits]
+    # ... and a settlement of exactly the name, as written or with "ai" for "ay" as other transliterations write it,
+    # in the country the text names, nearest home: a name search finds only a province of the name
+    # ("Xaysomboun, Laos" is the village Xaisomboun in Luang Namtha, which OpenStreetMap finds only asked for a
+    # settlement: 1cdmZPVMCkE; user, 2026-11-01)
+    land = next(iter(only), None)
+    hits = [(p, h if h and h[0] or not land else min(
+        _named_settlements(p.split(',')[0].strip(), land) or [h],
+        key=lambda x: _km(home[3], home[4], x[4], x[5]) if home and x else 0)) for p, h in hits]
     hits = [(p, h) for p, h in hits if usable(h)]
     if len(hits) > 1:
         anchor = max(hits, key=lambda ph: ph[1][6])
