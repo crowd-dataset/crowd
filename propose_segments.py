@@ -5490,6 +5490,11 @@ PLACE_AREAS = {'region', 'state', 'province', 'county', 'district', 'state_distr
                'island'}  # see _osm_place
 
 
+# what follows a town's name to tell it from its namesakes: "na Moru" (on the sea), "am Main", "-sur-Mer", "upon Tyne"
+QUALIFIED = re.compile(r'(?:\s+(?:na|nad|pod|pri|am|an der|an den|im|bei|ob der|upon|on|on Sea|aan|aan de|aan den)\s+'
+                       r'|-(?:sur|sous|lès|en|upon|on)-)\S.*$')
+
+
 @_remembered
 def _osm_place(phrase, country_codes, near=None, reach_km=None, home=None):
     """(town, region, country code, region code, lat, lon) of an OpenStreetMap feature called phrase in those
@@ -5535,7 +5540,14 @@ def _osm_place(phrase, country_codes, near=None, reach_km=None, home=None):
 
     def in_town(r):
         return any(r.raw.get('address', {}).get(k) for k in ('city', 'town', 'village', 'municipality'))
-    r = min(found, key=lambda r: (_name_key(_osm_name(r.raw)) != wanted, not in_town(r),
+    # (a town called the phrase and what tells it from its namesakes counts as the exact name: "Petrovac" of a
+    # Budva channel is Petrovac na Moru, 12 km away, not an islet Petrovac in Croatia; URWGUZeEc_Q; user, 2026-11-01)
+
+    def exact(r):
+        name = _osm_name(r.raw)
+        return _name_key(name) == wanted or (_osm_type(r.raw) in ('city', 'town', 'village')
+                                             and _name_key(QUALIFIED.sub('', name)) == wanted)
+    r = min(found, key=lambda r: (not exact(r), not in_town(r),
                                   _km(near[0], near[1], r.latitude, r.longitude) if near else 0))
     # a province nearer than the place found, in a country with no place of its name, is what the phrase names:
     # "South Holland" of a Rotterdam channel is the Dutch province, not the district in Lincolnshire
