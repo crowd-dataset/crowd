@@ -195,6 +195,56 @@ def download_low_res(video_id, out_dir):
     raise RuntimeError(f'download produced no file for {video_id}')
 
 
+# a video YouTube's embedded player will not play (L6UOZXjIxw0: "This video is unavailable" in the review page, fine
+# on YouTube, its embedding allowed; user, 2026-11-01) plays on the review page from a copy fetched on the player's
+# first error, kept in the batch's folder until its review is done (review_hub.drop_local_videos). Fetched, not kept
+# from the analysis: the workers download about 600 GB a week even at 240p
+LOCAL_VIDEOS = 'local_videos'
+# 360p H.264 in mp4, which every browser plays (no sound: the page plays muted)
+LOCAL_FORMAT = ('bv*[height<=360][vcodec^=avc1][ext=mp4]/bv*[height<=480][vcodec^=avc1]/b[height<=480][ext=mp4]'
+                '/bv*[height<=480]')
+LOCAL_HOSTS = ('lin5080',)  # where a copy is fetched when YouTube refuses it here (each with its own cookies)
+
+
+def fetch_local_video(video_id, out_dir, hosts=LOCAL_HOSTS):
+    """Download a 360p copy of the video to out_dir/<id>.mp4: here, else on one of hosts (copied here). Returns ''
+    when it is there, else why not."""
+    os.makedirs(out_dir, exist_ok=True)
+    target = os.path.join(out_dir, f'{video_id}.mp4')
+    if os.path.exists(target):
+        return ''
+    if not os.environ.get('YT_DLP_COOKIES') and os.path.exists('cookies.txt'):  # as run_channels.py
+        os.environ['YT_DLP_COOKIES'] = 'cookies.txt'
+    why = []
+    try:
+        _yt_dlp('-q', '-f', LOCAL_FORMAT, '--remux-video', 'mp4',
+                '-o', os.path.join(out_dir, f'{video_id}.dl.%(ext)s'), _url(video_id), timeout=900)
+        os.replace(os.path.join(out_dir, f'{video_id}.dl.mp4'), target)
+        return ''
+    except (RuntimeError, OSError) as e:
+        why.append(f'here: {str(e)[:150]}')
+    for host in hosts:
+        far = f'/tmp/crowd-local/{video_id}.mp4'
+        fetch = (f"cd crowd-routine && PATH=$HOME/crowd-routine/.venv/bin:$PATH .venv/bin/python -c 'import "
+                 f"propose_segments as ps; print(ps.fetch_local_video(\"{video_id}\", \"/tmp/crowd-local\", ()))'")
+        try:
+            r = subprocess.run(['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=15', host, fetch],
+                               capture_output=True, text=True, timeout=960, check=False)
+            if r.returncode or r.stdout.strip():
+                why.append(f'{host}: {(r.stdout.strip() or r.stderr.strip())[-150:]}')
+                continue
+            subprocess.run(['scp', '-q', '-o', 'BatchMode=yes', f'{host}:{far}', target + '.part'], check=True,
+                           capture_output=True, timeout=600)
+            os.replace(target + '.part', target)
+            return ''
+        except (subprocess.SubprocessError, OSError) as e:
+            why.append(f'{host}: {str(e)[:150]}')
+        finally:
+            subprocess.run(['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=15', host, f'rm -f {far}'],
+                           capture_output=True, check=False)
+    return '; '.join(why)
+
+
 def letterbox(path, samples=30, black=12):
     """(top, bottom) shares of the picture height that are black bars (a letterboxed video: XqNV7dDs5hs), else
     (0, 0). Bars are rows black in every sampled frame, about as high at the top as at the bottom: a dark night
@@ -9259,8 +9309,8 @@ header { position: sticky; top: 0; z-index: 1; background: #fff; border-bottom: 
          display: flex; gap: 20px; padding: 10px 20px; align-items: center; }
 /* the player keeps its size: a longer keys line beside it squeezed it (user, 2026-10-19); at most about a third
    of the window's height, so the frames and a segment with its buttons show below it (user, 2026-10-20) */
-#player { width: clamp(400px, min(34vw, 62vh), 900px); height: auto; aspect-ratio: 16 / 9; border: 0; background: #000;
-          flex: 0 0 auto; }
+#player, #local-player { width: clamp(400px, min(34vw, 62vh), 900px); height: auto; aspect-ratio: 16 / 9; border: 0;
+                         background: #000; flex: 0 0 auto; }
 header > div { min-width: 0; }
 #status { font-size: 15px; line-height: 1.6; }
 #apply { padding: 10px 18px; font-size: 15px; border: 0; border-radius: 4px;
@@ -9286,6 +9336,7 @@ input.at { width: 56px; font-size: 13px; padding: 2px 4px; }
 @media (max-width: 900px) { .video { grid-template-columns: 1fr; } .desc { border-left: 0; padding-left: 0; } }
 .video h3 { margin: 0 0 4px; font-size: 16px; }
 .note { color: #8a5300; font-size: 13px; margin: 2px 0 8px; }
+#local-note { color: #b00; font-size: 13px; }
 .note .warn { color: #c62828; font-weight: 600; }
 .sheet { width: 640px; max-width: 100%; display: block; margin: 8px 0; }
 .townsign { display: flex; align-items: center; gap: 8px; margin: 4px 0 8px; }
@@ -9378,6 +9429,7 @@ background:#fff;color:#222;font-size:13px;cursor:pointer}
 </head><body>
 <header>
   <div id="player"></div>
+  <video id="local-player" style="display: none" controls muted playsinline></video>
   <div>
     {% if channel %}<div class="channel">🚕 <a href="{{ channel.url }}" target="_blank" rel="noopener">
       {{- channel.name }}</a></div>{% endif %}
@@ -9387,7 +9439,7 @@ background:#fff;color:#222;font-size:13px;cursor:pointer}
       {{- ' · ' if not loop.last }}{% endfor %}</div>{% endif %}
     <div class="clock">Video: <span id="vid" title="click to copy">–</span>
       <a id="vid-yt" href="#" target="_blank" rel="noopener" title="open on YouTube here">↗</a>
-      <span id="vid-copied"></span></div>
+      <span id="vid-copied"></span> <span id="local-note"></span></div>
     <div class="clock">Time: <span id="clock" title="click to copy">0:00</span> <span id="copied"></span></div>
     <div class="keys">Keys for the outlined segment (the one clicked last): <b>A</b> start here · <b>S</b> end here ·
       <b>D</b> whole video · <b>Q</b> day · <b>W</b> night · <b>F</b> split time here · <b>C</b> copy the time ·
@@ -9567,7 +9619,72 @@ background:#fff;color:#222;font-size:13px;cursor:pointer}
 </details>
 </main>
 <script>
-let ytPlayer = null, ytReady = false, pending = null;
+let yt = null, ytReady = false, pending = null;
+// a video YouTube's embedded player will not play ("This video is unavailable" here, fine on YouTube: L6UOZXjIxw0;
+// user, 2026-11-01) plays from a copy the page server fetches (LOCAL_VIDEOS), in a plain video player behind the
+// same calls as YouTube's
+const local = { el: null, video: null, ready: new Set({{ local_ready | tojson }}), fetching: new Set() };
+let asked = null;  // the video play() asked for last
+const ytPlayer = {
+  mute() { yt.mute(); local.el.muted = true; },
+  seekTo(t) { if (local.video) local.el.currentTime = t; else yt.seekTo(t, true); },
+  playVideo() { if (local.video) local.el.play().catch(() => {}); else yt.playVideo(); },
+  loadVideoById(o) {
+    asked = o.videoId;
+    if (local.ready.has(o.videoId)) { showLocal(o.videoId, o.startSeconds); return; }
+    showYouTube();
+    yt.loadVideoById(o);
+  },
+  getVideoUrl() { return local.video ? `https://www.youtube.com/watch?v=${local.video}` : yt.getVideoUrl(); },
+  getCurrentTime() { return local.video ? local.el.currentTime : yt.getCurrentTime(); },
+  getDuration() { return local.video ? local.el.duration || 0 : yt.getDuration(); },
+  getPlayerState() {
+    if (!local.video) return yt.getPlayerState();
+    return !local.el.paused ? YT.PlayerState.PLAYING : local.el.readyState < 3 ? YT.PlayerState.BUFFERING
+      : YT.PlayerState.PAUSED;
+  },
+};
+function showLocal(video, t) {
+  if (!local.video) { try { yt.pauseVideo(); } catch (e) {} }
+  local.video = video;
+  document.getElementById('player').style.display = 'none';
+  local.el.style.display = '';
+  if (local.el.dataset.video !== video) { local.el.src = `local/${video}.mp4`; local.el.dataset.video = video; }
+  local.el.currentTime = Math.max(0, t || 0);
+  local.el.muted = true;
+  local.el.play().catch(() => {});
+}
+function showYouTube() {
+  if (!local.video) return;
+  local.video = null;
+  local.el.pause();
+  local.el.style.display = 'none';
+  document.getElementById('player').style.display = '';
+}
+function localNote(text) { document.getElementById('local-note').textContent = text; }
+async function onYouTubeError(e) {
+  const video = asked;
+  if (!video || local.ready.has(video) || local.fetching.has(video)) return;
+  const t = want && want.video === video ? want.t : 0;
+  want = null;  // no more tries on YouTube
+  local.fetching.add(video);
+  localNote(`YouTube will not play ${video} here (error ${e.data}): fetching a copy to play instead (a minute or so)`);
+  for (;;) {
+    let r = {};
+    try { r = await (await fetch(`local/${video}`, { method: 'POST' })).json(); } catch (err) {}
+    if (r && r.ready) break;
+    if (r && r.error) {
+      local.fetching.delete(video);
+      localNote(`YouTube will not play ${video} here, and no copy could be fetched: ${r.error}`);
+      return;
+    }
+    await new Promise(done => setTimeout(done, 3000));
+  }
+  local.fetching.delete(video);
+  local.ready.add(video);
+  localNote('');
+  if (asked === video) showLocal(video, t);
+}
 // a time in an exclusion reason or a proposal's note ("skips footage at 4:53", "highway driving 0-1856s", "camera
 // not facing forward 48-154s") plays the video from there (notes: user, 2026-10-16); each text piece on its own,
 // so the note's red warnings stay
@@ -9600,8 +9717,9 @@ document.addEventListener('click', e => {
   play(a.closest('[data-video]').dataset.video, Math.max(+a.dataset.t - 3, 0));  // 3 s before, as ▶ end (user)
 });
 function onYouTubeIframeAPIReady() {
-  ytPlayer = new YT.Player('player', { width: 480, height: 270, playerVars: { autoplay: 1, playsinline: 1, rel: 0 },
-    events: { onReady: () => { ytReady = true; if (pending) play(...pending); } } });
+  local.el = document.getElementById('local-player');
+  yt = new YT.Player('player', { width: 480, height: 270, playerVars: { autoplay: 1, playsinline: 1, rel: 0 },
+    events: { onReady: () => { ytReady = true; if (pending) play(...pending); }, onError: onYouTubeError } });
 }
 // what play() asked for, until the player plays it: YouTube sometimes leaves a video it was switched to unstarted
 // (state -1) at the right time (user, 2026-10-12: "the player gets stuck"; 2 of 3 quick switches in a test)
@@ -10419,6 +10537,8 @@ def review(plan_path, port=None):
     app.jinja_env.globals["note_html"] = note_html  # the note, its warnings in red
     app.jinja_env.globals["gap_reason"] = gap_reason  # why two segments are apart, on the split rows
     channel_cache = {}
+    local_dir = os.path.join(plan_dir, LOCAL_VIDEOS)
+    fetching = {}  # video: its download's thread, then why it failed ('' when done)
 
     def channel_link(plan):
         """{name, url} of the batch's YouTube channel, shown above the clock (user, 2026-10-13): its title from the
@@ -10561,7 +10681,10 @@ def review(plan_path, port=None):
                  .most_common(1) or [(None,)])[0][0]
         video_country = {p['video']: next(iter(title_countries(p.get('title'))), usual)
                          for p in plan if p['video'] in open_videos}
+        local_ready = sorted(f[:-4] for f in os.listdir(local_dir) if f.endswith('.mp4') and not f.endswith('.dl.mp4')
+                             ) if os.path.isdir(local_dir) else []
         return render_template_string(REVIEW_HTML, plan=plan, open_videos=open_videos, approved_hidden=approved_hidden,
+                                      local_ready=local_ready,
                                       channel=channel_link(plan),
                                       channel_places=channel_places(
                                           Counter(p.get('channel_id') for p in plan if p.get('channel_id'))
@@ -11059,6 +11182,29 @@ def review(plan_path, port=None):
                     'night': segs[0]['night']}]
         save(plan)
         return jsonify(ok=True)
+
+    @app.route('/local/<video_id>', methods=['POST'])
+    def local_video(video_id):
+        """Fetch a copy of a video YouTube's embedded player will not play (see LOCAL_VIDEOS): {ready} once it is
+        there, {error} when it cannot be fetched, else {} while it downloads."""
+        if not re.fullmatch(r'[\w-]{11}', video_id):
+            return jsonify(error='no such video'), 404
+        if os.path.exists(os.path.join(local_dir, f'{video_id}.mp4')):
+            return jsonify(ready=True)
+        job = fetching.get(video_id)
+        if isinstance(job, str):  # failed: said once, then tried again when asked again
+            del fetching[video_id]
+            return jsonify(error=job or 'the download left no file')
+        if job is None:
+            def run():
+                fetching[video_id] = fetch_local_video(video_id, local_dir)
+            fetching[video_id] = threading.Thread(target=run, daemon=True)
+            fetching[video_id].start()
+        return jsonify(fetching=True)
+
+    @app.route('/local/<video_id>.mp4')
+    def local_file(video_id):
+        return send_from_directory(local_dir, f'{video_id}.mp4')  # with ranges: the player seeks in it
 
     @app.route('/sheet/<video_id>.jpg')
     def sheet(video_id):
