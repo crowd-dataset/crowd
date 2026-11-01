@@ -203,12 +203,14 @@ LOCAL_VIDEOS = 'local_videos'
 # 360p H.264 in mp4, which every browser plays (no sound: the page plays muted)
 LOCAL_FORMAT = ('bv*[height<=360][vcodec^=avc1][ext=mp4]/bv*[height<=480][vcodec^=avc1]/b[height<=480][ext=mp4]'
                 '/bv*[height<=480]')
-LOCAL_HOSTS = ('lin5080',)  # where a copy is fetched when YouTube refuses it here (each with its own cookies)
+# where a copy is fetched, in turn (None: this machine), each with its own account's cookies: a workstation first,
+# so the review machine's account, which its worker's downloads already use, is asked least
+LOCAL_HOSTS = ('lin5080', None)
 
 
 def fetch_local_video(video_id, out_dir, hosts=LOCAL_HOSTS):
-    """Download a 360p copy of the video to out_dir/<id>.mp4: here, else on one of hosts (copied here). Returns ''
-    when it is there, else why not."""
+    """Download a 360p copy of the video to out_dir/<id>.mp4, on the first of hosts that can (copied here). Returns
+    '' when it is there, else why not."""
     os.makedirs(out_dir, exist_ok=True)
     target = os.path.join(out_dir, f'{video_id}.mp4')
     if os.path.exists(target):
@@ -216,17 +218,20 @@ def fetch_local_video(video_id, out_dir, hosts=LOCAL_HOSTS):
     if not os.environ.get('YT_DLP_COOKIES') and os.path.exists('cookies.txt'):  # as run_channels.py
         os.environ['YT_DLP_COOKIES'] = 'cookies.txt'
     why = []
-    try:
-        _yt_dlp('-q', '-f', LOCAL_FORMAT, '--remux-video', 'mp4',
-                '-o', os.path.join(out_dir, f'{video_id}.dl.%(ext)s'), _url(video_id), timeout=900)
-        os.replace(os.path.join(out_dir, f'{video_id}.dl.mp4'), target)
-        return ''
-    except (RuntimeError, OSError) as e:
-        why.append(f'here: {str(e)[:150]}')
     for host in hosts:
+        if host is None:
+            try:
+                _yt_dlp('-q', '-f', LOCAL_FORMAT, '--remux-video', 'mp4',
+                        '-o', os.path.join(out_dir, f'{video_id}.dl.%(ext)s'), _url(video_id), timeout=900)
+                os.replace(os.path.join(out_dir, f'{video_id}.dl.mp4'), target)
+                return ''
+            except (RuntimeError, OSError) as e:
+                why.append(f'here: {str(e)[:150]}')
+            continue
         far = f'/tmp/crowd-local/{video_id}.mp4'
         fetch = (f"cd crowd-routine && PATH=$HOME/crowd-routine/.venv/bin:$PATH .venv/bin/python -c 'import "
-                 f"propose_segments as ps; print(ps.fetch_local_video(\"{video_id}\", \"/tmp/crowd-local\", ()))'")
+                 f"propose_segments as ps; print(ps.fetch_local_video(\"{video_id}\", \"/tmp/crowd-local\", "
+                 f"(None,)))'")
         try:
             r = subprocess.run(['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=15', host, fetch],
                                capture_output=True, text=True, timeout=960, check=False)
@@ -9623,7 +9628,8 @@ let yt = null, ytReady = false, pending = null;
 // a video YouTube's embedded player will not play ("This video is unavailable" here, fine on YouTube: L6UOZXjIxw0;
 // user, 2026-11-01) plays from a copy the page server fetches (LOCAL_VIDEOS), in a plain video player behind the
 // same calls as YouTube's
-const local = { el: null, video: null, ready: new Set({{ local_ready | tojson }}), fetching: new Set() };
+const local = { el: null, video: null, ready: new Set({{ local_ready | tojson }}), fetching: new Set(),
+                refused: 0, askedAll: false };
 let asked = null;  // the video play() asked for last
 const ytPlayer = {
   mute() { yt.mute(); local.el.muted = true; },
@@ -9667,6 +9673,16 @@ async function onYouTubeError(e) {
   if (!video || local.ready.has(video) || local.fetching.has(video)) return;
   const t = want && want.video === video ? want.t : 0;
   want = null;  // no more tries on YouTube
+  // only videos YouTube refuses get a copy: a browser where every video fails (headless Chrome gets error 150 for
+  // all) would fetch them all, so after 3 refusals in a row, nothing played between, ask first (user, 2026-11-01)
+  if (++local.refused >= 3 && !local.askedAll) {
+    if (!confirm(`YouTube's player has refused ${local.refused} videos in a row here, which may be this browser `
+                 + `rather than the videos. Fetch a copy of ${video} to play anyway?`)) {
+      localNote(`YouTube will not play ${video} here (error ${e.data}): no copy fetched`);
+      return;
+    }
+    local.askedAll = true;
+  }
   local.fetching.add(video);
   localNote(`YouTube will not play ${video} here (error ${e.data}): fetching a copy to play instead (a minute or so)`);
   for (;;) {
@@ -9782,6 +9798,7 @@ setInterval(() => {
     const right = playingVideo() === want.video
       && Math.abs(ytPlayer.getCurrentTime() - want.t) <= 3 + waited / 1000;  // there, or played on from there
     if (state === YT.PlayerState.PLAYING && right) want = null;
+    if (state === YT.PlayerState.PLAYING && !local.video) local.refused = 0;  // YouTube plays videos here
     else if (want.tries >= 3) want = null;
     else if (waited > 6000) {
       ytPlayer.loadVideoById({ videoId: want.video, startSeconds: Math.max(0, Math.floor(want.t)) });
