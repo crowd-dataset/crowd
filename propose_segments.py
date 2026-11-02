@@ -5590,8 +5590,9 @@ def _osm_place(phrase, country_codes, near=None, reach_km=None, home=None):
     # "city" the Elias Motsoaledi Local Municipality; udVi6qOYvNI: Kwaggafontein; user, 2026-10-20)
     # ... nor a province or region ("Province of Småland": B2kJDCoBv6w; user, 2026-10-22; "Karachi Division")
     # ... nor Ontario's "District Municipality of Muskoka" (YwLuJ8ElslE)
-    if town and re.search(r'\b(?:County|Municipality|Province|Region|Prefecture|Oblast|Län|Division)$'
-                          r'|^(?:Province|Region|County|Prefecture|(?:District |Regional )?Municipality) of\b', town):
+    if town and re.search(r'\b(?:County|Municipality|Municipal Unit|Province|Region|Prefecture|Oblast|Län|Division)$'
+                          r'|^(?:Province|Region|County|Prefecture|(?:District |Regional )?Municipality'
+                          r'|Municipal Unit) of\b', town):
         town = None
     # (a region is no town: "Allgäu" is a place of type region, Hha1wy7hGto; user, 2026-10-27)
     if not town and r.raw.get('class') == 'place' and _name_key(_osm_name(r.raw)) in (
@@ -6438,6 +6439,9 @@ def drive_ends(title, df, home=None):
     own = [names[c.group(1)] if (c := re.search(r'\s+([A-Z]{2})$', x)) and c.group(1) in names and c.group(1) != 'LA'
            else None for x in (first, last)]
     first, last = (re.sub(r'\s+[A-Z]{2}$', f', {o}', x) if o else x for x, o in zip((first, last), own))
+    # "from the town of Argos to the town of Nafplion" is from Argos to Nafplion (R9UefVw_3S0; user, 2026-11-02)
+    first, last = (re.sub(r'^(?i:the\s+)?(?i:town|city|village)\s+of\s+(?=[A-ZÀ-Þ])', '', x)
+                   for x in (first, last))
     # "to Downtown Omaha" is to Omaha: OpenStreetMap has no place of that name (iSMg2dH2uuA)
     first, last = (re.sub(r'^(?:downtown|uptown|midtown|central|historic|old town)\s+(?=[A-Z])', '', x, flags=re.I)
                    for x in (first, last))
@@ -9072,6 +9076,14 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
                      and re.search(rf'\b{re.escape(a)}\b', p['title'] or '', re.I)]
             found = found or (named and place_locality(named[:3], df[in_reach], home))
             found = found or place_locality(place_phrases(description, limit=3), df[in_reach], home)
+            # ... else where a drive "from A to B" of the description starts, else ends: "From Ai Giannis beach to
+            # Toroni" (MFuh50Eliqg; user, 2026-11-02; reviewed "from Alanya to Antalya" was Alanya)
+            # (its places' words only: "From Downtown to Pudong Int'l Airport" was Downtown Baltimore, H785KgAcS9I;
+            # wherever home is when the title names another country, as title_places)
+            drive = FROM_TO[0].search(description)
+            there = None if home and any(c != home[2] for c in title_countries(p['title'])) else home
+            found = found or (drive and place_locality([ph for x in drive.groups()[:2] for ph in place_phrases(x)],
+                                                       df[in_reach], there))
             # a freeway drive whose only place is a region or a sight, or none: no town to give it, unless its GPS
             # overlay says (HXJ9w8h4CwA, "Southern California freeway drive" was Los Angeles; user, 2026-10-16)
             sig_path = os.path.join(out_dir, f"{p['video']}_signals.npz")
