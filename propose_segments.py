@@ -938,7 +938,8 @@ def contact_sheet(path, duration, out_png, n=12, cols=4):
         cv2.putText(img, label, (6, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
         tiles.append(img)
     rows = [np.hstack(tiles[i:i + cols]) for i in range(0, len(tiles), cols)]
-    cv2.imwrite(out_png, np.vstack(rows))
+    if not cv2.imwrite(out_png, np.vstack(rows)):  # silent otherwise: wsl5090's full disk, 2026-11-01
+        raise OSError(f'No space left on device? could not write {out_png}')
 
 
 def _rolling_median(x, n):
@@ -8695,7 +8696,9 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
             if os.path.exists(os.path.join(out_dir, CHANNEL_REJECTED)):  # rejected in review while this batch runs
                 stopped = 'the whole channel was rejected in review'
                 break
-            if download and not os.path.exists(sig_path):
+            # a signals file without its sheet (not written on a full disk) is analysed again: wRGpg1CheKg crashed
+            # every batch of wsl5090 for 9 h (2026-11-02)
+            if download and not (os.path.exists(sig_path) and os.path.exists(os.path.join(out_dir, f'{vid}.jpg'))):
                 print(f'[{n}/{len(ids)}] analysing {vid} {meta["title"][:60]}')
                 if (meta.get('duration') or 0) > 2 * 3600:  # run_channels.py waits longer for its silence
                     print(f'  long video: {int(meta["duration"]) // 60} min')
@@ -8715,10 +8718,10 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
                 commit([vid])
                 continue
             failures_in_a_row += 1
-            # no connection (a dropped network, an unresolved name): not the video's fault, so it is not recorded and
-            # a later run tries it again
+            # no connection (a dropped network, an unresolved name) or a full disk: not the video's fault, so it is
+            # not recorded and a later run tries it again
             offline = re.search(r'Failed to resolve|Unable to download API page|timed out|Connection (?:reset|refused|'
-                                r'aborted)|Network is unreachable|nodename nor servname', str(e))
+                                r'aborted)|Network is unreachable|nodename nor servname|No space left', str(e))
             if vid not in reanalyse and not offline:  # a whole-video proposal stays as it was
                 plan[vid] = {'video': vid, 'title': '', 'exclude': f'could not analyse: {e}'}
                 touched.append(vid)
