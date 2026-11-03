@@ -201,7 +201,9 @@ def drop_local_videos():
         if not os.path.isdir(folder) or not os.path.exists(plan):
             continue
         approved, no_place = approved_unapplied(name)
-        if rc.review_counts(name)[0] or approved > no_place or time.time() - os.path.getmtime(plan) < 3600:
+        # ... nor copies of its next batch coming in (sync_workers.sync: before its plan)
+        if (rc.review_counts(name)[0] or approved > no_place or time.time() - os.path.getmtime(plan) < 3600
+                or time.time() - os.path.getmtime(folder) < 3600):
             continue
         shutil.rmtree(folder, ignore_errors=True)
         print(f'{name}: deleted its copies of videos YouTube would not play here', flush=True)

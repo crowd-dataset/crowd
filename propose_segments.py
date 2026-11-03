@@ -206,6 +206,11 @@ LOCAL_FORMAT = ('bv*[height<=360][vcodec^=avc1][ext=mp4]/bv*[height<=480][vcodec
 # where a copy is fetched, in turn (None: this machine), each with its own account's cookies: a workstation first,
 # so the review machine's account, which its worker's downloads already use, is asked least
 LOCAL_HOSTS = ('lin5080', None)
+# ... but the analysis copy of a proposed video (240p) is kept as <id>.low.mp4 in its batch's LOCAL_VIDEOS, moved to
+# the review machine with the batch (sync_workers.sync) and played at once when YouTube refuses it: a fetch takes
+# minutes and the reviewer is faster (user, 2026-11-04). Written as .tmp during the batch (not synced), then kept or
+# deleted once the batch knows which videos it proposes (sort_kept_copies); deleted with the batch's other copies
+LOCAL_KEPT = '.low.mp4'
 
 
 def fetch_local_video(video_id, out_dir, hosts=LOCAL_HOSTS):
@@ -4202,9 +4207,9 @@ def night_from_title(segments, notes, sig, title):
 NIGHT_TITLE_CLIP = 0.9  # see night_from_title (not NIGHT_CLIP_SURE: that one is the day/night rule's)
 
 
-def analyse_video(video_id, out_dir, meta=None, signs=False):
-    """Download a low resolution copy, propose segments, write a contact sheet; the copy is deleted. signs: also
-    read the road signs (read_signs), for a drive between towns."""
+def analyse_video(video_id, out_dir, meta=None, signs=False, keep=False):
+    """Download a low resolution copy, propose segments, write a contact sheet; the copy is deleted, or with keep
+    left for the review page (LOCAL_KEPT). signs: also read the road signs (read_signs), for a drive between towns."""
     meta = meta or fetch_metadata(video_id)
     work_dir = tempfile.mkdtemp(prefix='crowd_')
     path = download_low_res(video_id, work_dir)
@@ -4287,12 +4292,30 @@ def analyse_video(video_id, out_dir, meta=None, signs=False):
         contact_sheet(path, meta['duration'] or len(sig['motion']) / FPS,
                       os.path.join(out_dir, f'{video_id}.jpg'))
     finally:
-        os.remove(path)
+        if keep and path.endswith('.mp4'):
+            os.makedirs(os.path.join(out_dir, LOCAL_VIDEOS), exist_ok=True)
+            shutil.move(path, os.path.join(out_dir, LOCAL_VIDEOS, f'{video_id}{LOCAL_KEPT}.tmp'))
+        else:
+            os.remove(path)
         os.rmdir(work_dir)
     sig['on_bus'] = np.array(title_vehicle(title_text(meta.get('title') or '')) == 1)
     segments, notes = night_from_title(*propose(sig), sig, meta.get('title'))
     np.savez_compressed(os.path.join(out_dir, f'{video_id}_signals.npz'), **sig)
     return {'meta': meta, 'segments': segments, 'notes': notes}
+
+
+def sort_kept_copies(out_dir, plan):
+    """The analysis copies left by analyse_video(keep=True) in out_dir (also by a batch that crashed): a video
+    the plan {video: entry} proposes keeps its copy for the review page (LOCAL_KEPT), the others' are deleted."""
+    folder = os.path.join(out_dir, LOCAL_VIDEOS)
+    for name in os.listdir(folder) if os.path.isdir(folder) else []:
+        if name.endswith(LOCAL_KEPT + '.tmp'):
+            p = plan.get(name[:-len(LOCAL_KEPT + '.tmp')], {})
+            path = os.path.join(folder, name)
+            if 'entries' in p and not p.get('exclude'):
+                os.replace(path, path[:-len('.tmp')])
+            else:
+                os.remove(path)
 
 
 LONG_LATER_S = 3600  # videos longer than this wait for the very end (see process_channel)
@@ -9275,7 +9298,7 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
                     print(f'  long video: {int(meta["duration"]) // 60} min')
                 drive = drive_title(meta['title'], meta.get('description'))
                 analyse_video(vid, out_dir, meta, signs=any(r.search(english_states(drive)) for r in FROM_TO)
-                              or country in TOWN_SIGN_COUNTRIES)  # their town signs (town_sign_split)
+                              or country in TOWN_SIGN_COUNTRIES, keep=True)  # town signs: town_sign_split
                 time.sleep(pause_s)  # spacing requests keeps YouTube's bot check away for longer
             failures_in_a_row = 0
         except BotCheck as e:
@@ -9840,6 +9863,7 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
                                       f'where {inset[1]} videos of this batch show one)'}
                 touched.append(v)
     commit(touched)
+    sort_kept_copies(out_dir, plan)
     kept = sum('entries' in p for p in new)
     print(f'{len(new)} videos added or re-analysed: {kept} proposed, {len(new) - kept} excluded -> {plan_path}')
     if stopped:
@@ -11359,8 +11383,8 @@ def review(plan_path, port=None):
                  .most_common(1) or [(None,)])[0][0]
         video_country = {p['video']: next(iter(title_countries(p.get('title'))), usual)
                          for p in plan if p['video'] in open_videos}
-        local_ready = sorted(f[:-4] for f in os.listdir(local_dir) if f.endswith('.mp4') and not f.endswith('.dl.mp4')
-                             ) if os.path.isdir(local_dir) else []
+        local_ready = sorted(f[:-4] for f in os.listdir(local_dir) if f.endswith('.mp4')
+                             and not f.endswith(('.dl.mp4', LOCAL_KEPT))) if os.path.isdir(local_dir) else []
         return render_template_string(REVIEW_HTML, plan=plan, open_videos=open_videos, approved_hidden=approved_hidden,
                                       local_ready=local_ready,
                                       channel=channel_link(plan),
@@ -11867,6 +11891,8 @@ def review(plan_path, port=None):
         there, {error} when it cannot be fetched, else {} while it downloads."""
         if not re.fullmatch(r'[\w-]{11}', video_id):
             return jsonify(error='no such video'), 404
+        if os.path.exists(os.path.join(local_dir, f'{video_id}{LOCAL_KEPT}')):  # a worker's analysis copy
+            os.replace(os.path.join(local_dir, f'{video_id}{LOCAL_KEPT}'), os.path.join(local_dir, f'{video_id}.mp4'))
         if os.path.exists(os.path.join(local_dir, f'{video_id}.mp4')):
             return jsonify(ready=True)
         job = fetching.get(video_id)

@@ -206,10 +206,18 @@ def sync(host):
         print(f'{host}: updated {", ".join(pushed)}')
     remote_state = json.loads(ssh(host, f'cat {rem}/_output/proposals/channels.json 2>/dev/null || echo "{{}}"'))
     state = rc.load_state()
+    # the analysis copies of the proposed videos (ps.LOCAL_KEPT) of every channel, moved here before the plans that
+    # show them, in one go
+    r = subprocess.run(['rsync', '-am', '--remove-source-files', '--include', '/*/',
+                        '--include', f'/*/{ps.LOCAL_VIDEOS}/', '--include', f'/*/{ps.LOCAL_VIDEOS}/*{ps.LOCAL_KEPT}',
+                        '--exclude', '*', f'{alias}:{rem}/_output/proposals/', rc.ROOT + '/'], capture_output=True)
+    if r.returncode not in (0, 23, 24):
+        raise subprocess.CalledProcessError(r.returncode, r.args, r.stdout, r.stderr)
     for url, c in remote_state.items():
         name = c['name']
         r = subprocess.run(['rsync', '-az', '--exclude', 'plan.json', '--exclude', '*.tmp',
-                            f'{alias}:{rem}/_output/proposals/{name}/', os.path.join(rc.ROOT, name) + '/'],
+                            '--exclude', ps.LOCAL_VIDEOS, f'{alias}:{rem}/_output/proposals/{name}/',
+                            os.path.join(rc.ROOT, name) + '/'],
                            capture_output=True)
         # 23/24: a file the worker was writing went away while copied (its batch running): the next sync has it
         if r.returncode not in (0, 23, 24):
