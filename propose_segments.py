@@ -1239,10 +1239,15 @@ def propose(sig, p=PARAMS):
                 cut[i] = False
 
     stamps = stamp_cuts(sig)
+    clocks, unsure_clocks = clock_cuts(sig, p)
+    clocks = [(a, b) for a, b in clocks if all(abs(a - x) > 30 for x in stamps)]
+    stamps = sorted(stamps + [a + 1 if b > a else a for a, b in clocks])  # the first second past the old clock
     for t in stamps:  # footage of another drive: a cut whatever the picture says
         if 0 < int(t * FPS) < n:
             cut[int(t * FPS)] = True
     keep = ~blank
+    for a, b in clocks:  # between the last second at the old time and the first at the new
+        keep[int((a + 1) * FPS):int(b * FPS)] = False
     notes = []
     for a, b, lag in repeated_footage(sig):  # the same footage again: once is enough
         keep[a * FPS:b * FPS] = False
@@ -1251,6 +1256,9 @@ def propose(sig, p=PARAMS):
     if (rear := rear_camera_from(sig, p)) is not None:  # the rest of the video is the rear camera
         keep[int(rear * FPS):] = False
         notes.append(f'rear camera from {int(rear) // 60}:{int(rear) % 60:02d}')
+    for a, b in unsure_clocks:  # see clock_cuts
+        notes.append(f'the time stamp in the picture changes to another time between {int(a) // 60}:{int(a) % 60:02d}'
+                     f' and {int(b) // 60}:{int(b) % 60:02d} (footage of another drive): check where')
     if stamps:
         notes.append('the time stamp in the picture jumps at '
                      + ', '.join(f'{int(t) // 60}:{int(t) % 60:02d}' for t in stamps) + ': footage of another drive')
@@ -2781,6 +2789,11 @@ def _frame_text(stream, t):
     url, headers = stream
     png = _stream_ffmpeg(['ffmpeg', '-v', 'error', '-headers', headers, '-ss', str(t), '-i', url, '-frames:v', '1',
                           '-vf', 'format=gray', '-f', 'image2pipe', '-vcodec', 'png', '-']).stdout
+    return _png_text(png)
+
+
+def _png_text(png):
+    """What tesseract reads in a frame (PNG bytes): the whole frame, and its edges' strips enlarged."""
     if not png:
         return ''
     text = subprocess.run(['tesseract', 'stdin', 'stdout', '--psm', '11'], input=png, capture_output=True,
@@ -2871,6 +2884,182 @@ def stamp_cuts(sig):
             inside = ev[(ev[:, 0] > t0) & (ev[:, 0] < t1)]
             cuts.append(float(inside[np.argmax(inside[:, 2]), 0]) if len(inside) else float((t0 + t1) / 2))
     return cuts
+
+
+CLOCK_TOL_S, CLOCK_CUT_S = 10, 60  # see clock_changes
+CLOCK_FRAMES_S = 120  # see refine_clock_cuts
+CLOCK_SURE_S = 60  # see clock_cuts
+
+
+def _one_digit(a, b):
+    """Whether times of day a and b (seconds) differ in one digit of HH:MM:SS, the seconds by up to 3 s besides, or
+    by 12 hours: a misread, not a cut (FloYMHI0QuU's 11:22 read as 01:22, 07:22 and 02:22)."""
+    def hms(x):
+        return f'{x // 3600:02d}{x // 60 % 60:02d}{x % 60:02d}'
+    return any(sum(u != v for u, v in zip(hms(int(a + d) % 86400), hms(int(b) % 86400))) <= 1
+               or (b - a - d) % 43200 == 0 for d in range(-3, 4))
+
+
+def _ahead(a, b):
+    """How far clock offset b is ahead of a, in seconds (-12 to +12 hours: past midnight)."""
+    return (b - a + 43200) % 86400 - 43200
+
+
+def clock_changes(sig, p=PARAMS):
+    """[(last reading s, first reading s, old offset, new offset)] where the time stamp in the picture moves to
+    another time for good: footage of another recording follows, the clock fallen back or ahead (CfgJIk2ftWA: 13:31
+    on 11 May, then 13:09 on 25 April at 2:58 and 20:31 at 4:52; its date is in figures, so parse_stamp does not
+    read it; user, 2026-11-03: "for videos that have timestamps, it should be possible to have very accurate
+    detection of splits"). Within one recording the clock keeps its offset from the video's time (drifting up to
+    CLOCK_TOL_S a reading). A reading one digit off the clock so far is a misread (_one_digit), as is a new offset
+    the next reading does not keep or that the old one comes back to within four readings (6MSOuv6_JVE: 3 hours
+    off for 4 readings, then back). Under CLOCK_CUT_S the change needs a frame jump between the two readings too,
+    else the new offset is taken without a cut (a clock set right, a wobble that stays). Of 754 reviewed videos
+    with a clock, 16 have such a change inside a reviewed segment."""
+    clock = np.asarray(sig.get('clock', np.zeros((0, 2)))).reshape(-1, 2)
+    ev = np.asarray(sig.get('skips', np.zeros((0, 3)))).reshape(-1, 3)
+    off = [(float(t), (c - t) % 86400, c % 86400) for t, c in clock]
+    if len(off) < 3:
+        return []
+    first = [o for _, o, _ in off[:5]]  # the offset most of the first readings agree on (one may be misread)
+    ref = max(first, key=lambda o: sum(abs(_ahead(o, x)) <= CLOCK_TOL_S for x in first))
+    last, out = off[0][0], []
+    for i, (t, o, c) in enumerate(off):
+        if abs(_ahead(ref, o)) <= CLOCK_TOL_S:
+            ref, last = o, t
+            continue
+        if _one_digit((t + ref) % 86400, c):
+            continue
+        later = [x for x in off[i + 1:] if not _one_digit((x[0] + o) % 86400, x[2])
+                 or abs(_ahead(o, x[1])) <= CLOCK_TOL_S]
+        if not later or abs(_ahead(o, later[0][1])) > CLOCK_TOL_S \
+                or any(abs(_ahead(ref, x[1])) <= CLOCK_TOL_S for x in off[i + 1:i + 5]):
+            continue
+        if abs(_ahead(ref, o)) >= CLOCK_CUT_S \
+                or ((ev[:, 0] > last) & (ev[:, 0] < t) & (ev[:, 2] >= p['cut_confirm_ratio'])).any():
+            out.append((last, t, ref, o))
+        ref, last = o, t
+    return out
+
+
+def _shows_clock(text, clock):
+    """Whether a frame's text shows the time of day clock (seconds, give or take 2), one character of it misread,
+    missing or extra: OCR reads CfgJIk2ftWA's "13:31:35" as "13231:35", a colon as a 2, which parse_clock does not
+    take."""
+    def edits(a, b):  # Levenshtein distance
+        row = list(range(len(b) + 1))
+        for i, x in enumerate(a, 1):
+            row, prev = [i], row
+            for j, y in enumerate(b, 1):
+                row.append(min(prev[j] + 1, row[j - 1] + 1, prev[j - 1] + (x != y)))
+        return row[-1]
+    runs = [re.sub(r'\D', '', line) for line in (text or '').splitlines()]
+    for d in range(-2, 3):
+        x = int(clock + d) % 86400
+        want = f'{x // 3600:02d}{x // 60 % 60:02d}{x % 60:02d}'
+        if any(edits(want, r[k:k + n]) <= 1 for r in runs for n in (5, 6, 7) for k in range(max(1, len(r) - n + 1))):
+            return True
+    return False
+
+
+def refine_clock_cuts(video_id, sig, p=PARAMS):
+    """[(start s, end s)] of each clock_changes change, read from the stamp to the second: the last second at the
+    old offset and the first at the new one, found by halving the time between its two readings. Frames are read
+    from the stream until CLOCK_FRAMES_S are left, then all of those at once to local files (a frame from the stream
+    takes 8-25 s, one read locally 6 s; tesseract reads about half of them). A frame not read gives way to the next
+    seconds; a reading of neither offset (a crossfade: 17E1tcf79Ew's 09:37:21 sped up to 10:55:31 over 4:32-4:35, read
+    as 10:50:31 in between) counts as the new side for the first and the old for the second, so the cut takes in
+    the whole change; with nothing read, the change is all between the readings."""
+    changes = clock_changes(sig, p)
+    if not changes:
+        return []
+    stream, cache, out = _stream(video_id), {}, []
+    with tempfile.TemporaryDirectory() as tmp:
+        frames = {}
+
+        def text(t):
+            if t not in cache:
+                if t in frames:
+                    with open(frames[t], 'rb') as f:
+                        cache[t] = _png_text(f.read())
+                else:
+                    cache[t] = _frame_text(stream, t)
+            return cache[t]
+
+        def same(t, ref):  # the frame at t shows the clock at offset ref, misread or not
+            c = parse_clock(text(t))
+            return _shows_clock(text(t), t + ref) or c is not None and (
+                abs(_ahead(ref, (c - t) % 86400)) <= CLOCK_TOL_S or _one_digit((t + ref) % 86400, c))
+
+        def read(lo, hi, mid, refs):  # the first second of mid, mid + 1, mid - 1, … within (lo, hi) that shows a
+            # clock: one of refs, else (None) one it reads (its offset)
+            for x in [x for k in range(6) for x in (mid + k, mid - k) if lo < x < hi][1:]:
+                if hit := next((r for r in refs if same(x, r)), None):
+                    return x, hit
+                if (c := parse_clock(text(x))) is not None:
+                    return x, (c - x) % 86400
+            return None, None
+
+        def search(lo, hi, refs, is_left, until=1):  # the last second of (lo, hi) whose offset is_left, the first
+            # one after it
+            while hi - lo > until:
+                at, o = read(lo, hi, (lo + hi) // 2, refs)
+                if at is None:
+                    break
+                lo, hi = (at, hi) if is_left(o) else (lo, at)
+            return lo, hi
+
+        def change(lo, hi, old, new, depth=0):  # [(start, end)] of the change from old to new in (lo, hi)
+            lo, _ = search(lo, hi, (old, new), lambda o: o == old)
+            _, hi = search(lo, hi, (new, old), lambda o: o != new)
+            # a third offset that holds between them is a recording of its own (uockmB2v4Mg: 34188 s, then 44871
+            # for a while, then sped up to 44891 at 10:34-10:37): a change into it and one out of it
+            at, o = read(lo, hi, (lo + hi) // 2, (old, new)) if hi - lo > 4 and depth < 3 else (None, None)
+            if at is not None and o not in (old, new):
+                _, o2 = read(at, hi, at + 2, (o,))
+                if o2 == o:
+                    return change(lo, at, old, o, depth + 1) + change(at, hi, o, new, depth + 1)
+            return [(float(lo), float(hi))]
+
+        for t0, t1, old, new in changes:
+            lo, hi = search(int(t0), int(np.ceil(t1)), (old, new), lambda o, old=old: o == old, until=CLOCK_FRAMES_S)
+            if hi - lo <= CLOCK_FRAMES_S:  # then each second of what is left, from local files
+                _stream_ffmpeg(['ffmpeg', '-v', 'error', '-headers', stream[1], '-ss', str(lo), '-i', stream[0],
+                                '-t', str(hi - lo + 1), '-vf', 'fps=1', '-start_number', str(lo),
+                                os.path.join(tmp, f'{video_id}_%d.png')])
+                frames = {t: x for t in range(lo, hi + 1)
+                          if os.path.exists(x := os.path.join(tmp, f'{video_id}_{t}.png'))}
+            out += change(lo, hi, old, new)
+    return out
+
+
+def clock_cuts(sig, p=PARAMS):
+    """([(start s, end s)] to cut, [(start s, end s)] to note) where the time stamp changes (see clock_changes): what
+    refine_clock_cuts read at analysis, else the time between the two readings. Of 20 reviewed videos refined, 16
+    changes came to 1-3 s, 8 more to 9-61 s, and 4 found no frame to read (AeL2wYmPRvY: nothing read in 930-3120 s).
+    A change not read to the second is cut at the one frame jump in it that stands out (four times
+    cut_confirm_ratio, twice any other: CfgJIk2ftWA 230 at 2:58; not 17E1tcf79Ew's 35 at 4:47, 15 s after its
+    crossfade), else left out whole when read to within CLOCK_SURE_S, else noted, not cut: an hour of footage is not
+    left out on a guess, nor the 30 s between two readings (20 min of the approved footage of 106 reviewed videos;
+    as it is, 11 s)."""
+    read = 'clock_cuts' in sig
+    if read:
+        found = [tuple(x) for x in np.asarray(sig['clock_cuts'], float).reshape(-1, 2)]
+    else:
+        found = [(t0, t1) for t0, t1, _, _ in clock_changes(sig, p)]
+    ev = np.asarray(sig.get('skips', np.zeros((0, 3)))).reshape(-1, 3)
+    cuts, unsure = [], []
+    for t0, t1 in found:
+        r = ev[(ev[:, 0] > t0) & (ev[:, 0] < t1)]
+        r = r[np.argsort(-r[:, 2])]
+        if t1 - t0 > 3 and len(r) and r[0, 2] >= 4 * p['cut_confirm_ratio'] \
+                and (len(r) == 1 or r[0, 2] >= 2 * r[1, 2]):
+            cuts.append((float(r[0, 0]), float(r[0, 0])))
+        elif read and t1 - t0 <= CLOCK_SURE_S:
+            cuts.append((t0, t1))
+        else:
+            unsure.append((t0, t1))
+    return cuts, unsure
 
 
 def gps_track(video_id, duration, opening=None):
@@ -4045,6 +4234,8 @@ def analyse_video(video_id, out_dir, meta=None, signs=False):
             print(f'  GPS overlay: {len(gps)} positions', flush=True)
         if clock:
             sig['clock'] = np.array(clock, float)
+            if cuts := refine_clock_cuts(video_id, sig):  # see clock_cuts
+                sig['clock_cuts'] = np.array(cuts, float)
         if stamp:
             sig['stamp'] = np.array(stamp, float)
         sig['on_bus'] = np.array(title_vehicle(title_text(meta.get('title') or '')) == 1)
@@ -6795,7 +6986,10 @@ def drive_ends(title, df, home=None):
     end = b and _hit_locality(b, df, countries, named=as_named[1])
     # "…to West Farms in the Bronx", "…hasta el Barrio Portugues en Adjuntas": the drive ends in that place, and a
     # namesake of the end elsewhere (another Barrio Portugués) is not it
-    if area := re.match(r"\s*(?:in|en)\s+(?:the\s+)?([A-Z][\w'’.-]*(?: [A-Z][\w'’.-]*){0,3})", title[m.end(2):]):
+    # ... not the weather or the time of day: "Brooklyn NYC to Jamaica Queens in the Rain" ends in no Rain, Bavaria
+    # (dsNhjy5PZqI; user, 2026-11-03)
+    if (area := re.match(r"\s*(?:in|en)\s+(?:the\s+)?([A-Z][\w'’.-]*(?: [A-Z][\w'’.-]*){0,3})", title[m.end(2):])) \
+            and not all(w.lower() in NOT_PLACE for w in area.group(1).split()):
         # near the drive: "in Nassau" is the county by Queens, not the village of Nassau near Albany
         q = area.group(1) + (f', {next(iter(named))}' if len(named) == 1 else '')
         c = _osm_place(q, codes, a[4:6] if a else b[4:6] if b else (home[3], home[4]) if home else None, 60)
@@ -6833,7 +7027,7 @@ def area_city(title, df, home=None, near=None):
     """[locality, state, country] of the city C of a drive "from A to B in C" when C is a city ("in the Bronx" is
     New York), else None (no such title, or C a county: "in Nassau")."""
     area = DRIVE_AREA.search(title or '')
-    if not area:
+    if not area or all(w.lower() in NOT_PLACE for w in area.group(1).split()):  # "in the Rain" (dsNhjy5PZqI)
         return None
     countries = {common.get_iso2_country_code(common.correct_country(c)): c for c in df['country'].dropna().unique()}
     countries.pop(None, None)
