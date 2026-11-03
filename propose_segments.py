@@ -436,6 +436,24 @@ def walk_no_stop(sig, p=None):
 
 
 BOB_EVERY_S = 45  # step_bob_track: one 15-s reading this often through the video
+# a camera on a bicycle's handlebar rolls side to side as the rider pedals and steers, a car's does not, however bumpy
+# the road (VzU9Sf-Y-Ac, -CNqMp219OE: robertlogger's bicycle rides, proposed as cars from the channel's history;
+# user, 2026-11-03: "camera is shaking a lot which can be a hint that it's bicycle"); the median _roll of the readings
+# while moving, in 572 reviewed videos: 0.6 degrees or more in 11 of 62 bicycles and 3 of 51 motorbikes, against 3 of
+# 399 cars (1 of 249 picked at random, 2 of the 150 that shake most sideways) and none of 60 buses and trucks; up
+# and down shaking alone tells little (bicycles 0.35 median, cars 0.32)
+BIKE_ROLL = 0.6
+
+
+def video_roll(sig):
+    """The median roll_track reading (degrees) while moving, 0 under 3 such readings."""
+    rt = np.asarray(sig.get('roll_track', np.zeros((0, 2)))).reshape(-1, 2)
+    motion = np.asarray(sig.get('motion', []))
+    moving = [r for t, r in rt if len(motion) > t * FPS
+              and np.median(motion[int(t * FPS):int((t + 15) * FPS)]) > PARAMS['moving_flow']]
+    return float(np.median(moving)) if len(moving) >= 3 else 0.0
+
+
 # BOB_WALK_RUN step-bob readings in a row at BOB_WALK or more are a walk, cut (6swqoWE057Y from 42:32: 0.78-0.91, the
 # drive before under 0.65; user, 2026-10-17). In 753 reviewed videos such runs cover 4830 s, none of it approved (3 in
 # a row: 8715 s, none either)
@@ -642,19 +660,43 @@ def night_scene_track(path, sig, work_dir):
     return sorted(_clip_scores(path, times, work_dir, NIGHT_SCENES).items()) if times else []
 
 
-def step_bob_track(path, duration, every=BOB_EVERY_S, length=15, fps=10):
+def _roll(frames):
+    """How much the camera rolls side to side, in degrees: the spread of its angle (from corners tracked from frame to
+    frame) around its 3-s mean; None when too few frames can be followed."""
+    angles = []
+    for i in range(1, len(frames)):
+        a, b = frames[i - 1], frames[i]
+        pts, m = cv2.goodFeaturesToTrack(a, 150, 0.01, 5), None
+        if pts is not None and len(pts) >= 20:
+            nxt, ok, _ = cv2.calcOpticalFlowPyrLK(a, b, pts, None)
+            ok = ok.ravel() == 1
+            if ok.sum() >= 10:
+                m, _ = cv2.estimateAffinePartial2D(pts[ok], nxt[ok], method=cv2.RANSAC, ransacReprojThreshold=1)
+        angles.append(np.nan if m is None else np.degrees(np.arctan2(m[1, 0], m[0, 0])))
+    angles = np.array(angles)
+    if len(angles) < 50 or np.isnan(angles).mean() > 0.3:
+        return None
+    roll = np.cumsum(np.nan_to_num(angles))
+    return float(np.std((roll - np.convolve(roll, np.ones(31) / 31, 'same'))[15:-15]))
+
+
+def step_bob_track(path, duration, every=BOB_EVERY_S, length=15, fps=10, rolls=None):
     """[(start s, share)] of step_bob's measure on a 15-s reading every `every` seconds: a walk inside a drive
     (jhXgQ-mMrnw 9:01-9:52, the one segment its highway drive kept: 0.56-0.81 against 0.33 driving at 5:00; user,
-    2026-10-13). A reading of 15 s is noisy, so a hint for the segments, not a cut."""
+    2026-10-13). A reading of 15 s is noisy, so a hint for the segments, not a cut. rolls: a list to which the
+    camera's _roll in each reading is added as (start s, degrees)."""
     w, h = 160, 90
     out = []
     for t in np.arange(0, max(0, (duration or 0) - length), every):
         raw = subprocess.run(['ffmpeg', '-v', 'error', '-ss', f'{t:.1f}', '-t', str(length), '-i', path, '-an', '-vf',
                               f'fps={fps},scale={w}:{h},format=gray', '-f', 'rawvideo', '-'],
                              capture_output=True, timeout=300).stdout
-        frames = np.frombuffer(raw, np.uint8).reshape(-1, h, w).astype(np.float32)
+        frames = np.frombuffer(raw, np.uint8).reshape(-1, h, w)
         if len(frames) < 50:
             continue
+        if rolls is not None and (r := _roll(frames)) is not None:
+            rolls.append((float(t), r))
+        frames = frames.astype(np.float32)
         win = cv2.createHanningWindow((w, h), cv2.CV_32F)
         dy = np.array([cv2.phaseCorrelate(a, b, win)[0][1] for a, b in zip(frames, frames[1:])])
         dy = dy - np.convolve(dy, np.ones(9) / 9, 'same')
@@ -4200,7 +4242,9 @@ def analyse_video(video_id, out_dir, meta=None, signs=False):
         sig['aerial'] = np.array(aerial_track(path, meta.get('duration'), work_dir), float).reshape(-1, 2)
         driver = driver_clip_track(path, sig.get('face', np.zeros(0)), work_dir)
         sig['driver_clip'] = np.array(driver, float).reshape(-1, 2)
-        track = step_bob_track(path, meta.get('duration'))  # the whole video's measure is its middle
+        rolls = []
+        track = step_bob_track(path, meta.get('duration'), rolls=rolls)  # the whole video's measure is its middle
+        sig['roll_track'] = np.array(rolls, float).reshape(-1, 2)
         sig['bob_track'] = np.array(track, float).reshape(-1, 2)
         sig['step_bob'] = np.array(np.median([x for _, x in track]) if len(track) >= 3 else 0, float)
         end = montage_end(sig)
@@ -4328,6 +4372,11 @@ NOT_DRIVING_TITLE = re.compile(r'\b(?:walk(?:s|ing|around|about)?|wa(?:king|ling
                                # 2ZujrrW_EzY: "The Slow Train Through Rural Japan"; no approved title says train);
                                # "Metro" alone is mostly a metro area ("Omaha Metro Tour")
                                r'|subway|underground train|tram|streetcar|trolley|light rail|monorail|cable car'
+                               # ... and a tram or bus line by its number in Dutch, German, French or Spanish ("Lijn 20
+                               # Dam - Paulus Potterstraat", W_zlhKfzEAg and HjwGZqz7YlM: Amsterdam's tram 20; user,
+                               # 2026-11-03: none of the 5 reviewed such titles approved), or a tram in those languages
+                               r'|(?:lijn|linie|ligne|l[ií]nea)\s+\d+[a-z]?|tramway|stra(?:ß|ss)enbahn|tranv[ií]a'
+                               r'|tramvaj|трамва\w*'
                                r'|funicular|(?:train|cab|railway|rail) (?:ride|view|journey)|trains?|railways?'
                                r'|metro (?:ride|journey|line|train|exp)'
                                r'|(?:on|from|by) (?:the |\w+ )?metro(?! area)|riding\b[^|]*\bline)\b', re.I)
@@ -7103,6 +7152,12 @@ DASH_DRIVE = re.compile(rf"\s*({_DASH_WORD}(?: {_DASH_WORD}){{0,2}})\s+[-–—]
 DASH_NOT_PLACE = NOT_PLACE | STREET_WORDS | {'day', 'time', 'lapse', 'sunny', 'world', 'county', 'highway', 'freeway',
                                              'motorway', 'raw', 'uncut', 'pov', 'boulevard', 'city', 'town', 'into',
                                              'to', 'from', 'via'}
+_PAIR_NAME = rf"{_DASH_WORD}(?: (?:(?:aan|op|den|de) )*{_DASH_WORD})*"
+BARE_PAIR = re.compile(rf"\s*({_PAIR_NAME})(?:\s+[-–—]\s*|\s*[-–—]\s+|[-–—](?=[^_]*_\d))({_PAIR_NAME})"
+                       r"(?:\s*\([^)]*\))?(?:\s*$|\.(?:\s|$)|[_ ]\d{6,8}(?:_\d+)?(?:\.\w+)?$|\s+\d{4}$|\s+(?=[a-z]))")
+PART_OF_TOWN = {'north', 'south', 'east', 'west', 'noord', 'zuid', 'oost', 'nord', 'süd', 'sud', 'ost', 'centrum',
+                'centre', 'center', 'zentrum', 'centro', 'downtown', 'uptown', 'midtown'}
+MONTH_WORD = re.compile(r"\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\b", re.IGNORECASE)
 ROAD_PAIR = re.compile(rf"({_DASH_WORD}(?: {_DASH_WORD}){{0,2}})\s*[-–—]\s*([A-Z]{{1,2}}-?\d{{1,4}})\s*[-–—]\s*"
                        rf"({_DASH_WORD}(?: {_DASH_WORD}){{0,2}})\b")
 DRIVE_LINES = 10  # a description's first lines that may name the drive
@@ -7294,6 +7349,13 @@ def drive_title(title, description):
     # "Grevenmacher  - Trier VIRTUAL DRIVE 4K" (iTzKa42lapA; user, 2026-10-19): two places, no common word in either
     # ("Sunny Day - Time Lapse Driving" is none), then a drive word
     if (m := DASH_DRIVE.match(title)) and not {w.lower() for w in f'{m[1]} {m[2]}'.split()} & DASH_NOT_PLACE:
+        return f'from {m[1]} to {m[2]}'
+    # ... or a title of just the two places, maybe with a note in brackets, a date or a sentence in lower case after:
+    # "Uithoorn -  Amstelveen (lente)", "Ouderkerk - Amstelveen 20250818_201622" (JbFj1hxCmHk, robertlogger; user,
+    # 2026-11-03: of 14 such reviewed titles naming two towns, all were set to both)
+    if (m := BARE_PAIR.match(title)) and not {w.lower() for w in f'{m[1]} {m[2]}'.split()} & DASH_NOT_PLACE \
+            and not MONTH_WORD.search(f'{m[1]} {m[2]}') and not any(ordinary(x.split()[0]) for x in (m[1], m[2])) \
+            and not {m[1].lower(), m[2].lower()} & PART_OF_TOWN:  # "Amstelveen Westwijk - Zuid" is no Amsterdam-Zuid
         return f'from {m[1]} to {m[2]}'
     # "Manchester-M62-Leeds" (J7_Pm8ec-28; user, 2026-10-19): two places with the road between them
     if (m := ROAD_PAIR.search(title)) and not {w.lower() for w in f'{m[1]} {m[3]}'.split()} & DASH_NOT_PLACE:
@@ -9377,6 +9439,9 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
             vt, vehicle_note = 0, f'vehicle from the title (a drive; the channel mostly: {VEHICLE_TYPES[vt]})'
         if vid in reanalyse:  # keep a vehicle type picked in the review page
             vt, vehicle_note = plan[vid].get('vehicle_type', vt), 'vehicle as in the earlier proposal'
+        elif (vt is None or vt == 0) and title_vt is None and not DRIVE_TITLE.search(title_text(meta['title'])) \
+                and analysed and (roll := video_roll(np.load(sig_path))) >= BIKE_ROLL:
+            vehicle_note += f'; the camera rolls side to side as on a bicycle ({roll:.1f} degrees): check the vehicle'
         named = title_countries(meta['title'])  # "…hacia Carolina, Puerto Rico": not San Juan, Texas
         guess = (transit_city(meta['title'], df)
                  or guess_locality(meta['title'], named[0] if len(named) == 1 else country, df))
