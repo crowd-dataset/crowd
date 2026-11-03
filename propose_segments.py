@@ -10278,7 +10278,9 @@ async function onYouTubeError(e) {
     local.askedAll = true;
   }
   local.fetching.add(video);
-  localNote(`YouTube will not play ${video} here (error ${e.data}): fetching a copy to play instead (a minute or so)`);
+  // a few minutes, not one (AXwrav7ugn8, 2026-11-03: 2.5 min, the page left 2 s before), so leaving is fine
+  localNote(`YouTube will not play ${video} here (error ${e.data}): fetching a copy to play instead (a few `
+            + 'minutes; it stays fetched if you move on, and plays when you come back)');
   for (;;) {
     let r = {};
     try { r = await (await fetch(`local/${video}`, { method: 'POST' })).json(); } catch (err) {}
