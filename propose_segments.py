@@ -4072,9 +4072,17 @@ EXCLUDE_TITLE = re.compile(r'walking tour|walk tour|city walk|time[- ]?lapse|hyp
 GAMES = (r"(?:Forza(?: Horizon| Motorsport)|The Crew(?: Motorfest| 2)|(?:Euro|American) Truck Simulator|BeamNG"
          r"|Assetto Corsa|Gran Turismo \d|Test Drive Unlimited|Need for Speed|Grand Theft Auto|GTA ?(?:V|IV|VI|5|6)"
          r"|Cyberpunk 2077|Microsoft Flight Simulator|SnowRunner|My Summer Car)\b")
-GAME_TITLE = re.compile(rf"(?<![#\w]){GAMES}", re.IGNORECASE)
-GAME_TEXT = re.compile(rf"(?<![#\w])(?<!real )game ?play\b|^\W*Game:|\b(?:in|of|playing|play)\s+{GAMES}",
-                       re.IGNORECASE | re.MULTILINE)
+# ... and "ATS 1.61", "ATS Hauls #31", "ETS2 Mods" in the title, or "in The Crew" with its capitals (b4Aan_4h9Bg,
+# r0ctADVtAVY; "the crew" is also people), or a sim rig listed ("GPU: ...", "Steering Wheel: Thrustmaster T300":
+# DRfsc19XqFI and 2 more unwindingrides clips naming no game; user, 2026-11-03). None of these matches a mapped video
+# (82,663 of them, 2026-11-03)
+GAME_TITLE = re.compile(rf"(?<![#\w]){GAMES}|(?-i:\b(?:ATS|ETS ?2)\b)\s*(?:v?\d\.\d{{2}}|Hauls?|Mods?|Promods)\b",
+                        re.IGNORECASE)
+GAME_TEXT = re.compile(rf"(?<![#\w])(?<!real )game ?play\b|^\W*Game:|\b(?:in|of|playing|play)\s+(?:{GAMES}"
+                       r"|(?-i:The Crew)\b)", re.IGNORECASE | re.MULTILINE)
+GAME_RIG = re.compile(r"^\W*(?:GPU|Graphics card|Steering wheel|Shifter|Pedals)\s*:"
+                      r"|\b(?:Thrustmaster|Fanatec|Logitech G(?:29|92[03])|Moza R\d+|Simagic|Sim Master)\b",
+                      re.IGNORECASE | re.MULTILINE)
 # highway driving and road trips ("highways 160/191" too: nor-caldashcams); "via I-5" only passes along it on
 # an otherwise urban drive
 # ... "Interstate" alone too: "Open Tennessee Interstate With Natural Road Noise" (JvkVpSHG5Bg and the series; user,
@@ -4485,7 +4493,8 @@ def exclusion_reason(meta):
     hit = AERIAL_TITLE.search(title)
     if hit:
         return f"drone or flight footage (title mentions '{hit.group(0)}')"
-    hit = GAME_TITLE.search(title) or GAME_TEXT.search(f"{title}\n{meta.get('description') or ''}")
+    hit = (GAME_TITLE.search(title) or GAME_TEXT.search(f"{title}\n{meta.get('description') or ''}")
+           or GAME_RIG.search(meta.get('description') or ''))
     if hit and not re.search(r'\breal\b', title, re.IGNORECASE):
         return f"a computer game (mentions '{hit.group(0).strip()}')"
     hit = NOT_DRIVING_TITLE.search(title)
