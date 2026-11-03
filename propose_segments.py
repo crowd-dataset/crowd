@@ -7805,21 +7805,45 @@ LEG_KMH, LEG_MIN_KM = 90, 3  # ... and no farther than this fast in the time sin
 # not the one 32 km off in Hasliberg; Sawando by Nagawado Dam, not the station of that name 40 km off in Ina)
 # a leg's end that is a sight, a road's junction or a car park is no locality of its own (Nagawado Dam, Norikura JCT,
 # Pen-y-Pass, Nant Peris Park & Ride)
-NOT_LOCALITY_END = re.compile(r"(?i)\b(?:dam|jct|junction|interchange|exit|pass|trail|track|hut|glacier|lake|falls"
-                              r"|waterfall|viewpoint|summit|peak|mountain|valley|gorge|ride)\b")
+NOT_LOCALITY_END = re.compile(r"(?i)\b(?:dam|jct|junction|interchange|exit|pass(?:höhe)?|trail|track|hut|glacier"
+                              r"|lake|falls|waterfall|viewpoint|summit|peak|mountain|valley|gorge|ride)\b")
+LEG_DASH_KM = 10  # see split_legs
+LEG_ROAD = re.compile(r"(?i)\b(?:autobahn|anschluss|ausfahrt|autoroute|motorway|freeway|highway|border|grenze"
+                      r"|airport|flughafen|aeroport|aéroport)\b|\bA\d+\b")
 LEG_SUFFIX = re.compile(r"(?i)\s+(?:park\s*(?:&|and)\s*ride|car\s*park|parking|station|bus terminal)$")
 
 
+# a place's name between a chapter's dashes: capitalised words and the small ones that join them ("Oetwil an der
+# Limmat", "Erlinsbach AG / SO"), at most five
+_DASH_WORD = rf"(?:[{CAPITALS}0-9][\w'’.-]*|an|am|im|der|die|das|bei|ob|sur|sous|en|les|di|/|&)"
+DASH_PLACE = re.compile(rf"[{CAPITALS}][\w'’.-]*(?: {_DASH_WORD}){{0,4}}")
+
+
 def chapter_legs(chapters):
-    """[(start s, end s or None, A, B)] of the chapters naming a leg "A to B", each until the next chapter starts;
-    [] unless one follows on from another (its A the other's B): "Saltburn-by-the-Sea to Loftus" 0:38, "Loftus to
-    Hinderwell" 14:30, ... (tol0zRsUB9A; user, 2026-10-28: "chapters show when car passed by localities")."""
+    """[(start s, end s or None, A, B, dashed)] of the chapters naming a leg "A to B", each until the next chapter
+    starts; [] unless one follows on from another (its A the other's B): "Saltburn-by-the-Sea to Loftus" 0:38,
+    "Loftus to Hinderwell" 14:30, ... (tol0zRsUB9A; user, 2026-10-28: "chapters show when car passed by localities").
+    A chapter of several places between spaced dashes is a leg from each to the next, the time between spread evenly
+    (see split_legs; dashed): "Romanshorn – Uttwil – Kesswil" 7:50, "Kesswil – Güttingen – Altnau" 11:55
+    (swissroadsplaces; user, 2026-11-03: "chapter names indicate localities"); a note in brackets is no part of a
+    name ("Baltenswil (Bassersdorf)", "Malbun (FL)")."""
     legs = []
     for i, (t, name) in enumerate(chapters or []):
-        parts = [x.strip(' .!') for x in re.split(r'\s+(?:to|→|->)\s+', CHAPTER_PREFIX.sub('', str(name).strip()),
-                                                  flags=re.IGNORECASE)]
-        if len(parts) == 2 and all(parts):
-            legs.append((float(t), float(chapters[i + 1][0]) if i + 1 < len(chapters) else None, *parts))
+        name = CHAPTER_PREFIX.sub('', str(name).strip())
+        parts = [x.strip(' .!') for x in re.split(r'\s+(?:to|→|->)\s+', name, flags=re.IGNORECASE)]
+        dash = len(parts) == 1
+        if dash:  # ... or places between dashes, each a name ("Mols (Quarten)"), not a sentence (boringdallas)
+            parts = [re.sub(r'\s*\([^)]*\)', '', x).strip(' .!') for x in re.split(r'\s+[–—-]\s+', name)]
+            if not all(DASH_PLACE.fullmatch(x) for x in parts):
+                continue
+        elif len(parts) != 2:
+            continue
+        end = float(chapters[i + 1][0]) if i + 1 < len(chapters) else None
+        if len(parts) >= 2 and all(parts):
+            n = len(parts) - 1
+            times = [float(t) + k * (end - float(t)) / n for k in range(n)] + [end] if end is not None \
+                else [float(t)] + [None] * n
+            legs += [(times[k], times[k + 1], parts[k], parts[k + 1], dash) for k in range(n)]
     if not any(_name_key(legs[i][3]) == _name_key(legs[i + 1][2]) for i in range(len(legs) - 1)):
         return []
     return legs
@@ -7855,21 +7879,34 @@ def split_legs(p, legs, segs, t1, df, home=None):
     countries.pop(None, None)
     codes = tuple(sorted(countries))
     chains = []  # [[(second, name), ...]] of legs following on from each other
-    for i, (a_t, b_t, a, b) in enumerate(legs):
+    dashed = set()  # (chain, j) of the legs from its j-th place to the next listed between dashes: see below
+    for i, (a_t, b_t, a, b, dash) in enumerate(legs):
         if not (chains and i and _name_key(legs[i - 1][3]) == _name_key(a) and legs[i - 1][1] == a_t):
             chains.append([(a_t, LEG_SUFFIX.sub('', a))])
+        if dash:
+            dashed.add((len(chains) - 1, len(chains[-1]) - 1))
         chains[-1].append((t1 if b_t is None else b_t, LEG_SUFFIX.sub('', b)))
+    keep = [k for k, c in enumerate(chains) if len(c) > 2]
+    dashed = {(keep.index(k), j) for k, j in dashed if k in keep}
     # a leg on its own is no part of the drive: a hike after it ("PYG Track to Snowdon", "Trekking to Karasawa")
-    chains = [c for c in chains if len(c) > 2]
+    chains = [chains[k] for k in keep]
     if not chains:
         return False
     # ... and a chapter after a chain's last leg that names only the place it reached is still there ("Country Club
     # Hills to Harvey", then "Harvey" from 51:00 to the end: dhjX7Yn_r3Q)
     chs = [(float(t), CHAPTER_PREFIX.sub('', str(n)).strip(' .!')) for t, n in p.get('drive_chapters') or []]
-    for c in chains:
+    for i, c in enumerate(chains):
         k = next((k for k, (t, n) in enumerate(chs) if t == c[-1][0] and _name_key(n) == _name_key(c[-1][1])), None)
         if k is not None:
+            if (i, len(c) - 2) in dashed:  # a stay in a listed place is in it (Kreuzlingen, not Konstanz: listed)
+                dashed.add((i, len(c) - 1))
             c.append((chs[k + 1][0] if k + 1 < len(chs) else t1, c[-1][1]))
+    starts = {t for t, _ in chs} | {t1}  # a chapter's own time; the places between, spread evenly until found
+    for c in chains:
+        anchors = [j for j, (t, _) in enumerate(c) if t in starts or j in (0, len(c) - 1)]
+        for j0, j1 in zip(anchors, anchors[1:]):  # noqa: RUF007 (pairs of anchors, not neighbours)
+            for j in range(j0 + 1, j1):
+                c[j] = (c[j0][0] + (j - j0) * (c[j1][0] - c[j0][0]) / (j1 - j0), c[j][1])
     first = min(s['start'] for s in segs)
     covered = sum(max(0, min(c[-1][0], t1) - max(c[0][0], first)) for c in chains)
     if covered < 0.6 * (t1 - first):
@@ -7877,29 +7914,68 @@ def split_legs(p, legs, segs, t1, df, home=None):
     links = [tuple(x) for x in p.get('drive_points') or []]
     stretches, path, stops, at, last = [], [], [], {}, None
     since = None  # the second the last place found was passed
+    if not links:  # where the drive is: the town of the chains' names most of the others are near (the first
+        # may be found as none, and a lone name as a namesake: Tannenheim, a street in Frick, for Flumserberg's;
+        # Bergheim in Alsace; 4Ocm9RDVsTU)
+        near = ((home[3], home[4]), ABROAD_KM) if home else (None, None)
+        hits = [(w, h) for w, n in dict.fromkeys(x for c in chains for x in c)
+                if (h := _osm_place(n, codes, *near)) and _name_key(h[0] or '') == _name_key(n)]
+        if hits:
+            w, h = max(hits, key=lambda x: sum(_km(*x[1][4:6], *y[1][4:6]) <= LEG_KM for y in hits))
+            last, since = tuple(h[4:6]), w
     resolved = []
     for k, chain in enumerate(chains):
         points = []
         for j, (when, name) in enumerate(chain):
             if links and ((k, j) == (0, 0) or (k, j) == (len(chains) - 1, len(chain) - 1)):
                 pt = links[0] if (k, j) == (0, 0) else links[-1]  # the linked route's own ends
-            elif last:
-                pt = _leg_point(name, codes, last, max(LEG_MIN_KM, min(LEG_KM, (when - since) / 3600 * LEG_KMH)))
-            else:
-                pt = _leg_point(name, codes, (home[3], home[4]) if home else None) or _leg_point(name, codes)
+            elif last:  # (a place listed between dashes: its time is a guess, see chapter_legs)
+                pt = _leg_point(name, codes, last, max(LEG_DASH_KM if (k, max(0, j - 1)) in dashed else LEG_MIN_KM,
+                                                       min(LEG_KM, abs(when - since) / 3600 * LEG_KMH)))
+            else:  # a town of the name first, however far a drive from home it is (Romanshorn, 65 km from Zürich:
+                # a feature of its name in reach of home was a street by Sulgen)
+                pt = (_leg_point(name, codes, (home[3], home[4]), ABROAD_KM) if home else None) \
+                    or _leg_point(name, codes)
             points.append(pt)
             last, since = (pt, when) if pt else (last, since)
         resolved.append(points)
+        # ... then by the way between them: the time a chapter of several places takes, by their distances
+        anchors = [j for j, (t, _) in enumerate(chain) if t in starts or j in (0, len(chain) - 1)]
+        for j0, j1 in zip(anchors, anchors[1:]):  # noqa: RUF007 (pairs of anchors, not neighbours)
+            if j1 - j0 > 1 and all(points[j0:j1 + 1]):
+                km = np.cumsum([0] + [_km(*points[j], *points[j + 1]) for j in range(j0, j1)])
+                if km[-1] > 0:
+                    for j in range(j0 + 1, j1):
+                        chain[j] = (chain[j0][0] + km[j - j0] / km[-1] * (chain[j1][0] - chain[j0][0]), chain[j][1])
+
+    def listed(name, pt):  # the locality a chapter lists between dashes: as it names it, or the mapping's town it
+        # begins with ("Winterthur-Wülflingen"), not a bigger town near it (Bottighofen is no Konstanz, Tagelswangen
+        # no Effretikon) nor the hamlet at the point found (Oberwil for Nürensdorf); a junction, pass or border none
+        name = re.sub(r'\s+[A-Z]{2}(?:\s*/\s*[A-Z]{2})*$', '', name)  # its canton: "Erlinsbach AG / SO"
+        if NOT_LOCALITY_END.search(name) or LEG_ROAD.search(name) \
+                or not (h := _osm_reverse(round(pt[0], 4), round(pt[1], 4))):
+            return None
+        return _written_locality(name, (name, *h[1:4], *pt), df) \
+            or _hit_locality((name, *h[1:]), df, countries, pt, named=True)
+
     # within one metropolis, its districts are no localities of their own (YNY-RhuzExo, "Shinjuku to Kinshicho": Tokyo)
     found_all = [pt for points in resolved for pt in points if pt]
     pop = pd.to_numeric(df['population_locality'], errors='coerce').fillna(0)
     if any(all(_km(*pt, float(r.lat), float(r.lon)) <= _town_km(float(r.population_locality)) for pt in found_all)
            for r in df[pop >= METRO_POP].itertuples()):
         return False
-    for chain, points in zip(chains, resolved):
+    for k, (chain, points) in enumerate(zip(chains, resolved)):
         found = [j for j, pt in enumerate(points) if pt]
         for j0, j1 in zip(found, found[1:]):  # noqa: RUF007 (pairs of found places, not neighbours)
             (t0, a), (tb, b) = chain[j0], chain[j1]
+            # places listed between dashes are the localities passed (listed), each until halfway to the next: the
+            # towns a route between neighbouring villages passes are their bigger neighbours (Uttwil to Kesswil, 3 km
+            # by the lake, sampled as Romanshorn, Dozwil and Amriswil)
+            if all((k, j) in dashed for j in range(j0, j1)):
+                ends = [listed(x, pt) for x, pt in ((a, points[j0]), (b, points[j1]))]
+                mid = (t0 + tb) / 2
+                stretches += [(t0, mid, ends[0] or ends[1]), (mid, tb, ends[1] or ends[0])]
+                continue
             shares, route = route_localities(f'from {a} to {b}', df, link_points=[points[j0], points[j1]])
             stretches += [(t0 + x * (tb - t0), t0 + y * (tb - t0), loc) for x, y, loc in shares]
             if route:
@@ -7908,7 +7984,10 @@ def split_legs(p, legs, segs, t1, df, home=None):
                 at.update(route.get('at', {}))
         for j in found[-1:]:  # after the last place found: still in its town, or on the open road
             pt = points[j]
-            if chain[j][0] < chain[-1][0] and _urban(*pt) and (h := _osm_reverse(round(pt[0], 4), round(pt[1], 4))):
+            if (chain[j][0] < chain[-1][0] and (k, j - 1) in dashed
+                    and (loc := listed(chain[j][1], pt))):  # (Kreuzlingen, not Konstanz: see listed)
+                stretches.append((chain[j][0], chain[-1][0], loc))
+            elif chain[j][0] < chain[-1][0] and _urban(*pt) and (h := _osm_reverse(round(pt[0], 4), round(pt[1], 4))):
                 stretches.append((chain[j][0], chain[-1][0], _hit_locality(h, df, countries, pt)))
     if not any(loc for _, _, loc in stretches):
         return False
