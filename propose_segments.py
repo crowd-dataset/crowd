@@ -1067,6 +1067,24 @@ def camera_tilt(sig, n, p=PARAMS):
 
 
 TILT_MARGIN = 0.03  # see camera_tilt
+SKY_SEEN, SKY_Y = 0.3, 0.945  # see sky_camera
+
+
+def sky_camera(sig, n, p=PARAMS):
+    """Whether the camera looks up at the sky all through: road users seen in under SKY_SEEN of the readings while the
+    car moves, at a median height past SKY_Y (only at the bottom edge). camera_tilt misses it: its minutes see too
+    few to judge (ur0qDEgjrJs, towers of Kuala Lumpur filmed from below for 44 min: 0.11 seen at 0.96; user,
+    2026-11-02). Of reviewed videos only it and A_Ck_fVXcuY (0.26, 0.954), both rejected, pass; the nearest
+    approved is 7E8ARSyeWZk (0.30, 0.937)."""
+    y = np.asarray(sig['object_y'], float)
+    moving = _rolling_median(np.asarray(sig['motion'][:n], float), p['smooth_s'] * FPS) > p['moving_flow']
+    if not len(y) or not len(moving):
+        return False
+    m = moving[np.minimum(np.arange(len(y)) * URBAN_EVERY_S * FPS, len(moving) - 1)]
+    seen = np.isfinite(y) & m
+    return m.sum() >= 24 and seen.sum() < SKY_SEEN * m.sum() and seen.any() and np.median(y[seen]) > SKY_Y
+
+
 SIDEWAYS_DARK = 0.5  # a sideways stretch this much in the dark is only a hint (see propose)
 
 
@@ -1392,6 +1410,8 @@ def propose(sig, p=PARAMS):
     if 'object_y' in sig:
         up, down = camera_tilt(sig, n, p)
         problems += [('camera tilted up', up), ('camera tilted down', down)]
+        if 'motion' in sig and sky_camera(sig, n, p):
+            problems.append(('camera facing the sky', np.ones(n, bool)))
     if len(town := np.asarray(sig.get('town_scene', np.zeros((0, 2)))).reshape(-1, 2)):
         # where CLIP sees a town's streets (houses, shops), no highway or rural cut (TOWN_SCENES): the middle of three
         # readings in a row, so one odd frame decides nothing
@@ -3910,6 +3930,16 @@ MIN_UPLOAD_S = 300  # the paper requires source uploads of at least five minutes
 EXCLUDE_TITLE = re.compile(r'walking tour|walk tour|city walk|time[- ]?lapse|hyperlapse|compilation'
                            r'|sped[- ]?up|speed(?:ed)?[- ]?up|fast[- ]?forward|\b\d(?:\.\d)?x speed\b|\bx\d speed\b'
                            r'|\bcrash|\baccident|multi[- ]?angle', re.I)  # multi-angle: 5k8awa6rpmA
+# a computer game's drive: its name in the title, or the description plays "in" or "of" it or has a "Game:" line
+# (vYpRsSmKY70: "the stunning roads of The Crew Motorfest"; user, 2026-11-02). Not a hashtag or keyword list ("#GTA6",
+# "border crossing cyberpunk 2077" on real drives), nor a real drive before one ("Driving Real Tokyo Before Forza
+# Horizon 6"). Of 79 reviewed or ruled-out videos it names, none was approved
+GAMES = (r"(?:Forza(?: Horizon| Motorsport)|The Crew(?: Motorfest| 2)|(?:Euro|American) Truck Simulator|BeamNG"
+         r"|Assetto Corsa|Gran Turismo \d|Test Drive Unlimited|Need for Speed|Grand Theft Auto|GTA ?(?:V|IV|VI|5|6)"
+         r"|Cyberpunk 2077|Microsoft Flight Simulator|SnowRunner|My Summer Car)\b")
+GAME_TITLE = re.compile(rf"(?<![#\w]){GAMES}", re.IGNORECASE)
+GAME_TEXT = re.compile(rf"(?<![#\w])(?<!real )game ?play\b|^\W*Game:|\b(?:in|of|playing|play)\s+{GAMES}",
+                       re.IGNORECASE | re.MULTILINE)
 # highway driving and road trips ("highways 160/191" too: nor-caldashcams); "via I-5" only passes along it on
 # an otherwise urban drive
 # ... "Interstate" alone too: "Open Tennessee Interstate With Natural Road Noise" (JvkVpSHG5Bg and the series; user,
@@ -4320,6 +4350,9 @@ def exclusion_reason(meta):
     hit = AERIAL_TITLE.search(title)
     if hit:
         return f"drone or flight footage (title mentions '{hit.group(0)}')"
+    hit = GAME_TITLE.search(title) or GAME_TEXT.search(f"{title}\n{meta.get('description') or ''}")
+    if hit and not re.search(r'\breal\b', title, re.IGNORECASE):
+        return f"a computer game (mentions '{hit.group(0).strip()}')"
     hit = NOT_DRIVING_TITLE.search(title)
     if hit and not says_drive(title):
         return f"not a drive (title mentions '{hit.group(0)}')"
@@ -4500,7 +4533,7 @@ def title_places(title, df, home):
     if home and any(c != home[2] for c in title_countries(title)):
         home = None
     if not states:
-        return place_localities(phrases, df, home)
+        return _not_near(place_localities(phrases, df, home), title, df)
     names = {code: name.title() for name, code in add_video.US_STATE_CODES.items() if len(name) > 2}
     if len(states) == 1:
         state = names.get(next(iter(states)))
@@ -4512,7 +4545,24 @@ def title_places(title, df, home):
         phrases = [f'{ph}, {state_of(nxt)}' if state_of(nxt) else ph
                    for ph, nxt in zip(phrases, phrases[1:] + ['']) if not state_of(ph)]
     found = place_localities(phrases, df[(df['country'] != 'United States') | df['state'].isin(states)], None)
-    return found or misspelt_places(phrases, df, states)
+    return _not_near(list(found) or misspelt_places(phrases, df, states), title, df)
+
+
+def _not_near(found, title, df):
+    """found without the towns the title says the place is near, when it names another: "Kuševac 4K | … Kod
+    Đakova" ("near Đakovo") is Kuševac (JWh5SinCW_s; user, 2026-11-02). Not a city of NEAR_CITY_POP: its suburbs are
+    the city ("Driving Through Randallstown & Pikesville MD | … Near Baltimore" was Baltimore, CEJK7if58NE and 3 more
+    reviewed)."""
+    found = list(found)
+    read = english(title) or title or ''
+    pop = {(r[0], r[1] if isinstance(r[1], str) else None, r[2]): r[3]
+           for r in df[['locality', 'state', 'country', 'population_locality']].itertuples(index=False)}
+    near = [x for x in found if not pop.get(tuple(x[0]), 0) >= NEAR_CITY_POP  # (none known: NaN)
+            and re.search(rf"\bnear\s+(?:the\s+)?{re.escape(x[1].split(',')[0])}\b", read, re.IGNORECASE)]
+    return [x for x in found if x not in near] or found
+
+
+NEAR_CITY_POP = 250_000  # see _not_near
 
 
 def misspelt_places(phrases, df, states):
@@ -5159,7 +5209,9 @@ NOT_PLACE = {'around', 'across', 'through', 'along', 'near', 'inside',
              'music', 'commentary', 'narration', 'talking'} | DEMONYMS | CONTINENTS
 # Italian ones too ("Madonna della Corona", sFkpN_MHn34; not "di": Indonesian for "in", "Berkendara di Kota Malang")
 PLACE_JOINERS = {'al', 'el', 'de', 'del', 'la', 'le', 'of', 'the', 'bin', 'bu', 'van', 'von', 'da', 'do', 'dos',
-                 'della', 'delle', 'dello', 'degli', 'dei'}
+                 'della', 'delle', 'dello', 'degli', 'dei',
+                 # "Weston super Mare" is Weston-super-Mare, not a Weston (dvdR6jSq4FY; user, 2026-11-02)
+                 'super', 'upon'}
 
 
 # "...from A to B in the Bronx, New York (2026)": the place after the last "in" holds the whole drive, when no
@@ -5334,6 +5386,14 @@ def place_phrases(text, limit=4):
             name, renamed = (' '.join(x).strip(',.:;!?()[]') for x in (w[i1:i2], t[j1:j2]))
             if op == 'replace' and i2 - i1 == j2 - j1 == 1 and renamed in out and name[:1].isupper():
                 out[out.index(renamed)] = name
+        # ... and so is the name heading a title, which the translation turned into words: "Marinci 4K | Vožnja …"
+        # was "Marines 4K", "Granice" "Borders", "Satnica" "Hourly rate", "Ivanovci Đakovački" "Ivanovci Đakovo"
+        # (_X0khQFSIJY; user, 2026-11-02)
+        cap = rf"[{CAPITALS}](?:[^\W\d_]|['’-])+"  # Đ too
+        head, renamed = (re.match(rf"\s*({cap}(?: {cap}){{0,2}})\s*(?:\d+[Kk]\b|[|:–—]|\s-\s)", x)
+                         for x in (written, translated))
+        if head and not head.group(1).isupper() and (not renamed or renamed.group(1) != head.group(1)):
+            out = [head.group(1)] + [x for x in out if not renamed or x != renamed.group(1)]
     return list(dict.fromkeys(out))
 
 
@@ -5562,6 +5622,19 @@ def _osm_place(phrase, country_codes, near=None, reach_km=None, home=None):
     a = r.raw.get('address', {})
     kind = next((k for k in ('city', 'town', 'village', 'municipality', 'hamlet') if a.get(k)), None)
     town = a.get(kind) if kind else None
+
+    # Croatian, Serbian, Bosnian and Slovenian towns and municipalities are "Grad", "Općina", "Opština", "Občina" in
+    # OpenStreetMap: the name is the town's own when the phrase names it ("Općina Vladislavci" is Vladislavci), else
+    # the municipality's, no locality ("Grad Našice" for its village Makloševac; slavonskimputevima; user, 2026-11-02)
+    def own_unit(town):
+        unit = re.match(r'(?:Grad|Općina|Opčina|Opština|Opštine|Občina|Mestna občina)\s+(?=\S)', town or '')
+        if not unit:
+            return town
+        bare = town[unit.end():]
+        # ... with what follows its name to tell it from its namesakes: "Grad Biograd na Moru" for "Biograd"
+        named = {wanted, _name_key(phrase.split(',')[0])}
+        return bare if {_name_key(bare), _name_key(QUALIFIED.sub('', bare))} & named else None
+    town = own_unit(town)
     # a village the phrase names is itself, not the town OpenStreetMap files it under (Eo3Zx_sPua8: Cebza and
     # Macedonia, villages of Ciacova; user, 2026-10-22)
     # ... also with its state after a comma ("PORT CARLING, Ontario": Port Carling, not Muskoka Lakes Township;
@@ -5585,6 +5658,7 @@ def _osm_place(phrase, country_codes, near=None, reach_km=None, home=None):
     if (not town and r.raw.get('class') == 'boundary' and _osm_name(r.raw) != a.get('state')
             and _osm_type(r.raw) not in PLACE_AREAS | {'country'}):
         town = _osm_name(r.raw)  # a municipality's own boundary has no town in its address (Little Silver, NJ)
+    town = own_unit(town)  # (its own boundary's name, set above)
     # a county or a municipality is no locality ("Suffolk" in "Coram in Suffolk"), and a place OpenStreetMap files
     # under no town, or under its municipality only, is the town itself (v7XHCQBdl4w: the suburb Motetema, its
     # "city" the Elias Motsoaledi Local Municipality; udVi6qOYvNI: Kwaggafontein; user, 2026-10-20)
@@ -6241,6 +6315,9 @@ CAPITALS = 'A-Z' + ''.join(c for c in map(chr, range(0xC0, 0x250)) if c.isupper(
 # the two ends of an arrow ("Kostelec nad Černými lesy → Doubek", "Trhový Štěpánov → Zruč nad Sázavou")
 _ARROW_TO = rf"[{CAPITALS}][\w'’.-]*(?: (?:nad|pod)(?: [\w'’.-]+){{1,2}}| [{CAPITALS}][\w'’.-]*){{0,3}}"
 _ARROW_FROM = rf"[{CAPITALS}][\w'’.-]*(?: [\w'’.-]+){{0,3}}"
+# the states of the countries whose titles write one after a drive's towns (see FROM_TO)
+_STATE_NAMES = '|'.join(sorted((re.escape(x.name) for c in ('US', 'CA', 'AU')
+                                for x in pycountry.subdivisions.get(country_code=c)), key=len, reverse=True))
 # a town in a cab-view title, with a note in brackets maybe ("Sokołów Małopolski(podkarpackie)")
 _DASH_TOWN = rf"([{CAPITALS}][\w'’.-]*(?: [{CAPITALS}][\w'’.-]*){{0,3}})(?:\s*\([^)]*\))?"
 # ("from Gamagori City toward Toyokawa City", ER7UFbJuaq0; user, 2026-10-21)
@@ -6265,6 +6342,10 @@ FROM_TO = (re.compile(r"\bfrom\s+(.+?)\s+to(?:wards?)?\s+(.+?)" + _END, re.I),
            re.compile(r"^(?!(?:Welcome|Back|Return|Road|Guide|Dusk|Dawn|Day|Night|"
                       r"Sunset|Sunrise|Morning|Evening|Sea)\b)"
                       r"([A-Z][\w'’.-]*(?: [A-Z][\w'’.-]*){0,3})\s+[Tt]o\s+([A-Z][\w'’.-]*(?: [A-Z][\w'’.-]*){0,3})"
+                      # ... with its state before a bar: "Markleeville to Coleville, California | …" (KtklybdiN50;
+                      # user, 2026-11-02); a state's name only ("Sylhet Juri To Dhakshinbhag, Ratuli Bazar |" was
+                      # Ratuli, "Halfway House to Gutcher, Yell -" Gutcher)
+                      rf"(?:,\s*(?:{_STATE_NAMES})(?=\s*(?:\s[-–—|]\s|\||:|\()))?"
                       r"(?:\s+via\s+[^|–—:(]+?)?\s*(?:\s[-–—|]\s|\||:|\(|$"
                       # ... or before a comma and words in lower case on how it goes: "Luso to Casqueira, using the
                       # old road (N235 & unpaved roads)" (iwZUbnvT7Fc; user, 2026-10-30; a comma before a capital is
@@ -8467,6 +8548,13 @@ def merged_locality(loc, merges=None):
     return m['to'] if m and (m.get('stated') or m['times'] >= MERGE_TIMES) else None
 
 
+def writes_own_region(title, country):
+    """Whether the title writes a place with a state or province of that country after it: "Portland, Oregon"."""
+    code = common.get_iso2_country_code(common.correct_country(country)) if country else None
+    return bool(code) and any(re.search(rf',\s*{re.escape(sub.name)}\b', title or '')
+                              for sub in pycountry.subdivisions.get(country_code=code) or [])
+
+
 def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True, single_city=True, new_only=False,
                     only=None, deferred=False):
     """Propose segments for every new video of a channel and write plan.json for the review page.
@@ -8879,7 +8967,10 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
             # naming its home): the one named country that has a town of the title (user, 2026-10-17)
             found = {tuple(g) for c in named if (g := guess_locality(meta['title'], c, df))}
             guess = list(next(iter(found))) if len(found) == 1 else None
-        if not guess and not named and not any(r.search(meta['title']) for r in FROM_TO):
+        # (not when it writes a town with a state of the channel's country: "Driving in the Portland, Oregon and
+        # Vancouver, Washington Metro Area" is in the US, not in Vancouver, BC: M8bOY4HL-dg; user, 2026-11-02)
+        if not guess and not named and not any(r.search(meta['title']) for r in FROM_TO) \
+                and not writes_own_region(meta['title'], country):
             # nothing in the batch's country (talkthewalk's batch is in Sri Lanka: "Cycling around Vancouver
             # Downtown", "... | Winnipeg"; user, 2026-10-20), and a drive between towns goes by its route ("Chicago
             # to Evanston ... Lincoln Square" is no Lincoln, UK): the one other country the channel has filmed in
