@@ -2903,11 +2903,10 @@ def gps_track(video_id, duration, opening=None):
     clock = [(t, c) for t, x in texts if (c := parse_clock(x)) is not None]
     stamp = [(t, c) for t, x in texts if (c := parse_stamp(x)) is not None]
     track = [(t, *xy) for t, x in texts if (xy := parse_gps(x))]
-    # a misread digit puts a point far off: keep the points a car could have driven to from the point most others
-    # agree with (not the first one: JyHYb3g7wxs began with 29.26695 for 49.26695)
-    reach = lambda a, b: _km(a[1], a[2], b[1], b[2]) <= 1 + abs(b[0] - a[0]) / 3600 * MAX_KMH  # noqa: E731
-    anchor = max(track, key=lambda a: sum(reach(a, b) for b in track), default=None)
-    kept = [x for x in track if reach(anchor, x)] if anchor else []
+    # a misread digit puts a point far off: keep every stretch of the drive, misread copies left out (not only the
+    # points a car could have driven to from the one most others agree with: that dropped the later drives of a
+    # video joined from several, xowRRb32D2k's Pugachyov part; JyHYb3g7wxs began with 29.26695 for 49.26695)
+    kept = gps_stretches(track, clean=False)
     return (kept if len(kept) >= 2 else None), clock, stamp
 
 
@@ -3567,7 +3566,7 @@ def split_gps(p, df, out_dir):
         return False
     countries = {common.get_iso2_country_code(common.correct_country(c)): c for c in df['country'].dropna().unique()}
     countries.pop(None, None)
-    track = gps_fit(gps_clean(sig['gps'].tolist()), df)
+    track = gps_fit(gps_stretches(sig['gps'].tolist()), df)
     if not track:
         return False
     lats, lons = np.radians(df['lat'].astype(float).values), np.radians(df['lon'].astype(float).values)
@@ -3768,7 +3767,7 @@ def gps_speedups(sig, steps=3):
 def gps_jumps(sig, km=2):
     """[(second, km)] where the GPS overlay's position jumps `km` or more in one step at GPS_FAST_KMH or faster,
     the steps before and after at a car's speed: footage cut out (or a short sped-up stretch)."""
-    g = gps_clean(np.asarray(sig.get('gps', np.zeros((0, 3)))).reshape(-1, 3).tolist())
+    g = gps_stretches(np.asarray(sig.get('gps', np.zeros((0, 3)))).reshape(-1, 3).tolist())
     out = []
     for i in range(1, len(g) - 2):
         steps = [(_km(a[1], a[2], b[1], b[2]), max(b[0] - a[0], 1e-6) / 3600)
@@ -3800,6 +3799,142 @@ def gps_clean(track, kmh=None):
             if len(track) < 3 or (i and reach(track[i - 1], x)) or (i + 1 < len(track) and reach(x, track[i + 1]))]
 
 
+GPS_MIN_STRETCH = 3   # positions: a shorter stretch can be a misread no digit explains
+GPS_AHEAD = 5, 300    # a position is linked to the next 5 and those within 300 s a car could drive to
+GPS_FLIP_S = 1800     # s: a misread digit, sign or swap of lat and lon is tested this far
+GPS_APART_KM = 1000   # a stretch farther from the largest is a misread (Maracaibo's 71.6, 110.7 for 10.6, -71.6)
+GPS_NEAR_S = 150      # s: _gps_same_drive's window
+# one digit wrong (a degree digit; a tenth, ten or one minute, ten seconds), or a degree digit and a tenth or ten
+# minutes (CCHGZNRqBK4: 124°41' for 121°11'), either way; with the smallest digit's unit: a shape is tested only when
+# a car's way off is under a quarter of it (no grid to fit)
+_GPS_DEG = [(k * u, u) for k in range(1, 10) for u in (100, 10, 1)]
+_GPS_TENTH = [(k * u, u) for k in range(1, 10) for u in (0.1, 10 / 60)]
+_GPS_SHAPES = sorted({(s * x, u) for s in (1, -1) for x, u in _GPS_DEG + _GPS_TENTH
+                      + [(k * u, u) for k in range(1, 10) for u in (1 / 60, 10 / 3600)]}
+                     | {(s * (d + f), v) for s in (1, -1) for d, _ in _GPS_DEG for f, v in _GPS_TENTH})
+_GPS_DIGITS, _GPS_UNITS = (np.array(x) for x in zip(*_GPS_SHAPES))
+
+
+def _gps_tol_km(dt):
+    return 1 + abs(dt) / 3600 * MAX_KMH * 1.5
+
+
+def _gps_parts(track):
+    """[[(t, lat, lon)], ...]: the positions linked where a car could have driven from one to one of the next
+    GPS_AHEAD (misreads between them skipped: 73owIHq-9hM's 124.44 for 121.44 four times in 150 s), the groups so
+    linked."""
+    track = sorted(track)
+    up = list(range(len(track)))
+
+    def root(i):
+        while up[i] != i:
+            up[i] = up[up[i]]
+            i = up[i]
+        return i
+    for i, p in enumerate(track):
+        for j in range(i + 1, len(track)):
+            if j > i + GPS_AHEAD[0] and track[j][0] - p[0] > GPS_AHEAD[1]:
+                break
+            if _km(p[1], p[2], track[j][1], track[j][2]) <= _gps_tol_km(track[j][0] - p[0]):
+                up[root(j)] = root(i)
+    groups = {}
+    for i, p in enumerate(track):
+        groups.setdefault(root(i), []).append(p)
+    return list(groups.values())
+
+
+def _gps_misread(p, a):
+    """Whether position p is position a's reading with a digit (or two) wrong, a car's way off at most, and clearly
+    far from a (jJJdOhZal90 drove 8 km in 132 s, 0.12 degrees of longitude); None when that cannot be told: not
+    clearly far, or only a digit too small for that distance in time would explain it."""
+    tol = _gps_tol_km(p[0] - a[0])
+    if abs(p[0] - a[0]) > GPS_FLIP_S or _km(p[1], p[2], a[1], a[2]) < 3 * tol:
+        return None  # too far in time, or a car nearly gets there: cannot tell
+    lat_deg, lon_deg = tol / 111.2, tol / max(111.2 * abs(np.cos(np.radians(a[1]))), 1)
+
+    def off(x, y, deg):  # x a misread of y: True, None (only by a digit too small to tell) or False
+        fit = np.zeros(len(_GPS_DIGITS), bool)
+        for z in (x, -x):
+            fit |= np.abs(z - y - _GPS_DIGITS) <= deg
+        return True if (fit & (_GPS_UNITS >= 4 * deg)).any() else None if fit.any() else False
+    out = [off(p[2], a[2], lon_deg) if abs(p[1] - a[1]) <= lat_deg else False,
+           off(p[1], a[1], lat_deg) if abs(p[2] - a[2]) <= lon_deg else False]
+    return True if True in out else None if None in out else False
+
+
+def _gps_flipped(p, a):
+    """Whether position p is position a's with a sign wrong or lat and lon swapped (sLlVKNBtgYY's 14.91 for -14.91;
+    Maracaibo's 71.6, 10.7 for 10.7, -71.6), a car's way off at most."""
+    tol = _gps_tol_km(p[0] - a[0])
+    return abs(p[0] - a[0]) <= GPS_FLIP_S and any(
+        _km(x, y, a[1], a[2]) <= tol for u, w in ((p[1], p[2]), (p[2], p[1])) for x in (u, -u) for y in (w, -w)
+        if (x, y) != (p[1], p[2]) and abs(x) <= 90)
+
+
+def _gps_votes(stretch, other, test, near):
+    """Whether most positions of a stretch near another's in time pass a test (None: not counted)."""
+    votes = []
+    for p in stretch:
+        a = min(other, key=lambda a: abs(a[0] - p[0]))
+        if abs(a[0] - p[0]) <= near and (v := test(p, a)) is not None:
+            votes.append(v)
+    return bool(votes) and sum(votes) * 2 >= len(votes)
+
+
+def _gps_copy(stretch, other):
+    """Whether most of a stretch's positions near another's in time are misread copies of its positions."""
+    return _gps_votes(stretch, other, _gps_misread, GPS_FLIP_S) or _gps_votes(stretch, other, _gps_flipped, GPS_FLIP_S)
+
+
+def _gps_same_drive(stretch, other):
+    """Whether most of a stretch's positions near another's in time are where a car gets from its positions: one
+    drive split by a misread a car could reach (its next positions went on from the misread one)."""
+    return _gps_votes(stretch, other, lambda p, a: _km(p[1], p[2], a[1], a[2]) <= _gps_tol_km(p[0] - a[0]),
+                      GPS_NEAR_S)
+
+
+def _gps_km_to(stretch, main):
+    p, q = stretch[len(stretch) // 2], main[len(main) // 2]
+    return _km(p[1], p[2], q[1], q[2])
+
+
+def gps_stretches(track, clean=True):
+    """The GPS track without misreads, every stretch of the drive kept, in time order (Pavlo, 2026-11-03). The
+    positions are split into stretches a car could drive (_gps_parts); the largest is the drive, another of
+    GPS_MIN_STRETCH or more positions a part of it too (a video joined from several drives: xowRRb32D2k's Pugachyov
+    part) unless it is GPS_APART_KM or more away, has a kept position between its first and last (a car is not in
+    two places: ZjjP299A6oY's -73.287 between -73.86 and -73.889; 3kPjPCgNYVA's -118.96 for -118.56, a 5 read as 9)
+    or is a misread copy (_gps_copy) of the largest: 85clOz-PtQY's 121.749 for 121.249 (121°44' for 121°14', its
+    overlay's 1 read as 4) four frames in a row. Of two stretches that
+    are copies of each other the one nearer the largest is kept (xowRRb32D2k: 11 frames read -2.028, 8 52.028).
+    clean: each kept stretch then goes through gps_clean on its own (its median would cut a stretch's first positions
+    at a join). On the 1,692 tracks of the mapping's overlays (2026-11-02) 4 segment flags of the GPS locality check
+    went away (misreads: both Taoyuan) and the later drives of about 10 joined videos were kept."""
+    parts = sorted(_gps_parts([tuple(x) for x in track]), key=len, reverse=True)
+    if not parts:
+        return []
+    merged = True
+    while merged:  # the pieces of one drive joined again, largest first
+        merged = False
+        for i, j in ((i, j) for i in range(len(parts)) for j in range(len(parts)) if i != j):
+            if len(parts[i]) >= len(parts[j]) and _gps_same_drive(parts[j], parts[i]):
+                parts[i] = sorted(parts[i] + parts.pop(j))
+                parts.sort(key=len, reverse=True)
+                merged = True
+                break
+    main, rest = parts[0], [s for s in parts[1:] if len(s) >= GPS_MIN_STRETCH]
+    keep = [main]
+    for s in rest:
+        if _gps_km_to(s, main) > GPS_APART_KM or any(s[0][0] < a[0] < s[-1][0] for k in keep for a in k) \
+                or _gps_copy(s, main):
+            continue
+        if any(_gps_copy(s, t) and not (_gps_copy(t, s) and _gps_km_to(s, main) < _gps_km_to(t, main))
+               for t in rest if t is not s):
+            continue
+        keep.append(s)
+    return sorted(x for s in keep for x in (gps_clean(s) if clean else s))
+
+
 GPS_DRIVE_KMH = 20  # a GPS overlay moving this fast (median) is a vehicle's: no walk
 
 
@@ -3807,7 +3942,7 @@ def gps_drive(sig):
     """Whether the GPS overlay in the picture moves at a vehicle's pace: Car_fx9kn's dashcam drives were left out as
     walks (people close by in 5-6% of the frames, a step-like bob; user, 2026-10-20), their positions at 70-100
     km/h."""
-    track = gps_clean([tuple(x) for x in np.asarray(sig.get('gps', np.zeros((0, 3)))).reshape(-1, 3)])
+    track = gps_stretches(np.asarray(sig.get('gps', np.zeros((0, 3)))).reshape(-1, 3).tolist())
     kmh = [_km(a[1], a[2], b[1], b[2]) / (b[0] - a[0]) * 3600 for a, b in zip(track, track[1:]) if b[0] > a[0]]
     return len(kmh) >= 5 and float(np.median(kmh)) >= GPS_DRIVE_KMH
 
