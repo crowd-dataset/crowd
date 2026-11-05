@@ -376,6 +376,12 @@ WALK_BATCH_N, WALK_BATCH_SHARE = 8, 0.6
 # readings at BOB_WALK+: of the 60 reviewed videos such batches proposed, 9 rejected and no approved one (approved:
 # 0.57 at most, then 14%; the batch rule alone would leave out 24 approved)
 WALK_BATCH_BOB, WALK_BATCH_HI = 0.55, 0.2
+# ... or from WALK_BATCH_BOB_NEAR step_bob when walk_hints cover WALK_BATCH_HINT of its proposed footage and a big
+# person is close by in WALK_PERSON_SHARE of its frames (eyeandi's Kathmandu walks K7jFn5uSlq8 and QyPGjXO_29Y at
+# 0.49 and 0.50, 84% and 38% of frames with a person close by and traffic ahead in the crowded streets; user,
+# 2026-11-05): of the reviewed videos of walk batches so judged, 15 rejected (272 min) and no approved one
+# (approved: 0.43 at most, but for a traffic jam in Mykolaiv at 0.57 with nobody close by)
+WALK_BATCH_BOB_NEAR, WALK_BATCH_HINT = 0.47, 0.5
 # ... and, batch or not, from WALK_SHEET_FEW frames on foot with that bob (user, 2026-10-30): of 408 reviewed videos
 # at step_bob 0.5-0.65, 14 walks or rejected and no approved one (2 frames alone: 6 approved)
 WALK_SHEET_FEW = 2
@@ -428,6 +434,18 @@ def walk_view(sig):
         return None
     person, ahead = float(wv[:, 0].mean()), float(wv[:, 1].mean())
     return (person, ahead) if person >= WALK_PERSON_SHARE and ahead < WALK_AHEAD_SHARE else None
+
+
+def walk_near(p, sig):
+    """Whether a proposed video bobs like a walk with people close by (WALK_BATCH_BOB_NEAR)."""
+    if float(sig.get('step_bob', 0)) < WALK_BATCH_BOB_NEAR:
+        return False
+    segs = [g for e in p.get('entries', []) for g in e['segments']]
+    total = sum(g['end'] - g['start'] for g in segs)
+    hinted = sum(b - a for a, b in walk_hints(segs, np.asarray(sig.get('bob_track', np.zeros((0, 2)))).reshape(-1, 2)
+                                              .tolist()))
+    wv = np.asarray(sig.get('walk_view', np.zeros((0, 2)))).reshape(-1, 2)
+    return bool(total) and hinted / total >= WALK_BATCH_HINT and (not len(wv) or wv[:, 0].mean() >= WALK_PERSON_SHARE)
 
 
 def walk_no_stop(sig, p=None):
@@ -5876,6 +5894,9 @@ def place_phrases(text, limit=4):
                          for x in (written, translated))
         if head and not head.group(1).isupper() and (not renamed or renamed.group(1) != head.group(1)):
             out = [head.group(1)] + [x for x in out if not renamed or x != renamed.group(1)]
+    # "IN THE WORLD" names no place: "THE MOST POLLUTED CITY IN THE WORLD" was a "The World" in Gurugram
+    # (U-FxxqGEnXo; user, 2026-11-05); "Walt Disney World" is one
+    out = [x for x in out if re.sub(r'^the\s+', '', x.strip().lower()) != 'world']
     return list(dict.fromkeys(out))
 
 
@@ -10027,7 +10048,8 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
             if ('entries' not in p or not undecided(p) or v not in sigs or gps_drive(sigs[v])
                     or MOVING_TITLE.search(p.get('title') or '')):
                 continue
-            if float(sigs[v].get('step_bob', 0)) < WALK_BATCH_BOB or (bob_share(sigs[v]) or 0) < WALK_BATCH_HI:
+            if (float(sigs[v].get('step_bob', 0)) < WALK_BATCH_BOB or (bob_share(sigs[v]) or 0) < WALK_BATCH_HI) \
+                    and not walk_near(p, sigs[v]):
                 continue
             committed.setdefault(v, json.dumps(p, sort_keys=True))  # replaced only if nobody changed it since
             plan[v] = {'video': v, 'title': p['title'], 'analysed': True,
