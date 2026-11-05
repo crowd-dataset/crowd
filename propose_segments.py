@@ -519,6 +519,10 @@ AERIAL_FRAMES, AERIAL_SHARE = 8, 0.5
 # or more are drone footage. Those three videos' drone stretches read 0.9+ throughout; of 46,418 frames of approved
 # segments (250 videos) 24 did, in a row only in mdfLX6NEvXA, a still view of a bay from a balcony
 AERIAL_EVERY_S, AERIAL_SURE, AERIAL_RUN = 10, 0.9, 2
+# ... and a shot between hard cuts judged whole: one of SHOT_MIN_S+ with AERIAL_SHOT_N readings or more, AERIAL_SHOT
+# of them at 0.5 or more (-oef9WBKqzE 5:21-7:15 over a car park, 6 of 11, which CLIP calls "a parking lot" as often
+# as "aerial"; user, 2026-11-04: "drone footage")
+AERIAL_SHOT_N, AERIAL_SHOT = 4, 0.5
 
 
 def aerial_track(path, duration, work_dir):
@@ -545,6 +549,22 @@ def aerial_runs(sig):
         out.append(run)
     half = AERIAL_EVERY_S / 2
     return [(max(0.0, r[0] - half), r[-1] + half) for r in out]
+
+
+def aerial_shots(sig, cut):
+    """[(start s, end s)] of the shots between hard cuts (cut: a bool per frame) that AERIAL_SHOT judges drone
+    footage; none from signals with readings minutes apart (udRDUzRn4xU: 3 of 8 aerial, 6:10-11:20 of a 14-min shot
+    a drive the reviewer approved)."""
+    a = np.asarray(sig.get('aerial', np.zeros((0, 2)))).reshape(-1, 2)
+    if len(a) < 2 or np.median(np.diff(a[:, 0])) > 1.5 * AERIAL_EVERY_S:
+        return []
+    edges, out = [0, *np.flatnonzero(cut), len(cut)], []
+    for k in range(len(edges) - 1):
+        x, y = edges[k], edges[k + 1]
+        w = a[(a[:, 0] >= x / FPS) & (a[:, 0] < y / FPS), 1]
+        if (y - x) / FPS >= SHOT_MIN_S and len(w) >= AERIAL_SHOT_N and (w >= 0.5).mean() >= AERIAL_SHOT:
+            out.append((x / FPS, y / FPS))
+    return out
 
 
 # a camera facing the driver, seen by CLIP (user, 2026-10-16: jykQR2dKANc, AlCduyvTAxI, 1MDz3XJ82Oc; the Haar face
@@ -1527,7 +1547,7 @@ def propose(sig, p=PARAMS):
     for a, b in np.asarray(sig.get('rear', np.zeros((0, 2)))).reshape(-1, 2):  # see rear_camera
         keep[int(a * FPS):int(b * FPS)] = False
         notes.append(f'rear camera {int(a) // 60}:{int(a) % 60:02d}-{int(b) // 60}:{int(b) % 60:02d}')
-    for a, b in aerial_runs(sig):
+    for a, b in [*aerial_runs(sig), *aerial_shots(sig, cut)]:
         keep[int(a * FPS):int(b * FPS)] = False
         notes.append(f'drone footage {a:.0f}-{b:.0f}s')
     for a, b in bob_walks(sig):
@@ -2766,6 +2786,11 @@ GPS_HEMI = re.compile(r'([NS])\s*(\d{1,2}[.,]\d{3,})\D{0,4}?([EW])\s*(\d{1,3}[.,
 # minutes mark at times: "N 24°2240.2""; user, 2026-10-20)
 GPS_DMS = re.compile(r"([NS])\s*(\d{1,2})\s*[°*º˚]\s*(\d{2})\s*['’′`]?\s*(\d{1,2}(?:[.,]\d+)?)\W{0,4}?"
                      r"([EW])\s*(\d{1,3})\s*[°*º˚]\s*(\d{2})\s*['’′`]?\s*(\d{1,2}(?:[.,]\d+)?)")
+# ... and in degrees and decimal minutes, the hemisphere after each, in either order: "26°3.897'E,44°18.968'N"
+# (soferamator's dashcam, jMmmQqX66_c; user, 2026-11-04: "gps overlay is present"), OCR putting a space after the
+# point at times ("44°18. 882'N")
+_DM = r"(\d{1,3})\s*[°*º˚]\s*(\d{1,2}[.,] ?\d{2,})\s*['’′`]?\s*([NSEW])"
+GPS_DM = re.compile(rf"(?<![\d.]){_DM}\W{{0,4}}?{_DM}")
 # ... and labelled: "lat: 23.18409 lon: 120.48879" (Car_fx9kn's other dashcam, the two a line apart in OCR)
 # (OCR reads the l as I, 1 or |: "Iat: 24.30392", "Ion: 120.59553", aEIGIgrxOgM)
 GPS_LABELLED = re.compile(r'(?i)(?<![a-z])[li1|]at(?:itude)?\b\W{0,3}(-?\d{1,2}[.,]\d{3,})[\s\S]{0,40}?'
@@ -2799,6 +2824,14 @@ def _parse_gps(text):
         lon = int(d2) + int(m2) / 60 + float(s2.replace(',', '.')) / 3600
         lat, lon = -lat if ns == 'S' else lat, -lon if ew == 'W' else lon
         if abs(lat) <= 90 and abs(lon) <= 180:
+            return lat, lon
+    if (m := GPS_DM.search(text or '')) and {m[3], m[6]} in ({'N', 'E'}, {'N', 'W'}, {'S', 'E'}, {'S', 'W'}):
+        (d1, m1, h1), (d2, m2, h2) = m.groups()[:3], m.groups()[3:]
+        x, y = (int(d) + float(n.replace(',', '.').replace(' ', '')) / 60 for d, n in ((d1, m1), (d2, m2)))
+        (lat, ns), (lon, ew) = ((x, h1), (y, h2)) if h1 in 'NS' else ((y, h2), (x, h1))
+        lat, lon = -lat if ns == 'S' else lat, -lon if ew == 'W' else lon
+        if max(float(m1.replace(',', '.').replace(' ', '')), float(m2.replace(',', '.').replace(' ', ''))) < 60 \
+                and abs(lat) <= 90 and abs(lon) <= 180:
             return lat, lon
     if m := GPS_LABELLED.search(text or ''):
         lat, lon = float(m.group(1).replace(',', '.')), float(m.group(2).replace(',', '.'))
@@ -2871,7 +2904,9 @@ def _png_text(png):
         text += '\n' + read.stdout.decode(errors='ignore')
     # a phone app's time and date in a corner, two lines in letters and digits ("12:58 PM" over "Feb 6, 2025" at
     # the bottom left of CuseVegas's drives, REnfw4fpZ5A): read without the digit whitelist
-    for crop in ('iw*0.35:ih*0.17:0:ih*0.82',):
+    # ... and coordinates with degree and minute marks in the bottom right corner, which the whitelist drops
+    # ("26°3.897'E,44°18.968'N", jMmmQqX66_c; see GPS_DM)
+    for crop in ('iw*0.35:ih*0.17:0:ih*0.82', 'iw*0.35:ih*0.06:iw*0.65:ih*0.94'):
         strip = subprocess.run(['ffmpeg', '-v', 'error', '-i', '-', '-vf',
                                 f"crop={crop},scale=-2:200,format=gray,lut=y='if(gt(val\\,190)\\,0\\,255)'",
                                 '-f', 'image2pipe', '-vcodec', 'png', '-'], input=png, capture_output=True,
@@ -3450,36 +3485,48 @@ def head_signs(video_id, duration, keep_dir):
 # colour, in order along it. Where those texts are on the map (map_route) makes the line the drive's route
 MAP_LABELS = 15
 MAP_FIT_LABELS, MAP_FIT_PX = 6, 12  # a map's fit: this many labels within this many pixels of their place
+ROUTE_GAP_PX = 48  # see route_line
 
 
 def route_line(img):
-    """[(x, y)] the longest line of one strong colour in a picture, end to end along it (every 6th pixel), else []."""
+    """[(x, y)] the longest line of one strong colour in a picture, end to end along it (every 6th pixel), else [].
+    Its pieces count as one line across gaps of up to ROUTE_GAP_PX: a route the map's stop markers or its time label
+    break (d0euWDDFVUY's Google Maps route at its end, 40:16; user, 2026-11-04)."""
     hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
     best = None
+    join = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (ROUTE_GAP_PX, ROUTE_GAP_PX))
     for h0 in range(0, 180, 6):
         mask = ((((hsv[:, :, 0].astype(int) - h0) % 180) < 8) & (hsv[:, :, 1] > 140) & (hsv[:, :, 2] > 90))
-        n, lab, st, _ = cv2.connectedComponentsWithStats(mask.astype(np.uint8), 8)
+        n, lab, st, _ = cv2.connectedComponentsWithStats(cv2.dilate(mask.astype(np.uint8), join), 8)
         for i in range(1, n):
-            span = float(np.hypot(st[i, 2], st[i, 3]))
-            if st[i, 4] > 500 and (best is None or span > best[0]):
-                best = (span, lab == i)
+            span = float(np.hypot(st[i, 2], st[i, 3])) - ROUTE_GAP_PX
+            if span > (best[0] if best else 0) and (part := (lab == i) & mask).sum() > 500:
+                best = (span, part)
     if best is None or best[0] < 0.25 * float(np.hypot(*img.shape[:2])):
         return []
     ys, xs = np.nonzero(best[1])
     cells = np.unique(np.c_[xs // 6, ys // 6], axis=0)
     idx = {tuple(c): k for k, c in enumerate(cells)}
 
-    def far(k0):  # steps along the line from cell k0 to every cell
+    def far(k0):  # steps along the line from cell k0 to every cell, over a gap to the nearest piece not reached yet
         d = np.full(len(cells), -1)
         d[k0], todo = 0, [k0]
-        for k in todo:
-            for dx in (-1, 0, 1):
-                for dy in (-1, 0, 1):
-                    j = idx.get((cells[k][0] + dx, cells[k][1] + dy))
-                    if j is not None and d[j] < 0:
-                        d[j] = d[k] + 1
-                        todo.append(j)
-        return d
+        while True:
+            for k in todo:
+                for dx in (-1, 0, 1):
+                    for dy in (-1, 0, 1):
+                        j = idx.get((cells[k][0] + dx, cells[k][1] + dy))
+                        if j is not None and d[j] < 0:
+                            d[j] = d[k] + 1
+                            todo.append(j)
+            seen, rest = np.flatnonzero(d >= 0), np.flatnonzero(d < 0)
+            if not len(rest):
+                return d
+            gap = np.hypot(*(cells[seen][:, None, :] - cells[rest][None, :, :]).transpose(2, 0, 1))
+            k, j = np.unravel_index(np.argmin(gap), gap.shape)
+            if gap[k, j] * 6 > ROUTE_GAP_PX:
+                return d
+            d[rest[j]], todo = d[seen[k]] + int(np.ceil(gap[k, j])), [rest[j]]
     d = far(int(np.argmax(far(0))))
     return [(int(x) * 6 + 3, int(y) * 6 + 3) for x, y in cells[np.argsort(d)][d[np.argsort(d)] >= 0]]
 
@@ -4270,7 +4317,12 @@ def analyse_video(video_id, out_dir, meta=None, signs=False, keep=False):
         cap = int(sig['labelled_montage'])
         if cap and (after := clip_intro(path, meta.get('duration'), work_dir, max_s=30, start=cap)):
             sig['labelled_montage'] = np.array(after, float)
-        if signs and (m := map_frame(video_id, texts)):  # a map of the drive in the opening
+        # a map of the drive in the opening, else in the outro: d0euWDDFVUY's Google Maps route at 40:16 (user,
+        # 2026-11-04: "such maps can be used to derive accurate route")
+        outro = float(sig['outro_start'])
+        if signs and ((m := map_frame(video_id, texts)) or (
+                outro and (m := map_frame(video_id, opening_texts(video_id, outro + 1, min(
+                    outro + 61, float(meta.get('duration') or outro + 61))))))):
             sig['map_labels'], sig['map_line'] = np.array(json.dumps(m[0])), np.array(m[1], float)
         if signs and (read := read_signs(video_id, duration=meta.get('duration'))):
             sig['signs'] = np.array(json.dumps({str(t): x for t, x in read.items()}))
@@ -4888,6 +4940,16 @@ VEHICLE_TITLE = [(4, re.compile(r'\b(?:bike (?:route|ride|tour|path|lane)s?|cycl
                                 r'|bus(?:es)? (?:window|seat)s?)\b|🚌', re.I))]
 
 
+# ... or a description saying the ride is by bicycle, the title naming no vehicle: "Nu een keertje met de fiets"
+# ("this time by bike") under robertlogger's "Amsterdam Lekstraat - Haarlemmermeerstation" (1hUm-hP2sHo; user,
+# 2026-11-04: "bicycle video"); these phrases in other languages than English, as English ones in descriptions
+# name bike lanes and cyclists seen from a car (17 of 24 reviewed such videos were cars; these: 2 of 2 bicycles, and
+# all 10 others they name are bike rides); a cyclist seen is no ride ("Fahrradfahrerin in Wien")
+BIKE_DESC = re.compile(r"\b(?:met de fiets|op de fiets|fietst\w*|mit dem (?:fahr)?rad|(?:fahr)?radtour\w*|à vélo"
+                       r"|en vélo|en bici(?:cleta)?|in bici(?:cletta)?|na rowerze|på cykel|med cykel|på sykkel"
+                       r"|de bicicleta|na kole|на велосипеде)\b", re.IGNORECASE)
+
+
 # a drive in the title of a channel that mostly cycles is in a car (yeTRE5gTkJs "Morning Drive Through Amsterdam"
 # and 3 reviewed "Netherlands Drive" videos of Eleonoraswalks proposed as bicycles; user, 2026-10-27); a channel of
 # motorbikes or trucks "drives" too (17 and 21 reviewed such titles kept their channel's vehicle)
@@ -4912,6 +4974,10 @@ def load_signals(sig_path, title):
 WORD_STATE_CODES = {'IN', 'OR', 'ME', 'OK', 'HI', 'DE', 'CO', 'MA', 'AL', 'ID', 'OH', 'LA'}  # LA: Los Angeles
 
 
+# a street word after a state's name: a street named after the state
+STATE_STREET = r"(?i:ave|avenue|st|street|blvd|boulevard|rd|pkwy|parkway|ln|lane|ct|court|pl|place|ter|terrace)\.?"
+
+
 def title_states(title):
     """The US states (postal codes) a title names, by name or by code: "Bay Lake FL", "Ponce, PR"; codes that are
     also words or names (IN, OR, ME, PA, ...) only after a comma, and none in an all-capitals title."""
@@ -4921,7 +4987,9 @@ def title_states(title):
     # "New York" alone is the city (a drive "from Newark to New York" is no Newark, NY): the state only as
     # "New York State" or by its code
     found = {code for name, code in add_video.US_STATE_CODES.items()
-             if re.search(rf'\b{re.escape(name)}\b(?! City)(?!,? ?D\.? ?C\b)'
+             # nor a street named after it ("Wyoming Ave: Dearborn to Oak Park", DzxUDU4D1fg: no Dearborn in Wyoming;
+             # user, 2026-11-04); not "Drive" or "Road", which may be a drive there ("Hawaii Drive", "Utah Road Trip")
+             if re.search(rf'\b{re.escape(name)}\b(?! City)(?!,? ?D\.? ?C\b)(?!\s+{STATE_STREET}\b)'
                           + (r'(?= State)' if name == 'new york' else ''), title, re.I)}
     if sum(c.isupper() for c in title) <= 0.6 * sum(c.isalpha() for c in title):
         found |= {m.group(2) for m in re.finditer(r'(,\s*)?\b([A-Z]{2})\b', title)
@@ -5171,12 +5239,19 @@ GENERIC_RUN = {'big', 'small', 'busy', 'city', 'town', 'street', 'streets', 'roa
 TOWN_SUBDIVISION = re.compile(r'municipal|city|town|commune|borough|council|quarter', re.I)
 
 
+def town_subdivision(sub):
+    """Whether a pycountry subdivision is a town (TOWN_SUBDIVISION), or a prefecture within a region, named after
+    its seat: "Fes, Morocco" is Fez, not the prefecture of Fès (zCDw5nE7qP0; user, 2026-11-05); Japan's prefectures
+    are regions of their own."""
+    return bool(TOWN_SUBDIVISION.search(sub.type) or sub.type == 'Prefecture' and sub.parent_code)
+
+
 @lru_cache(maxsize=None)
 def provinces(country):
     """The name keys of a country's subdivisions that are no towns (see TOWN_SUBDIVISION)."""
     code = common.get_iso2_country_code(common.correct_country(country))
     return frozenset(_name_key(sub.name) for sub in (code and pycountry.subdivisions.get(country_code=code)) or []
-                     if not TOWN_SUBDIVISION.search(sub.type))
+                     if not town_subdivision(sub))
 
 
 def province_key(state, country):
@@ -5982,10 +6057,18 @@ def _osm_place(phrase, country_codes, near=None, reach_km=None, home=None):
                        addressdetails=True, language='en', timeout=15, **box) or []
     wanted = _name_key(phrase)
 
-    def fits(r):
+    def fits(r, aliases=False):
         # a feature of that name that is a place (a town, district, beach, park, mountain) or a main road:
         # shops, offices and side streets named alike are everywhere ("Colombo" jewellers, a "Grand Avenue")
         name = _name_key(_osm_name(r.raw))
+        # ... or one of its other names exactly, accents and all, as the phrase writes it before a comma (below;
+        # "Fes, Morocco" is Fez: zCDw5nE7qP0; user, 2026-11-05); "Huế" is no "Nguyễn Huệ"; a town only (a road or
+        # a quarter so found made one end of Cotabato and Bangkok drives that name no other town)
+        if aliases and _osm_type(r.raw) in ('city', 'town', 'village', 'municipality') \
+                and unicodedata.normalize('NFC', phrase.split(',')[0].strip()).casefold() in {
+                    unicodedata.normalize('NFC', v).casefold() for k, v in (r.raw.get('namedetails') or {}).items()
+                    if k.startswith(('name', 'alt_name', 'official_name'))}:
+            name = wanted
         cls = r.raw.get('class') or r.raw.get('category')  # Nominatim's jsonv2 says "category"
         main_road = cls == 'highway' and r.raw.get('type') in ('motorway', 'trunk', 'primary')
         # a main road by its name whatever kind of way a title calls it (user, 2026-10-14: OJm2GB-6-1E's "Henry
@@ -6001,6 +6084,12 @@ def _osm_place(phrase, country_codes, near=None, reach_km=None, home=None):
                      or r.raw.get('type') in LANDMARK_TYPES))
     regions = [r for r in found if _osm_type(r.raw) == 'state' and _name_key(_osm_name(r.raw)) == wanted]
     found = [r for r in found if fits(r)]
+    # ... else by another of its names, as English names come back: "Den Haag" is The Hague (4R3DQXenPLo,
+    # "DenHaag_Alkmaar"; user, 2026-11-04); asked only then, so earlier lookups stay as they were
+    if not found:
+        found = [r for r in _nominatim('geocode', phrase, exactly_one=False, limit=10, country_codes=sorted(codes),
+                                       addressdetails=True, namedetails=True, language='en', timeout=15, **box) or []
+                 if fits(r, aliases=True)]
     if not found:
         return None
     # the exact name first ("Plains" is Plains, PA, not White Plains, NY), in a town ("Lancaster" is the city,
@@ -6234,7 +6323,7 @@ def place_localities(phrases, df, home=None):
     states = {_name_key(sub.name): sub.name for code in codes
               for sub in pycountry.subdivisions.get(country_code=code) or []
               if not (code == 'US' and sub.code[3:] in US_TERRITORIES)  # Puerto Rico is a country here
-              and not TOWN_SUBDIVISION.search(sub.type)}
+              and not town_subdivision(sub)}
     # a state of the countries searched is the state ("Atlanta, Georgia"), else "GEORGIA" in a title is the country
     country_names = {_name_key(c) for c in COUNTRIES} - set(states)
     # a state and its country after a name only say where it is: "PORT CARLING Ontario Canada" is Port Carling in
@@ -6883,6 +6972,10 @@ def _route(start, end, via=None):
 
 GENERIC_ENDS = {'downtown', 'uptown', 'midtown', 'airport', 'theairport', 'home', 'thebeach', 'beach', 'citycenter',
                 'citycentre', 'thecity', 'city', 'center', 'centre', 'town', 'work', 'school', 'hotel', 'thehotel'}
+# the time of day before a drive's start: "Early Morning Dublin to Wicklow Drive Ireland" (8WTeMx-AZ0w; user,
+# 2026-11-04)
+TIME_LEAD = re.compile(r"^(?i:(?:early|late)\s+)?(?i:morning|afternoon|evening|night|nighttime|daytime|midday|"
+                       r"midnight|dawn|dusk|sunrise|sunset)\s+(?=[A-ZÀ-Þ])")
 
 
 def _without_longer(text, name, states):
@@ -6933,6 +7026,11 @@ def drive_ends(title, df, home=None):
     # "to Downtown Omaha" is to Omaha: OpenStreetMap has no place of that name (iSMg2dH2uuA)
     first, last = (re.sub(r'^(?:downtown|uptown|midtown|central|historic|old town)\s+(?=[A-Z])', '', x, flags=re.I)
                    for x in (first, last))
+    # ... nor the time of day: "Early Morning Dublin" starts in Dublin (8WTeMx-AZ0w; user, 2026-11-04), which as a
+    # county of the same name made the end looked for in it (Wicklow, Dublin: not found); kept when a place is
+    # called that ("Sunset Beach", "Morning Sun"), and a word after it is no name ("Spend a Night Here?")
+    first, last = (y if (y := TIME_LEAD.sub('', x)) != x and not ordinary(y.split()[0]) and not _osm_place(x, codes)
+                   else x for x in (first, last))
     # a country the title names holds both ends: "Carolina a … San Juan, Puerto Rico" is not a Carolina in the US
     only = {code for code, name in countries.items() if name in title_countries(title)}
     # "from Newburgh to Brewster, New York": both ends in the states the title names (Maine has both too); with
@@ -7039,7 +7137,15 @@ def drive_ends(title, df, home=None):
     if both:
         a, b = bigs
     for i, phrase in enumerate((first, last)) if not named and not both else ():
-        chosen, big = (a, b)[i], bigs[i]
+        chosen, big, partner = (a, b)[i], bigs[i], (b, a)[i]
+        # ... not when the end found is a place of the name written within PAIR_KM of the other end, a town of its
+        # own by its name, and the major namesake is farther: "Alkmaar_Bergen" ends in Bergen, NH by Alkmaar, not
+        # Bergen, Norway (vWeITDWfXNA; user, 2026-11-04)
+        if chosen and partner and big and chosen[0] and partner[6] >= OWN_NAME_PLACE \
+                and _name_key(chosen[0]) == _name_key(re.sub(r',.*', '', phrase)) \
+                and _km(chosen[4], chosen[5], partner[4], partner[5]) <= PAIR_KM \
+                and _km(big[4], big[5], partner[4], partner[5]) > PAIR_KM:
+            continue
         if (big and big[6] >= MAJOR_PLACE and (not chosen or _km(chosen[4], chosen[5], big[4], big[5]) > 30)
                 and not (home and _km(home[3], home[4], big[4], big[5]) > ABROAD_KM)):
             other = place((last, first)[i], big[4:6], 60)
@@ -7170,14 +7276,18 @@ def _region_and_country_keys():
 
 
 _DASH_WORD = r"[A-ZÀ-ÞŁŚŻŹĆŃČŘŠŽĚŮ][a-zà-ÿąćęłńóśźżčďěňřšťůž'’-]+"
+# (the picture's size between: "Bucuresti - Mihailesti 4K Drive Via Noua Autostrada A0", G6DHLdr6Ssk; user,
+# 2026-11-05)
 DASH_DRIVE = re.compile(rf"\s*({_DASH_WORD}(?: {_DASH_WORD}){{0,2}})\s+[-–—]\s+({_DASH_WORD}(?: {_DASH_WORD}){{0,2}})"
-                        r"\s+(?i:(?:virtual\s+|real[- ]time\s+)?(?:drive|driving|road ?trip|cruise))\b")
+                        r"\s+(?i:(?:[48]K|U?HD|HDR|\d{3,4}p|\d{2,3} ?fps)\s+){0,3}"
+                        r"(?i:(?:virtual\s+|real[- ]time\s+)?(?:drive|driving|road ?trip|cruise))\b")
 DASH_NOT_PLACE = NOT_PLACE | STREET_WORDS | {'day', 'time', 'lapse', 'sunny', 'world', 'county', 'highway', 'freeway',
                                              'motorway', 'raw', 'uncut', 'pov', 'boulevard', 'city', 'town', 'into',
                                              'to', 'from', 'via'}
 _PAIR_NAME = rf"{_DASH_WORD}(?: (?:(?:aan|op|den|de) )*{_DASH_WORD})*"
 BARE_PAIR = re.compile(rf"\s*({_PAIR_NAME})(?:\s+[-–—]\s*|\s*[-–—]\s+|[-–—](?=[^_]*_\d))({_PAIR_NAME})"
                        r"(?:\s*\([^)]*\))?(?:\s*$|\.(?:\s|$)|[_ ]\d{6,8}(?:_\d+)?(?:\.\w+)?$|\s+\d{4}$|\s+(?=[a-z]))")
+UNDERSCORE_PAIR = re.compile(r"([A-ZÀ-Þ][a-zà-ÿ][^\W_]*)_([A-ZÀ-Þ][a-zà-ÿ][^\W_]*)")
 PART_OF_TOWN = {'north', 'south', 'east', 'west', 'noord', 'zuid', 'oost', 'nord', 'süd', 'sud', 'ost', 'centrum',
                 'centre', 'center', 'zentrum', 'centro', 'downtown', 'uptown', 'midtown'}
 MONTH_WORD = re.compile(r"\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\b", re.IGNORECASE)
@@ -7380,6 +7490,10 @@ def drive_title(title, description):
             and not MONTH_WORD.search(f'{m[1]} {m[2]}') and not any(ordinary(x.split()[0]) for x in (m[1], m[2])) \
             and not {m[1].lower(), m[2].lower()} & PART_OF_TOWN:  # "Amstelveen Westwijk - Zuid" is no Amsterdam-Zuid
         return f'from {m[1]} to {m[2]}'
+    # ... or as a file's name: "Alkmaar_Bergen" (vWeITDWfXNA; user, 2026-11-04: Bergen, NH, not Norway),
+    # "DenHaag_Alkmaar" (reviewed as both)
+    if m := UNDERSCORE_PAIR.fullmatch(title):
+        return 'from {} to {}'.format(*(re.sub(r'(?<=[a-zà-ÿ])(?=[A-ZÀ-Þ])', ' ', x) for x in m.groups()))
     # "Manchester-M62-Leeds" (J7_Pm8ec-28; user, 2026-10-19): two places with the road between them
     if (m := ROAD_PAIR.search(title)) and not {w.lower() for w in f'{m[1]} {m[3]}'.split()} & DASH_NOT_PLACE:
         return f'from {m[1]} to {m[3]} via {m[2]}'
@@ -7421,6 +7535,53 @@ def multi_city(meta, df, home=None):
     named |= {tuple(loc)} if loc else set()
     if len(named) >= 2:
         return f'its chapters name {len(named)} localities ({", ".join(sorted(n[0] for n in named))})'
+    # ... or, the title naming no town at all, its description's first line two near each other: "rijden tijdens
+    # winterse omstandigheden, Geldrop en Rotterdam A16" under "Rijden in winterse omstandigheden" (YYips8VL7Vg;
+    # user, 2026-11-04); a title naming one is there ("Shoham • ... near Ben Gurion Airport" whose description names
+    # Tel Aviv and Jerusalem: 3 of 6 reviewed such videos were set to the title's town alone)
+    if not loc and not names_any_locality(meta.get('title'), df) \
+            and (two := description_pair((meta.get('description') or '').strip().split('\n')[0], df)) \
+            and not names_town(meta.get('title'), _iso2(two[0][2])):
+        return f'its description names {two[0][0]} and {two[1][0]}'
+    return None
+
+
+def names_town(title, code):
+    """Whether a run of capitalised words of a title is a town, city or village of that name in OpenStreetMap, in
+    the country of that ISO code."""
+    runs = re.findall(r"[A-ZÀ-Þ][\w'’-]*(?: [A-ZÀ-Þ][\w'’-]*){0,2}", title or '')
+    return any((hit := _osm_place(run, (code,))) and hit[7] in ('city', 'town', 'village') and hit[0]
+               and _name_key(hit[0]) == _name_key(run) for run in runs if not ordinary(run.split()[0]))
+
+
+def names_any_locality(title, df):
+    """Whether a title has a mapping locality's name (over 3 letters) as one to three of its words."""
+    words = re.findall(r"[^\W\d_][\w'’-]*", (title or '').lower())
+    names = set(df['locality'].dropna().astype(str).str.lower())
+    return any(len(g) > 3 and g in names for k in (1, 2, 3) for i in range(len(words) - k + 1)
+               if (g := ' '.join(words[i:i + k])))
+
+
+# (a second word of letters only: "Den Haag", not the road of "Rotterdam A16")
+_PAIR_TOWN = r"[A-ZÀ-Þ][\w'’.-]+(?: [A-ZÀ-Þ][a-zà-ÿ'’-]+)?"
+DESC_PAIR = re.compile(rf"(?<![\w'’.-])({_PAIR_TOWN})\s+(?:and|en|und|et|e|y|i|og|och|&)\s+({_PAIR_TOWN})(?![\w'’-])")
+
+
+def description_pair(line, df):
+    """The two mapping localities a line names as "A and B" (in any of DESC_PAIR's languages), in one country and
+    within PAIR_KM of each other, else None."""
+    for m in DESC_PAIR.finditer(line or ''):
+        locs = []
+        for name in m.groups():
+            rows = df[df['locality'] == name]
+            if len(rows) != 1:  # none, or namesakes: which is meant is not known
+                break
+            locs.append(rows.iloc[0])
+        else:
+            a, b = locs
+            if a['country'] == b['country'] and _km(a['lat'], a['lon'], b['lat'], b['lon']) <= PAIR_KM:
+                return [[r['locality'], r['state'] if isinstance(r['state'], str) else None, r['country']]
+                        for r in locs]
     return None
 
 
@@ -8933,9 +9094,14 @@ def locate_now(p, df, home, sig_path=None, meta=None, boilerplate=frozenset()):
         elif found := description_locality(meta.get('description'), df, boilerplate):
             # far from the channel's home, the place of that name near home is meant (x_M1WdCQ__8: "Hollywood" in a
             # Los Angeles channel's description is no Hollywood, FL)
+            # ... a place in the home country, and only when the description does not name the far one's country:
+            # "Willemstad" in a Suriname channel's "Curaçao travel vlog" is no Willemstad in Guyana's village No. 8
+            # (Yplg8L9hrkk and 5 more of regiliojadi; user, 2026-11-05)
             row = add_video.get_existing_locality_row(df, *found)[1]
             if (home and row is not None and _km(home[3], home[4], float(row['lat']), float(row['lon'])) > FAR_KM
-                    and (near := place_locality([found[0]], df, home)) and near[0] != list(found)):
+                    and found[2] not in title_countries(meta.get('description') or '')
+                    and (near := place_locality([found[0]], df, home)) and near[0] != list(found)
+                    and near[0][2] == home[2]):
                 found = near[0]
             e['locality'], e['guessed'] = found, True
             p['note'] = f"{p['note']}; locality {found[0]} from the description".lstrip('; ')
@@ -9460,6 +9626,9 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
             vt, vehicle_note = title_vt, f'vehicle from the title ({VEHICLE_TYPES[title_vt]})'
         elif vt in NON_MOTOR and DRIVE_TITLE.search(title_text(meta['title'])):
             vt, vehicle_note = 0, f'vehicle from the title (a drive; the channel mostly: {VEHICLE_TYPES[vt]})'
+        elif not DRIVE_TITLE.search(title_text(meta['title'])) \
+                and (bike := BIKE_DESC.search(meta.get('description') or '')):
+            vt, vehicle_note = 4, f'vehicle from the description ({VEHICLE_TYPES[4]}: "{bike[0]}")'
         if vid in reanalyse:  # keep a vehicle type picked in the review page
             vt, vehicle_note = plan[vid].get('vehicle_type', vt), 'vehicle as in the earlier proposal'
         elif (vt is None or vt == 0) and title_vt is None and not DRIVE_TITLE.search(title_text(meta['title'])) \
@@ -9614,6 +9783,12 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
         if ends and (named_ends := [merged_locality(x[1]) or x[1] for x in ends if x and x[1]]):
             near_town = partial(_route_end, ends=named_ends)
             reach = reach | df['country'].isin({x[2] for x in named_ends})
+        # with neither, near the channel's home when the title names it: "Holbrook" (a street) in a Detroit
+        # channel's "St Aubin Street: Full Length Through Detroit and Hamtramck" is no Holbrook, AZ (xmR6A9wPlpw;
+        # user, 2026-11-04); not otherwise, as a travelling channel is far from home (AbaoAmbience's Tokyo for a
+        # drive in Naha)
+        if not at and not ends and home and home[0] and re.search(rf'\b{re.escape(home[0])}\b', p['title']):
+            at = (None, None, None, home[3], home[4])
         stretches = chapter_localities(video_chapters(metas[p['video']]), df[reach], near_town,
                                        near=at[3:5] if at else None, first=start or titled, open_road=bool(ends))
         if not stretches:
