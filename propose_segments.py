@@ -6972,6 +6972,10 @@ def _route(start, end, via=None):
 
 GENERIC_ENDS = {'downtown', 'uptown', 'midtown', 'airport', 'theairport', 'home', 'thebeach', 'beach', 'citycenter',
                 'citycentre', 'thecity', 'city', 'center', 'centre', 'town', 'work', 'school', 'hotel', 'thehotel'}
+# ... and the middle of the city: "Richmond to the Heart of the City" in Sydney is no Heart of the City, Minneapolis
+# (NRsY5BxApNM; 7_n5PC-Lx_Q's report, 2026-11-05)
+CITY_HEART = re.compile(r"(?i:(?:the\s+)?(?:heart|centre|center|middle)\s+of\s+(?:the\s+)?(?:city|town)"
+                        r"|(?:the\s+)?(?:city|town)\s+(?:centre|center|centrum))")
 # the time of day before a drive's start: "Early Morning Dublin to Wicklow Drive Ireland" (8WTeMx-AZ0w; user,
 # 2026-11-04)
 TIME_LEAD = re.compile(r"^(?i:(?:early|late)\s+)?(?i:morning|afternoon|evening|night|nighttime|daytime|midday|"
@@ -7031,6 +7035,10 @@ def drive_ends(title, df, home=None):
     # called that ("Sunset Beach", "Morning Sun"), and a word after it is no name ("Spend a Night Here?")
     first, last = (y if (y := TIME_LEAD.sub('', x)) != x and not ordinary(y.split()[0]) and not _osm_place(x, codes)
                    else x for x in (first, last))
+    # ... nor an article in lower case: "from Soho to the Upper East Side" ends on the Upper East Side, which as "the
+    # Upper East Side" OpenStreetMap found only in Los Angeles (7_n5PC-Lx_Q; user, 2026-11-05); "The Hague" keeps it,
+    # and so does a single word after it ("From the Factory to the Consumer", "from the Atlantic to Xinjiang")
+    first, last = (re.sub(r'^the\s+(?=[A-ZÀ-Þ][^\s,]*\s+[A-ZÀ-Þ])', '', x) for x in (first, last))
     # a country the title names holds both ends: "Carolina a … San Juan, Puerto Rico" is not a Carolina in the US
     only = {code for code, name in countries.items() if name in title_countries(title)}
     # "from Newburgh to Brewster, New York": both ends in the states the title names (Maine has both too); with
@@ -7071,7 +7079,7 @@ def drive_ends(title, df, home=None):
 
     def place(phrase, near=None, reach=None):
         # an end that names no place ("Airport to Downtown": St George, UT, not a Downtown near the channel)
-        if _name_key(re.sub(r',.*', '', phrase)) in GENERIC_ENDS:
+        if _name_key(re.sub(r',.*', '', phrase)) in GENERIC_ENDS or CITY_HEART.fullmatch(re.sub(r',.*', '', phrase)):
             return None
         hit = _osm_place(phrase, codes, near, reach)
         return hit if hit and (not only or hit[2] in only) else None
@@ -7240,7 +7248,7 @@ def _generic_end(name):
     """Whether a drive's end names no town: "Downtown", a street ("Eastern Ave to Rainbow Blvd"), a county or an
     airport, or no end at all ("Scenic Drive to Pine Mountain Club", "Visit to Khor Fakkan"; user, 2026-10-17)."""
     name = re.sub(r',.*', '', name.strip())
-    return (_name_key(name) in GENERIC_ENDS
+    return (_name_key(name) in GENERIC_ENDS or bool(CITY_HEART.fullmatch(name))
             or bool(re.search(r'\b(?:ave(?:nue)?|blvd|boulevard|st|street|rd|road|drive|dr|lane|way|county'
                               r'|airport)\.?$', name, re.I))
             or bool(re.match(r'(?:downtown|scenic|visit|flying|sunny|sunset|night|morning)\b', name, re.I)))
