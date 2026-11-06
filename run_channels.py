@@ -438,6 +438,25 @@ def refresh_todo(state, args, any_phase=False, only=None):
     return [t[1:] for t in todo]
 
 
+def widen_refresh(state):
+    """The refresh queue's channels now fetched in full (new_only false: phase 6 since 2026-11-06, user: every video
+    not in the mapping, older ones too) that this machine fetched for their new uploads only: in full from now on, and
+    those done ("to review", "reviewed") again in progress. Not those of another machine (host: the reviewing one's
+    state), nor rejected ones."""
+    try:
+        with open(REFRESH_QUEUE) as f:
+            full = {'refresh:' + q['url'] for q in json.load(f) if not q.get('new_only', True)}
+    except (OSError, ValueError):
+        return
+    for key in full & set(state):
+        c = state[key]
+        if c.get('new_only') and not c.get('host'):
+            c['new_only'] = False
+            if c.get('status') in ('to review', 'reviewed'):
+                c['status'] = 'processing'
+                log(f"{key.removeprefix('refresh:')}: its older videos not in the mapping too: in progress again")
+
+
 def deferred_todo(state, args, kind='multi_city'):
     """[(None, state key, url, country, False)] of the channels here whose plans hold drives through several
     localities held back by SINGLE_CITY_FIRST: the very last work, after the sheet and the refresh queue; with kind
@@ -584,6 +603,7 @@ def main():
             # "Reject the whole channel" on its review page, also for a channel no machine fetches any more
             if c.get('status') != 'rejected' and os.path.exists(os.path.join(ROOT, c['name'], 'channel_rejected')):
                 c['status'], c['comment'] = 'rejected', 'the whole channel was rejected in review'
+        widen_refresh(state)
         try:
             sheet = sheet_rows()
         except requests.RequestException as e:
