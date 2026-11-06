@@ -600,6 +600,12 @@ DRIVER_CLIP_EVERY_S, DRIVER_NEAR_S, DRIVER_CLIP_SURE, DRIVER_CLIP_RUN = 10, 300,
 # row at DRIVER_FAR_SURE or more. Those four read so throughout their bad stretches; the first 15 min of 149 approved
 # videos (256x144) in 2 places, 1.7 min
 DRIVER_FAR_SURE, DRIVER_FAR_RUN = 0.95, 4
+# ... but at night only with a face in DRIVER_NIGHT_FACES of its frames: in the dark CLIP sees the driver in the road
+# ahead with a lit map inset or dashcam text (londonblackcabtours: DWaW4v26I-o 9:22, sCEV01MEgkw 14:40, _EMlPgYXDrI
+# 5:47, 0.9-0.99; user, 2026-11-06: "this happens often"). Reviewers approved 25 min of such night cuts and rejected
+# none; of 12 sampled night cuts left as they were, 8 showed the road ahead, and the one person facing the camera had
+# 5 face frames (the others 0, a tunnel 2)
+DRIVER_NIGHT_FACES = 3
 
 
 def driver_clip_track(path, face, work_dir):
@@ -1420,6 +1426,10 @@ def propose(sig, p=PARAMS):
         # ... and where CLIP sees the driver, face or not (driver_clip_runs)
         near = [True] * len(runs)  # runs a face found, or near one: the gap between two is bridged below
         for a, b, far in driver_clip_runs(sig):
+            if np.median(sig['sky'][a:b]) < p['night_sky'] and (sig['face'][a:b] > 0).sum() < DRIVER_NIGHT_FACES:
+                notes.append(f'camera on the driver? {a / FPS:.0f}-{b / FPS:.0f}s: CLIP says so, but at night and '
+                             'with no face found: check')
+                continue
             k = int(np.searchsorted([x for x, _ in runs], a))
             runs.insert(k, (a, b))
             sure.insert(k, True)
