@@ -5,10 +5,11 @@
 In this order (user, 2026-10-10): 1. the channels subscribed to (_output/subscriptions/channels.txt, "channel id
 @handle" per line, read from youtube.com/feed/channels) that have videos in the mapping, or none yet but upload
 drives; 2. the sheet's Processed channels and its Offline ones that are online again; 3. its Not finished ones.
-Phases 1 and 2 fetch the uploads newer than the channel's newest video in the mapping, phase 3 every video not in
-it. Phase 6 (user, 2026-10-13): the new uploads of the channels added to the sheet from the mapping ("added from
-the mapping" in Comments), after phases 4 and 5 of an earlier queue, which are kept; last of all come the drives
-through several towns held back in the plans (run_channels.deferred_todo). Channels whose only country is Russia
+Phases 1 and 2 fetch the uploads newer than the channel's newest video in the mapping, phases 3 and 6 every video
+not in it. Phase 6 (user, 2026-10-13): the channels added to the sheet from the mapping ("added from the mapping" in
+Comments), all their videos not in the mapping, older ones too (user, 2026-11-06; new uploads only before), after
+phases 4 and 5 of an earlier queue, which are kept; last of all come the drives through several towns held back in
+the plans (run_channels.deferred_todo). Channels whose only country is Russia
 are Olena's and left out, as are those whose column E (Processed by) names her (run_channels.OTHERS_BY). Writes
 run_channels.REFRESH_QUEUE ([{url, country, name, why, phase, new_only}]) and a readable list beside the
 subscriptions.
@@ -169,7 +170,7 @@ def main():
     for cid, (n, url, status, country) in sheet.items():
         if rc.from_mapping(url) and status in ('Processed', '', 'Processing'):
             if mapped[cid]:
-                add(cid, url, country, f'sheet row {n}: added from the mapping, its new uploads', 6)
+                add(cid, url, country, f'sheet row {n}: added from the mapping', 6, new_only=False)
             else:
                 left_out.append((url, f'row {n}: added from the mapping, but none of its videos is in it now'))
     with open(HANDLES, 'w') as f:
