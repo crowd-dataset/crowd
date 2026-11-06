@@ -7282,26 +7282,35 @@ _LIST_WORD = r"[A-ZÀ-ÞŁŚŻŹĆŃČŘŠŽĚŮ][\w'’.]*"
 _LIST_PLACE = (rf"{_LIST_WORD}(?:\s+(?:nad|na|pod|u|am|an|der|de|del|la|le|sur|sous|en|im|bei|ob)\s+{_LIST_WORD}"
                rf"|\s+{_LIST_WORD}){{0,3}}")
 PLACE_LIST = re.compile(rf"{_LIST_PLACE}(?:\s+[-–—]\s+{_LIST_PLACE}){{2,}}")
+# ... or by commas right after a drive word: "DRIVE TOUR - Struga, Ohrid, Resen (Macedonia 2026)" (jWOoMKaKimM;
+# user, 2026-11-06)
+COMMA_LIST = re.compile(rf"(?i:\b(?:drive|driving|road ?trip|drive tour|driving tour)\b)\s*[-–—:|]?\s*"
+                        rf"({_LIST_PLACE}(?:\s*,\s*{_LIST_PLACE}){{2,}})")
 
 
 def place_list(title):
     """[places] a title lists as a drive's stops (PLACE_LIST), else None: no season, word or country among them."""
-    m = PLACE_LIST.search(title or '')
-    if not m:
+    if m := PLACE_LIST.search(title or ''):
+        items = [x.strip() for x in re.split(r'\s+[-–—]\s+', m.group(0))]
+    elif m := COMMA_LIST.search(title or ''):
+        items = [x.strip() for x in m.group(1).split(',')]
+    else:
         return None
-    items = [x.strip() for x in re.split(r'\s+[-–—]\s+', m.group(0))]
     # a region or country is no stop ("Omaha - Nebraska - USA"), a code no place ("Tijuana - Oaxaca - VOI3140")
     items = [x for x in items if _name_key(x) not in _region_and_country_keys()]
-    if len(items) < 3 or any(re.search(r'\d', x) or ordinary(x.split()[0]) for x in items):
+    # (nor a street or a state's code: "Ft. Crook RD, Bellevue, NE, 13 St" in Omaha)
+    if len(items) < 3 or any(re.search(r'\d', x) or ordinary(x.split()[0]) or x in add_video.US_STATE_CODES.values()
+                             or {w.lower().rstrip('.') for w in x.split()} & STREET_WORDS for x in items):
         return None
     return items
 
 
 @lru_cache(maxsize=None)
 def _region_and_country_keys():
-    """_name_key of every country (and its everyday names) and every country's first-level regions."""
+    """_name_key of every country (and its everyday names) and every country's subdivisions, but those that are
+    towns (town_subdivision: North Macedonia's municipalities Struga, Ohrid, Resen; jWOoMKaKimM, 2026-11-06)."""
     return ({_name_key(c) for c in COUNTRIES} | {_name_key(c) for c in COUNTRY_ALIASES} | {'usa', 'uae', 'uk'}
-            | {_name_key(sub.name) for sub in pycountry.subdivisions})
+            | {_name_key(sub.name) for sub in pycountry.subdivisions if not town_subdivision(sub)})
 
 
 _DASH_WORD = r"[A-ZÀ-ÞŁŚŻŹĆŃČŘŠŽĚŮ][a-zà-ÿąćęłńóśźżčďěňřšťůž'’-]+"
