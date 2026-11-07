@@ -5436,6 +5436,21 @@ CHAPTER_PREFIX = re.compile(r'^(?:start(?:ing)? (?:in|at|from)|entering|arriv(?:
                             r'leaving|into|in|to|from|downtown)\s+', re.I)
 
 
+# a place written with its kind after it, "OMODOS VILLAGE", "PAPHOS CITY", "PAPHOS OLD TOWN", is that place when
+# no place has the longer name (Mexico City, Quezon City keep theirs): neither the mapping nor OpenStreetMap knows
+# the longer one (Ae500pT174s, nysE6ldTxtc of explorecyprus; user, 2026-11-07: "2 locality names in chapters")
+PLACE_KIND_TAIL = re.compile(r"(?<=\w)\s+(?i:village|town|city|old town|town cent(?:er|re)|city cent(?:er|re))$")
+
+
+def plain_place(name):
+    """A chapter's place without the kind after it and, written in capitals, as a name is written: "OMODOS
+    VILLAGE" -> "Omodos"; short words in capitals ("NYC") stay; name itself when nothing changes."""
+    name = PLACE_KIND_TAIL.sub('', name.strip())
+    if name.isupper():
+        name = ' '.join(w if len(w) <= 3 else w.capitalize() for w in name.split())
+    return name
+
+
 CHAPTER_ASIDE = re.compile(r'\b(?:proximity|close|near(?:by)?|distance|day[- ]trips?|far|away|minutes?|hours?|km)'
                            r'\b|\bmiles\b', re.I)
 
@@ -5464,6 +5479,9 @@ def chapter_localities(chapters, df, near_home=None, near=None, km=150, first=No
             locs.append(None)
             continue
         loc = _title_locality(name, df, exact_case=True, word_needs_state=True)
+        if not loc and (plain := plain_place(CHAPTER_PREFIX.sub('', name.strip(' .!-')))) != name:
+            loc = _title_locality(plain, df, exact_case=True, word_needs_state=True)
+            name = plain if loc else name
         if loc and near and (at := _locality_anchor(loc, df)) and _km(near[0], near[1], at[3], at[4]) > km:
             loc = None
         if loc and part_of_name(name, loc, df):
@@ -5483,8 +5501,10 @@ def chapter_localities(chapters, df, near_home=None, near=None, km=150, first=No
                 loc = None
         # ... also with its state or country after a comma ("Medina, Texas": ODe2OYlGuP4; user, 2026-10-24)
         place = re.sub(r",\s*[A-Z][\w'.-]*(?: [A-Z][\w'.-]*){0,2}$", '', place)
+        # (as a name is written: "MANDRIA VILLAGE" is Mandria)
         if not loc and near_home and re.fullmatch(r"(?:[A-Z][\w'.-]*\s?){1,4}", place):
-            loc = near_home(place.strip())
+            plain = plain_place(place) if place.isupper() else place.strip()
+            loc = near_home(plain) or (plain != place.strip() and near_home(place.strip())) or None
         locs.append(loc)
     named = [loc for loc in locs if loc and loc != 'open road']
     if not named:
@@ -6191,6 +6211,13 @@ def _osm_place(phrase, country_codes, near=None, reach_km=None, home=None):
     # "city" the Elias Motsoaledi Local Municipality; udVi6qOYvNI: Kwaggafontein; user, 2026-10-20)
     # ... nor a province or region ("Province of Småland": B2kJDCoBv6w; user, 2026-10-22; "Karachi Division")
     # ... nor Ontario's "District Municipality of Muskoka" (YwLuJ8ElslE)
+    # ... but a municipality of the name the phrase writes is that town: OpenStreetMap's Cypriot cities are "Paphos
+    # Municipality", "Limassol Municipality" (nysE6ldTxtc: "PAPHOS CITY"; user, 2026-11-07)
+    if town and (bare := re.sub(r'\s+Municipality$', '', town)) != town \
+            and _name_key(bare) in (wanted, _name_key(phrase.split(',')[0])):
+        town = bare
+    if town and _country_code(a) == 'CY':  # ... and its villages "Kouklia Community" (as _osm_reverse)
+        town = re.sub(r'(?<=\w) (?:Community|Municipality)$', '', town)
     if town and re.search(r'\b(?:County|Municipality|Municipal Unit|Province|Region|Prefecture|Oblast|Län|Division)$'
                           r'|^(?:Province|Region|County|Prefecture|(?:District |Regional )?Municipality'
                           r'|Municipal Unit) of\b', town):
@@ -6520,10 +6547,14 @@ def _nearby_places(lat, lon):
     GeoNames does not answer."""
     clat, clon = round(lat * 20) / 20, round(lon * 20) / 20
     key = f'c5:{clat:.2f},{clon:.2f}'
+
+    # GeoNames' "Geroskipou Municipality", "Rødovre Municipality" are the towns (MSSn2YAVDEk; user, 2026-11-07)
+    def own(places):
+        return [[re.sub(r'(?<=\w) Municipality$', '', p[0]), *p[1:]] for p in places]
     with contextlib.suppress(OSError, ValueError), open(NEARBY_PLACES) as f:
         known = json.load(f)
         if key in known:
-            return known[key]
+            return own(known[key])
     try:
         r = requests.get('http://api.geonames.org/findNearbyPlaceNameJSON', timeout=30, params={
             'lat': clat, 'lng': clon, 'radius': MAJOR_TOWN_KM + 4, 'cities': 'cities1000',
@@ -6543,7 +6574,7 @@ def _nearby_places(lat, lon):
         with open(NEARBY_PLACES + '.tmp', 'w') as f:
             json.dump(known, f)
         os.replace(NEARBY_PLACES + '.tmp', NEARBY_PLACES)
-    return places
+    return own(places)
 
 
 def _urban(lat, lon):
@@ -6943,6 +6974,10 @@ def _osm_reverse(lat, lon):
         town, kind = re.sub(r'\s+Municipio$', '', a['county']), 'city'  # San Juan), which OSM keeps as counties
     if town:
         town = re.sub(r'^(?:City|Town|Village|Borough|Township) of ', '', town)
+        # Cyprus' villages and towns are "Empa Community", "Geroskipou Municipality" in OpenStreetMap (nysE6ldTxtc;
+        # user, 2026-11-07): the place is Empa
+        if _country_code(a) == 'CY':
+            town = re.sub(r'(?<=\w) (?:Community|Municipality)$', '', town)
     return (town, a.get('state'), _country_code(a), _region_code(a), kind) if a else None
 
 
@@ -7070,8 +7105,20 @@ def drive_ends(title, df, home=None):
     # Upper East Side" OpenStreetMap found only in Los Angeles (7_n5PC-Lx_Q; user, 2026-11-05); "The Hague" keeps it,
     # and so does a single word after it ("From the Factory to the Consumer", "from the Atlantic to Xinjiang")
     first, last = (re.sub(r'^the\s+(?=[A-ZÀ-Þ][^\s,]*\s+[A-ZÀ-Þ])', '', x) for x in (first, last))
+    # ... nor its kind after it when no place has the longer name: "from OMODOS VILLAGE to VASA KOILANIOU VILLAGE"
+    # (a town of the shorter name, not one of the longer: "MANDRIA VILLAGE" found Mandria Lemesou, the other
+    # Mandria; "711 Time Town" is no "711 Time", which found an industrial park)
     # a country the title names holds both ends: "Carolina a … San Juan, Puerto Rico" is not a Carolina in the US
     only = {code for code, name in countries.items() if name in title_countries(title)}
+
+    # ... only when the longer name finds nothing, or a title in capitals finds a namesake by it: "Middle Village",
+    # "Greenwich Village", "Century City" and "Notre Dame Village" are neighbourhoods, no Middle or Century
+    def own_name(phrase):  # (in the country the title names: a "Mandria Village" elsewhere is not it)
+        return (hit := _osm_place(phrase, tuple(sorted(only)) or codes)) and hit[0] \
+            and _name_key(hit[0]) == _name_key(phrase)
+    first, last = (y if (y := PLACE_KIND_TAIL.sub('', x)) != x and own_name(y)
+                   and (x.isupper() and not own_name(x) or not _osm_place(x, tuple(sorted(only)) or codes)) else x
+                   for x in (first, last))
     # "from Newburgh to Brewster, New York": both ends in the states the title names (Maine has both too); with
     # one state named, each end is looked up in it ("Newburgh, New York"); only states of a country the title
     # names ("de San Juan hacia Carolina, Puerto Rico" names no San Juan province of Argentina)
@@ -7669,8 +7716,10 @@ def route_localities(title, df, home=None, max_km=None, map_path=None, via_names
     if not ends and not map_path and not link_points:
         return [], None
     m_ends = next((m for r in FROM_TO if (m := r.search(english_states(title or '')))), None)
+    # (as a name is written: "MANDRIA VILLAGE" is Mandria)
     named_ends = ([re.sub(r'\s*\([^)]*\)', '', x).strip(' !?.') for x in m_ends.groups()[:2]] if m_ends
                   else [None, None])
+    named_ends = [plain_place(x) if x and x.isupper() else x for x in named_ends]
     own_ends = [None, None]  # (lat, lon) of an end that is a locality of its own at the linked route's point
     (a, start), (b, end) = ends or ((None, None), (None, None))
     countries = {common.get_iso2_country_code(common.correct_country(c)): c for c in df['country'].dropna().unique()}
