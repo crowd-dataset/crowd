@@ -4954,7 +4954,10 @@ def _iso2(country):
 # a title saying how the camera travels beats the channel's usual vehicle (OoOwyF8-T24: "Bike Route" from a channel
 # that mostly drives); "motorbike" is no bike
 # ("biking around": 1xYd7Sb7kmY; user, 2026-10-20)
-VEHICLE_TITLE = [(4, re.compile(r'\b(?:bike (?:route|ride|tour|path|lane)s?|cycling|biking|cycle (?:ride|tour)|bicycle'
+# ... a motorcycle's emoji first: "على الدراجة 🏍️" translates as "on a bike 🏍️" (bUGs71Le3Ag, streetslebanon; user,
+# 2026-11-08: "should be two-wheeler")
+VEHICLE_TITLE = [(3, re.compile('🏍')),
+                 (4, re.compile(r'\b(?:bike (?:route|ride|tour|path|lane)s?|cycling|biking|cycle (?:ride|tour)|bicycle'
                                 r'|by bike|on (?:a|my) bike|e-?bike)\b', re.I)),
                  (3, re.compile(r'\b(?:motorcycle|motorbike|motor bike|moped)s?\b', re.I)),
                  # "bus 22 ride", "bus Z13 ride", "by bus", "bus route" (YdIDmVIjOk4, 9Nr4xAUyJKI were cars from
