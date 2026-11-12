@@ -20,8 +20,8 @@ import run_channels as rc
 # ssh alias: the sheet rows and refresh-queue share it takes (run_channels.py --rows, --queue-rows); the laptop
 # takes rows 2/3 and queue 2/4
 # mini ('sheet rows 1/2, no queue') is out until its new account is set up (2026-10-11)
-WORKERS = {'lin5080': 'queue phase 5 (highway videos to redo), then 2 (new uploads of processed channels): '
-                      'every other channel (--queue-rows 0/2)',
+WORKERS = {'lin5080': 'queue phase 6 (channels added from the mapping) from the top, before its started channels; '
+                      'claimed on mini, so no other worker\'s (--refresh-only --phases 6 --first-phases 6)',
            # phase 6 here and phase 3 on lin5080b since 2026-10-28 (user: Shadab's runs often pause lin5080b)
            'wsl5090': 'sheet rows 0/2, then queue phase 4 (UCxbv63aE7sg8_HzYz5KFPeA highway videos), 1 and 6',
            # account pavlo since 2026-10-12 (shadab before): ~/crowd-routine, started by cron with start_worker.sh
@@ -30,7 +30,8 @@ WORKERS = {'lin5080': 'queue phase 5 (highway videos to redo), then 2 (new uploa
            'mini': 'queue phases 1 and 6: the other half of wsl5090\'s (--rows 1/2 --phases 1,6)',
            # a second worker on lin5080 (user, 2026-10-18: its GPU had room), in its own folder
            # paused while Shadab's crowd-city runs use lin5080 (~/crowd_city_runs), so phase 3 (user, 2026-10-28)
-           'lin5080b': 'queue phase 3 (every video of the sheet\'s unfinished channels)',
+           # both lin5080 workers on phase 6 from the top, apart by the claims on mini (user, 2026-11-10)
+           'lin5080b': 'queue phase 6, as lin5080 (--refresh-only --phases 6 --first-phases 6)',
            # and one on wsl5090 (user, 2026-10-18), paused while win5090 is used, the first going on (wsl_yield.py)
            'wsl5090b': 'queue phase 5, then 2: the other half of lin5080\'s (--queue-rows 1/2)'}
 REMOTE = 'crowd-routine'       # the repository on each worker, relative to its home
@@ -278,6 +279,26 @@ def sync(host):
 SYNC_LOCK = '/tmp/crowd-sync.lock'  # one sync at a time: the hourly one and the review hub's button
 
 
+def seed_claims(state):
+    """Every refresh queue channel some machine has started, claimed (rc.claim) in that machine's name here: a worker
+    whose TAKEN is older than that start still skips it. Run where the claims are (rc.CLAIMS_HOST, this machine)."""
+    base = os.path.expanduser(os.path.join('~', rc.CLAIMS))
+    os.makedirs(base, exist_ok=True)
+    n = 0
+    for key, c in state.items():
+        if not key.startswith('refresh:'):
+            continue
+        d = os.path.join(base, rc.claim_key(key))
+        try:
+            os.mkdir(d)
+        except FileExistsError:
+            continue
+        with open(os.path.join(d, 'by'), 'w') as f:
+            f.write(c.get('host', 'mini'))
+        n += 1
+    return n
+
+
 def main():
     import fcntl
     lock = open(SYNC_LOCK, 'w')
@@ -288,6 +309,7 @@ def main():
         except subprocess.CalledProcessError as e:
             print(f'{host}: not reached ({(e.stderr or "").strip()[-200:]})')
     state, sheet = rc.load_state(), rc.sheet_rows()
+    seed_claims(state)
     rc.check_reviews(state, sheet)
     rc.write_sheet_todo(state, sheet)
     rc.save_state(state)
