@@ -382,6 +382,15 @@ WALK_BATCH_BOB, WALK_BATCH_HI = 0.55, 0.2
 # 2026-11-05): of the reviewed videos of walk batches so judged, 15 rejected (272 min) and no approved one
 # (approved: 0.43 at most, but for a traffic jam in Mykolaiv at 0.57 with nobody close by)
 WALK_BATCH_BOB_NEAR, WALK_BATCH_HINT = 0.47, 0.5
+# ... and in any batch with a big person close by in WALK_NEAR_ALONE of the frames, the title naming no drive (a
+# market walk among motorbikes, so with traffic ahead: LfMGsG0GyyY of ppccityview at 38%; user, 2026-11-08): of the
+# reviewed videos so judged 3 rejected and no approved one (approved: 12% at most; 2 approved drives at 15%+ say
+# "Drive" in their titles)
+WALK_NEAR_ALONE = 0.15
+# ... or, at WALK_NEVER_BOB+ step_bob, never standing a second in a video of WALK_NEVER_MIN minutes or more, as a
+# walker in a crowd never stands while a car waits at lights (ZFJlelufPRA of wanderer_youtube; user, 2026-11-09):
+# of the reviewed videos so judged 55 rejected and no approved one (one 5-min approved clip never stood)
+WALK_NEVER_BOB, WALK_NEVER_MIN = 0.5, 8
 # ... and, batch or not, from WALK_SHEET_FEW frames on foot with that bob (user, 2026-10-30): of 408 reviewed videos
 # at step_bob 0.5-0.65, 14 walks or rejected and no approved one (2 frames alone: 6 approved)
 WALK_SHEET_FEW = 2
@@ -456,6 +465,15 @@ def walk_no_stop(sig, p=None):
     sm = _rolling_median(sig['motion'], p['smooth_s'] * FPS)
     stops = [(b - a) / FPS for a, b in _runs(sm <= p['moving_flow']) if a > 0 and b < len(sm)]
     return max(stops, default=0) < NO_STOP_S
+
+
+def never_stands(sig, p=None):
+    """Whether a video bobs at WALK_NEVER_BOB+ and, WALK_NEVER_MIN minutes or longer, never stands a second."""
+    p = p or PARAMS
+    if float(sig.get('step_bob', 0)) < WALK_NEVER_BOB or len(sig.get('motion', [])) < WALK_NEVER_MIN * 60 * FPS:
+        return False
+    sm = _rolling_median(sig['motion'], p['smooth_s'] * FPS)
+    return not any(b - a >= FPS for a, b in _runs(sm <= p['moving_flow']) if a > 0 and b < len(sm))
 
 
 BOB_EVERY_S = 45  # step_bob_track: one 15-s reading this often through the video
@@ -10127,6 +10145,21 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
                        'exclude': f'probably a walk: {share[0]} of {share[1]} long videos of this batch were walks, '
                                   f"and it bobs like one ({float(sigs[v]['step_bob']):.0%} of its shake)"}
             touched.append(v)
+    for v, p in list(plan.items()):  # any batch: a walk among people close by (WALK_NEAR_ALONE)
+        if ('entries' not in p or not undecided(p) or v not in sigs or gps_drive(sigs[v])
+                or MOVING_TITLE.search(title_text(p.get('title') or '')) or not walk_near(p, sigs[v])):
+            continue
+        wv = np.asarray(sigs[v].get('walk_view', np.zeros((0, 2)))).reshape(-1, 2)
+        near = len(wv) and wv[:, 0].mean() >= WALK_NEAR_ALONE
+        if not near and not never_stands(sigs[v]):
+            continue
+        why = (f'people close by in {wv[:, 0].mean():.0%} of the frames' if near
+               else 'it never stands still a second, as a car at lights does')
+        committed.setdefault(v, json.dumps(p, sort_keys=True))  # replaced only if nobody changed it since
+        plan[v] = {'video': v, 'title': p['title'], 'analysed': True,
+                   'exclude': f"probably a walk: {why}, and it bobs like one ({float(sigs[v]['step_bob']):.0%} of "
+                              'its shake)'}
+        touched.append(v)
     if (inset := batch_inset(plan, out_dir)):  # the batch's inset, faint in its other videos (PIP_BATCH_N)
         for v, p in list(plan.items()):
             frames = sheet_frames(os.path.join(out_dir, f'{v}.jpg')) if 'entries' in p and undecided(p) else []
