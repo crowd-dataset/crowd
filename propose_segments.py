@@ -161,6 +161,23 @@ def _yt_dlp(*args, timeout=None):
     return out
 
 
+def youtube_location(meta, df, home=None):
+    """(locality, phrase) of the location an uploader set on YouTube, shown above the comments ("Росток" at 54.09,
+    12.10 for SLSCl_BDz4o; user, 2026-11-09: "makes it possible to link it to that locality"): the town at its point
+    (Data API recordingDetails), else its name looked up, else None; none in another country than the title names
+    (an uploader's default location under a trip abroad)."""
+    name, point, found = meta.get('location'), meta.get('location_point'), None
+    if point and (h := _osm_reverse(round(point[0], 4), round(point[1], 4))):
+        countries = {common.get_iso2_country_code(common.correct_country(c)): c
+                     for c in df['country'].dropna().unique()}
+        countries.pop(None, None)
+        if (loc := _hit_locality(h, df, countries, (point[0], point[1]))):
+            found = (loc, name or loc[0])
+    found = found or (place_locality([name], df, home) if name else None)
+    named = title_countries(meta.get('title') or '')
+    return found if found and (not named or found[0][2] in named) else None
+
+
 def _url(video_id):
     return f'https://www.youtube.com/watch?v={video_id}'
 
@@ -181,6 +198,8 @@ def fetch_metadata(video_id):
         'height': m.get('height'),
         'description': m.get('description') or '',
         'chapters': [(c.get('title'), c.get('start_time')) for c in (m.get('chapters') or [])],
+        'location': m.get('location'),  # as YouTube shows it above the comments (youtube_location)
+        'tags': m.get('tags') or [],
     }
 
 
@@ -3391,6 +3410,20 @@ def rear_camera(video_id):
         shutil.rmtree(w, ignore_errors=True)
 
 
+def reread_opening(video_id, sig_path, out_dir):
+    """Read a video's opening again when the analysis could not (its stream refused: an empty screen_text; 3,288 of
+    20,806 analyses by 2026-11-12), and keep it in the signals: a town's label at 0:10 was missed so (UwG1QMxwIIs,
+    zgHc0ElFQvs; user, 2026-11-09). Signals of before screen_text are left as they are."""
+    with np.load(sig_path) as z:
+        if 'screen_text' not in z.files or json.loads(str(z['screen_text'])):
+            return
+        sig = {k: z[k] for k in z.files}
+    texts = opening_texts(video_id, keep_dir=os.path.join(out_dir, f'{video_id}_open.tmp'))
+    if texts:
+        sig['screen_text'] = np.array(json.dumps({f'{t:.0f}': x for t, x in texts.items()}))
+        np.savez_compressed(sig_path, **sig)
+
+
 def opening_texts(video_id, start=1, upto=61, step=None, keep_dir=None):
     """{second: [texts]} EasyOCR reads in the frames of the video's 720p stream every `step` (CAPTION_STEP_S)
     seconds from `start` to `upto`; None without the OCR environment or the stream. keep_dir: the frames with text
@@ -4508,8 +4541,19 @@ NOT_DRIVING_TITLE = re.compile(r'\b(?:walk(?:s|ing|around|about)?|wa(?:king|ling
 # reviewed titles the words added then take)
 AERIAL_TITLE = re.compile(r"\b(?:drones?|aerials?|aerially|from above|bird'?s?[- ]eye|birds?'? ?view"
                           r"|fly(?:ing)? over|fpv|(?:from|through) the (?:air|sky|skies)"
+                          # "Flying in the Night Sky | LONDON 4K", "NIGHT LONDON SKY 4K" (Uyz-Ozl-zk4, BQ_A5nEFitA,
+                          # oGoX29CaodE; user, 2026-11-09): none of the reviewed such titles approved
+                          r"|flying (?:in|over|above|around|through|across|high|low|from|to|into|down|past)"
+                          r"|night (?:\w+ ){0,2}sky"
                           r"|from (?:a|the) (?:plane|helicopter)|helicopter (?:ride|tour|flight|view))\b",
                           re.IGNORECASE)
+# a comparison of dash cams shows their two pictures together: "Сравнение видеорегистраторов: Garmin Dash Cam Mini 2
+# и VIOFO A119 MINI 2", one above the other (nggxUWeSdgk; user, 2026-11-09: "2 videos on top of each other. such
+# videos should not be added")
+CAMERA_COMPARE = re.compile(r'\b(?:comparison|compared?|сравнение|порівняння|vergleich|comparaison'
+                            r'|confronto|comparaci[oó]n|porównanie|karşılaştırma)\b', re.IGNORECASE)
+DASHCAM_WORD = re.compile(r'dash ?cams?|видеорегистратор\w*|відеореєстратор\w*|\b(?:viofo|garmin|70mai|blackvue'
+                          r'|thinkware|nextbase|vantrue|redtiger|azdome|rexing|ddpai)\b', re.IGNORECASE)
 # national parks and forests have no urban driving (yHEDro64z0Y, Zion; none of 28 such titles was approved)
 NATURE_TITLE = re.compile(r'\b(?:national|state|provincial|regional) (?:park|forest|monument|seashore|recreation area'
                           r'|preserve)s?\b|\bnational parks?\b|\bwilderness\b|\bscenic byway\b', re.I)
@@ -4690,9 +4734,10 @@ def fetch_metadata_api(video_ids):
     out = {}
     for i in range(0, len(video_ids), 50):
         # the player part's embed size follows the video's own proportions, which reveals portrait videos
-        for v in _api('videos', part='snippet,contentDetails,player', id=','.join(video_ids[i:i + 50]),
-                      maxWidth=1000).get('items', []):
-            sn, pl = v['snippet'], v.get('player', {})
+        for v in _api('videos', part='snippet,contentDetails,player,recordingDetails',
+                      id=','.join(video_ids[i:i + 50]), maxWidth=1000).get('items', []):
+            sn, pl, rd = v['snippet'], v.get('player', {}), v.get('recordingDetails') or {}
+            at = rd.get('location') or {}
             day = add_video.youtube_day(sn['publishedAt']).strftime('%Y-%m-%d') if sn.get('publishedAt') else ''
             out[v['id']] = {
                 'id': v['id'], 'title': sn.get('title'), 'duration': _iso_seconds(v['contentDetails'].get('duration')),
@@ -4701,6 +4746,9 @@ def fetch_metadata_api(video_ids):
                 'description': sn.get('description') or '', 'chapters': [],
                 'width': int(pl['embedWidth']) if pl.get('embedWidth') else None,
                 'height': int(pl['embedHeight']) if pl.get('embedHeight') else None,
+                'location': rd.get('locationDescription'), 'tags': sn.get('tags') or [],
+                **({'location_point': [at['latitude'], at['longitude']]}
+                   if at.get('latitude') is not None and at.get('longitude') is not None else {}),
             }
     return out
 
@@ -4854,6 +4902,8 @@ def exclusion_reason(meta):
     hit = AERIAL_TITLE.search(title)
     if hit:
         return f"drone or flight footage (title mentions '{hit.group(0)}')"
+    if CAMERA_COMPARE.search(title) and DASHCAM_WORD.search(title):
+        return 'a comparison of cameras (two pictures shown together, side by side or one above the other)'
     hit = (GAME_TITLE.search(title) or GAME_TEXT.search(f"{title}\n{meta.get('description') or ''}")
            or GAME_RIG.search(meta.get('description') or ''))
     if hit and not re.search(r'\breal\b', title, re.IGNORECASE):
@@ -4975,6 +5025,9 @@ def _iso2(country):
 # ... a motorcycle's emoji first: "على الدراجة 🏍️" translates as "on a bike 🏍️" (bUGs71Le3Ag, streetslebanon; user,
 # 2026-11-08: "should be two-wheeler")
 VEHICLE_TITLE = [(3, re.compile('🏍')),
+                 # "Exploring the City on My Electric Scooter" (zgHc0ElFQvs; user, 2026-11-09: "by e-scooter, title
+                 # says it"): 3 of 3 reviewed such titles approved as electric scooters
+                 (6, re.compile(r'\b(?:e-?scooter|electric (?:kick )?scooter)s?\b', re.IGNORECASE)),
                  (4, re.compile(r'\b(?:bike (?:route|ride|tour|path|lane)s?|cycling|biking|cycle (?:ride|tour)|bicycle'
                                 r'|by bike|on (?:a|my) bike|e-?bike)\b', re.I)),
                  (3, re.compile(r'\b(?:motorcycle|motorbike|motor bike|moped)s?\b', re.I)),
@@ -6699,8 +6752,11 @@ def _hit_locality(hit, df, countries, at=None, named=False):
         # ... and a town of the mapping filed under another state is still that town when it lies right there
         # (a state it was given by hand, or none: Maturín, Venezuela)
         named = rows[rows['locality'].map(_name_key) == _name_key(town or '')]
+        # (not one filed under another real region of the country: Pfäffikon, ZH is no Pfäffikon SZ, 18 km off;
+        # RJkHgoGnZbc, user, 2026-11-09)
+        real = {d.code.split('-')[-1] for d in pycountry.subdivisions.get(country_code=code) or []} - {state}
         if town and at and not (named['state'] == state).any() and (
-                same := [r for r in named.itertuples() if pd.notna(r.lat)
+                same := [r for r in named.itertuples() if pd.notna(r.lat) and r.state not in real
                          and _km(at[0], at[1], float(r.lat), float(r.lon)) <= METRO_KM]):
             r = same[0]
             return [r.locality, r.state if isinstance(r.state, str) else None, r.country]
@@ -6994,7 +7050,9 @@ def _osm_reverse(lat, lon):
     if a.get('state') == 'Puerto Rico' and a.get('county'):  # its localities are the municipios (Río Piedras is in
         town, kind = re.sub(r'\s+Municipio$', '', a['county']), 'city'  # San Juan), which OSM keeps as counties
     if town:
-        town = re.sub(r'^(?:City|Town|Village|Borough|Township) of ', '', town)
+        # (and Greece's "Municipal Unit of Zagora", from a GPS overlay's points: 6wreNRh_YQk; user, 2026-11-09)
+        town = re.sub(r'^(?:City|Town|Village|Borough|Township|Municipal Unit|Municipal Community|Municipality'
+                      r'|Community) of ', '', town)
         # Cyprus' villages and towns are "Empa Community", "Geroskipou Municipality" in OpenStreetMap (nysE6ldTxtc;
         # user, 2026-11-07): the place is Empa
         if _country_code(a) == 'CY':
@@ -7170,6 +7228,11 @@ def drive_ends(title, df, home=None):
     if len(named) == 1:
         state = next(iter(named))
         first, last = (x if state in x or o else f'{x}, {state}' for x, o in zip((first, last), own))
+    # ... with each end's own region named ("from Zug, Zug to Pfäffikon, Schwyz": DESC_DRIVE_REGION), the end's
+    # after it (the pattern stops the last end at the comma)
+    if len(named) > 1 and (tail := re.match(r',\s*([^,|]+)', title[m.end(2):])) \
+            and (region := tail.group(1).strip()) in named and region not in last:
+        last = f'{last}, {region}'
     # a named state says where, however far from home: no box around home (San Jose is 48 degrees from New York)
     near = (home[3], home[4]) if home and not named and not any(own) else None
     if only and not named:  # looked up in it, as with a state ("Carolina, Puerto Rico")
@@ -7181,6 +7244,18 @@ def drive_ends(title, df, home=None):
         if _name_key(re.sub(r',.*', '', phrase)) in GENERIC_ENDS or CITY_HEART.fullmatch(re.sub(r',.*', '', phrase)):
             return None
         hit = _osm_place(phrase, codes, near, reach)
+        # ... "Pfäffikon, Schwyz", which OpenStreetMap knows as Pfäffikon only: that name near the other end, in
+        # that region (RJkHgoGnZbc: not the Pfäffikon in Zurich)
+        # (or "Pfäffikon SZ", as OpenStreetMap names a Swiss town by its canton's code)
+        if not hit and ',' in phrase:
+            name, region = (x.strip() for x in phrase.split(',', 1))
+            hit = h if near and (h := _osm_place(name, codes, near, reach or 60)) and h[1] \
+                and _name_key(h[1]) == _name_key(region) else None
+            for sub in () if hit else (x for c in codes for x in pycountry.subdivisions.get(country_code=c) or []
+                                       if _name_key(x.name) == _name_key(region)):
+                if (h := _osm_place(f'{name} {sub.code.split("-")[1]}', codes, near, reach)) and h[3] == sub.code:
+                    hit = (name, *h[1:])
+                    break
         return hit if hit and (not only or hit[2] in only) else None
     a = place(first, near)
     b = place(last, a[4:6] if a else near, 300 if a else None)
@@ -7573,6 +7648,15 @@ def maps_points(description):
     return out if len(out) >= 2 and not data else []
 
 
+# a description's drive with each end's region: "Driving in Switzerland, from Zug in the canton of Zug to Pfäffikon
+# in the canton of Schwyz." (RJkHgoGnZbc of tvfjm; user, 2026-11-09: "route in description"): Pfäffikon, Schwyz is
+# not the Pfäffikon in Zurich
+_REGION_OF = r"\s+in the (?i:canton|county|province|region|state|district|department|prefecture) of\s+"
+DESC_DRIVE_REGION = re.compile(rf"(?i:(?:drive|driving|road ?trip)\s+(?:in|through)\s+[^,]{{2,40}},\s*)?(?i:from)\s+"
+                               rf"({_DESC_PLACE})(?:{_REGION_OF}({_DESC_PLACE}))?\s+(?i:to)\s+"
+                               rf"({_DESC_PLACE})(?:{_REGION_OF}({_DESC_PLACE}))?[\s.!]*$")
+
+
 def drive_title(title, description):
     """What names a drive "from A to B": the title, else the first of the description's first DRIVE_LINES lines that
     does ("Location: Minokamo to Yaotsu,Gifu,Japan" under "Drive in Japan | Rain Sounds Therapy", qBRUPhoFeTQ;
@@ -7618,10 +7702,34 @@ def drive_title(title, description):
     if len(stops := maps_stops(description)) >= 2:  # a route on Google Maps linked in the description
         return f'from {stops[0]} to {stops[-1]}'
     for line in (description or '').splitlines()[:DRIVE_LINES]:
+        if len(line) <= 150 and (m := DESC_DRIVE_REGION.match(line.strip())) and (m.group(2) or m.group(4)) \
+                and not ordinary(m.group(1).split()[0]) and not ordinary(m.group(3).split()[0]):
+            return 'from {} to {}'.format(*(f'{p}, {r}'.rstrip('.') if r else p.rstrip('.')
+                                            for p, r in ((m[1], m[2]), (m[3], m[4]))))
         if (len(line) <= 150 and (m := DESC_DRIVE.match(line.strip()) or DESC_DRIVE_ON.match(line.strip()))
                 and not ordinary(m.group(1).split()[0]) and not ordinary(m.group(3).split()[0])):  # "Welcome to"
             return f'from {m.group(1)}{m.group(2) or ""} to {m.group(3)}{m.group(4) or ""}{m.group(5) or ""}'
     return title
+
+
+def screen_drive(sig_path):
+    """'from A to B' of a drive a label in the video's opening names, else None: "BULGARIA | DRIVING FROM | SLIVEN TO
+    STARA ZAGORA | 27.08.2022" under "Scenic Drive - Stara Zagora 4K - Bulgaria" (qfGt5NKKF5M; user, 2026-11-09:
+    "description of drive between 2 towns as label at start"); a date after it is no part of its end."""
+    try:
+        with np.load(sig_path) as z:
+            texts = json.loads(str(z['screen_text'])) if 'screen_text' in z.files else {}
+    except (OSError, ValueError):
+        return None
+    for t in sorted(texts, key=float):
+        line = english_states(' '.join(texts[t]))
+        if (m := next((m for r in FROM_TO if (m := r.search(line))), None)):
+            a, b = (re.sub(r'(?:\s+[\d.:/-]+)+$', '', x.strip()) for x in m.groups()[:2])
+            # (names of up to 4 words, as OCR reads a clean label: not a sentence or garbled text)
+            if all(re.fullmatch(r"[A-ZÀ-Þ][^\W\d_]+(?:[ '’.-]+[A-ZÀ-Þ][^\W\d_]+){0,3}", x)
+                   and not ordinary(x.split()[0].lower()) for x in (a, b)):
+                return f'from {a} to {b}'
+    return None
 
 
 def multi_city(meta, df, home=None):
@@ -8505,7 +8613,18 @@ def town_sign_hint(p, sig_path, out_dir, df):
 # channel's 12 reviewed videos 3,798 of 4,293 approved seconds then fall under the reviewer's locality, not 3,329;
 # of 84 reviewed German and Austrian drives' entry signs 10 agree with the reviewer, 2 not (a quarter of Lucerne), 9
 # lie in footage the reviewer left out
-TOWN_SIGN_COUNTRIES = {'Germany', 'Austria', 'Switzerland'}
+# ... Switzerland's and Liechtenstein's blue ones too, read alike; also for a channel elsewhere whose title names
+# such a country (tvfjm, at home in Liechtenstein, drives in Switzerland; user, 2026-11-09: "very visible traffic signs
+# showing when towns start and end")
+TOWN_SIGN_COUNTRIES = {'Germany', 'Austria', 'Switzerland', 'Liechtenstein'}
+
+
+def town_sign_country(title, country):
+    """The TOWN_SIGN_COUNTRIES country a video drives in, by its title, else the channel's, else None."""
+    return next((c for c in title_countries(title or '') if c in TOWN_SIGN_COUNTRIES), None) or (
+        country if country in TOWN_SIGN_COUNTRIES else None)
+
+
 SETTLEMENTS = os.path.join('_output', 'proposals', 'settlements.json')  # OpenStreetMap's places around a point, kept
 SIGN_NOT_TOWN = {'gemeinde', 'stadt', 'landkreis', 'kreis', 'ortsteil', 'stop', 'umleitung', 'ende', 'zone',
                  'polizei', 'achtung', 'baustelle', 'bahnhof', 'zentrum', 'centrum', 'innenstadt', 'kirche', 'schule'}
@@ -8671,7 +8790,7 @@ def town_sign_split(p, sig_path, df, home=None):
     if not segs or any(g.get('decision') or g.get('applied') for g in segs):
         return False
     first = ents[0].get('locality')
-    country = first[2] if first else home[2] if home else None
+    country = first[2] if first else town_sign_country(p.get('title'), home[2] if home else None)
     if country not in TOWN_SIGN_COUNTRIES:
         return False
     # around the proposal's locality and the channel's home both: a first guess from a direction sign is off
@@ -9582,7 +9701,7 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
                     print(f'  long video: {int(meta["duration"]) // 60} min')
                 drive = drive_title(meta['title'], meta.get('description'))
                 analyse_video(vid, out_dir, meta, signs=any(r.search(english_states(drive)) for r in FROM_TO)
-                              or country in TOWN_SIGN_COUNTRIES, keep=True)  # town signs: town_sign_split
+                              or bool(town_sign_country(meta['title'], country)), keep=True)  # town_sign_split
                 time.sleep(pause_s)  # spacing requests keeps YouTube's bot check away for longer
             failures_in_a_row = 0
         except BotCheck as e:
@@ -9606,6 +9725,8 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
                 commit([vid])
             continue
         analysed = os.path.exists(sig_path)
+        if analysed:
+            reread_opening(vid, sig_path, out_dir)
         reason = skip_note = None
         if analysed:
             frames = sheet_frames(os.path.join(out_dir, f'{vid}.jpg'))
@@ -9619,7 +9740,10 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
             elif not driving and float(np.load(sig_path).get('step_bob', 0)) >= STEP_BOB_WALK:
                 reason = (f"a walk, not a drive: the camera bobs at a walker's step rate "
                           f"({float(np.load(sig_path)['step_bob']):.0%} of its shake)")
-            elif not driving and (seen := walk_view(dict(np.load(sig_path)))):
+            # (not a ride the title says is on a scooter or bicycle, in a bike lane or a park among people: 14
+            # electric scooter rides of wanderer_youtube were so left out, the 3 reviewed ones approved)
+            elif not driving and title_vehicle(title_text(meta['title'])) not in NON_MOTOR \
+                    and (seen := walk_view(dict(np.load(sig_path)))):
                 reason = (f'a walk, not a drive: people close by in {seen[0]:.0%} of the frames, a vehicle ahead in '
                           f'only {seen[1]:.0%}')
             elif (not driving and n_walk >= WALK_SHEET_FEW
@@ -9780,6 +9904,8 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
         locality = far_district(meta['title'], locality, df) or locality
         touched.append(vid)
         dt = drive_title(meta['title'], meta.get('description'))
+        if not any(r.search(english_states(dt)) for r in FROM_TO) and analysed and (shown := screen_drive(sig_path)):
+            dt = shown
         # chapters that are the legs of a drive name its ends: "Road to Whitby" by "Saltburn-by-the-Sea to Loftus"
         # ... "Sandsend to Whitby" (tol0zRsUB9A; user, 2026-10-28)
         if not any(r.search(english_states(dt)) for r in FROM_TO) and (legs := chapter_legs(video_chapters(meta))):
@@ -9964,6 +10090,8 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
             named = [f'{a}, {b}' for a, b in TOWN_STATE.findall(description) if b.lower() in _state_and_country_keys()
                      and re.search(rf'\b{re.escape(a)}\b', p['title'] or '', re.I)]
             found = found or (named and place_locality(named[:3], df[in_reach], home))
+            # ... the place YouTube shows above the comments, as the uploader set it, before the description's
+            found = found or youtube_location(metas.get(p['video'], {}), df, home)
             found = found or place_locality(place_phrases(description, limit=3), df[in_reach], home)
             # ... else where a drive "from A to B" of the description starts, else ends: "From Ai Giannis beach to
             # Toroni" (MFuh50Eliqg; user, 2026-11-02; reviewed "from Alanya to Antalya" was Alanya)
@@ -10440,7 +10568,8 @@ background:#fff;color:#222;font-size:13px;cursor:pointer}
     <div class="clock">Time: <span id="clock" title="click to copy">0:00</span> <span id="copied"></span></div>
     <div class="keys">Keys for the outlined segment (the one clicked last): <b>A</b> start here · <b>S</b> end here ·
       <b>D</b> whole video · <b>Q</b> day · <b>W</b> night · <b>F</b> split time here · <b>C</b> copy the time ·
-      <b>V</b> copy the video and time · <b>E</b> approve · <b>R</b> reject (both then on to the next) ·
+      <b>V</b> copy the video and time · <b>B</b> copy the video's ID · <b>E</b> approve ·
+      <b>R</b> reject (both then on to the next) ·
       <b>T</b> approve rest · <b>Y</b> reject rest (of its video) · in a time box <b>↑↓</b> ±1 s, <b>←→</b> ±10 s</div>
     <div id="status"></div>
     {% if waiting > open_videos | length %}<div class="keys">Showing {{ open_videos | length }} of {{ waiting }}
@@ -10481,11 +10610,12 @@ background:#fff;color:#222;font-size:13px;cursor:pointer}
             onclick="startAtSign(this)">Start {{ ts.locality }} here</button></div>
   {% endfor %}{% endif %}
   {% set route = p.route or routes.get(p.video) %}
+  <div class="routeslot" data-video="{{ p.video }}">
   {% if route %}{% set times = {} %}{% for e in p.entries if e.locality %}{% set _ = times.setdefault(
        e.locality[0], []).extend(e.segments | rejectattr('decision', 'equalto', 'reject')) %}{% endfor %}
   <div class="routemap" data-route='{{ route | tojson }}' data-times='{{ times | tojson }}'
        title="{{ 'the car route the localities were estimated from' if p.route else
-                 'the localities in the order the video passes them' }}"></div>{% endif %}
+                 'the localities in the order the video passes them' }}"></div>{% endif %}</div>
   {% endif %}
   <table>
   {% for e in p.entries %}{% set ei = loop.index0 %}
@@ -10898,7 +11028,7 @@ document.addEventListener('keydown', e => {
   if (e.metaKey || e.ctrlKey || e.altKey) return;
   let key = e.key.toLowerCase();
   if (!/^[a-z]$/.test(key) && /^Key[A-Z]$/.test(e.code)) key = e.code.slice(3).toLowerCase();  // Cyrillic layouts
-  if (!['a', 's', 'd', 'q', 'w', 'f', 'c', 'v', 'e', 'r', 't', 'y'].includes(key)) return;
+  if (!['a', 's', 'd', 'q', 'w', 'f', 'c', 'v', 'b', 'e', 'r', 't', 'y'].includes(key)) return;
   if (key === 'c') {  // the current time to the clipboard, as a click on it does (user, 2026-10-16)
     e.preventDefault();
     document.getElementById('clock').click();
@@ -10910,6 +11040,15 @@ document.addEventListener('keydown', e => {
     if (!video) return;
     copyText(`${video} Time: ${fmt(Math.floor(ytPlayer.getCurrentTime() || 0))}`);
     document.getElementById('copied').textContent = 'video and time copied';
+    setTimeout(() => { document.getElementById('copied').textContent = ''; }, 1500);
+    return;
+  }
+  if (key === 'b') {  // just the video's ID: the playing one, else the one in view (user, 2026-11-09)
+    e.preventDefault();
+    const video = (ytReady && playingVideo()) || keyRow()?.dataset.video;
+    if (!video) return;
+    copyText(video);
+    document.getElementById('copied').textContent = `${video} copied`;
     setTimeout(() => { document.getElementById('copied').textContent = ''; }, 1500);
     return;
   }
@@ -11052,6 +11191,7 @@ async function saveLocality(el) {
   status.textContent = out.new ? 'new locality: created on Apply, with the lookups the add-video form makes'
                                : '✓ in the mapping';
   showMap(box, out.new);
+  refreshRoute(box.dataset.video);
 }
 // lat, lon as Google Maps gives them (user, 2026-10-28: the lookups are sometimes off and checked there): copied
 // from its right-click menu ("52.36760, 4.90410"), its degrees ("52°22'03.4"N 4°54'14.8"E") or a link (a place's
@@ -11482,7 +11622,7 @@ if (resume) {
 </script>
 <script>
 // a drive "from A to B": its car route, with where each locality on the way starts and its segments' times
-document.querySelectorAll('.routemap').forEach(el => {
+function drawRoute(el) {
   if (!window.L) { el.textContent = 'the map needs internet (Leaflet from unpkg.com)'; return; }
   const route = JSON.parse(el.dataset.route), times = JSON.parse(el.dataset.times);
   const mss = t => `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`;
@@ -11497,7 +11637,26 @@ document.querySelectorAll('.routemap').forEach(el => {
                     .join(''), { permanent: true, direction: 'right' }).addTo(map);
   });
   map.fitBounds(line.getBounds(), { padding: [20, 20] });
-});
+}
+document.querySelectorAll('.routemap').forEach(drawRoute);
+// ... drawn again as localities are set, without reloading the page (user, 2026-11-09: the map "does not get
+// updated when more localities are assigned to segments")
+async function refreshRoute(video) {
+  const slot = document.querySelector(`.routeslot[data-video="${video}"]`);
+  if (!slot) return;
+  let out;
+  try { out = await (await fetch('route?' + new URLSearchParams({ video }))).json(); } catch (e) { return; }
+  slot.innerHTML = '';
+  if (!out.route) return;
+  const el = document.createElement('div');
+  el.className = 'routemap';
+  el.dataset.route = JSON.stringify(out.route);
+  el.dataset.times = JSON.stringify(out.times);
+  el.title = out.car ? 'the car route the localities were estimated from'
+                     : 'the localities in the order the video passes them';
+  slot.appendChild(el);
+  drawRoute(el);
+}
 </script>
 <script src="https://www.youtube.com/iframe_api"></script>
 </body></html>"""
@@ -11527,9 +11686,17 @@ def localities_route(p, plan_dir, mapping):
             _, lat, lon = gps[np.argmin(np.abs(gps[:, 0] - start))]
         else:
             _, row = add_video.get_existing_locality_row(mapping, *e['locality'])
-            if row is None:
+            # ... a locality not in the mapping yet where its marker was put, else where OpenStreetMap has it
+            # (user, 2026-11-09: the map showed only once two of a video's localities were in the mapping)
+            if row is not None and pd.notna(row['lat']):
+                lat, lon = float(row['lat']), float(row['lon'])
+            elif e.get('at'):
+                lat, lon = e['at'][0], e['at'][1]
+            elif (code := _iso2(e['locality'][2])) and (h := _osm_place(
+                    ', '.join(x for x in e['locality'][:2] if x), (code,))):
+                lat, lon = h[4], h[5]
+            else:
                 continue
-            lat, lon = float(row['lat']), float(row['lon'])
         stops.append([float(lat), float(lon), name])
     if len(stops) < 2:
         return None
@@ -12043,6 +12210,20 @@ def review(plan_path, port=None):
             e['at'] = [round(float(d['lat']), 6), round(float(d['lon']), 6)]
         save(plan)
         return jsonify(ok=True)
+
+    @app.route('/route')
+    def route_now():
+        """The map of a video's localities as the plan has them now (refreshRoute), with each one's kept times."""
+        p = next((p for p in load() if p['video'] == request.args.get('video') and 'entries' in p), None)
+        if p is None:
+            return jsonify(route=None)
+        route = p.get('route') or localities_route(p, plan_dir, add_video.load_csv(add_video.FILE_PATH))
+        times = {}
+        for e in p['entries']:
+            if e.get('locality'):
+                times.setdefault(e['locality'][0], []).extend(
+                    s for s in e['segments'] if s.get('decision') != 'reject')
+        return jsonify(route=route, times=times, car=bool(p.get('route')))
 
     @app.route('/locality', methods=['POST'])
     def set_locality():
