@@ -16,11 +16,14 @@ with "Claude+Pavlo" in column E (Processed by).
 import argparse
 import csv
 import fcntl
+import hashlib
 import io
 import json
 import os
 import re
 import select
+import shlex
+import socket
 import subprocess
 import sys
 import threading
@@ -38,6 +41,14 @@ ROOT = '_output/proposals'
 STATE = os.path.join(ROOT, 'channels.json')
 TO_REVIEW = os.path.join(ROOT, 'to_review.md')
 PAUSE = os.path.join(ROOT, 'pause')  # created while the user travels (Travel calendar)
+# the worker's buttons on the pipeline page (dashboards/pipeline_status.py; user, 2026-11-10), apart from PAUSE so
+# Resume there never ends a pause for travel or a crowd-city run: Pause lets the running batch finish, then waits;
+# Stop ends the running batch at once, then waits; Resume removes both
+PAGE_PAUSE = os.path.join(ROOT, 'pause_page')
+STOP = os.path.join(ROOT, 'stop')
+# the refresh queue's channels claimed on the reviewing machine, one folder each (relative to its home there), so two
+# workers never start the same channel between two syncs (user, 2026-11-10: lin5080's two workers joined phase 6)
+CLAIMS_HOST, CLAIMS = 'mini', 'crowd-claims'
 # the sheet changes still to make, [{row, url, status, by}], for whoever edits the sheet (the hourly check)
 SHEET_TODO = os.path.join(ROOT, 'sheet_todo.json')
 # channels done before whose new uploads come once the sheet's are all done ([{url, country, name, why}],
@@ -282,7 +293,8 @@ def on_hotspot():
     name)."""
     if sys.platform != 'darwin':  # a worker machine on the campus network has no hotspot
         return False
-    r = subprocess.run(['route', '-n', 'get', 'default'], capture_output=True, text=True)
+    # its full path: cron's PATH has no /sbin (the sync runner failed to start 72 times on 2026-11-10)
+    r = subprocess.run(['/sbin/route', '-n', 'get', 'default'], capture_output=True, text=True)
     return 'gateway: 172.20.10.' in r.stdout
 
 
@@ -334,7 +346,8 @@ def run_chunk(url, country, chunk, single_city=False, new_only=False, deferred=F
                 long = LONG_VIDEO.search(line)
                 if long or '] analysing ' in line:  # the next video: its own limit
                     silent = max(SILENT_BATCH_S, int(long[1]) * 60 * SILENT_SHARE) if long else SILENT_BATCH_S
-                if on_hotspot() or os.path.exists(PAUSE):  # stop downloading at once; the batch continues later
+                # stop downloading at once; the batch continues later
+                if on_hotspot() or os.path.exists(PAUSE) or os.path.exists(STOP):
                     proc.terminate()
                     out.append('switched to the hotspot or paused\n')
                     done = True
@@ -372,6 +385,28 @@ def others_channels():
 def theirs(url, others):
     urls, ids, known = others
     return same_url(url) in urls or known.get(url) in ids
+
+
+def claim_key(key):
+    return hashlib.sha1(key.encode()).hexdigest()
+
+
+def claim(key, me=None):
+    """Whether this worker may start the refresh queue's channel key: it claims it on CLAIMS_HOST first (mkdir there
+    is atomic), so the first worker to ask gets it and every other one skips it. True when CLAIMS_HOST cannot be
+    reached: TAKEN, sent with each sync, still keeps the workers apart then."""
+    me = me or f'{socket.gethostname()}:{os.getcwd()}'
+    d = f'{CLAIMS}/{claim_key(key)}'
+    cmd = (f'mkdir -p {CLAIMS} && if mkdir {d} 2>/dev/null; then printf %s {shlex.quote(me)} > {d}/by; fi; '
+           f'cat {d}/by 2>/dev/null')
+    try:
+        r = subprocess.run(['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=15', CLAIMS_HOST, cmd],
+                           capture_output=True, text=True, timeout=60)
+    except (subprocess.SubprocessError, OSError):
+        return True
+    if r.returncode not in (0, 1):  # 255: ssh failed (1: cat found no "by" yet, another worker writing it)
+        return True
+    return r.stdout.strip() == me
 
 
 def done_before(url, sheet, state):
@@ -565,6 +600,9 @@ def main():
                     '(sync_workers.py): the machine you review on')
     ap.add_argument('--no-new', action='store_true',
                     help='finish the channels started here, start no new one (the worker machines take those)')
+    ap.add_argument('--first-phases', type=lambda t: {int(x) for x in t.split(',')}, default=FIRST_PHASES,
+                    help='queue phases (of --phases) taken here before everything else, also before the channels '
+                         f'started here (default {",".join(map(str, sorted(FIRST_PHASES)))})')
     args = ap.parse_args()
     lock = open(os.path.join(ROOT, 'runner.lock'), 'w')
     try:  # one routine at a time: the hourly task may find the last one still running
@@ -575,6 +613,7 @@ def main():
     t0 = time.time()
     state = load_state()
     code = os.path.getmtime(__file__)
+    claimed_elsewhere = set()  # refresh queue channels another worker claimed first (claim)
     if args.sync:
         threading.Thread(target=push_code_on_change, daemon=True).start()
     while not args.max_minutes or time.time() - t0 < args.max_minutes * 60:
@@ -588,6 +627,13 @@ def main():
             while os.path.exists(PAUSE):
                 time.sleep(60)
             log('pause removed: continuing')
+        if os.path.exists(STOP) or os.path.exists(PAGE_PAUSE):
+            log(f"{'stopped' if os.path.exists(STOP) else 'paused'} from the pipeline page: waiting until "
+                'Resume there')
+            while os.path.exists(STOP) or os.path.exists(PAGE_PAUSE):
+                time.sleep(20)
+            log('resumed from the pipeline page: continuing')
+            continue  # the hotspot and PAUSE again first
         if os.path.exists(NEXT_ARGS):  # new options for this machine, from its next batch on
             with open(NEXT_ARGS) as f:
                 argv = [sys.argv[0]] + json.load(f)
@@ -639,13 +685,13 @@ def main():
             return US_LATER and country_in(t, US_NAMES)
 
         def going(ts):
-            return [t for t in ts if not country_in(t, PAUSED_COUNTRIES)]
+            return [t for t in ts if not country_in(t, PAUSED_COUNTRIES) and t[1] not in claimed_elsewhere]
         todo, queue = going(todo), going(queue)
         # this machine's phases done: the queue's other phases next, in its order, before the held-back drives
         # (user, 2026-10-20: "assign next phase in the queue to workers when work is done automatically")
         if not queue and args.phases is not None and not args.no_queue:
             queue = going(refresh_todo(state, args, any_phase=True))
-        todo = going(refresh_todo(state, args, only=FIRST_PHASES)) \
+        todo = going(refresh_todo(state, args, only=args.first_phases)) \
             or [t for t in todo if not in_us(t)] or [t for t in queue if not in_us(t)] \
             or [t for t in todo if in_us(t)] or [t for t in queue if in_us(t)] \
             or (US_LATER and going(deferred_todo(state, args, 'us'))) or going(deferred_todo(state, args)) \
@@ -660,6 +706,10 @@ def main():
             log(f'row {n} {url} is the channel of {other}, done there: skipped (the sheet lists it twice)')
             state[key] = {'row': n, 'name': channel_name(url), 'status': 'duplicate', 'comment': f'same as {other}'}
             save_state(state)
+            continue
+        if key not in state and key.startswith('refresh:') and not args.sync and not claim(key):
+            log(f'{what}: another worker took it (claimed on {CLAIMS_HOST}): skipped')
+            claimed_elsewhere.add(key)
             continue
         # ... and one whose country only YouTube gives, before it is taken on
         country = state.get(key, {}).get('country') or country_of(url, sheet_country)
