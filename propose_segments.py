@@ -161,6 +161,42 @@ def _yt_dlp(*args, timeout=None):
     return out
 
 
+# German number plates name their district: most cars in a city drive are registered there ("HRO" for Rostock in
+# SLSCl_BDz4o; user, 2026-11-09). The code read PLATE_READS times or more, PLATE_SHARE of all plates read, in the
+# road signs and opening the analysis read: on reviewed German videos 4 so (Rostock 3, Ravensburg), all the
+# reviewer's locality. Codes from de.wikipedia's list of German plate codes (plate_codes_de.py: code -> [town, state])
+PLATE_READS, PLATE_SHARE = 3, 0.6
+PLATE_DE = re.compile(r'^([A-ZÄÖÜ]{1,3})[\s·.-]{1,2}([A-Z]{1,2})[\s·.-]?(\d{1,4})[EH]?$')
+
+
+@functools.cache
+def _plate_codes():
+    try:
+        from plate_codes_de import PLATE_CODES_DE
+    except ImportError:
+        return {}
+    return PLATE_CODES_DE
+
+
+def plate_locality(sig_path, df, home=None):
+    """(locality, phrase) of the district most German number plates read in a video are from, else None."""
+    try:
+        with np.load(sig_path) as z:
+            texts = [x for k in ('signs', 'head_signs', 'screen_text') if k in z.files
+                     for xs in json.loads(str(z[k])).values() for x in xs]
+    except (OSError, ValueError):
+        return None
+    codes = Counter(m.group(1) for x in texts if (m := PLATE_DE.match(x.strip().upper())))
+    if not codes:
+        return None
+    code, n = codes.most_common(1)[0]
+    if n < PLATE_READS or n < PLATE_SHARE * sum(codes.values()) or code not in _plate_codes():
+        return None
+    town = _plate_codes()[code][0]
+    found = place_locality([town], df[df['country'] == 'Germany'], home)
+    return (found[0], f'{code} number plates ({n})') if found else None
+
+
 def youtube_location(meta, df, home=None):
     """(locality, phrase) of the location an uploader set on YouTube, shown above the comments ("Росток" at 54.09,
     12.10 for SLSCl_BDz4o; user, 2026-11-09: "makes it possible to link it to that locality"): the town at its point
@@ -7657,6 +7693,9 @@ DESC_DRIVE_REGION = re.compile(rf"(?i:(?:drive|driving|road ?trip)\s+(?:in|throu
                                rf"({_DESC_PLACE})(?:{_REGION_OF}({_DESC_PLACE}))?[\s.!]*$")
 
 
+BRACKET_PAIR = re.compile(rf"\(\s*({_DESC_PLACE})\s+(?:to|→|->)\s+({_DESC_PLACE})\s*\)")
+
+
 def drive_title(title, description):
     """What names a drive "from A to B": the title, else the first of the description's first DRIVE_LINES lines that
     does ("Location: Minokamo to Yaotsu,Gifu,Japan" under "Drive in Japan | Rain Sounds Therapy", qBRUPhoFeTQ;
@@ -7677,6 +7716,11 @@ def drive_title(title, description):
     if (en := english(title)) and (m := next((m for r in FROM_TO if (m := r.search(english_states(en)))), None)) \
             and all((_name_key(m.group(i)).split() or [''])[0][:4] in _name_key(title) for i in (1, 2)):
         return en
+    # ... or in brackets after a drive word: "Driving in Switzerland (Tiefencastel to Bivio) 4K" (9L0jYB-s5sw; user,
+    # 2026-11-12), "German Alps Road Trip (Eibsee to Munich)"; not a dash ("(Aruarian Dance - Nujabes)": a song)
+    if (m := BRACKET_PAIR.search(title)) and DRIVE_TITLE.search(title) \
+            and not any(ordinary(x.split()[0].lower()) for x in m.groups()):
+        return f'from {m[1]} to {m[2]}'
     if stops := place_list(title):  # the first stop to the last (drive_via: the ones between)
         return f'from {stops[0]} to {stops[-1]}'
     # "Grevenmacher  - Trier VIRTUAL DRIVE 4K" (iTzKa42lapA; user, 2026-10-19): two places, no common word in either
@@ -10093,6 +10137,9 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
             # ... the place YouTube shows above the comments, as the uploader set it, before the description's
             found = found or youtube_location(metas.get(p['video'], {}), df, home)
             found = found or place_locality(place_phrases(description, limit=3), df[in_reach], home)
+            # ... else the district on most of the number plates read in a German video
+            found = found or (('Germany' in title_countries(p['title']) or country.strip() == 'Germany')
+                              and plate_locality(os.path.join(out_dir, f"{p['video']}_signals.npz"), df, home))
             # ... else where a drive "from A to B" of the description starts, else ends: "From Ai Giannis beach to
             # Toroni" (MFuh50Eliqg; user, 2026-11-02; reviewed "from Alanya to Antalya" was Alanya)
             # (its places' words only: "From Downtown to Pudong Int'l Airport" was Downtown Baltimore, H785KgAcS9I;
