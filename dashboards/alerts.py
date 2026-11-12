@@ -7,7 +7,9 @@ page (8771) on this machine. Cron runs it every 10 minutes on the reviewing mach
 The webhook URL is read from ~/.config/crowd-alerts/discord_webhook (chmod 600, never in a repository).
 
 An alert is posted when it starts, again every REPEAT_H hours while it lasts, and once more when it clears; the
-alerts open now are kept in ~/.config/crowd-alerts/state.json.
+alerts open now are kept in ~/.config/crowd-alerts/state.json. When ~/.config/crowd-alerts/diagnose/ exists, each new
+alert of a worker, the downloader, a machine or a page also leaves a request there, for a separate job that looks into
+its cause and posts that (on the reviewing machine: ~/claude-jobs/claude_jobs.py diagnose, run by a LaunchAgent).
 """
 import json
 import os
@@ -30,6 +32,8 @@ ROOTS = ('/', 'C:\\')
 # video only above 55 GB, so its largest videos (22 GB so far) can take one to about 33 GB; below this, something else
 DOWNLOAD_DRIVE, DOWNLOAD_DRIVE_MIN_GB = '/media/salam/crowd-tue-', 25
 DOWNLOAD_H = 2  # the window for the video downloader's alerts (download_problems)
+DIAGNOSE = STATE_DIR / 'diagnose'  # requests for the diagnosis job, when this folder exists
+DIAGNOSE_KINDS = ('worker', 'downloads', 'machine', 'page')  # not cookies or disks: their alert says what to do
 
 
 def fetch(url):
@@ -81,8 +85,8 @@ def download_problems(d, now=None):
     with videos waiting (it pauses 30 min, then 1 h, 2 h, 4 h when YouTube blocks it: two hours is past the first
     pauses it gets over by itself), or most of its attempts in that time failing."""
     now = now or time.time()
-    if d.get('error') or not d.get('queue'):  # lin4080 unreachable is a machine alert; nothing to download is fine
-        return {}
+    if d.get('error') or not d.get('queue') or d.get('control'):  # lin4080 unreachable is a machine alert; nothing
+        return {}  # to download, or paused or stopped on the pipeline page (download_control.sh), is fine
     since = now - DOWNLOAD_H * 3600
     ok = sum(r['t'] > since for r in d.get('recent', []))
     bad = sum(f['t'] > since for f in d.get('failures', []))
@@ -116,6 +120,9 @@ def main(dry=False):
         last = state['open'].get(key)
         if last is None:
             msgs.append(f'🔴 {text}')
+            if not dry and DIAGNOSE.is_dir() and key.split(':')[0] in DIAGNOSE_KINDS:
+                name = ''.join(c if c.isalnum() else '-' for c in key)
+                (DIAGNOSE / f'{int(now)}-{name}.json').write_text(json.dumps({'key': key, 'text': text, 'at': now}))
         elif now - last['posted'] > REPEAT_H * 3600:
             msgs.append(f'🟠 still: {text} (since {time.strftime("%a %H:%M", time.localtime(last["since"]))})')
         else:
