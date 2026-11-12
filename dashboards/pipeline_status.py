@@ -19,12 +19,13 @@ from concurrent.futures import ThreadPoolExecutor
 
 from pathlib import Path
 
-from flask import Flask, jsonify, render_template_string, request
+from flask import Flask, jsonify, redirect, render_template_string, request
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # run_channels and sync_workers: the repo's top folder
 import run_channels as rc  # noqa: E402
 import sync_workers as sw  # noqa: E402
 
+import coords_review  # noqa: E402
 import short_videos  # noqa: E402
 from globe import globe_data  # noqa: E402
 
@@ -103,14 +104,31 @@ def parse_log(lines, mtime, now):
     return out
 
 
+def flags_path(host):
+    return f'{sw.place(host)[1]}/_output/proposals'
+
+
+# the worker's buttons here (user, 2026-11-10): the files run_channels.py waits on (rc.PAGE_PAUSE, rc.STOP)
+FLAGS = {'pause': f'touch {os.path.basename(rc.PAGE_PAUSE)}', 'stop': f'touch {os.path.basename(rc.STOP)}',
+         'resume': f'rm -f {os.path.basename(rc.PAGE_PAUSE)} {os.path.basename(rc.STOP)}',
+         # Resume of a worker held by its pause file (user, 2026-11-12: Pause turns into Resume whenever it is paused)
+         'unpause': 'rm -f ' + ' '.join(os.path.basename(p) for p in (rc.PAUSE, rc.PAGE_PAUSE, rc.STOP))}
+# the downloader's buttons (user, 2026-11-12): ~/download_control.sh on its machine (SIGSTOP/SIGCONT, flag files)
+DOWNLOAD_CONTROL = '~/download_control.sh'
+
+
 def worker(host):
-    log = f'{sw.place(host)[1]}/_output/proposals/runner.log'
+    log = f'{flags_path(host)}/runner.log'
+    flags = ' '.join(os.path.basename(p) for p in (rc.PAUSE, rc.PAGE_PAUSE, rc.STOP))
     try:
         raw = sw.ssh(host, f'tail -n {TAIL} {log}; echo @@; '
                            f'stat -c %Y {log} 2>/dev/null || stat -f %m {log}; date +%s; '
-                           'echo @@Y; cat ~/.wsl_yield.json 2>/dev/null || true')  # jobs paused for Windows
+                           'echo @@Y; cat ~/.wsl_yield.json 2>/dev/null || true; '  # jobs paused for Windows
+                           f'echo @@F; cd {flags_path(host)} 2>/dev/null && ls {flags} 2>/dev/null || true')
     except Exception as e:
         return dict(host=host, state='offline', error=str(e)[-200:], role=sw.WORKERS[host])
+    raw, _, flags = raw.rpartition('@@F\n')
+    flags = set(flags.split())
     body, _, tail = raw.rpartition('@@\n')
     tail, _, paused = tail.partition('@@Y\n')
     try:
@@ -124,6 +142,13 @@ def worker(host):
         y = {}
     if sw.yielded(y, host):  # wsl_yield.py made way for someone using the Windows PC: not stalled (and no alert)
         w.update(state='paused', paused=dict(why=y.get('why', ''), since=y.get('since')))
+    if os.path.basename(rc.PAUSE) in flags and not w.get('paused'):  # Resume here leaves it
+        w.update(state='paused', held='its pause file (travel, or a GPU job on the machine such as a crowd-city '
+                                      'run): it goes on when that is removed')
+    w['button'] = ('stop' if os.path.basename(rc.STOP) in flags else
+                   'pause' if os.path.basename(rc.PAGE_PAUSE) in flags else None)  # pressed here
+    if w['button']:
+        w['state'] = 'stopped' if w['button'] == 'stop' else 'paused'
     return w
 
 
@@ -131,9 +156,12 @@ def downloads():
     """The downloader's status, with videos per hour over the last 3 h and the time left at that pace."""
     host, path = DOWNLOADER
     try:
-        d = json.loads(sw.ssh(host, f'cat {path}'))
+        raw = sw.ssh(host, f'cat {path}; echo @@C; {DOWNLOAD_CONTROL} state 2>/dev/null || true')
+        raw, _, control = raw.rpartition('@@C\n')
+        d = json.loads(raw)
     except Exception as e:
         return dict(host=host, error=str(e)[-200:])
+    d['control'] = control.strip() if control.strip() in ('paused', 'stopped') else None  # from this page
     now = time.time()
     hours = min(3.0, (now - d['started']) / 3600)
     done = sum(r['t'] > now - hours * 3600 for r in d.get('recent', []))
@@ -314,6 +342,7 @@ def collect():
     return dict(
         at=time.time(), workers=workers, downloads=dl, inventory=inv, cookies=cookies_needed(workers, dl),
         short_open=sum(not c.get('decision') for c in short_videos.load()['cases']),
+        coords=coords_summary(),
         batches=sorted(batches, key=lambda b: -b['waiting']),
         sheet_todo=len(todo), queue=len(queue), left=left, pace=pace,
         queue_phases=sorted(collections.Counter(q.get('phase') for q in queue).items(), key=lambda x: str(x[0])),
@@ -354,7 +383,10 @@ h2{font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--mute
 .head{display:flex;justify-content:space-between;align-items:baseline;gap:8px}.head h3{margin:0;font-size:16px}
 .st{font-size:12px;font-weight:600;border-radius:6px;padding:1px 8px;background:var(--track)}
 .st.working{color:var(--ok)}.st.idle{color:var(--muted)}
-.st.blocked,.st.stalled{color:var(--warn)}.st.paused{color:var(--link)}.st.offline{color:var(--bad)}
+.st.blocked,.st.stalled{color:var(--warn)}.st.paused{color:var(--link)}.st.offline,.st.stopped{color:var(--bad)}
+.btns{display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end}.btns form{margin:0}
+.btns button{font:12px system-ui,sans-serif;padding:1px 8px;border:1px solid var(--line);border-radius:6px;
+ background:var(--card);color:var(--fg);cursor:pointer}.btns button:hover{border-color:var(--link)}
 .bar{height:6px;background:var(--track);border-radius:3px;overflow:hidden;margin:6px 0 4px}
 .bar i{display:block;height:100%;background:var(--bar)}
 .row{margin:3px 0}.ell{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -421,8 +453,22 @@ border-radius:16px;background:var(--bg);color:var(--fg);font-size:13px;cursor:po
 </div>
 <h2>Workers</h2><div class="grid">
 {% for w in s.workers %}<div class="card">
- <div class="head"><h3>{{ w.host }}</h3><span class="st {{ w.state }}">{{ w.state }}</span></div>
+ <div class="head"><h3>{{ w.host }}</h3><span class="btns">
+  {% if w.state != 'offline' %}{% if w.button %}<form method="post" action="worker/{{ w.host }}/resume">
+  <button title="go on where it stopped">▶ Resume</button></form>{% elif w.held %}<form method="post"
+  action="worker/{{ w.host }}/unpause" onsubmit="return confirm('{{ w.host }} is paused by its pause file (travel, ' +
+  'or a GPU job on the machine such as a crowd-city run). Resume it anyway?')">
+  <button title="remove its pause file and go on">▶ Resume</button></form>{% elif w.paused %}<button disabled
+  title="paused while someone uses win5090; it goes on by itself 10 min after">▶ Resume</button>{% else %}
+  <form method="post" action="worker/{{ w.host }}/pause"><button title="let the running batch finish, then wait">⏸
+  Pause</button></form>{% endif %}{% if w.button != 'stop' %}<form method="post" action="worker/{{ w.host }}/stop"
+  onsubmit="return confirm('Stop {{ w.host }} now? Its running batch ends at once (it goes on with Resume).')">
+  <button title="end the running batch at once, then wait">⏹ Stop</button></form>{% endif %}{% endif %}
+  <span class="st {{ w.state }}">{{ w.state }}</span></span></div>
  <div class="muted small">{{ w.role }}</div>
+ {% if w.button %}<div class="small" style="color:var(--link)">{{ 'stopped' if w.button == 'stop' else
+  'paused (after its running batch)' }} from this page: Resume to go on</div>{% endif %}
+ {% if w.held %}<div class="small" style="color:var(--link)">paused by {{ w.held }}</div>{% endif %}
  {% if w.state == 'offline' %}<div class="prob">{{ w.error }}</div>{% else %}
  {% if w.channel %}<div class="row ell" style="margin-top:8px"><b>{{ w.name }}</b>
   <span class="muted">{% if w.row %}· row {{ w.row }} {% endif %}· {{ w.country }}</span>
@@ -444,8 +490,18 @@ border-radius:16px;background:var(--bg);color:var(--fg);font-size:13px;cursor:po
 {% set d = s.downloads %}<h2>Video downloads ({{ d.host }})</h2>
 {% if d.error %}<div class="card"><div class="prob">status not readable: {{ d.error }}</div></div>{% else %}
 <div class="dl"><div class="card">
- <div class="head"><h3>tools/download_videos.py</h3><span class="st {{ 'working' if d.state == 'downloading' else
-  'idle' if d.state == 'idle' else 'blocked' }}">{{ d.state }}</span></div>
+ <div class="head"><h3>tools/download_videos.py</h3><span class="btns">
+  {% if d.control %}<form method="post" action="downloads/resume"><button title="go on where it stopped">▶ Resume
+  </button></form>{% else %}<form method="post" action="downloads/pause"><button
+  title="freeze it where it is, the running download too">⏸ Pause</button></form>{% endif %}
+  {% if d.control != 'stopped' %}<form method="post" action="downloads/stop"
+  onsubmit="return confirm('Stop the video downloader? A running download is lost (Resume starts it again).')">
+  <button title="end it; cron does not start it again until Resume">⏹ Stop</button></form>{% endif %}
+  {% if d.control %}<span class="st {{ d.control }}">{{ d.control }}</span>{% else %}
+  <span class="st {{ 'working' if d.state == 'downloading' else
+  'idle' if d.state == 'idle' else 'blocked' }}">{{ d.state }}</span>{% endif %}</span></div>
+ {% if d.control %}<div class="small" style="color:var(--link)">{{ d.control }} from this page: Resume to go on
+  </div>{% endif %}
  {% if d.until %}<div class="small muted">until {{ hm(d.until) }}</div>{% endif %}
  <div class="row" style="margin-top:8px"><a href="downloads/todo"><b>{{ d.queue }}</b> videos to download</a>
   · <a href="downloads/done">downloaded</a>{% if d.rate %} ·
@@ -499,6 +555,11 @@ border-radius:16px;background:var(--bg);color:var(--fg);font-size:13px;cursor:po
   <a href="short">check them one by one</a>{% if s.short_open %} <b>({{ s.short_open }} to decide)</b>{% endif %}
   {% endif %}</td></tr>{% endfor %}
  </table>{% endif %}</div>{% endif %}
+{% set k = s.coords %}{% if k and k.built %}<h2>Mapping coordinates</h2><div class="card">
+ <div class="row"><a href="coords"><b>{{ k.n }}</b> rows GeoNames does not confirm</a>: {{ k.moves }} with a suggested
+  move{% if k.open %} · <b>{{ k.open }} to decide</b>{% endif %}{% if k.to_apply %} · {{ k.to_apply }} decided moves
+  not written into the mapping yet{% endif %}{% if k.applied %} · {{ k.applied }} applied{% endif %}
+  <span class="small muted">· checked {{ hm(k.built) }}</span></div></div>{% endif %}
 {% if s.batches %}<h2>Batches waiting for review</h2><div class="card"><table>
 <tr><th>channel</th><th>fetched on</th><th class="n">to review</th><th class="n">proposed</th></tr>
 {% for b in s.batches %}<tr><td>{{ b.name }}</td><td class="muted">{{ b.host }}</td>
@@ -636,6 +697,54 @@ def short_decide():
     return (jsonify(ok=True), 200) if ok else ('unknown video', 404)
 
 
+@app.route('/coords')
+def coords_page():
+    """A form to check the mapping coordinates GeoNames does not confirm (dashboards/coords_review.py)."""
+    data = coords_review.load()
+    return render_template_string(coords_review.PAGE, cases=data['cases'], built=data['built'],
+                                  counts=data.get('counts'), decisions=coords_review.DECISIONS,
+                                  issues=[k for k in coords_review.coords_check.ISSUES if k != 'ok'],
+                                  theme=PAGE[PAGE.index('<script>'):PAGE.index('</script>') + 9],
+                                  hm=lambda t: time.strftime('%d %b %H:%M', time.localtime(t)))
+
+
+@app.route('/coords/decide', methods=['POST'])
+def coords_decide():
+    d = request.get_json(force=True)
+    try:
+        got = coords_review.decide(str(d.get('id')), d.get('decision'), d.get('note'), d.get('to'))
+    except (ValueError, TypeError, IndexError):
+        return 'bad decision or point', 400
+    return (jsonify(ok=True, **got), 200) if got else ('unknown row', 404)
+
+
+@app.route('/worker/<host>/<action>', methods=['POST'])
+def worker_button(host, action):
+    """Pause (after the running batch), Stop (at once) or Resume a worker, then its card read again."""
+    if host not in sw.WORKERS or action not in FLAGS:  # both go into a command line
+        return 'unknown worker or action', 404
+    try:
+        sw.ssh(host, f'cd {flags_path(host)} && {FLAGS[action]}')
+    except Exception as e:
+        return f'{host} not reached: {str(e)[-200:]}', 502
+    w = worker(host)
+    snapshot['workers'] = [w if x['host'] == host else x for x in snapshot.get('workers', [])]
+    return redirect('../..', code=303)
+
+
+@app.route('/downloads/<action>', methods=['POST'])
+def downloads_button(action):
+    """Pause (frozen at once), Stop or Resume the video downloader, then its card read again."""
+    if action not in ('pause', 'stop', 'resume'):  # goes into a command line
+        return 'unknown action', 404
+    try:
+        sw.ssh(DOWNLOADER[0], f'{DOWNLOAD_CONTROL} {action}')
+    except Exception as e:
+        return f'{DOWNLOADER[0]} not reached: {str(e)[-200:]}', 502
+    snapshot['downloads'] = downloads()
+    return redirect('..', code=303)
+
+
 @app.route('/status.json')
 def status_json():
     return jsonify(snapshot)
@@ -650,6 +759,15 @@ def globe_page():
 @app.route('/globe.json')
 def globe_json():
     return jsonify(globe_data.globe())
+
+
+def coords_summary():
+    """The coordinates check for the page: rows to check, how many are decided and applied, when it was built."""
+    data = coords_review.load()
+    cases = data['cases']
+    return dict(built=data['built'], n=len(cases), moves=sum(c['suggestion'] == 'move' for c in cases),
+                open=sum(not c.get('decision') for c in cases), applied=sum(bool(c.get('applied')) for c in cases),
+                to_apply=sum(c.get('decision') in ('move', 'custom') and not c.get('applied') for c in cases))
 
 
 def _check_parse_log():
