@@ -7698,6 +7698,8 @@ DESC_DRIVE_REGION = re.compile(rf"(?i:(?:drive|driving|road ?trip)\s+(?:in|throu
                                rf"({_DESC_PLACE})(?:{_REGION_OF}({_DESC_PLACE}))?[\s.!]*$")
 
 
+HYPHEN_DRIVE = re.compile(rf"\s*({_DASH_WORD})-({_DASH_WORD})\s+(?i:(?:highway|motorway|autobahn|freeway|road|scenic|"
+                          r"night|morning|evening|[48]K|U?HD)\s+){0,3}(?i:drive|driving|road ?trip|trip|cruise)\b")
 BRACKET_PAIR = re.compile(rf"\(\s*({_DESC_PLACE})\s+(?:to|→|->)\s+({_DESC_PLACE})\s*\)")
 
 
@@ -7731,6 +7733,11 @@ def drive_title(title, description):
     # "Grevenmacher  - Trier VIRTUAL DRIVE 4K" (iTzKa42lapA; user, 2026-10-19): two places, no common word in either
     # ("Sunny Day - Time Lapse Driving" is none), then a drive word
     if (m := DASH_DRIVE.match(title)) and not {w.lower() for w in f'{m[1]} {m[2]}'.split()} & DASH_NOT_PLACE:
+        return f'from {m[1]} to {m[2]}'
+    # ... also joined by a bare hyphen when both are towns of the mapping and the two together are none: "Berlin-
+    # Dortmund Highway Drive" (fQ_a9o9YYe0; user, 2026-11-12: proposed as Berlin all through), not "Konongo-Odumase"
+    if (m := HYPHEN_DRIVE.match(title)) and m[1].lower() in _all_mapping_names() \
+            and m[2].lower() in _all_mapping_names() and f'{m[1]}-{m[2]}'.lower() not in _all_mapping_names():
         return f'from {m[1]} to {m[2]}'
     # ... or a title of just the two places, maybe with a note in brackets, a date or a sentence in lower case after:
     # "Uithoorn -  Amstelveen (lente)", "Ouderkerk - Amstelveen 20250818_201622" (JbFj1hxCmHk, robertlogger; user,
@@ -10532,6 +10539,7 @@ tr.entryhead td { border-top: 0; padding-top: 8px; }
 .locmap .paste-at.bad { border-color: #c00; background: #fee; }
 /* Leaflet's own layers reach z-index 1000: keep them under the sticky player and the locality suggestions */
 .routemap, .locmap .leafmap { position: relative; z-index: 0; }
+tr.seg.likely td.times::after { content: ' ✓ likely'; color: #2e7d32; font-size: 11px; }
 .locbox input, .locbox select { font-size: 14px; padding: 3px 6px; }
 .locwrap { position: relative; }
 .loc-suggestions { display: none; position: absolute; top: 100%; left: 0; min-width: 320px; z-index: 5;
@@ -10625,6 +10633,9 @@ background:#fff;color:#222;font-size:13px;cursor:pointer}
       <b>R</b> reject (both then on to the next) ·
       <b>T</b> approve rest · <b>Y</b> reject rest (of its video) · in a time box <b>↑↓</b> ±1 s, <b>←→</b> ±10 s</div>
     <div id="status"></div>
+    {% if likely %}<div class="keys">Likely approvals (✓ likely: no warning in the note, and this batch is 90%+
+      approved so far; 97% of such segments were approved): <button class="small" onclick="approveLikely()">Approve
+      all likely ones…</button></div>{% endif %}
     {% if waiting > open_videos | length %}<div class="keys">Showing {{ open_videos | length }} of {{ waiting }}
       videos left to decide; the next appear as you finish these.</div>{% endif %}
     <button id="apply" disabled>Apply approved segments to the mapping</button>
@@ -10697,7 +10708,8 @@ background:#fff;color:#222;font-size:13px;cursor:pointer}
       {% endif %}
     </td></tr>
   {% for s in e.segments %}
-    <tr class="seg {{ s.decision or '' }} {{ 'applied' if s.applied else '' }}"
+    <tr class="seg {{ s.decision or '' }} {{ 'applied' if s.applied else '' }}
+               {{- ' likely' if p.video in likely and not s.decision and not s.applied else '' }}"
         data-video="{{ p.video }}" data-entry="{{ ei }}" data-seg="{{ loop.index0 }}"
         data-start="{{ s.start }}" data-end="{{ s.end }}">
       <td class="times">{% set t0 = '%d:%02d' % (s.start // 60, s.start % 60) %}
@@ -11131,6 +11143,18 @@ document.addEventListener('keydown', e => {
   const tod = row.querySelector('button.tod');
   if (tod && (key === 'q' || key === 'w') && tod.classList.contains('night') !== (key === 'w')) toggleNight(tod);
 });
+async function approveLikely() {
+  // every undecided segment marked likely, after the reviewer says yes (never by itself)
+  const rows = [...document.querySelectorAll('tr.seg.likely')].filter(r =>
+    !r.classList.contains('approve') && !r.classList.contains('reject'));
+  if (!rows.length || !confirm(`Approve ${rows.length} likely segments of `
+      + `${new Set(rows.map(r => r.dataset.video)).size} videos?`)) return;
+  for (const r of rows) {
+    const btn = r.querySelector('button.yes');
+    if (btn && !(await decide(btn, 'approve'))) break;
+    r.classList.remove('likely');
+  }
+}
 async function decide(btn, decision, advance = false) {
   const row = btn.closest('tr');
   const res = await fetch('decide', { method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -11715,6 +11739,25 @@ async function refreshRoute(video) {
 </body></html>"""
 
 
+# Likely approvals (user, 2026-11-12: "pre-filling likely decisions … you only confirm"): in a batch whose decided
+# segments are LIKELY_RATE+ approved (LIKELY_MIN at least), an undecided segment of a video whose note warns of
+# nothing (LIKELY_WARN): of such reviewed segments 97% were approved (99.5% at a batch rate of 95%); the page marks
+# them and approves them all on one confirmed click, never by itself
+LIKELY_RATE, LIKELY_MIN = 0.9, 20
+LIKELY_WARN = re.compile(r'check|\?|walk|sped|ghost|edit|reject|driver|not facing|rear|dusk|night|drone|stopped|cut')
+
+
+def likely_videos(plan):
+    """The videos whose undecided segments the review page marks as likely approvals (see LIKELY_RATE)."""
+    done = [g['decision'] == 'approve' for p in plan for e in p.get('entries', []) for g in e['segments']
+            if g.get('decision')]
+    if len(done) < LIKELY_MIN or sum(done) < LIKELY_RATE * len(done):
+        return set()
+    return {p['video'] for p in plan if 'entries' in p and not any(
+        LIKELY_WARN.search(x) for x in (p.get('note') or '').split('; ')
+        if x and not x.startswith(('stationary', 'vehicle from', 'intro', 'outro', 'locality')))}
+
+
 def localities_route(p, plan_dir, mapping):
     """{'path', 'stops'} for the review page's map of a video with several localities and no car route (split by
     its chapters or a GPS overlay; user, 2026-10-11): the GPS track if the picture has one, else straight lines
@@ -11931,6 +11974,7 @@ def review(plan_path, port=None):
                                       routes={p['video']: r for p in plan if p['video'] in open_videos
                                               and not p.get('route')
                                               and (r := localities_route(p, plan_dir, mapping))},
+                                      likely=likely_videos(plan),
                                       max_merge_gap=MAX_MERGE_GAP_S, countries=COUNTRIES, vehicle_types=VEHICLE_TYPES,
                                       descriptions={v: d for v, d in descriptions.items() if d})
 
