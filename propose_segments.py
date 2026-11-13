@@ -5393,7 +5393,7 @@ def town_subdivision(sub):
 def provinces(country):
     """The name keys of a country's subdivisions that are no towns (see TOWN_SUBDIVISION)."""
     code = common.get_iso2_country_code(common.correct_country(country))
-    return frozenset(_name_key(sub.name) for sub in (code and pycountry.subdivisions.get(country_code=code)) or []
+    return frozenset(_name_key(sub.name) for sub in (code and _subdivisions(code)) or []
                      if not town_subdivision(sub))
 
 
@@ -5403,7 +5403,7 @@ def province_key(state, country):
     if _name_key(state) in provinces(country):
         return _name_key(state)
     code = common.get_iso2_country_code(common.correct_country(country))
-    return next((_name_key(sub.name) for sub in (code and pycountry.subdivisions.get(country_code=code)) or []
+    return next((_name_key(sub.name) for sub in (code and _subdivisions(code)) or []
                  if sub.code.split('-')[1] == state and _name_key(sub.name) in provinces(country)), None)
 
 
@@ -6494,7 +6494,7 @@ def place_localities(phrases, df, home=None):
     countries.pop(None, None)
     codes = tuple(sorted(countries))
     states = {_name_key(sub.name): sub.name for code in codes
-              for sub in pycountry.subdivisions.get(country_code=code) or []
+              for sub in _subdivisions(code) or []
               if not (code == 'US' and sub.code[3:] in US_TERRITORIES)  # Puerto Rico is a country here
               and not town_subdivision(sub)}
     # a state of the countries searched is the state ("Atlanta, Georgia"), else "GEORGIA" in a title is the country
@@ -6506,7 +6506,7 @@ def place_localities(phrases, df, home=None):
     named = {states[_name_key(p)] for p in phrases if _name_key(p) in states}
     if named:  # looked up in the countries of the states named only: LocationIQ finds "Henry Hudson Highway, New
         # York" (the parkway, OJm2GB-6-1E) in the US, and nothing when asked in every country of the mapping
-        codes = tuple(sorted({code for code in codes for sub in pycountry.subdivisions.get(country_code=code) or []
+        codes = tuple(sorted({code for code in codes for sub in _subdivisions(code) or []
                               if sub.name in named})) or codes
 
     def usable(hit):
@@ -6612,6 +6612,15 @@ def place_localities(phrases, df, home=None):
 REGION_KM = 150  # see place_localities
 
 
+def _subdivisions(code):
+    """pycountry's subdivisions of a country (ISO code), [] for none or no code: pycountry raises LookupError for
+    None, which a phrase naming a country with no code made (j_drives GuGwwIEi6Do, 2026-11-13)."""
+    try:
+        return pycountry.subdivisions.get(country_code=code) or []
+    except LookupError:
+        return []
+
+
 def _state_country_split(phrase, states, df):
     """[name, state, country] of a phrase ending in a state and its country ("PORT CARLING Ontario Canada"), or
     [state, country] for those two alone, else [phrase]; states: place_localities' states by _name_key. Not a state
@@ -6624,7 +6633,7 @@ def _state_country_split(phrase, states, df):
             if _name_key(state) not in states or _name_key(country) not in _country_keys():
                 continue
             code = common.get_iso2_country_code(common.correct_country(country))
-            if not any(sub.name == states[_name_key(state)] for sub in pycountry.subdivisions.get(country_code=code)
+            if not any(sub.name == states[_name_key(state)] for sub in _subdivisions(code)
                        or []):
                 continue
             there = [c for c in df['country'].dropna().unique()
@@ -6795,7 +6804,7 @@ def _hit_locality(hit, df, countries, at=None, named=False):
         named = rows[rows['locality'].map(_name_key) == _name_key(town or '')]
         # (not one filed under another real region of the country: Pfäffikon, ZH is no Pfäffikon SZ, 18 km off;
         # RJkHgoGnZbc, user, 2026-11-09)
-        real = {d.code.split('-')[-1] for d in pycountry.subdivisions.get(country_code=code) or []} - {state}
+        real = {d.code.split('-')[-1] for d in _subdivisions(code) or []} - {state}
         if town and at and not (named['state'] == state).any() and (
                 same := [r for r in named.itertuples() if pd.notna(r.lat) and r.state not in real
                          and _km(at[0], at[1], float(r.lat), float(r.lon)) <= METRO_KM]):
@@ -6838,7 +6847,7 @@ def _mapping_region(region_code, rows, at=None):
     country, code = region_code.split('-')[0], region_code.split('-')[-1]
     labelled = rows[rows['state'].notna() & rows['lat'].notna() & rows['lon'].notna()]
     try:
-        iso = {d.code.split('-')[-1] for d in pycountry.subdivisions.get(country_code=country) or []}
+        iso = {d.code.split('-')[-1] for d in _subdivisions(country) or []}
     except (KeyError, LookupError):
         return code
     own = labelled[~labelled['state'].isin(iso)]
@@ -6993,7 +7002,7 @@ _ARROW_TO = rf"[{CAPITALS}][\w'’.-]*(?: (?:nad|pod)(?: [\w'’.-]+){{1,2}}| [{
 _ARROW_FROM = rf"[{CAPITALS}][\w'’.-]*(?: [\w'’.-]+){{0,3}}"
 # the states of the countries whose titles write one after a drive's towns (see FROM_TO)
 _STATE_NAMES = '|'.join(sorted((re.escape(x.name) for c in ('US', 'CA', 'AU')
-                                for x in pycountry.subdivisions.get(country_code=c)), key=len, reverse=True))
+                                for x in _subdivisions(c)), key=len, reverse=True))
 # a town in a cab-view title, with a note in brackets maybe ("Sokołów Małopolski(podkarpackie)")
 _DASH_TOWN = rf"([{CAPITALS}][\w'’.-]*(?: [{CAPITALS}][\w'’.-]*){{0,3}})(?:\s*\([^)]*\))?"
 # ("from Gamagori City toward Toyokawa City", ER7UFbJuaq0; user, 2026-10-21)
@@ -7206,7 +7215,7 @@ def drive_ends(title, df, home=None):
     first, last = (re.sub(r'(?:\s+(?:[2-8]K|HDR|UHD|\d+\s?fps|\d{3,4}p))+$', '', x, flags=re.I) for x in (first, last))
     # a US state's code after a town, without a comma, is its state: "Mobile AL to Panama City Beach FL" (9F47RLjPHdM);
     # not "LA", which is Los Angeles ("Downtown LA to Koreatown")
-    names = {sub.code[3:]: sub.name for sub in pycountry.subdivisions.get(country_code='US') or []}
+    names = {sub.code[3:]: sub.name for sub in _subdivisions('US') or []}
     own = [names[c.group(1)] if (c := re.search(r'\s+([A-Z]{2})$', x)) and c.group(1) in names and c.group(1) != 'LA'
            else None for x in (first, last)]
     first, last = (re.sub(r'\s+[A-Z]{2}$', f', {o}', x) if o else x for x, o in zip((first, last), own))
@@ -7242,7 +7251,7 @@ def drive_ends(title, df, home=None):
     # "from Newburgh to Brewster, New York": both ends in the states the title names (Maine has both too); with
     # one state named, each end is looked up in it ("Newburgh, New York"); only states of a country the title
     # names ("de San Juan hacia Carolina, Puerto Rico" names no San Juan province of Argentina)
-    named = {sub.name for code in (only or codes) for sub in pycountry.subdivisions.get(country_code=code) or []
+    named = {sub.name for code in (only or codes) for sub in _subdivisions(code) or []
              if sub.name not in COUNTRIES  # Puerto Rico is a US subdivision but a country of the mapping
              and re.search(rf'\b{re.escape(sub.name)}\b', title)
              # as a qualifier of a place: after a comma or in an end's own words, not a road's name elsewhere in
@@ -7256,7 +7265,7 @@ def drive_ends(title, df, home=None):
              # "Lilongwe to Mponela" is no Mponela in that district (iWbS0H_Prdc: Mponela is in Dowa)
              and _name_key(sub.name) not in {_name_key(first), _name_key(last)}}
     if 'US' in (only or codes):  # by its code too: "Venice Beach to Malibu Beach, Los Angeles, CA" (k6V_9uIXVm4)
-        named |= {sub.name for sub in pycountry.subdivisions.get(country_code='US') or []
+        named |= {sub.name for sub in _subdivisions('US') or []
                   if sub.code.split('-')[1] in title_states(title) and sub.name not in COUNTRIES}
     # an end's own state is its alone: "New York City To Washington DC" is no New York City in DC
     named -= {o for o in own if o}
@@ -7292,7 +7301,7 @@ def drive_ends(title, df, home=None):
             name, region = (x.strip() for x in phrase.split(',', 1))
             hit = h if near and (h := _osm_place(name, codes, near, reach or 60)) and h[1] \
                 and _name_key(h[1]) == _name_key(region) else None
-            for sub in () if hit else (x for c in codes for x in pycountry.subdivisions.get(country_code=c) or []
+            for sub in () if hit else (x for c in codes for x in _subdivisions(c) or []
                                        if _name_key(x.name) == _name_key(region)):
                 if (h := _osm_place(f'{name} {sub.code.split("-")[1]}', codes, near, reach)) and h[3] == sub.code:
                     hit = (name, *h[1:])
@@ -8188,7 +8197,7 @@ def split_route(p, df, home=None, sig_path=None):
     timing = signs
     first = ((route or {}).get('path') or [None])[0]
     if first and (h := _osm_reverse(round(first[0], 4), round(first[1], 4))) and h[3]:
-        province = next((x.name for x in pycountry.subdivisions.get(country_code=h[2]) or [] if x.code == h[3]), None)
+        province = next((x.name for x in _subdivisions(h[2]) or [] if x.code == h[3]), None)
         if province and _name_key(province) != _name_key(h[0] or ''):
             timing = [x for x in signs if _name_key(x[1][0]) != _name_key(province)]
     when = sign_clock(timing, (route or {}).get('path'), df, t0, t1, marks, (route or {}).get('clock'))
@@ -9169,7 +9178,7 @@ def _mapping_state(osm_state, rows, country):
         return known[_name_key(bare)]
     # the mapping may write the code: "New South Wales" is NSW
     iso2 = common.get_iso2_country_code(common.correct_country(country))
-    code = next((sub.code.split('-')[1] for sub in (iso2 and pycountry.subdivisions.get(country_code=iso2)) or []
+    code = next((sub.code.split('-')[1] for sub in (iso2 and _subdivisions(iso2)) or []
                  if _name_key(sub.name) == _name_key(bare)), None)
     return code if code in states else bare
 
@@ -9544,7 +9553,7 @@ def writes_own_region(title, country):
     """Whether the title writes a place with a state or province of that country after it: "Portland, Oregon"."""
     code = common.get_iso2_country_code(common.correct_country(country)) if country else None
     return bool(code) and any(re.search(rf',\s*{re.escape(sub.name)}\b', title or '')
-                              for sub in pycountry.subdivisions.get(country_code=code) or [])
+                              for sub in _subdivisions(code) or [])
 
 
 def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True, single_city=True, new_only=False,
