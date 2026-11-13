@@ -9415,9 +9415,27 @@ def locate_now(p, df, home, sig_path=None, meta=None, boilerplate=frozenset()):
     # not after a GPS split that left one town (kddS8sGShKA: rural until 95:30, then Laughlin): the GPS decides
     if sig_path and len(es) == 1 and es[0].get('locality') and not p.get('route') and not es[0].get('gps') \
             and not es[0].get('chapters'):
-        es[0]['segments'] = night_from_title(*propose(sig := load_signals(sig_path, p.get('title')), ONE_PLACE),
-                                             sig, p.get('title'))[0]
-        p['note'] = re.sub(r'; (?:rural|highway) driving \d+-\d+s', '', p['note'])
+        es[0]['segments'] = one_place_segments(p, sig_path)
+
+
+# a one-town video whose title names a highway or a road trip still has its rural and highway stretches of this
+# long cut (user, 2026-11-13): of 9,432 reviewed one-town videos, in those with such a title the reviewer rejected
+# 37 h of such stretches of 10+ min and approved 7.5 h (143 videos); in the others the two were about even
+ONE_PLACE_HIGHWAY = {**PARAMS, 'quiet_min_s': 600}
+
+
+def one_place_segments(p, sig_path):
+    """The segments of a proposal p all in one town, proposed again from its signals without the rural and highway
+    cuts (ONE_PLACE: a quiet street of the town is no rural driving), but with the long ones of a highway or road
+    trip title (ONE_PLACE_HIGHWAY); p's note keeps only those cuts."""
+    title = p.get('title') or ''
+    highway = bool(HIGHWAY_TITLE.search(title) or motorway_title(title))
+    sig = load_signals(sig_path, title)
+    segments, notes = night_from_title(*propose(sig, ONE_PLACE_HIGHWAY if highway else ONE_PLACE), sig, title)
+    p['note'] = re.sub(r'; (?:rural|highway) driving \d+-\d+s', '', p.get('note') or '')
+    if (kept := [n for n in notes if re.fullmatch(r'(?:rural|highway) driving \d+-\d+s', n)]):
+        p['note'] = f"{p['note']}; {'; '.join(kept)} (cut: 10+ min, a highway or road trip title)".lstrip('; ')
+    return segments
 
 
 # a suggested town the reviewer replaces with a bigger city nearby, as a rule for later suggestions (user, 2026-10-13:
@@ -10262,9 +10280,7 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
                 p['note'] = (f"{p['note']}; the title drives {'to' if role == 'end' else 'from'} "
                              f"{es[0]['locality'][0]}: only its {role} is there, set the locality of the rest")
                 continue
-            es[0]['segments'] = night_from_title(*propose(sig := load_signals(sig_path, p.get('title')),
-                                                          ONE_PLACE), sig, p.get('title'))[0]
-            p['note'] = re.sub(r'; (?:rural|highway) driving \d+-\d+s', '', p.get('note') or '')
+            es[0]['segments'] = one_place_segments(p, sig_path)
     # nothing names a place, neither title, description, chapters nor GPS (iHwHqW98IRQ, "Driving tour view with my
     # friends on the holiday"; user, 2026-10-19: no way to learn its locality): the channel's city when it mostly
     # films in one, else left out. Of 38 reviewed such videos, the 4 of channels spread wider all rejected
