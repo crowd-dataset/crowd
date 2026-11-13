@@ -8887,7 +8887,8 @@ def town_sign_split(p, sig_path, df, home=None):
         return False
     # around the proposal's locality and the channel's home both: a first guess from a direction sign is off
     # (ZLskCAezdYs: Sigmaringen, 35 km from the Altshausen it drives into)
-    anchors = [a[3:5] for a in ((_locality_anchor(first, df) if first else None), home) if a and a[3] is not None]
+    at = _locality_anchor(first, df) if first else None
+    anchors = [a[3:5] for a in (at, home) if a and a[3] is not None]
     # ... and around the places the title names, regions too: "Allgäu" is 120 km from the channel's home, and
     # its "Oberstdorf" sign matched an Oberdorf near home (Hha1wy7hGto; user, 2026-10-28)
     code = _iso2(country)
@@ -8900,6 +8901,10 @@ def town_sign_split(p, sig_path, df, home=None):
     kind, pos = {x[0]: x[1] for x in places}, {x[0]: (x[2], x[3]) for x in places}
 
     def locality(name):  # the mapping's locality of that name right there (also written another way), else new
+        # the proposal's own town by its sign: the same entry, though only the title gave its state (Jenins, GR
+        # alternated with a Jenins of no state at each of its 16 signs, jXfTGRPt3TY)
+        if first and _same_name(first[0], name) and (not at or at[3] is None or _km(*pos[name], *at[3:5]) <= 5):
+            return list(first)
         for r in rows.itertuples():
             if _same_name(r.locality, name) and _km(*pos[name], float(r.lat), float(r.lon)) <= 5:
                 return [r.locality, r.state if isinstance(r.state, str) else None, r.country]
@@ -8933,8 +8938,8 @@ def town_sign_split(p, sig_path, df, home=None):
         nxt = ev[i + 1][0] if i + 1 < len(ev) else float('inf')
         stretches.append((int(t), int(min(end, nxt, max(t, seg['start']) + SIGN_TOWN_S.get(kind.get(name), 300))),
                           locality(name)))
-    if not stretches:
-        return False
+    if not stretches or all(loc == list(first or []) for *_, loc in stretches):
+        return False  # no sign but its own town's: nothing to split
     towns, rest = split_by_stretches(segs, stretches), []
     for g in segs:
         x = g['start']
@@ -8945,7 +8950,15 @@ def town_sign_split(p, sig_path, df, home=None):
             x = max(x, b)
     same = next((e for e in towns if first and e['locality'] == list(first)), None)
     if same:
-        same['segments'] = sorted(same['segments'] + rest, key=lambda g: g['start'])
+        joined = []
+        for g in sorted(same['segments'] + rest, key=lambda g: g['start']):
+            # its stretch and the rest meet within one segment: one piece again (a cut between segments stays)
+            if joined and g['start'] == joined[-1]['end'] and g['start'] not in {x['start'] for x in segs} \
+                    and g['night'] == joined[-1]['night'] and set(g) == set(joined[-1]) == {'start', 'end', 'night'}:
+                joined[-1]['end'] = g['end']
+            else:
+                joined.append(g)
+        same['segments'] = joined
     elif rest:
         towns.insert(0, {**ents[0], 'segments': rest})
     p['entries'] = towns
