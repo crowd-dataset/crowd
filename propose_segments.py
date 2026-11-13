@@ -6605,11 +6605,25 @@ def place_localities(phrases, df, home=None):
                 typo := _near_home_typo(bare, df, home)):
             yield typo, phrase
             continue
+        # a phrase of ordinary words only, with no state or country after it ("THE WORLD", "Big City", "Experience",
+        # "Scenes", "The Rain"), names no place unless the place found is called so, or lies near home: of 1,491
+        # reviewed videos located from a phrase, 25 had such a phrase 100+ km from home (or no home), 22 of them wrong
+        # (user, 2026-11-13: "Irina", "Raya", "Costco" and the like in town guesses)
+        if hit and not itself and ',' not in phrase and plain_words(bare) and (
+                not home or _km(home[3], home[4], hit[4], hit[5]) > PLAIN_FAR_KM):
+            continue
         if usable(hit) and (loc := _hit_locality(hit, df, countries, named=bool(itself))):
             yield loc, phrase
 
 
 REGION_KM = 150  # see place_localities
+PLAIN_FAR_KM = 100  # see place_localities
+
+
+def plain_words(phrase):
+    """Whether a phrase is ordinary words only ("The Rain", "Big City"), articles and numbers aside."""
+    words = re.findall(r"[^\W\d_]+", phrase or '')
+    return bool(words) and all(ordinary(w) or w.lower() in ('the', 'of', 'a', 'an') for w in words)
 
 
 def _subdivisions(code):
