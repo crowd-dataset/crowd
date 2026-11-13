@@ -7380,6 +7380,19 @@ def drive_ends(title, df, home=None):
                 other = alone
             a, b = (big, other) if i == 0 else (other, big)
             break
+    # ends in two countries the title does not name, over ABROAD_KM apart: the one far from the channel's home is a
+    # namesake, looked for near the other end ("Vancouver to Richmond" was Richmond, Virginia, 3,800 km off;
+    # "Driving to LAX" Lax in Valais, from Los Angeles; user, 2026-11-13), and with both far from home neither is
+    # known ("Drive in Prague": Saint-Apollinaire to Ulvik). Of 324 reviewed drives "from A to B", 4 had such ends,
+    # all wrong
+    if a and b and home and a[2] != b[2] and not only and _km(a[4], a[5], b[4], b[5]) > ABROAD_KM:
+        off = [_km(home[3], home[4], x[4], x[5]) for x in (a, b)]
+        if min(off) > ABROAD_KM:
+            a = b = None
+        else:
+            far = 0 if off[0] > off[1] else 1
+            again = place((first, last)[far], (b, a)[far][4:6], 300)
+            a, b = (again, b) if far == 0 else (a, again)
     # an end the title names as it is is that place, not the bigger town nearby a village counts for (fw3zM-XDdkM:
     # "TĂLMACIU to CISNĂDIOARA" ends in Cisnădioara, 434 people, not in Cisnădie 3 km off; user, 2026-10-23)
     as_named = [bool(x and x[0] and (_name_key(x[0]) == _name_key(p) or _same_name(x[0], re.sub(r',.*', '', p))))
@@ -10145,10 +10158,19 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
             # 2026-10-24). Of the reviewed videos located from their description it changes 3: Mystic, Dayton, Chicago
             named = [f'{a}, {b}' for a, b in TOWN_STATE.findall(description) if b.lower() in _state_and_country_keys()
                      and re.search(rf'\b{re.escape(a)}\b', p['title'] or '', re.I)]
-            found = found or (named and place_locality(named[:3], df[in_reach], home))
+            # the description's places in the countries the title names, when it names any: "Driving in Switzerland"
+            # whose description tells of the "Rhine Gorge" (the Ruinaulta in Graubünden) is not in Sankt Goar on the
+            # Middle Rhine (pjLHZFohk50; user, 2026-11-13). Of 2,079 reviewed videos whose title names a country,
+            # 18 were approved elsewhere, most by a country's name in a longer one ("Jersey City", "Mt. Lebanon",
+            # "Jamaica Queens"), which does not count here
+            told = [c for c in title_countries(p['title']) if not re.search(
+                rf"\b(?:Mt\.?|Mount|New|East|West|North|South)\s+{re.escape(c)}\b|\b{re.escape(c)}\s+[A-Z]",
+                p['title'] or '')]
+            told_reach = df['country'].isin(told) if told else in_reach
+            found = found or (named and place_locality(named[:3], df[told_reach], home))
             # ... the place YouTube shows above the comments, as the uploader set it, before the description's
             found = found or youtube_location(metas.get(p['video'], {}), df, home)
-            found = found or place_locality(place_phrases(description, limit=3), df[in_reach], home)
+            found = found or place_locality(place_phrases(description, limit=3), df[told_reach], home)
             # ... else the district on most of the number plates read (in the country the title names, else the
             # channel's)
             found = found or plate_locality(os.path.join(out_dir, f"{p['video']}_signals.npz"), df, home,
@@ -10160,7 +10182,7 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
             drive = FROM_TO[0].search(description)
             there = None if home and any(c != home[2] for c in title_countries(p['title'])) else home
             found = found or (drive and place_locality([ph for x in drive.groups()[:2] for ph in place_phrases(x)],
-                                                       df[in_reach], there))
+                                                       df[told_reach], there))
             # a freeway drive whose only place is a region or a sight, or none: no town to give it, unless its GPS
             # overlay says (HXJ9w8h4CwA, "Southern California freeway drive" was Los Angeles; user, 2026-10-16)
             sig_path = os.path.join(out_dir, f"{p['video']}_signals.npz")
