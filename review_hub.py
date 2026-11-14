@@ -448,13 +448,15 @@ def add_videos(df, have, other, source, only=None):
 
 
 def video_segments(df):
-    """{video: ((locality, state, country), (times of day, starts, ends), row index, its place in the row)}."""
+    """{(video, (locality, state, country)): ((times of day, starts, ends), row index, its place in the row)}: one
+    entry per row a video is in (2026-11-14: keyed by video alone, 19 of Shadab's 242 cut corrections in 4f23c62b,
+    all of videos in several rows, were not taken in)."""
     out = {}
     for i, r in df.iterrows():
         nested = [add_video._safe_literal_eval(r[c], []) for c in NESTED]
         place = (r['locality'], '' if pd.isna(r['state']) else r['state'], r['country'])
         for k, v in enumerate(add_video._parse_flat_list_cell(r['videos'])):
-            out[v] = (place, tuple(tuple(x[k]) if k < len(x) else () for x in nested), i, k)
+            out[(v, place)] = (tuple(tuple(x[k]) if k < len(x) else () for x in nested), i, k)
     return out
 
 
@@ -474,13 +476,14 @@ def pull_github_mapping(df, have, base=None, there='origin/main'):
     old = pd.read_csv(io.StringIO(git('show', base)))
     df, taken = add_videos(df, have, remote, 'GitHub', only=videos(remote) - videos(old))
     was, now, here = video_segments(old), video_segments(remote), video_segments(df)
-    for v, (place, segs, _, _) in now.items():
-        if v not in was or v not in here or segs in (was[v][1], here[v][1]) or place != was[v][0]:
+    for key, (segs, _, _) in now.items():
+        v = key[0]
+        if key not in was or key not in here or segs in (was[key][0], here[key][0]):
             continue
-        if here[v][1] != was[v][1]:
+        if here[key][0] != was[key][0]:
             taken.append(f'{v} (its segments changed here and on GitHub: kept as here)')
             continue
-        i, k = here[v][2], here[v][3]
+        i, k = here[key][1], here[key][2]
         for c, val in zip(NESTED, segs):
             cell = add_video._safe_literal_eval(df.at[i, c], [])
             cell[k] = list(val)
