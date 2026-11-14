@@ -6830,7 +6830,13 @@ def _hit_locality(hit, df, countries, at=None, named=False):
     if town and named:
         town = re.sub(r' Township$', '', town)
     elif town and at:
-        town = _major_town(at[0], at[1], town, kind) or town
+        major = _major_town(at[0], at[1], town, kind)
+        # ... in its own state: Heidiland's point is in Graubünden, its Bad Ragaz in St. Gallen (70ajJy6tPBs, tvfjm;
+        # user, 2026-11-14)
+        p = major and next((p for p in _nearby_places(at[0], at[1]) or [] if p[0] == major), None)
+        if p and (there := _country_region_at(p[2], p[3])) and there[0] == code and (there[1] or there[2]):
+            region_code, region = there[1], there[2]
+        town = major or town
     if code not in countries:
         return None
     rows = df[df['country'] == countries[code]]
