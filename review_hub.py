@@ -413,12 +413,16 @@ FLAT, NESTED = ('videos', 'vehicle_type', 'upload_date', 'channel'), ('time_of_d
 
 def add_videos(df, have, other, source, only=None):
     """The videos of mapping table other that df lacks (or only those of only), added to the row of the same
-    locality, state and country, else as a new row. Returns (df, ["video (locality, from source)"]); have grows."""
+    locality, state and country, else as a new row. Returns (df, ["video (locality, from source)"]); have grows.
+    A video in several rows of other comes with all of them (2026-11-14: 42d621bd took 3QQxRgd3B0Q's Girvan row of
+    Olena's file but not its Maybole one, and o8WYso-WtVs without her new row Cairnryan)."""
     added = []
+    wanted = {v for cell in other['videos'] for v in add_video._parse_flat_list_cell(cell)
+              if v not in have and (only is None or v in only)}
     for _, r in other.iterrows():
         cells = {c: add_video._parse_flat_list_cell(r[c]) for c in FLAT}
         cells.update({c: add_video._safe_literal_eval(r[c], []) for c in NESTED})
-        new = [i for i, v in enumerate(cells['videos']) if v not in have and (only is None or v in only)]
+        new = [i for i, v in enumerate(cells['videos']) if v in wanted]
         if not new:
             continue
         state = '' if pd.isna(r['state']) else r['state']
@@ -439,7 +443,7 @@ def add_videos(df, have, other, source, only=None):
             row['id'] = int(pd.to_numeric(df['id'], errors='coerce').max()) + 1
             df = pd.concat([df, pd.DataFrame([row])[df.columns]], ignore_index=True)
         added += [f"{cells['videos'][k]} ({r['locality']}, from {source})" for k in new]
-        have |= {cells['videos'][k] for k in new}
+    have |= wanted
     return df, added
 
 
