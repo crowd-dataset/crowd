@@ -5409,8 +5409,10 @@ TOWN_SUBDIVISION = re.compile(r'municipal|city|town|commune|borough|council|quar
 def town_subdivision(sub):
     """Whether a pycountry subdivision is a town (TOWN_SUBDIVISION), or a prefecture within a region, named after
     its seat: "Fes, Morocco" is Fez, not the prefecture of Fès (zCDw5nE7qP0; user, 2026-11-05); Japan's prefectures
-    are regions of their own."""
-    return bool(TOWN_SUBDIVISION.search(sub.type) or sub.type == 'Prefecture' and sub.parent_code)
+    are regions of their own. So is a district within a region: Czechia's okresy, Bangladesh's and Uganda's districts
+    ("Nová Ves - Mělník - Roudnice nad Labem - Litoměřice" lost Mělník and Litoměřice as regions, aQexfOymIkw; user,
+    2026-11-14)."""
+    return bool(TOWN_SUBDIVISION.search(sub.type) or sub.type in ('Prefecture', 'District') and sub.parent_code)
 
 
 @lru_cache(maxsize=None)
@@ -5640,10 +5642,14 @@ def chapter_localities(chapters, df, near_home=None, near=None, km=150, first=No
                 loc = None
         # ... also with its state or country after a comma ("Medina, Texas": ODe2OYlGuP4; user, 2026-10-24)
         place = re.sub(r",\s*[A-Z][\w'.-]*(?: [A-Z][\w'.-]*){0,2}$", '', place)
+        # ... and of two towns side by side the first, else the second: "Gampel / Steg", "Leuk/Susten" (Bs8KDqeeSEE;
+        # OpenStreetMap finds no town Leuk near Sion)
+        two = re.fullmatch(r"(.+?)\s*/\s*([A-ZÀ-Þ][\w'.-]*(?: [A-ZÀ-Þ][\w'.-]*){0,2})", place)
         # (as a name is written: "MANDRIA VILLAGE" is Mandria)
-        if not loc and near_home and re.fullmatch(r"(?:[A-Z][\w'.-]*\s?){1,4}", place):
-            plain = plain_place(place) if place.isupper() else place.strip()
-            loc = near_home(plain) or (plain != place.strip() and near_home(place.strip())) or None
+        for one in (two.groups() if two else (place,)):
+            if not loc and near_home and re.fullmatch(r"(?:[A-ZÀ-Þ][\w'.-]*\s?){1,4}", one):
+                plain = plain_place(one) if one.isupper() else one.strip()
+                loc = near_home(plain) or (plain != one.strip() and near_home(one.strip())) or None
         locs.append(loc)
     named = [loc for loc in locs if loc and loc != 'open road']
     if not named:
@@ -8757,6 +8763,8 @@ SIGN_DISTRICT = re.compile(r"(?i)^\W*(?:lkr|landkreis|kreis|gemeinde|gem|gde|goe
                            r"|bez|kanton"
                            r"|(?:gro(?:ß|ss)e\s+)?kreisstad\w*|gro(?:ß|ss)e)\b")
 SIGN_NAME = re.compile(r"^[A-ZÄÖÜ][A-Za-zÄÖÜäöüß.\-' ]{3,}$")
+SIGN_SPEED = re.compile(r'^\W*(?:[2-9]0|1[0-2]0)\W*$')  # a speed limit's number, read beside a town sign
+SIGN_MARK_SHARE = 0.3  # of the frames with text read: a text read in so many is the channel's mark (town_sign_events)
 SIGN_TOWN_S = {'city': float('inf'), 'town': 900}  # the longest a town's stretch from its sign runs; a village 300 s
 SIGN_LATE_S = 30  # a segment starting this long after a sign is still in its town
 SIGN_EMPTY_LATE_S = 120  # ... in a proposal with no locality (35ao15Ju1Nk: 79 s; Gl9YlbRfD4w's 142 s was not)
@@ -8825,13 +8833,26 @@ def town_sign_events(read, places):
     def wordy(x):
         return re.search(r'[A-Za-zÄÖÜäöü]{3,}', x)
     times = sorted(read, key=float)
-    raw = {u: list(read[u]) for u in times}
+    # a channel's mark read in most frames ("Travel Video FJM", also as "Travel", "FJM", "Traval Video FJM") is no
+    # sign, and read with every sign it hid them all: none read alone (8S_2qLyZ2k8's "Wangs" at 1:54; user,
+    # 2026-11-14: "videos still miss recognition based on signs")
+    seen = Counter(k for u in times for k in {_sign_key(x) for x in read[u]} if len(k) >= 4)
+    marks = [k for k, n in seen.items() if n >= SIGN_MARK_SHARE * len(times)]
+
+    def mark(x):
+        k = _sign_key(x)
+        return bool(k) and any(len(k) >= 3 and k in m or difflib.SequenceMatcher(None, k, m).ratio() >= 0.8
+                               for m in marks)
+    raw = {u: [x for x in read[u] if not mark(x)] for u in times}
 
     def words_at(u):  # the texts read but the sign's district line and fragments of a longer word read with them
         ws = [x.strip(' |)(]![') for x in raw[u] if wordy(x) and not SIGN_DISTRICT.match(x)]
         return [w for w in ws if not any(o != w and _sign_key(o).startswith(_sign_key(w)[:4]) and len(o) > len(w)
                                          for o in ws)]
-    read = {u: words_at(u) + [x for x in raw[u] if re.search(r'\d', x)] for u in times}
+    # (but a speed limit's bare number: Switzerland puts "50" beside its town signs, 8S_2qLyZ2k8's Wangs)
+    read = {u: words_at(u) + [x for x in raw[u] if re.search(r'\d', x) and not SIGN_SPEED.match(x)] for u in times}
+    # (a frame with nothing but a speed limit or the channel's mark is no other sign)
+    quiet = {u for u in times if all(SIGN_SPEED.match(x) for x in raw[u])}
     lone = {u for u in times
             if len([x for x in read[u] if wordy(x)]) == 1 and not any(re.search(r'\d', x) for x in read[u])}
 
@@ -8868,7 +8889,8 @@ def town_sign_events(read, places):
         t = float(u)
         if u in lone:
             m0 = next((m for x in read[u] if (m := match(x))), None)
-            if any(v not in lone and not (m0 and same_sign(v, m0[0])) for v in times if 0 < abs(float(v) - t) <= 1):
+            if any(v not in lone and v not in quiet and not (m0 and same_sign(v, m0[0]))
+                   for v in times if 0 < abs(float(v) - t) <= 1):
                 continue  # a name among others a moment before or after: a direction sign or a shop
         texts = [x.strip(' |)(]![') for x in read[u] if x.strip()]
         words = [x for x in texts if wordy(x)]
@@ -9244,12 +9266,15 @@ def _mapping_state(osm_state, rows, country):
     bare = re.sub(r'\s+(?:Prefecture|Province|State|Region|Governorate|County)$', '', osm_state)
     states = set(rows['state'].dropna().unique()) if rows is not None else set()
     known = {_name_key(s): s for s in states}
-    if _name_key(bare) in known:
-        return known[_name_key(bare)]
+    # (a name in two languages, "Valais/Wallis", is either: Bs8KDqeeSEE's Sion came as a second Sion of no "VS")
+    names = [bare] + [x.strip() for x in bare.split('/') if '/' in bare]
+    if (hit := next((known[_name_key(x)] for x in names if _name_key(x) in known), None)):
+        return hit
     # the mapping may write the code: "New South Wales" is NSW
     iso2 = common.get_iso2_country_code(common.correct_country(country))
+    keys = {_name_key(x) for x in names}
     code = next((sub.code.split('-')[1] for sub in (iso2 and _subdivisions(iso2)) or []
-                 if _name_key(sub.name) == _name_key(bare)), None)
+                 if _name_key(sub.name) in keys or any(_name_key(x) in keys for x in sub.name.split('/'))), None)
     return code if code in states else bare
 
 
@@ -9456,6 +9481,10 @@ def locate_now(p, df, home, sig_path=None, meta=None, boilerplate=frozenset()):
             and not motorway_title(meta.get('title')) and 'screen_text' in (sig_files := np.load(sig_path)).files:
         # a town's name on the screen in the opening (QcYf2VZqS-Y: "Sacramento" at 0:26; user, 2026-10-13)
         texts = {float(t): x for t, x in json.loads(str(sig_files['screen_text'])).items()}
+        # ... an opening not read (its stream refused) in a video whose signs were read: their first minute, which
+        # has its labels too (qmtrDOckk_Q: "Salzburg, Population: 157245" at 0:31; user, 2026-11-14)
+        if not texts and 'signs' in sig_files.files:
+            texts = {float(t): x for t, x in json.loads(str(sig_files['signs'])).items() if float(t) <= 61}
         # within the states and countries the title names: "Hatcher Pass, Alaska" is no Earth, TX from a map's
         # "Earth" at 0:01 (dqgfuV2HLeE; user, 2026-10-16)
         named_states, named_countries = title_states(meta.get('title') or ''), title_countries(meta.get('title') or '')
@@ -10226,7 +10255,11 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
         # is that town, as its sign would be (JszmgYHlqug, Lucerne: Hergiswil, Stans, Sarnen, Sachseln, Lungern;
         # user, 2026-11-13: "chapters show localities")
         base = named_ends[0] if named_ends else titled
-        if base and base[2] in TOWN_SIGN_COUNTRIES and (a0 := _locality_anchor(base, df)) and a0[3] is not None:
+        # (a town not in the mapping yet where OpenStreetMap has it: Bs8KDqeeSEE's "DRIVE TO SION", its chapters Visp,
+        # Raron, Leuk, Sion, Vétroz, Ardon; user, 2026-11-14)
+        if base and base[2] in TOWN_SIGN_COUNTRIES and (a0 := _locality_anchor(base, df) or (
+                (h := _osm_place(base[0], (_iso2(base[2]),))) and h[4] is not None and (*base[:3], h[4], h[5]))) \
+                and a0[3] is not None:
             near_town = partial(_end_or_town, ends=named_ends, around=(*base[:3], a0[3], a0[4]), df=df)
         stretches = chapter_localities(video_chapters(metas[p['video']]), df[reach], near_town,
                                        near=at[3:5] if at else None, first=start or titled, open_road=bool(ends))
