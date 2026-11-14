@@ -6142,9 +6142,17 @@ def _nominatim(method, *args, **kwargs):
 US_TERRITORIES = {'PR', 'GU', 'VI', 'AS', 'MP'}
 
 
+# ... and Hong Kong and Macau under China ("CN-HK" one level up from the states): the mapping has them as countries
+# (Hong Kong and Kwai Chung came as Chinese towns of no state; 2026-11-14)
+CN_SARS = {'CN-HK': 'HK', 'CN-MO': 'MO'}
+
+
 def _country_code(address):
-    """The ISO country code of an address, a US territory as its own: Adjuntas is in PR, not the US."""
+    """The ISO country code of an address, a US territory as its own: Adjuntas is in PR, not the US; Hong Kong and
+    Macau too."""
     code, region = (address.get('country_code') or '').upper(), _region_code(address)
+    if code == 'CN' and (sar := CN_SARS.get(address.get('ISO3166-2-lvl3') or '')):
+        return sar
     return region[3:] if code == 'US' and region[3:] in US_TERRITORIES else code
 
 
@@ -6248,7 +6256,8 @@ def _osm_place(phrase, country_codes, near=None, reach_km=None, home=None):
         # Brisbane channel's home, was not found: 5ctGFTcAT4s; user, 2026-10-31)
         box = {'viewbox': [(max(near[0] - deg, -90), max(near[1] - deg, -180)),
                            (min(near[0] + deg, 90), min(near[1] + deg, 180))], 'bounded': True}
-    codes = set(country_codes) | ({'US'} if US_TERRITORIES & set(country_codes) else set())
+    codes = set(country_codes) | ({'US'} if US_TERRITORIES & set(country_codes) else set()) \
+        | ({'CN'} if set(CN_SARS.values()) & set(country_codes) else set())
     found = _nominatim('geocode', phrase, exactly_one=False, limit=10, country_codes=sorted(codes),
                        addressdetails=True, language='en', timeout=15, **box) or []
     wanted = _name_key(phrase)
@@ -6424,6 +6433,12 @@ def _name_key(name):
     # "St. Clair" (OpenStreetMap) is "Saint Clair" (GeoNames); Mt. and Ft. alike
     name = re.sub(r'\b(?:st|saint) ', 'saint ', re.sub(r'\bmt ', 'mount ', re.sub(r'\bft ', 'fort ', name)))
     return re.sub(r' (?:emirate|city|province|prefecture|governorate|municipality|county)$', '', name)
+
+
+# a description's route: "Route: Fläsch - Maienfeld - Jenins - Malans - Maienfeld - Heidihof" (70ajJy6tPBs)
+ROUTE_LINE = re.compile(r'(?im)^\W*(?:route|itinerary|strecke|fahrtroute|reiseroute|percorso|itinéraire|trajet|ruta|'
+                        r'rota)\b\s*[:\-–]\s*(.+)$')
+ROUTE_SEP = re.compile(r'\s+[-–—>→]+\s+|\s*[→>]\s*')
 
 
 def place_locality(phrases, df, home=None):
@@ -7021,14 +7036,37 @@ def _region_at(lat, lon):
     return a.get('ISO3166-2-lvl4') or a.get('state') or None
 
 
-@_remembered
+REGIONS_AT = os.path.join('_output', 'proposals', 'regions_at.json')  # _country_region_at's answers, kept
+_REGIONS_AT = {}
+
+
 def _country_region_at(lat, lon):
-    """(ISO country code, first-level region's ISO code, its name) of the place at a point, by OpenStreetMap; None
-    when it does not answer."""
-    r = _nominatim('reverse', (round(lat, 3), round(lon, 3)), zoom=10, addressdetails=True, language='en',
-                   timeout=15)
+    """(ISO country code, first-level region's ISO code, its name) of the place at a point, by OpenStreetMap, kept in
+    REGIONS_AT (workers and re-proposals ask the same towns again, and OpenStreetMap refuses mini when it is asked
+    too often: 2026-11-14); None when it does not answer."""
+    key = f'{round(lat, 3)},{round(lon, 3)}'
+    if not _REGIONS_AT:
+        with contextlib.suppress(OSError, ValueError), open(REGIONS_AT) as f:
+            _REGIONS_AT.update(json.load(f))
+    if key in _REGIONS_AT:
+        return tuple(_REGIONS_AT[key])
+    try:
+        r = _nominatim('reverse', (round(lat, 3), round(lon, 3)), zoom=10, addressdetails=True, language='en',
+                       timeout=15)
+    except (GeopyError, requests.RequestException, ValueError):
+        LOOKUP_FAILURES[0] += 1
+        return None
     a = (r.raw.get('address') or {}) if r else {}
-    return (a.get('country_code') or '').upper() or None, a.get('ISO3166-2-lvl4'), a.get('state')
+    _REGIONS_AT[key] = [_country_code(a) or None, a.get('ISO3166-2-lvl4'), a.get('state')]
+    with plan_lock(REGIONS_AT):
+        known = {}
+        with contextlib.suppress(OSError, ValueError), open(REGIONS_AT) as f:
+            known = json.load(f)
+        known[key] = _REGIONS_AT[key]
+        with open(REGIONS_AT + '.tmp', 'w') as f:
+            json.dump(known, f)
+        os.replace(REGIONS_AT + '.tmp', REGIONS_AT)
+    return tuple(_REGIONS_AT[key])
 
 
 # a parish of a municipality (Venezuela, Ecuador, Portugal): a part of a town, never one of its own (user, 2026-10-25:
@@ -10348,6 +10386,17 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
                              + ': set the locality').lstrip('; ')
                 continue
             found = next(iter(in_title.items()), None)
+            # where drives are split at their town signs, a region or a sight in the title ("Heidiland" as Bad Ragaz)
+            # gives way to the first town of the description's route ("Route: Fläsch - Maienfeld - Jenins - Malans",
+            # 70ajJy6tPBs; user, 2026-11-14). Not elsewhere: AroundSydney's routes start in suburbs the reviewer
+            # counts as Sydney, WorldTravelaholic's at airports (of 190 reviewed videos with a route, 48 start at the
+            # first locality approved)
+            route = ROUTE_LINE.search(description)
+            stops = [x.strip() for x in ROUTE_SEP.split(route.group(1)) if x.strip()] if route else []
+            if found and found[0][2] in TOWN_SIGN_COUNTRIES and len(stops) > 1 \
+                    and _name_key(found[0][0]) not in _name_key(found[1]) \
+                    and not any(_same_name(found[0][0], x) for x in stops):
+                found = place_locality(stops[:1], df[df['country'] == found[0][2]], home) or found
             # ... a "Town, State" of the description whose town the title names first: "Mystic, Connecticut" in
             # "Sunset in Mystic 4K Drive", not the "CITY COMPS: Newport, Rhode Island" above it (SbnPMoc4wuM; user,
             # 2026-10-24). Of the reviewed videos located from their description it changes 3: Mystic, Dayton, Chicago
