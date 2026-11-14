@@ -489,6 +489,34 @@ def pull_github_mapping(df, have, base=None, there='origin/main'):
             cell[k] = list(val)
             df.at[i, c] = add_video.compact_nested_list(cell)
         taken.append(f'{v} (segments from GitHub)')
+    # an entry taken out on GitHub and left as it was here goes here too (2026-11-14: Shadab removed j9cvkgja00A from
+    # Wilhelmsdorf in 4f23c62b and only his segment changes were taken in); a row left empty goes when GitHub lacks it
+    drop = {}
+    moved = {key[0] for key in now if key not in was and key not in here}  # put in another row there: not taken in
+    for key, (segs, i, k) in here.items():
+        if key in was and key not in now:
+            if key[0] in moved:
+                taken.append(f'{key[0]} (moved to another row on GitHub: kept as here, move it by hand)')
+                continue
+            if segs != was[key][0]:
+                taken.append(f'{key[0]} (removed from {key[1][0]} on GitHub, changed here: kept as here)')
+                continue
+            drop.setdefault(i, []).append(k)
+            taken.append(f'{key[0]} (removed from {key[1][0]} as on GitHub)')
+    places = {(r.locality, '' if pd.isna(r.state) else r.state, r.country) for r in remote.itertuples()}
+    empty = []
+    for i, ks in drop.items():
+        for c in FLAT + NESTED:
+            parse = add_video._parse_flat_list_cell if c in FLAT else lambda s: add_video._safe_literal_eval(s, [])
+            cell = parse(df.at[i, c])
+            cell = [x for j, x in enumerate(cell) if j not in ks]
+            df.at[i, c] = (add_video.compact_flat_list if c in FLAT else add_video.compact_nested_list)(cell)
+        r = df.loc[i]
+        if not add_video._parse_flat_list_cell(r['videos']) and \
+                (r['locality'], '' if pd.isna(r['state']) else r['state'], r['country']) not in places:
+            empty.append(i)
+    if empty:
+        df = df.drop(index=empty).reset_index(drop=True)
     merged_with = blob
     return df, taken
 
