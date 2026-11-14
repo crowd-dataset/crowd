@@ -3290,7 +3290,10 @@ def gps_track(video_id, duration, opening=None):
 def _stream(video_id):
     """(url, HTTP headers) of the video's 720p stream: YouTube refuses it (403) without the headers yt-dlp asked
     for it with."""
-    m = json.loads(_yt_dlp('-j', '-f', 'bv*[height<=720][ext=mp4]/bv*[height<=720]', _url(video_id)))
+    # an https stream first: ffmpeg seeks an HLS playlist slowly, past its timeout (lin5080 got only format 609 for
+    # Ejsknub-vjQ on 2026-11-13, an hour after mini and the workers got https ones)
+    m = json.loads(_yt_dlp('-j', '-f', 'bv*[height<=720][ext=mp4][protocol=https]/bv*[height<=720][protocol=https]/'
+                                       'bv*[height<=720][ext=mp4]/bv*[height<=720]', _url(video_id)))
     return m['url'], ''.join(f'{k}: {v}\r\n' for k, v in (m.get('http_headers') or {}).items())
 
 
@@ -3483,7 +3486,22 @@ def opening_texts(video_id, start=1, upto=61, step=None, keep_dir=None):
             return (float(t), shot) if os.path.exists(shot) else None
         with ThreadPoolExecutor(3) as pool:  # the frames side by side from the stream (3: YouTube is slow at times)
             shots = [x for x in pool.map(grab, np.arange(start, upto, step)) if x]
+        if not shots and start < 2:
+            # no frame from the stream: the opening downloaded, its frames taken from the file (the openings of
+            # Ejsknub-vjQ and RYIUjdOlMXw, j_drives, were lost so, and with them the maps of their routes; user,
+            # 2026-11-13: "map on this frame shows route")
+            print('  opening: no frame from the stream, downloading it', flush=True)
+            _yt_dlp('-q', '-f', 'bv*[height<=720][ext=mp4]/bv*[height<=720]', '--download-sections',
+                    f'*0-{upto + 1:.0f}', '-o', os.path.join(work_dir, 'open.%(ext)s'), _url(video_id), timeout=600)
+            clip = next(os.path.join(work_dir, n) for n in os.listdir(work_dir) if n.startswith('open.'))
+            for t in np.arange(start, upto, step):
+                shot = os.path.join(work_dir, f'{t:.0f}.png')
+                subprocess.run(['ffmpeg', '-v', 'error', '-y', '-ss', f'{t:.1f}', '-i', clip, '-frames:v', '1', shot],
+                               capture_output=True, timeout=120, check=False)
+                if os.path.exists(shot):
+                    shots.append((float(t), shot))
         if not shots:
+            print('  opening not read: no frame', flush=True)
             return None
         lines = _ocr_run([x for _, x in shots])
         if lines is None:
@@ -3495,8 +3513,8 @@ def opening_texts(video_id, start=1, upto=61, step=None, keep_dir=None):
                 if texts:
                     shutil.move(shot, os.path.join(keep_dir, f'{t:.0f}.png'))
         return {t: texts for (t, _), texts in zip(shots, lines)}
-    except (RuntimeError, subprocess.TimeoutExpired, KeyError, ValueError) as e:
-        print(f'  opening not read: {e}', flush=True)
+    except (RuntimeError, subprocess.TimeoutExpired, KeyError, ValueError, StopIteration) as e:
+        print(f'  opening not read: {e or type(e).__name__}', flush=True)
         return None
     finally:
         shutil.rmtree(work_dir, ignore_errors=True)
@@ -3651,9 +3669,9 @@ def route_line(img):
     return [(int(x) * 6 + 3, int(y) * 6 + 3) for x, y in cells[np.argsort(d)][d[np.argsort(d)] >= 0]]
 
 
-def map_frame(video_id, texts):
+def map_frame(video_id, texts, keep_dir=None):
     """(labels [[x, y, text, confidence]], route line [[x, y]]) of a map in the opening (texts: opening_texts), else
-    None."""
+    None. keep_dir: where opening_texts kept the frames with text (the map's is taken from there, not the stream)."""
     if not texts:
         return None
     t, most = max(texts.items(), key=lambda kv: len(kv[1]))
@@ -3661,10 +3679,13 @@ def map_frame(video_id, texts):
         return None
     work_dir = tempfile.mkdtemp(prefix='crowd_map_')
     try:
-        url, headers = _stream(video_id)
         shot = os.path.join(work_dir, 'map.png')
-        _stream_ffmpeg(['ffmpeg', '-v', 'error', '-y', '-headers', headers, '-ss', f'{t:.1f}', '-i', url,
-                        '-frames:v', '1', shot])
+        if keep_dir and os.path.exists(kept := os.path.join(keep_dir, f'{t:.0f}.png')):
+            shutil.copy(kept, shot)
+        else:
+            url, headers = _stream(video_id)
+            _stream_ffmpeg(['ffmpeg', '-v', 'error', '-y', '-headers', headers, '-ss', f'{t:.1f}', '-i', url,
+                            '-frames:v', '1', shot])
         img = cv2.imread(shot)
         line = route_line(img) if img is not None else []
         labels = (_ocr_run([shot], boxes=True) or [None])[0] if line else None
@@ -4421,7 +4442,8 @@ def analyse_video(video_id, out_dir, meta=None, signs=False, keep=False):
         sig['step_bob'] = np.array(np.median([x for _, x in track]) if len(track) >= 3 else 0, float)
         end = montage_end(sig)
         # read once: highlight captions and town labels (their frames kept for screen_locality)
-        texts = opening_texts(video_id, keep_dir=os.path.join(out_dir, f'{video_id}_open.tmp'))
+        opened = os.path.join(out_dir, f'{video_id}_open.tmp')
+        texts = opening_texts(video_id, keep_dir=opened)
         sig['screen_text'] = np.array(json.dumps({f'{t:.0f}': x for t, x in (texts or {}).items()}))
         # a dashcam that shows its rear camera now and then, captioned so (see rear_camera)
         mark = os.path.join(out_dir, REAR_MARK)
@@ -4440,7 +4462,9 @@ def analyse_video(video_id, out_dir, meta=None, signs=False, keep=False):
         # a map of the drive in the opening, else in the outro: d0euWDDFVUY's Google Maps route at 40:16 (user,
         # 2026-11-04: "such maps can be used to derive accurate route")
         outro = float(sig['outro_start'])
-        if signs and ((m := map_frame(video_id, texts)) or (
+        # (an opening's map whatever the title: RYIUjdOlMXw's "Driving to Aix en Provence" opens on "Marseille to
+        # Aix-en-Provence" and a map of that route; user, 2026-11-13: "map on this frame shows route")
+        if (m := map_frame(video_id, texts, opened)) or (signs and (
                 outro and (m := map_frame(video_id, opening_texts(video_id, outro + 1, min(
                     outro + 61, float(meta.get('duration') or outro + 61))))))):
             sig['map_labels'], sig['map_line'] = np.array(json.dumps(m[0])), np.array(m[1], float)
@@ -7020,6 +7044,10 @@ _STATE_NAMES = '|'.join(sorted((re.escape(x.name) for c in ('US', 'CA', 'AU')
 # a town in a cab-view title, with a note in brackets maybe ("Sokołów Małopolski(podkarpackie)")
 _DASH_TOWN = rf"([{CAPITALS}][\w'’.-]*(?: [{CAPITALS}][\w'’.-]*){{0,3}})(?:\s*\([^)]*\))?"
 # ("from Gamagori City toward Toyokawa City", ER7UFbJuaq0; user, 2026-10-21)
+# the lower-case words inside a place's name, before its next capitalised word: "Playa del Carmen" (ybUMABHMwzU, user,
+# 2026-11-13: "title shows drive between 2 localities"), "Aix en Provence", "Stratford upon Avon"
+_JOIN = r"(?:de|del|della|di|da|do|dos|das|du|des|la|le|les|el|en|sur|upon|am|an|im|y)"
+_NAME = r"[A-Z][\w'’.-]*(?: (?:" + _JOIN + r" )?[A-Z][\w'’.-]*){0,3}"  # a place's name in a drive's title
 FROM_TO = (re.compile(r"\bfrom\s+(.+?)\s+to(?:wards?)?\s+(.+?)" + _END, re.I),
            # without "from": "Driving Lincoln to Hickman, Nebraska" (yQbYiSKgB-I), "Ashland to Waterloo Drive Tour"
            # ... also "4K POV Drive: Fremont to Downtown Omaha, Nebraska" (iSMg2dH2uuA: a colon after the word)
@@ -7032,15 +7060,15 @@ FROM_TO = (re.compile(r"\bfrom\s+(.+?)\s+to(?:wards?)?\s+(.+?)" + _END, re.I),
                       r"around|in|into|along|across|past|by|over|tour|on|at|the|my|our|a|out|with|all|"
                       r"welcome|return|dusk|dawn|day|night|sunset|sunrise|morning|evening)\b)"
                       # ... with a note on the start in brackets: "Kansas City (Legends Outlets) to Lawrence, KS"
-                      r"([A-Z][\w'’.-]*(?: [A-Z][\w'’.-]*){0,3})(?:\s*\([^)]*\))?\s+to\s+(.+?)" + _END, re.I),
+                      r"(" + _NAME + r")(?:\s*\([^)]*\))?\s+to\s+(.+?)" + _END, re.I),
            re.compile(r"^(?!(?:Welcome|Dusk|Dawn|Day|Night|Sunset|Sunrise|Morning|Evening|Sea)\b)"
-                      r"([A-Z][\w'’.-]*(?: [A-Z][\w'’.-]*){0,3})\s+[Tt]o\s+([A-Z][\w'’.-]*(?: [A-Z][\w'’.-]*){0,3})"
+                      r"(" + _NAME + r")\s+[Tt]o\s+(" + _NAME + r")"
                       r"\s+(?i:drive|driving|road ?trip|cruise)\b"),
            # or a title made of the drive and what follows: "Lilongwe to Mponela - M1 Upgrade Status" (iWbS0H_Prdc)
            # ... "To" too: "Lake George To New York City ( Full Video)" (6cAuDtDOx3Q; user, 2026-10-16)
            re.compile(r"^(?!(?:Welcome|Back|Return|Road|Guide|Dusk|Dawn|Day|Night|"
                       r"Sunset|Sunrise|Morning|Evening|Sea)\b)"
-                      r"([A-Z][\w'’.-]*(?: [A-Z][\w'’.-]*){0,3})\s+[Tt]o\s+([A-Z][\w'’.-]*(?: [A-Z][\w'’.-]*){0,3})"
+                      r"(" + _NAME + r")\s+[Tt]o\s+(" + _NAME + r")"
                       # ... with its state before a bar: "Markleeville to Coleville, California | …" (KtklybdiN50;
                       # user, 2026-11-02); a state's name only ("Sylhet Juri To Dhakshinbhag, Ratuli Bazar |" was
                       # Ratuli, "Halfway House to Gutcher, Yell -" Gutcher)
@@ -7059,11 +7087,15 @@ FROM_TO = (re.compile(r"\bfrom\s+(.+?)\s+to(?:wards?)?\s+(.+?)" + _END, re.I),
            # may follow a comma ("Highway 111, Palm Springs To Indio California, USA |", 8AbWRytSJ_U; user, 2026-10-17)
            # ... a dash right after a word too, and a date at the end ("Dash Cam Cruising Sunrise- Palmerston to
            # Darwin City, Australia 09/10/2026", sQ_M5uC-LX4; user, 2026-10-20)
-           re.compile(r"(?:\s?[-–—|]\s|\|\s*|:\s+|,\s+)(?!(?:Welcome|Back|Return|Road|Guide|Dusk|Dawn|Day|Night|"
+           # ... (a town's county and state may both follow it, its state in two letters too: "| Salisbury, Wicomico
+           # County, Maryland to Cambridge", "- Reno, NV to Susanville, CA" was ", NV to Susanville")
+           re.compile(r"(?:\s?[-–—|]\s|[|｜]\s*|:\s+|,\s+)(?!(?:Welcome|Back|Return|Road|Guide|Dusk|Dawn|Day|Night|"
                       r"Sunset|Sunrise|Morning|Evening|Sea)\b)"
-                      r"([A-Z][\w'’.-]*(?: [A-Z][\w'’.-]*){0,3})(?:,\s*[A-Z][a-z]+(?: [A-Z][a-z]+)?)?\s+[Tt]o\s+"
-                      r"([A-Z][\w'’.-]*(?: [A-Z][\w'’.-]*){0,3})(?:,\s*[A-Z][\w.]*(?: [A-Z][a-z]+)?)*"
-                      r"(?:\s+via\s+[^|–—:(]+?)?\s*(?:\s[-–—|]\s|\||:|\(|\s\d{1,4}[/.-]\d{1,2}(?:[/.-]\d{2,4})?$|$)"),
+                      r"(" + _NAME + r")(?:,\s*(?:[A-Z][a-z]+(?: [A-Z][a-z]+)?|[A-Z]{2}))*\s+[Tt]o\s+"
+                      r"(" + _NAME + r")(?:,\s*[A-Z][\w.]*(?: [A-Z][a-z]+)?)*"
+                      r"(?:\s+via\s+[^|–—:(]+?)?\s*(?:\s[-–—|]\s|\||:|\(|\s\d{1,4}[/.-]\d{1,2}(?:[/.-]\d{2,4})?$|$|"
+                      # ... or before a flag: "Best Drive in Mexico - Playa del Carmen to Tulum 🇲🇽 Yucatan Mexico"
+                      r"[\U0001F1E6-\U0001F1FF])"),
            # an arrow between two places ("Ingleburn → Surry Hills | Sydney POV", AroundSydney), or a dash right after
            # a drive word ("Drive Wąchock – Starachowice", 3Xg0vN2LqKo; user, 2026-10-16); a dash elsewhere
            # separates a title's parts ("TeslaXDrive — What This Channel Is")
@@ -8961,6 +8993,7 @@ def town_sign_split(p, sig_path, df, home=None):
         same['segments'] = joined
     elif rest:
         towns.insert(0, {**ents[0], 'segments': rest})
+    p['signs_from'] = ents  # for the chapters, which name the towns better when they do (JszmgYHlqug)
     p['entries'] = towns
     p['note'] = (f"{p.get('note') or ''}; localities from the town signs (check them): " + ', '.join(
         f'{loc[0]} from {a // 60}:{a % 60:02d}' for a, _, loc in stretches)).lstrip('; ')
@@ -9170,6 +9203,11 @@ def _locality_anchor(loc, df):
 def _route_end(name, ends):
     """The end of a drive (a locality) that name is, else None."""
     return next((list(e) for e in ends if _name_key(e[0]) == _name_key(name)), None)
+
+
+def _end_or_town(name, ends, around, df):
+    """The end of a drive that name is (_route_end), else the town of that name near around (town_near)."""
+    return _route_end(name, ends) or town_near(name, around, df)
 
 
 def town_near(name, home, df=None):
@@ -9780,6 +9818,16 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
                 scope.discard(vid)
                 continue  # search results come in no date order: older than the channel's newest video in the mapping
             reason = exclusion_reason(meta)
+            # the Data API gives no chapters: YouTube's own, as yt-dlp sees them, once before the video is proposed
+            # (JszmgYHlqug: "Lucerne", "Hergiswil", "Stans", ... "Sarnen" were left out, its town signs gave
+            # Interlaken; user, 2026-11-13: "chapters show localities"). The review page marks them so too
+            if not reason and 'yt_chapters' not in meta and not meta.get('chapters'):
+                try:
+                    meta['chapters'], meta['yt_chapters'] = fetch_metadata(vid)['chapters'], True
+                    with open(meta_path, 'w') as f:
+                        json.dump(meta, f)
+                except (RuntimeError, ValueError) as e:
+                    print(f'  chapters not fetched: {str(e)[:80]}', flush=True)
             # footage from outside the US first (user, 2026-10-16): a channel elsewhere filming in the US waits
             if not reason and not deferred and country.strip().lower() not in US_NAMES and us_title(meta['title']):
                 plan[vid] = {'video': vid, 'title': meta['title'], 'deferred': 'us',
@@ -10128,8 +10176,16 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
 
     # a drive through several localities often names them as chapters: split its segments at those chapters
     for p in new:
-        if len(p.get('entries', [])) != 1 or p['video'] not in metas:
+        # (a video its town signs split, as it was before: its chapters say better where it goes, when they name
+        # towns; user, 2026-11-13: JszmgYHlqug's "chapters show localities", its signs gave Interlaken)
+        signs_from = p.pop('signs_from', None)
+        if signs_from and any(g.get('decision') or g.get('applied') for e in p['entries'] for g in e['segments']):
+            signs_from = None
+        if (len(p.get('entries', [])) != 1 and not signs_from) or p['video'] not in metas:
             continue
+        signed = p['entries']
+        if signs_from:
+            p['entries'] = signs_from
         # a title naming a city puts the video there: its chapters split it only where they name another mapping
         # locality outright ("Kobe City Skyline"), not by sights and junctions looked up near home (zvCKHw9rKPg:
         # "Osaka Bay Sunset Drive" became Tokyo from "Awaza Junction"; JCsEdFxRjtE: Kyoto became Zushi and Nara)
@@ -10137,7 +10193,11 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
         # chapters before the first that names a place are in the title's (5Du7Q0t-8Ns: Los Angeles until "Malibu"
         # at 16:09; user, 2026-10-13), and those of a drive "from A to B" in A, its chapters naming the towns on
         # the way however far (PvQnDdF145Q: San Francisco to Los Angeles, 11 h by Santa Cruz and Morro Bay)
-        ends = drive_ends(p.get('drive_title') or p['title'], df[in_reach], home)
+        # (the drive's part of a title has lost the country the title names: JszmgYHlqug's "LUCERNE to LUNGERN
+        # Switzerland" from a Kosovo channel was looked up near Peja, as Duino and Lesachtal; user, 2026-11-14)
+        far = home and any(c != home[2] for c in title_countries(p['title']))
+        ends = drive_ends(p.get('drive_title') or p['title'], df[title_reach(df, in_reach, p['title'])],
+                          None if far else home)
         start = ends[0][1] if ends else None
         reach, at = in_reach, None if ends else _locality_anchor(titled, df)
         if ends and start and start[1]:  # in the states of its ends: no Venice, FL on a drive along the coast of LA
@@ -10147,7 +10207,8 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
         # reviewer counts it (Beverly Hills is Los Angeles); its numbered roads and counties are the open road between
         # them (ODe2OYlGuP4: Kerrville, "TX 16", "Bandera County", "Medina, Texas"; user, 2026-10-24). No other town
         # is looked up near them: on 122 reviewed drives that split metro drives into suburbs (qTnWQk7osjQ)
-        if ends and (named_ends := [merged_locality(x[1]) or x[1] for x in ends if x and x[1]]):
+        named_ends = [merged_locality(x[1]) or x[1] for x in ends if x and x[1]] if ends else []
+        if named_ends:
             near_town = partial(_route_end, ends=named_ends)
             reach = reach | df['country'].isin({x[2] for x in named_ends})
         # with neither, near the channel's home when the title names it: "Holbrook" (a street) in a Detroit
@@ -10156,8 +10217,19 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
         # drive in Naha)
         if not at and not ends and home and home[0] and re.search(rf'\b{re.escape(home[0])}\b', p['title']):
             at = (None, None, None, home[3], home[4])
+        # where drives are split at their town signs, a chapter naming a town near the video's town (or its start)
+        # is that town, as its sign would be (JszmgYHlqug, Lucerne: Hergiswil, Stans, Sarnen, Sachseln, Lungern;
+        # user, 2026-11-13: "chapters show localities")
+        base = named_ends[0] if named_ends else titled
+        if base and base[2] in TOWN_SIGN_COUNTRIES and (a0 := _locality_anchor(base, df)) and a0[3] is not None:
+            near_town = partial(_end_or_town, ends=named_ends, around=(*base[:3], a0[3], a0[4]), df=df)
         stretches = chapter_localities(video_chapters(metas[p['video']]), df[reach], near_town,
                                        near=at[3:5] if at else None, first=start or titled, open_road=bool(ends))
+        if signs_from and len(stretches) < 2:
+            p['entries'] = signed  # no towns in the chapters: the signs' split stays
+            continue
+        if signs_from:
+            p['note'] = re.sub(r'; localities from the town signs \(check them\): [^;]*', '', p['note'] or '')
         if not stretches:
             continue
         e = p['entries'][0]
