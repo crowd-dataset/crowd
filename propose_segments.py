@@ -6441,6 +6441,21 @@ ROUTE_LINE = re.compile(r'(?im)^\W*(?:route|itinerary|strecke|fahrtroute|reisero
 ROUTE_SEP = re.compile(r'\s+[-–—>→]+\s+|\s*[→>]\s*')
 
 
+def route_start(loc, phrase, description, df, home=None):
+    """Where drives are split at their town signs, the first town of the description's route, when the title gave
+    only a region or a sight (phrase) for loc and the route does not pass it: "Heidiland" was Bad Ragaz, the route
+    "Fläsch - Maienfeld - Jenins - Malans" (70ajJy6tPBs; user, 2026-11-14); else None. Not elsewhere: AroundSydney's
+    routes start in suburbs the reviewer counts as Sydney, WorldTravelaholic's at airports (of 190 reviewed videos
+    with a route, 48 start at the first locality approved)."""
+    route = ROUTE_LINE.search(description or '')
+    stops = [x.strip() for x in ROUTE_SEP.split(route.group(1)) if x.strip()] if route else []
+    if loc[2] not in TOWN_SIGN_COUNTRIES or len(stops) < 2 or _name_key(loc[0]) in _name_key(phrase) \
+            or any(_same_name(loc[0], x) for x in stops):
+        return None
+    hit = place_locality(stops[:1], df[df['country'] == loc[2]], home)
+    return list(hit[0]) if hit else None
+
+
 def place_locality(phrases, df, home=None):
     """([locality, state, country], phrase) for the first phrase OpenStreetMap finds in df's countries (and near
     home when known), None when it finds none; see place_localities."""
@@ -9542,6 +9557,8 @@ def locate_now(p, df, home, sig_path=None, meta=None, boilerplate=frozenset()):
                 hits = {tuple(city): hits[tuple(city)]}
             if len(hits) == 1:
                 (loc, phrase), = hits.items()
+                if (start := route_start(loc, phrase, (meta or {}).get('description'), df, home)):
+                    loc, phrase = start, f"{phrase}' and the description's route starts at '{start[0]}"
                 e['locality'], e['guessed'] = list(loc), True
                 p['note'] = f"{p['note']}; locality {loc[0]} from where '{phrase}' is".lstrip('; ')
     es = p.get('entries') or []
@@ -10386,17 +10403,8 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
                              + ': set the locality').lstrip('; ')
                 continue
             found = next(iter(in_title.items()), None)
-            # where drives are split at their town signs, a region or a sight in the title ("Heidiland" as Bad Ragaz)
-            # gives way to the first town of the description's route ("Route: Fläsch - Maienfeld - Jenins - Malans",
-            # 70ajJy6tPBs; user, 2026-11-14). Not elsewhere: AroundSydney's routes start in suburbs the reviewer
-            # counts as Sydney, WorldTravelaholic's at airports (of 190 reviewed videos with a route, 48 start at the
-            # first locality approved)
-            route = ROUTE_LINE.search(description)
-            stops = [x.strip() for x in ROUTE_SEP.split(route.group(1)) if x.strip()] if route else []
-            if found and found[0][2] in TOWN_SIGN_COUNTRIES and len(stops) > 1 \
-                    and _name_key(found[0][0]) not in _name_key(found[1]) \
-                    and not any(_same_name(found[0][0], x) for x in stops):
-                found = place_locality(stops[:1], df[df['country'] == found[0][2]], home) or found
+            if found and (start := route_start(found[0], found[1], description, df, home)):
+                found = (start, found[1])
             # ... a "Town, State" of the description whose town the title names first: "Mystic, Connecticut" in
             # "Sunset in Mystic 4K Drive", not the "CITY COMPS: Newport, Rhode Island" above it (SbnPMoc4wuM; user,
             # 2026-10-24). Of the reviewed videos located from their description it changes 3: Mystic, Dayton, Chicago
