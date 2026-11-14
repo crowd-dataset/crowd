@@ -27,7 +27,7 @@ import threading
 import time
 import unicodedata
 import webbrowser
-from collections import Counter
+from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache, partial, wraps
 from threading import Timer
@@ -8953,7 +8953,7 @@ def town_sign_split(p, sig_path, df, home=None):
             if not name:
                 continue
         ev.append((t, what, name))
-    stretches = []
+    stretches, signs = [], []
     for i, (t, what, name) in enumerate(ev):
         # with no locality to keep, a segment after a sign is in its town as long as its stretch could run: the
         # drive entered Kasernen (Gemeinde Berg) at 13:42, its segment starts at 15:01 after a rural cut
@@ -8970,6 +8970,8 @@ def town_sign_split(p, sig_path, df, home=None):
         nxt = ev[i + 1][0] if i + 1 < len(ev) else float('inf')
         stretches.append((int(t), int(min(end, nxt, max(t, seg['start']) + SIGN_TOWN_S.get(kind.get(name), 300))),
                           locality(name)))
+        # the signs that put the stretch there, shown under its locality on the review page (user, 2026-11-14)
+        signs.append([[int(t), 'start']] + ([[int(nxt), 'end']] if nxt <= stretches[-1][1] else []))
     if not stretches or all(loc == list(first or []) for *_, loc in stretches):
         return False  # no sign but its own town's: nothing to split
     towns, rest = split_by_stretches(segs, stretches), []
@@ -8993,6 +8995,9 @@ def town_sign_split(p, sig_path, df, home=None):
         same['segments'] = joined
     elif rest:
         towns.insert(0, {**ents[0], 'segments': rest})
+    for (_, _, loc), read in zip(stretches, signs):
+        if (e := next((e for e in towns if e.get('locality') == loc), None)) is not None:
+            e['signs'] = sorted({tuple(x) for x in e.get('signs', []) + read})
     p['signs_from'] = ents  # for the chapters, which name the towns better when they do (JszmgYHlqug)
     p['entries'] = towns
     p['note'] = (f"{p.get('note') or ''}; localities from the town signs (check them): " + ', '.join(
@@ -10629,6 +10634,30 @@ def apply_segments(video_id, locality, state, country, segments, vehicle_type, u
             raise RuntimeError(f'{video_id} {seg}: {msg}')
 
 
+SIGN_NOTE = re.compile(r'localities from the town signs \(check them\): ([^;]*)')
+SIGN_SHOWN = 4  # sign frames shown under a locality at most
+
+
+def locality_signs(p):
+    """{entry index: [[second, 'start' or 'end'], ...]} of the town signs that set where each locality of a proposal
+    starts or ends (town_sign_split), for the review page (user, 2026-11-14: "if sign is used as a way to get start
+    and/or end of locality, show image with the sign under the locality"). Proposals made before the entries kept
+    them: the start signs the note names ("Stans from 6:36")."""
+    ents, out = p.get('entries') or [], {}
+    for i, e in enumerate(ents):
+        if e.get('signs'):
+            out[i] = [list(x) for x in e['signs']][:SIGN_SHOWN]
+    if out or not (m := SIGN_NOTE.search(p.get('note') or '')):
+        return out
+    for name, mins, secs in re.findall(r'(.+?) from (\d+):(\d{2})(?:, |$)', m.group(1)):
+        t = int(mins) * 60 + int(secs)
+        near = [(min(abs(g['start'] - t), abs(g['end'] - t)) if not g['start'] <= t < g['end'] else 0, i)
+                for i, e in enumerate(ents) if e.get('locality') and e['locality'][0] == name for g in e['segments']]
+        if near and (i := min(near)[1]) is not None and len(out.setdefault(i, [])) < SIGN_SHOWN:
+            out[i].append([t, 'start'])
+    return out
+
+
 REVIEW_HTML = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <title>{% if channel %}{{ channel.name }} · {% endif %}Review proposals</title>
@@ -10679,7 +10708,11 @@ button.tod.night { background: #2a3f8f; color: #fff; border-color: #2a3f8f; }
 label.vehicle { margin-left: 16px; font-size: 14px; }
 tr.entryhead td { border-top: 0; padding-top: 8px; }
 .locbox { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
-.locmap { flex-basis: 100%; font-size: 12px; color: #666; }
+.locrow { flex-basis: 100%; display: flex; gap: 10px; align-items: flex-start; flex-wrap: wrap; }
+.locmap { font-size: 12px; color: #666; }
+.locsigns { display: flex; gap: 8px; flex-wrap: wrap; }
+.locsigns figure { margin: 0; font-size: 12px; color: #666; }
+.locsigns img { width: 320px; max-width: 100%; display: block; border-radius: 4px; margin-bottom: 2px; }
 .locmap .leafmap { width: 420px; height: 240px; border: 1px solid #ccc; margin-top: 4px; }
 .locmap .paste-at { font-size: 12px; margin-left: 6px; }
 .locmap .paste-at.bad { border-color: #c00; background: #fee; }
@@ -10848,8 +10881,16 @@ background:#fff;color:#222;font-size:13px;cursor:pointer}
           ⚠ not set: approved segments cannot be added{% endif %}</span>
         {% if not e.segments %}<button class="drop" data-video="{{ p.video }}" data-entry="{{ ei }}"
           onclick="dropGroup(this)" title="this group has no segments: remove it">✕ remove</button>{% endif %}
-        <div class="locmap"{% if e.locality and e.locality | tojson in new_localities %}
+        <div class="locrow"><div class="locmap"{% if e.locality and e.locality | tojson in new_localities %}
              data-new="1"{% endif %}></div>
+        {%- set shown = signs.get(p.video, {}).get(ei) %}{% if shown %}
+          <div class="locsigns">{% for t, kind in shown %}
+            <figure><a href="signframe/{{ p.video }}/{{ t }}.jpg" target="_blank" rel="noopener"
+              title="the whole frame"><img src="signframe/{{ p.video }}/{{ t }}.jpg" loading="lazy"
+              alt="the sign at {{ t }} s" onerror="this.closest('figure').remove()"></a>
+              <figcaption>{{ 'start' if kind == 'start' else 'end' }}: a sign at {{ '%d:%02d' % (t // 60, t % 60) }}
+              <button class="small" onclick="play('{{ p.video }}', {{ t }})">▶ sign</button></figcaption>
+            </figure>{% endfor %}</div>{% endif %}</div>
       </div>
       {% endif %}
     </td></tr>
@@ -12121,6 +12162,8 @@ def review(plan_path, port=None):
                                               and not p.get('route')
                                               and (r := localities_route(p, plan_dir, mapping))},
                                       likely=likely_videos(plan),
+                                      signs={p['video']: s for p in plan if p['video'] in open_videos
+                                             and (s := locality_signs(p))},
                                       max_merge_gap=MAX_MERGE_GAP_S, countries=COUNTRIES, vehicle_types=VEHICLE_TYPES,
                                       descriptions={v: d for v, d in descriptions.items() if d})
 
@@ -12650,6 +12693,35 @@ def review(plan_path, port=None):
     @app.route('/sign/<video_id>.jpg')
     def town_sign(video_id):
         return send_from_directory(plan_dir, f'{video_id}_townsign.jpg')
+
+    streams, frame_locks = {}, defaultdict(threading.Lock)
+
+    @app.route('/signframe/<video_id>/<int:t>.jpg')
+    def sign_frame(video_id, t):
+        """The frame of a town sign that sets where a locality starts or ends (locality_signs), taken once from the
+        reviewer's copy of the video, else YouTube's stream, and kept as VIDEO_signT.jpg."""
+        if not re.fullmatch(r'[\w-]{11}', video_id):
+            return 'no such video', 404
+        name = f'{video_id}_sign{t}.jpg'
+        with frame_locks[video_id]:
+            if not os.path.exists(path := os.path.join(plan_dir, name)):
+                local = os.path.join(local_dir, f'{video_id}.mp4')
+                try:
+                    if os.path.exists(local):
+                        src, headers = local, []
+                    else:
+                        if time.time() - streams.get(video_id, (0,))[0] > 3600:  # its URL lasts some hours
+                            streams[video_id] = (time.time(), *_stream(video_id))
+                        src, headers = streams[video_id][1], ['-headers', streams[video_id][2]]
+                    _stream_ffmpeg(['ffmpeg', '-v', 'error', '-y', *headers, '-ss', f'{t + 0.3:.1f}', '-i', src,
+                                    '-frames:v', '1', '-vf', 'scale=960:-2', '-q:v', '3', path + '.tmp.jpg'])
+                    if os.path.exists(path + '.tmp.jpg'):
+                        os.replace(path + '.tmp.jpg', path)
+                except (RuntimeError, ValueError, KeyError, subprocess.TimeoutExpired) as e:
+                    return f'no frame: {e}', 404
+            if not os.path.exists(path):
+                return 'no frame', 404
+        return send_from_directory(plan_dir, name)
 
     @app.route('/decide', methods=['POST'])
     def decide():
