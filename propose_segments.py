@@ -7015,6 +7015,16 @@ def _region_at(lat, lon):
     return a.get('ISO3166-2-lvl4') or a.get('state') or None
 
 
+@_remembered
+def _country_region_at(lat, lon):
+    """(ISO country code, first-level region's ISO code, its name) of the place at a point, by OpenStreetMap; None
+    when it does not answer."""
+    r = _nominatim('reverse', (round(lat, 3), round(lon, 3)), zoom=10, addressdetails=True, language='en',
+                   timeout=15)
+    a = (r.raw.get('address') or {}) if r else {}
+    return (a.get('country_code') or '').upper() or None, a.get('ISO3166-2-lvl4'), a.get('state')
+
+
 # a parish of a municipality (Venezuela, Ecuador, Portugal): a part of a town, never one of its own (user, 2026-10-25:
 # "Parroquia Idelfonso Vasquez is a suburb of Maracaibo", cwZByInCdXE)
 PARISH = re.compile(r'(?i)(?:parroquia|freguesia|parish)\b')
@@ -8952,6 +8962,7 @@ def town_sign_split(p, sig_path, df, home=None):
     if not places:
         return False
     rows = df[df['country'] == country]
+    countries = {_iso2(c): c for c in df['country'].dropna().unique()}
     kind, pos = {x[0]: x[1] for x in places}, {x[0]: (x[2], x[3]) for x in places}
 
     def locality(name):  # the mapping's locality of that name right there (also written another way), else new
@@ -8959,10 +8970,24 @@ def town_sign_split(p, sig_path, df, home=None):
         # alternated with a Jenins of no state at each of its 16 signs, jXfTGRPt3TY)
         if first and _same_name(first[0], name) and (not at or at[3] is None or _km(*pos[name], *at[3:5]) <= 5):
             return list(first)
-        for r in rows.itertuples():
-            if _same_name(r.locality, name) and _km(*pos[name], float(r.lat), float(r.lon)) <= 5:
+        # in the country it lies in, a town over the border too (Eschen is Liechtenstein's, Bürs Austria's: both came
+        # as Swiss towns in tvfjm), with its state: a new town had none (Mels, Wangs, Maienfeld; user, 2026-11-14:
+        # "localities in tvfjm miss cantons")
+        lat, lon = pos[name]
+        box = (df['lat'].astype(float) - lat).abs().lt(0.1) & (df['lon'].astype(float) - lon).abs().lt(0.15)
+        for r in df[box].itertuples():
+            if _same_name(r.locality, name) and _km(lat, lon, float(r.lat), float(r.lon)) <= 5:
                 return [r.locality, r.state if isinstance(r.state, str) else None, r.country]
-        return [name, None, country]
+        code, region_code, region = _country_region_at(lat, lon) or (None, None, None)  # none when OSM refuses
+        there = countries.get(code, country) if code else country
+        near = df[df['country'] == there]
+        state = None
+        if (region_code or region) and near['state'].notna().mean() > 0.5:  # where the mapping writes states
+            state = _mapping_state(region, near, there)
+            if state not in set(near['state']) and region_code:
+                state = _mapping_region(region_code, near, pos[name])
+        # OpenStreetMap's "Malans GR" is the mapping's Malans of GR
+        return [re.sub(rf'\s+{re.escape(state)}$', '', name) if state else name, state, there]
     read = json.loads(str(np.load(sig_path)['signs']))
     ev = []
     for t, what, name in town_sign_events(read, places):
