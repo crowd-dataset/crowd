@@ -5117,6 +5117,15 @@ BIKE_DESC = re.compile(r"\b(?:met de fiets|op de fiets|fietst\w*|mit dem (?:fahr
                        r"|de bicicleta|na kole|на велосипеде)\b", re.IGNORECASE)
 
 
+# ... or a description naming a double-decker or a sightseeing bus, the title naming no vehicle and no drive:
+# jasonsstamp8753's "上海都市旅游一号线" ("Shanghai city tour line 1": "上海双层都市观光", a double-decker sightseeing
+# bus; oDtxZq6M6Lc, proposed as a car from the channel's history; user, 2026-11-15). Of 17 reviewed such videos 16 were
+# buses (the other: a "tour bus" mentioned in passing, hence no plain "tour bus"); under a drive title 2 of 2 were cars
+BUS_DESC = re.compile(r'double[- ]?deck(?:er)?|双层|雙層|观光(?:巴士|车)|觀光(?:巴士|車)|旅游巴士|sightseeing bus'
+                      r'|hop[- ]on[,/ ]*hop[- ]off|open[- ]top(?:ped)? bus|doppeldecker|autobus turistico'
+                      r'|bus touristique|bus turístico', re.IGNORECASE)
+
+
 # a drive in the title of a channel that mostly cycles is in a car (yeTRE5gTkJs "Morning Drive Through Amsterdam"
 # and 3 reviewed "Netherlands Drive" videos of Eleonoraswalks proposed as bicycles; user, 2026-10-27); a channel of
 # motorbikes or trucks "drives" too (17 and 21 reviewed such titles kept their channel's vehicle)
@@ -10251,6 +10260,9 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
         elif not DRIVE_TITLE.search(title_text(meta['title'])) \
                 and (bike := BIKE_DESC.search(meta.get('description') or '')):
             vt, vehicle_note = 4, f'vehicle from the description ({VEHICLE_TYPES[4]}: "{bike[0]}")'
+        elif not DRIVE_TITLE.search(title_text(meta['title'])) \
+                and (bus := BUS_DESC.search(meta.get('description') or '')):
+            vt, vehicle_note = 1, f'vehicle from the description ({VEHICLE_TYPES[1]}: "{bus[0]}")'
         if vid in reanalyse:  # keep a vehicle type picked in the review page
             vt, vehicle_note = plan[vid].get('vehicle_type', vt), 'vehicle as in the earlier proposal'
         elif (vt is None or vt == 0) and title_vt is None and not DRIVE_TITLE.search(title_text(meta['title'])) \
