@@ -490,10 +490,28 @@ def walk_batch(plan):
 
 
 # a title naming a vehicle or a drive, in the languages the batches come in
-MOVING_TITLE = re.compile(r'driv|dash ?cam|road ?trip|\bcar\b|cruis|\bpov\b|\btaxi|\buber|\bbus\b|cycl'
+MOVING_TITLE = re.compile(r'driv|dash ?cam|road ?trip|\bcar\b|cruis|\bpov\b|\btaxi|\buber|\bbus\b|cycl|scooter'
                           r'|bik(?:e|ing)|motor|highway|freeway|route|commute|ride|manej|conduc|recorrido|carretera'
                           r'|fahrt|autobahn|jazda'
                           r'|przejazd|guida|strada|estrada|dirigindo|운전|드라이브|가는길|🚗|🚙|🚕|🚌|🏍|🚲', re.I)
+
+
+# a walk on a gimbal (no step bob, nobody close by, a description saying nothing: tvfjm's Zuoz 44z964nYsls, the
+# Sonoma State campus eZqEvZHXzho; user, 2026-11-15: "walking", "leave them out"): a vehicle ahead in under
+# EMPTY_AHEAD of the YOLO frames and under EMPTY_USERS road users a frame, WALK_SHEET_FEW+ contact sheet frames on
+# foot, a title naming no vehicle or drive. Of reviewed videos that left out 5 rejected walks and 2 approved videos
+# (MyNiceCityTehran's snowy fcLkASjcbgo, roadsandthings' Entracque 8er5sbxjb-g: 644 s), the user's trade
+EMPTY_AHEAD, EMPTY_USERS = 0.1, 1.0
+
+
+def empty_road(sig):
+    """A nearly empty road (see EMPTY_AHEAD): (share of frames with a vehicle ahead, road users a frame), else None."""
+    wv = np.asarray(sig.get('walk_view', np.zeros((0, 2)))).reshape(-1, 2)
+    urban = np.asarray(sig.get('urban', []), float)
+    if len(wv) < 20 or not len(urban):
+        return None
+    ahead, users = float(wv[:, 1].mean()), float(urban.mean())
+    return (ahead, users) if ahead < EMPTY_AHEAD and users < EMPTY_USERS else None
 
 
 def walk_view(sig):
@@ -10222,6 +10240,12 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
                           f"({float(np.load(sig_path)['step_bob']):.0%} of its shake) and never stands {NO_STOP_S} s")
             # ... and in a batch mostly of walks, a title naming no vehicle or drive (AsQAgDtCWbw's showground walk
             # read as a drive by every check; user, 2026-10-21): of such reviewed videos 32 rejected, 2 approved
+            elif (not driving and n_walk >= WALK_SHEET_FEW and not MOVING_TITLE.search(meta['title'] or '')
+                  and title_vehicle(title_text(meta['title'])) is None
+                  and (empty := empty_road(dict(np.load(sig_path))))):
+                reason = (f'a walk, not a drive: {n_walk} of {len(frames)} sampled frames look taken on foot, a '
+                          f'vehicle ahead in only {empty[0]:.0%} of the frames and {empty[1]:.1f} road users a frame, '
+                          'and the title names no vehicle or drive')
             elif not driving and (share := walk_share(plan)) and not MOVING_TITLE.search(meta['title'] or ''):
                 reason = (f'probably a walk: {share[0]} of {share[1]} long videos of this batch were walks and the '
                           'title names no vehicle or drive')
