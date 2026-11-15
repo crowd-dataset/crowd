@@ -6483,8 +6483,8 @@ def _name_key(name):
     name = ' '.join(re.sub(r'\W+', ' ', name).split())
     name = re.sub(r'^(?:city|town|village|borough|township) of ', '', name)  # OpenStreetMap's "City of Newburgh"
     name = re.sub(r'^the ', '', name)  # "The Bronx" is the Bronx
-    # "St. Clair" (OpenStreetMap) is "Saint Clair" (GeoNames); Mt. and Ft. alike
-    name = re.sub(r'\b(?:st|saint) ', 'saint ', re.sub(r'\bmt ', 'mount ', re.sub(r'\bft ', 'fort ', name)))
+    # "St. Clair" (OpenStreetMap) is "Saint Clair" (GeoNames), "St. Gallen" is "Sankt Gallen" (ISO); Mt. and Ft. alike
+    name = re.sub(r'\b(?:st|saint|sankt) ', 'saint ', re.sub(r'\bmt ', 'mount ', re.sub(r'\bft ', 'fort ', name)))
     return re.sub(r' (?:emirate|city|province|prefecture|governorate|municipality|county)$', '', name)
 
 
@@ -9494,13 +9494,19 @@ def _mapping_state(osm_state, rows, country):
     known = {_name_key(s): s for s in states}
     # (a name in two languages, "Valais/Wallis", is either: Bs8KDqeeSEE's Sion came as a second Sion of no "VS")
     names = [bare] + [x.strip() for x in bare.split('/') if '/' in bare]
+    # the mapping may write the code: "New South Wales" is NSW; in a country whose localities mostly carry codes, a
+    # code none has yet too, before a name some row carries ("Thurgau" went in for Kreuzlingen, "St. Gallen" was
+    # guessed for Ebnat-Kappel among SG rows: _uefMwgb9IM; user, 2026-11-15: "cantons are given with 2-letter codes")
+    iso2 = common.get_iso2_country_code(common.correct_country(country))
+    subs = list((iso2 and _subdivisions(iso2)) or [])
+    keys = {_name_key(x) for x in names}
+    code = next((sub.code.split('-')[1] for sub in subs
+                 if _name_key(sub.name) in keys or any(_name_key(x) in keys for x in sub.name.split('/'))), None)
+    labels = rows['state'].dropna() if rows is not None else []
+    if code and len(labels) and labels.isin({sub.code.split('-')[1] for sub in subs}).mean() > 0.5:
+        return code
     if (hit := next((known[_name_key(x)] for x in names if _name_key(x) in known), None)):
         return hit
-    # the mapping may write the code: "New South Wales" is NSW
-    iso2 = common.get_iso2_country_code(common.correct_country(country))
-    keys = {_name_key(x) for x in names}
-    code = next((sub.code.split('-')[1] for sub in (iso2 and _subdivisions(iso2)) or []
-                 if _name_key(sub.name) in keys or any(_name_key(x) in keys for x in sub.name.split('/'))), None)
     return code if code in states else bare
 
 
