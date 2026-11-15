@@ -10703,7 +10703,7 @@ id,locality,locality_aka,state,country,iso3,continent,lat,lon,gmp,population_loc
 10702,Raron,[],VS,Switzerland,CHE,Europe,46.309934,7.799589,,1944,9092436,2.2,,171.53,44.0,33.5,0.0,[Bs8KDqeeSEE],[[0]],[[380]],[[615]],[0],[19032021],[UCOG_imhDwtvT4Bxy4J_vItg]
 10703,Gampel,[],VS,Switzerland,CHE,Europe,46.3153507,7.7430022,,1386,9092436,2.2,,171.53,44.0,33.5,0.0,[Bs8KDqeeSEE],[[0]],[[615]],[[902]],[0],[19032021],[UCOG_imhDwtvT4Bxy4J_vItg]
 10704,Susten,[],VS,Switzerland,CHE,Europe,46.310925,7.6406395,,3386,9092436,2.2,,171.53,44.0,33.5,0.0,[Bs8KDqeeSEE],[[0]],[[902]],[[1610]],[0],[19032021],[UCOG_imhDwtvT4Bxy4J_vItg]
-10705,Vetroz,[],VS,Switzerland,CHE,Europe,46.2253413,7.2812893,,4137,9092436,2.2,,171.53,44.0,33.5,20.0,[Bs8KDqeeSEE],[[0]],[[1762]],[[1958]],[0],[19032021],[UCOG_imhDwtvT4Bxy4J_vItg]
+10705,Vétroz,[Vetroz],VS,Switzerland,CHE,Europe,46.2253413,7.2812893,,4137,9092436,2.2,,171.53,44.0,33.5,20.0,[Bs8KDqeeSEE],[[0]],[[1762]],[[1958]],[0],[19032021],[UCOG_imhDwtvT4Bxy4J_vItg]
 10706,Ardon,[],VS,Switzerland,CHE,Europe,46.2104977,7.2576107,,2305,9092436,2.2,,171.53,44.0,33.5,0.0,[Bs8KDqeeSEE],[[0]],[[1958]],[[2149]],[0],[19032021],[UCOG_imhDwtvT4Bxy4J_vItg]
 10707,Zharkent,[],Jetisu,Kazakhstan,KAZ,Asia,44.165665,80.002739,,34422,20843754,12.7,99.79,168.62,30.7,29.2,0.0,[vBneWPUtO5Q],[[0]],[[1]],[[307]],[0],[13032023],[UCumk5L0gBVdzAQ8OstBGAzA]
 10708,Penacova,[],,Portugal,PRT,Europe,40.2702086,-8.2810743,,3254,10804871,8.2,96.29,167.8,46.0,33.9,2.38,[qr7qOuVtzE8],"[[0,0]]","[[0,326]]","[[316,722]]",[0],[11122022],[UCSbgP52lk_bguvIikFDYxFA]
