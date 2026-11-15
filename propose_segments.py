@@ -8837,6 +8837,23 @@ SIGN_MARK_SHARE = 0.3  # of the frames with text read: a text read in so many is
 SIGN_TOWN_S = {'city': float('inf'), 'town': 900}  # the longest a town's stretch from its sign runs; a village 300 s
 SIGN_LATE_S = 30  # a segment starting this long after a sign is still in its town
 SIGN_EMPTY_LATE_S = 120  # ... in a proposal with no locality (35ao15Ju1Nk: 79 s; Gl9YlbRfD4w's 142 s was not)
+# signs a drive can't have passed: no faster than SIGN_REACH_KMH from one sign's town to the next (or from the title's
+# town at the start), each town SIGN_REACH_SLACK_KM wide: a direction sign's Lugano 6 min after Menaggio's sign
+# (g--NY-1xlYw), Kopiec 15 km from the Zwoleń passed 3 min before (FXOaRn0b85I), Cavendish 13 s into "North Rustico To
+# Cavendish" (SCQuxeJHCrU)
+SIGN_REACH_KMH = 130
+SIGN_REACH_SLACK_KM = {'city': 5, 'town': 2, 'village': 1, 'hamlet': 0.5}
+SIGN_PASS_S = 30  # a town's name and its "out" this close: a signpost read twice (Røyken in Oslo, Ternat near Aalst)
+# a sign of a place within SIGN_SUBURB_KM × √(population / 100,000) of a mapping city of SIGN_SUBURB_POP or more, in
+# a drive there: a suburb or district, which counts as the city, or a direction sign (Budaörs 7 km from Budapest,
+# r3UFdKdI2yA; Rąbień 11 km from Łódź, sAP8JV0ixZk; Kanena, a district of Halle 5 km out, nNIQJy-traE)
+SIGN_SUBURB_KM, SIGN_SUBURB_POP = 5, 100000
+# a title of a drive in one city ("Biel / Bienne City Drive", "Winterthur ... City Driving Tour") naming the proposal's
+# town and no other place (but its country, or the town by another name): other towns' names are on direction signs
+# (Solothurn in Biel, yDQGF5BgVb4; Zürich, Turbenthal and Frauenfeld in Winterthur, ulJAnVL6wOI)
+SIGN_CITY_DRIVE = re.compile(r'(?i)\bcity\s+(?:drive|driving|tour|walk)|\b(?:drive|driving|tour)\s+'
+                             r'(?:in|through|around)\s+(?:the\s+)?city\b')
+SIGN_ALIAS_KM = 3  # a city's sign this close to a mapping row is that row by another name: Genova is Genoa
 
 
 def settlements(lat, lon, km=30):
@@ -8991,6 +9008,68 @@ def _sign_place(word, places):
     return next((name for name, *_ in places if _sign_key(name) == w), None) if len(w) >= 3 else None
 
 
+def _reachable_signs(ev, segs, first, at, kind, pos, df, titled=(), title=''):
+    """The town-sign events (town_sign_events) a drive can have passed: a signpost's name read and then again with a
+    distance (SIGN_PASS_S) dropped, all but the town's own in a city drive (SIGN_CITY_DRIVE), a suburb of the big city
+    driven in (SIGN_SUBURB_KM) dropped, one farther from all
+    the places the title names ([(phrase, (lat, lon))]) than a drive gets since the video's start dropped, and of the
+    rest the most towns a drive can pass in their order (SIGN_REACH_KMH), the title's first place at the start among
+    them when it is the proposal's locality. at: (locality, state, country, lat, lon) of the proposal's locality (or
+    the channel's home)."""
+    ev = [x for i, x in enumerate(ev)
+          if not any(y[2] == x[2] and abs(y[0] - x[0]) < SIGN_PASS_S and {y[1], x[1]} == {'in', 'out'}
+                     for y in ev[max(0, i - 1):i + 2])]
+    here = at[3:5] if at and at[3] is not None else None
+    nations = {_name_key(c) for c in df['country'].dropna().unique()}
+    if here and first and SIGN_CITY_DRIVE.search(title or '') and _name_key(first[0]) in _name_key(title) \
+            and all(_name_key(ph) in nations or _name_key(first[0]) in _name_key(ph)
+                    or _km(*q, *here) <= SIGN_REACH_SLACK_KM['city'] for ph, q in titled):
+        return [x for x in ev if _same_name(x[2], first[0])]
+    if here and first:
+        _, row = add_video.get_existing_locality_row(df, *first)
+        pop = pd.to_numeric(row.get('population_locality'), errors='coerce') if row is not None else None
+        if pop and pop >= SIGN_SUBURB_POP:
+            ev = [x for x in ev if _same_name(x[2], first[0]) or kind.get(x[2]) == 'city'
+                  or _km(*pos[x[2]], *here) > SIGN_SUBURB_KM * (pop / 100000) ** 0.5]
+
+    def slack(name):
+        return SIGN_REACH_SLACK_KM.get(kind.get(name), 2)
+    # Pozov, 53 km from Oplany and Poděbrady, 12 min into "Oplany → Poděbrady" (P2Ur0NE0nx0); but a town the title
+    # names itself, though not found (MENAGGIO COMO, g--NY-1xlYw)
+    if (towns := [q for ph, q in titled if _name_key(ph) not in nations]):
+        ev = [x for x in ev if _name_key(x[2]) in _name_key(title) or min(_km(*pos[x[2]], *q) for q in towns)
+              <= x[0] / 3600 * SIGN_REACH_KMH + slack(x[2]) + SIGN_REACH_SLACK_KM['city']]
+    runs = []  # the drive's unbroken stretches: segments following on within 5 s
+    for g in segs:
+        if runs and g['start'] <= runs[-1][1] + 5:
+            runs[-1][1] = max(runs[-1][1], g['end'])
+        else:
+            runs.append([g['start'], g['end']])
+
+    def run(t):
+        return next((i for i, (a, b) in enumerate(runs) if a - SIGN_LATE_S <= t <= b), None)
+    inside = [x for x in ev if run(x[0]) is not None]  # a sign outside the segments makes no stretch: kept as it is
+    # (second, place, (lat, lon), kind): the title's first place where the drive starts, then each sign's
+    pts = [(segs[0]['start'], first[0], here, 'town')] if here and segs and first and titled \
+        and _same_name(titled[0][0], first[0]) else []
+    pts += [(t, name, pos[name], kind.get(name)) for t, _, name in inside]
+
+    def reach(a, b):
+        if run(a[0]) != run(b[0]) or a[1] == b[1]:  # across a cut anything goes
+            return True
+        return _km(*a[2], *b[2]) <= (b[0] - a[0]) / 3600 * SIGN_REACH_KMH + slack(a[1]) + slack(b[1])
+
+    def score(c):  # the chain of the most places (ties: the most signs, then the closest to the proposal's locality:
+        # Menaggio's sign read twice, not Lugano's direction sign once, g--NY-1xlYw)
+        return len({pts[k][1] for k in c}), len(c), -sum(_km(*pts[k][2], *here) for k in c) if here else 0
+    best = []
+    for i, x in enumerate(pts):
+        best.append(max((best[j] for j in range(i) if reach(pts[j], x)), key=score, default=[]) + [i])
+    shift = len(pts) - len(inside)
+    keep = {id(inside[k - shift]) for k in max(best, key=score, default=[]) if k >= shift}
+    return [x for x in ev if run(x[0]) is None or id(x) in keep]
+
+
 def town_sign_split(p, sig_path, df, home=None):
     """A one-locality proposal in TOWN_SIGN_COUNTRIES split by its town signs (town_sign_events): each town entered
     takes the segment its sign is in (or one starting within 30 s after it, and the segments following on without a
@@ -9015,8 +9094,9 @@ def town_sign_split(p, sig_path, df, home=None):
     # ... and around the places the title names, regions too: "Allgäu" is 120 km from the channel's home, and
     # its "Oberstdorf" sign matched an Oberdorf near home (Hha1wy7hGto; user, 2026-10-28)
     code = _iso2(country)
-    anchors += [h[4:6] for phrase in place_phrases(p.get('title') or '')[:3]
-                if code and (h := _osm_place(phrase, (code,))) and h[4] is not None]
+    titled = [(phrase, h[4:6]) for phrase in place_phrases(p.get('title') or '')[:3]
+              if code and (h := _osm_place(phrase, (code,))) and h[4] is not None]
+    anchors += [x for _, x in titled]
     places = list({x[0] + str(x[2]): x for a in dict.fromkeys(anchors) for x in settlements(*a)}.values())
     if not places:
         return False
@@ -9037,6 +9117,11 @@ def town_sign_split(p, sig_path, df, home=None):
         for r in df[box].itertuples():
             if _same_name(r.locality, name) and _km(lat, lon, float(r.lat), float(r.lon)) <= 5:
                 return [r.locality, r.state if isinstance(r.state, str) else None, r.country]
+        # a city's own name for the mapping's English one: Genova is Genoa (xPIVypfrfro)
+        near = [(_km(lat, lon, float(r.lat), float(r.lon)), r) for r in df[box].itertuples()]
+        if kind.get(name) == 'city' and (r := min(near, key=lambda x: x[0], default=(None, None))[1]) is not None \
+                and _km(lat, lon, float(r.lat), float(r.lon)) <= SIGN_ALIAS_KM:
+            return [r.locality, r.state if isinstance(r.state, str) else None, r.country]
         code, region_code, region = _country_region_at(lat, lon) or (None, None, None)  # none when OSM refuses
         there = countries.get(code, country) if code else country
         near = df[df['country'] == there]
@@ -9059,6 +9144,7 @@ def town_sign_split(p, sig_path, df, home=None):
             if not name:
                 continue
         ev.append((t, what, name))
+    ev = _reachable_signs(ev, segs, first, at or home, kind, pos, df, titled, p.get('title') or '')
     stretches, signs = [], []
     for i, (t, what, name) in enumerate(ev):
         # with no locality to keep, a segment after a sign is in its town as long as its stretch could run: the
