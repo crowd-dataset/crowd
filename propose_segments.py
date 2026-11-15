@@ -5104,7 +5104,13 @@ VEHICLE_TITLE = [(3, re.compile('🏍')),
                                 # ... "Shuttle Bus 🚌 ... Upper Deck View" (zF8FDqyDUAM; user, 2026-10-21): 12 of 12
                                 r'|shuttle bus|double[- ]?decker(?: bus)?|bus(?:es)? view|upper deck'
                                 # ... "Dubai Bus Window Views" (HHkx9oMo0v4; user, 2026-10-26)
-                                r'|bus(?:es)? (?:window|seat)s?)\b|🚌', re.I))]
+                                r'|bus(?:es)? (?:window|seat)s?)\b|🚌', re.I)),
+                 # ... and a car, after all the others ("Car Driving POV Pakistan" of movehush, a channel of cars and
+                 # motorbikes: YV7e6NFspqg; user, 2026-11-15: "car, based on title too"): 544 of 546 reviewed such
+                 # titles were cars, the other 2 cars too by their frames (88j2NkX_HyY, gQ__HASYgtc)
+                 (0, re.compile(r'\b(?:car (?:driv(?:e|es|ing)|rides?|pov|tours?|trips?|journey)|by car'
+                                r'|in (?:a|my|the|our) car|driving (?:a|my|the|our) car|car dash ?cam)\b'
+                                r'|🚗|🚙|🚘', re.IGNORECASE))]
 
 
 # ... or a description saying the ride is by bicycle, the title naming no vehicle: "Nu een keertje met de fiets"
@@ -5134,7 +5140,7 @@ NON_MOTOR = {4, 6, 7, 12}  # bicycle, electric scooter, monowheel, scooter (VEHI
 
 
 def title_vehicle(title):
-    """The VEHICLE_TYPES code a title names (a bicycle, a motorcycle, a bus), else None."""
+    """The VEHICLE_TYPES code a title names (a bicycle, a motorcycle, a bus, a car), else None."""
     return next((vt for vt, r in VEHICLE_TITLE if r.search(title or '')), None)
 
 
@@ -10930,11 +10936,14 @@ button.tod.night { background: #2a3f8f; color: #fff; border-color: #2a3f8f; }
 label.vehicle { margin-left: 16px; font-size: 14px; }
 tr.entryhead td { border-top: 0; padding-top: 8px; }
 .locbox { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
-.locrow { flex-basis: 100%; display: flex; gap: 10px; align-items: flex-start; flex-wrap: wrap; }
-.locmap { font-size: 12px; color: #666; }
-.locsigns { display: flex; gap: 8px; flex-wrap: wrap; }
-.locsigns figure { margin: 0; font-size: 12px; color: #666; }
-.locsigns img { width: 320px; max-width: 100%; display: block; border-radius: 4px; margin-bottom: 2px; }
+/* the sign frames right beside the map, level with it (user, 2026-11-15: "to save space"): the map's box as wide as
+   the map, its line of text and paste field running on past it above the frames */
+.locrow { flex-basis: 100%; display: flex; gap: 10px; align-items: flex-end; flex-wrap: nowrap; }
+.locmap { font-size: 12px; color: #666; flex: none; }
+.locmap:has(.leafmap) { width: 422px; white-space: nowrap; }
+.locsigns { display: flex; gap: 8px; flex-wrap: nowrap; min-width: 0; }
+.locsigns figure { margin: 0; font-size: 12px; color: #666; flex: 0 1 300px; min-width: 160px; }
+.locsigns img { width: 100%; display: block; border-radius: 4px; margin-bottom: 2px; }
 .locmap .leafmap { width: 420px; height: 240px; border: 1px solid #ccc; margin-top: 4px; }
 .locmap .paste-at { font-size: 12px; margin-left: 6px; }
 .locmap .paste-at.bad { border-color: #c00; background: #fee; }
