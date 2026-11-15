@@ -336,7 +336,13 @@ def open_batch(name):
         servers[name], started[name] = (proc, port), time.time()
         # on to the page once it answers: it takes 4 s or more to start on a busy mini, and a fixed 3 s wait sent
         # the browser to a page not there yet (user, 2026-10-16)
+        # in the theme of the hub and review pages (cookie theme, dark unless switched to light; user, 2026-11-15)
         return render_template_string(
+            '<!doctype html><meta charset="utf-8"><title>Starting…</title>'
+            '<style>body{font:15px system-ui,sans-serif;margin:24px;color:#222;background:#fff}'
+            'html[data-theme=dark] body{color:#e6e6e6;background:#1a1a1a}</style>'
+            '<script>const m = document.cookie.match(/(?:^|; )theme=(dark|light)/);'
+            'document.documentElement.dataset.theme = m ? m[1] : "dark";</script>'
             '<meta http-equiv="refresh" content="90;url=http://{{h}}:{{p}}">Starting the review page…'
             '<script>const u = "http://{{h}}:{{p}}/";'
             '(async function go() { try { await fetch(u, { mode: "no-cors" }); location.href = u; }'
