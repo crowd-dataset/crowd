@@ -1339,6 +1339,39 @@ SIDE_FRAMES, SIDE_FORWARD = 6, 0.8
 SIDE_CUT = re.compile(rf'(?:camera not facing forward|{SIDE_SHOT}|camera turned to the side \([^)]*\)) (\d+)-(\d+)s')
 
 
+# a scene off the road edited into a drive (3MCWs0IRUiE 0:46-1:24: a photo shoot on the rocks by the sea, faded in and
+# out between two frames of the same crossing; user, 2026-11-15): where YOLO sees a big person close by and no vehicle
+# ahead (walk_view) for OFF_ROAD_READINGS readings in a row or more, in a drive (a vehicle ahead in OFF_ROAD_AHEAD of
+# all its readings), and CLIP sees OFF_SCENES' first ones in OFF_ROAD_FRAMES frames (middle score OFF_ROAD_AT). Of 30
+# such approved stretches (3 readings or more) sampled, one scored that high: 15 s of a street with a man beside the
+# camera (3DAdCDRzM58), hence 4 readings; the photo shoot scored 1.0
+OFF_SCENES = (['people posing for a photo outdoors', 'a person standing on rocks by the sea', 'people on a beach',
+               'a person walking toward the camera on a path', 'a person taking a selfie outdoors', 'people in a park',
+               'a woman looking at her phone outdoors',
+               'a road ahead seen through a car windshield', 'a city street seen from a driving car',
+               'traffic ahead on a road', 'a motorcyclist ahead on a road seen from a car',
+               'a cyclist ahead on a bike lane', 'pedestrians crossing the street in front of a car',
+               'the inside of a car with the driver', 'a road tunnel', 'a street at night seen from a car'], 7,
+              'a photo of ')
+OFF_ROAD_READINGS, OFF_ROAD_AHEAD, OFF_ROAD_FRAMES, OFF_ROAD_AT, OFF_ROAD_PAD_S = 4, 0.3, 5, 0.9, 5
+
+
+def off_road_candidates(sig):
+    """[(start s, end s)] where a big person is close by and no vehicle ahead OFF_ROAD_READINGS readings in a row or
+    more, in a drive (see OFF_SCENES), padded by OFF_ROAD_PAD_S."""
+    wv = np.asarray(sig.get('walk_view', np.zeros((0, 2)))).reshape(-1, 2)
+    if len(wv) < 20 or wv[:, 1].mean() < OFF_ROAD_AHEAD:
+        return []
+    end = len(sig.get('motion', [])) / FPS or len(wv) * URBAN_EVERY_S
+    return [(max(0, a * URBAN_EVERY_S - OFF_ROAD_PAD_S), min(end, b * URBAN_EVERY_S + OFF_ROAD_PAD_S))
+            for a, b in _runs((wv[:, 0] == 1) & (wv[:, 1] == 0)) if b - a >= OFF_ROAD_READINGS]
+
+
+def off_road_track(path, sig, work_dir):
+    """[(start s, end s)] of off_road_candidates CLIP sees as people off the road (see OFF_SCENES)."""
+    return _clip_stretches(path, off_road_candidates(sig), work_dir, OFF_SCENES, OFF_ROAD_FRAMES, OFF_ROAD_AT)
+
+
 def side_forward_track(path, sig, work_dir):
     """[(start s, end s)] of the side views propose cuts that CLIP sees as the road ahead (see SIDE_FORWARD)."""
     stretches = [(int(a), int(b)) for a, b in SIDE_CUT.findall('; '.join(propose(sig)[1]))]
@@ -1650,6 +1683,10 @@ def propose(sig, p=PARAMS):
             notes.append(f'{label} {a / FPS:.0f}-{b / FPS:.0f}s')
     for t, x in fast_walkers(sig):  # see walk_cadence
         notes.append(f'people walk at {x:.1f} steps a second at {int(t) // 60}:{int(t) % 60:02d}: sped up? check')
+    for a, b in np.asarray(sig.get('off_road', np.zeros((0, 2)))).reshape(-1, 2):  # see OFF_SCENES
+        keep[int(a * FPS):int(b * FPS)] = False
+        notes.append(f'not the drive: people off the road (CLIP) {int(a) // 60}:{int(a) % 60:02d}-'
+                     f'{int(b) // 60}:{int(b) % 60:02d}')
     for a, b in np.asarray(sig.get('rear', np.zeros((0, 2)))).reshape(-1, 2):  # see rear_camera
         keep[int(a * FPS):int(b * FPS)] = False
         notes.append(f'rear camera {int(a) // 60}:{int(a) % 60:02d}-{int(b) // 60}:{int(b) % 60:02d}')
@@ -4485,6 +4522,7 @@ def analyse_video(video_id, out_dir, meta=None, signs=False, keep=False):
             sig['stamp'] = np.array(stamp, float)
         sig['on_bus'] = np.array(title_vehicle(title_text(meta.get('title') or '')) == 1)
         sig['side_forward'] = np.array(side_forward_track(path, sig, work_dir), float).reshape(-1, 2)
+        sig['off_road'] = np.array(off_road_track(path, sig, work_dir), float).reshape(-1, 2)
         contact_sheet(path, meta['duration'] or len(sig['motion']) / FPS,
                       os.path.join(out_dir, f'{video_id}.jpg'))
     finally:
