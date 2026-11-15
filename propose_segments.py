@@ -8843,7 +8843,9 @@ SIGN_EMPTY_LATE_S = 120  # ... in a proposal with no locality (35ao15Ju1Nk: 79 s
 # Cavendish" (SCQuxeJHCrU)
 SIGN_REACH_KMH = 130
 SIGN_REACH_SLACK_KM = {'city': 5, 'town': 2, 'village': 1, 'hamlet': 0.5}
-SIGN_PASS_S = 30  # a town's name and its "out" this close: a signpost read twice (Røyken in Oslo, Ternat near Aalst)
+# a town's (not a village's: Mastrils is passed in 18 s, 8S_2qLyZ2k8) name and its "out" this close: a signpost read
+# twice (Ternat near Aalst, Y-GwQM5DvCs)
+SIGN_PASS_S = 30
 # a sign of a place within SIGN_SUBURB_KM × √(population / 100,000) of a mapping city of SIGN_SUBURB_POP or more, in
 # a drive there: a suburb or district, which counts as the city, or a direction sign (Budaörs 7 km from Budapest,
 # r3UFdKdI2yA; Rąbień 11 km from Łódź, sAP8JV0ixZk; Kanena, a district of Halle 5 km out, nNIQJy-traE)
@@ -9009,21 +9011,21 @@ def _sign_place(word, places):
 
 
 def _reachable_signs(ev, segs, first, at, kind, pos, df, titled=(), title=''):
-    """The town-sign events (town_sign_events) a drive can have passed: a signpost's name read and then again with a
-    distance (SIGN_PASS_S) dropped, all but the town's own in a city drive (SIGN_CITY_DRIVE), a suburb of the big city
-    driven in (SIGN_SUBURB_KM) dropped, one farther from all
-    the places the title names ([(phrase, (lat, lon))]) than a drive gets since the video's start dropped, and of the
-    rest the most towns a drive can pass in their order (SIGN_REACH_KMH), the title's first place at the start among
-    them when it is the proposal's locality. at: (locality, state, country, lat, lon) of the proposal's locality (or
-    the channel's home)."""
+    """The town-sign events (town_sign_events) a drive can have passed. Dropped: a town's name read and then again
+    with a distance (a signpost, SIGN_PASS_S); in a city drive all but its own town (SIGN_CITY_DRIVE); a suburb of the
+    big city driven in (SIGN_SUBURB_KM); one farther from all the towns the title names ([(phrase, (lat, lon), town or
+    None)]) than a drive gets since the video's start. Of the rest, the most towns a drive can pass in their order
+    (SIGN_REACH_KMH), the title's first place at the start among them when it is the proposal's locality. at:
+    (locality, state, country, lat, lon) of the proposal's locality (or the channel's home)."""
     ev = [x for i, x in enumerate(ev)
-          if not any(y[2] == x[2] and abs(y[0] - x[0]) < SIGN_PASS_S and {y[1], x[1]} == {'in', 'out'}
+          if kind.get(x[2]) not in ('town', 'city')
+          or not any(y[2] == x[2] and abs(y[0] - x[0]) < SIGN_PASS_S and {y[1], x[1]} == {'in', 'out'}
                      for y in ev[max(0, i - 1):i + 2])]
     here = at[3:5] if at and at[3] is not None else None
     nations = {_name_key(c) for c in df['country'].dropna().unique()}
     if here and first and SIGN_CITY_DRIVE.search(title or '') and _name_key(first[0]) in _name_key(title) \
             and all(_name_key(ph) in nations or _name_key(first[0]) in _name_key(ph)
-                    or _km(*q, *here) <= SIGN_REACH_SLACK_KM['city'] for ph, q in titled):
+                    or _km(*q, *here) <= SIGN_REACH_SLACK_KM['city'] for ph, q, _ in titled):
         return [x for x in ev if _same_name(x[2], first[0])]
     if here and first:
         _, row = add_video.get_existing_locality_row(df, *first)
@@ -9035,8 +9037,9 @@ def _reachable_signs(ev, segs, first, at, kind, pos, df, titled=(), title=''):
     def slack(name):
         return SIGN_REACH_SLACK_KM.get(kind.get(name), 2)
     # Pozov, 53 km from Oplany and Poděbrady, 12 min into "Oplany → Poděbrady" (P2Ur0NE0nx0); but a town the title
-    # names itself, though not found (MENAGGIO COMO, g--NY-1xlYw)
-    if (towns := [q for ph, q in titled if _name_key(ph) not in nations]):
+    # names itself, though not found (MENAGGIO COMO, g--NY-1xlYw); towns only: a region's point is anywhere in it
+    # (the "Rhine Valley" of JwZ6oP8eW-c dropped its Gams)
+    if (towns := [q for ph, q, town in titled if town and _name_key(ph) not in nations]):
         ev = [x for x in ev if _name_key(x[2]) in _name_key(title) or min(_km(*pos[x[2]], *q) for q in towns)
               <= x[0] / 3600 * SIGN_REACH_KMH + slack(x[2]) + SIGN_REACH_SLACK_KM['city']]
     runs = []  # the drive's unbroken stretches: segments following on within 5 s
@@ -9094,9 +9097,9 @@ def town_sign_split(p, sig_path, df, home=None):
     # ... and around the places the title names, regions too: "Allgäu" is 120 km from the channel's home, and
     # its "Oberstdorf" sign matched an Oberdorf near home (Hha1wy7hGto; user, 2026-10-28)
     code = _iso2(country)
-    titled = [(phrase, h[4:6]) for phrase in place_phrases(p.get('title') or '')[:3]
+    titled = [(phrase, h[4:6], h[0]) for phrase in place_phrases(p.get('title') or '')[:3]
               if code and (h := _osm_place(phrase, (code,))) and h[4] is not None]
-    anchors += [x for _, x in titled]
+    anchors += [x for _, x, _ in titled]
     places = list({x[0] + str(x[2]): x for a in dict.fromkeys(anchors) for x in settlements(*a)}.values())
     if not places:
         return False
