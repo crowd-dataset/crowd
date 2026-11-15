@@ -4990,6 +4990,27 @@ def title_text(title):
     return f'{title} | {translated}' if (translated := english(title)) else title
 
 
+# a description opening on a walk, under a title naming no vehicle or drive: "Walk through Jenins, a fairytale
+# wine-growing village" (jXfTGRPt3TY; user, 2026-11-15: "walking"), not "walking/driving in Tehran". Of reviewed such
+# videos one rejected (that one) and none approved, besides 625 left out anyway
+WALK_DESC = re.compile(r"^\W*(?:an? |our |my |this )?(?:walk(?:ing)?(?: tour)?|stroll(?:ing)?|spaziergang|rundgang"
+                       r"|promenade|paseo|passeggiata)\b(?!\s*/\s*driv|\s+(?:and|or|&)\s+driv)", re.IGNORECASE)
+# ... and a description calling it drone footage: "Here's a drone video we shot from the back seat of a Tesla"
+# (55LKg7LM-N4; user, 2026-11-15: "drone footage"), a drone named. Of reviewed such videos 2 rejected and none
+# approved, besides 100 left out anyway
+AERIAL_DESC = re.compile(r"\b(?:(?:a|our|my|this) drone (?:video|footage|shot|flight)"
+                         r"|drone (?:video|footage) (?:of|we|i)"
+                         r"|(?:shot|filmed|recorded|captured) (?:with|by|from|using) (?:a |my |our |the )?(?:dji )?"
+                         r"drone|DJI (?:Mavic|Mini \d|Air \d|Avata|FPV|Phantom|Inspire)|FPV drone)", re.IGNORECASE)
+
+
+def walk_description(title, description):
+    """The opening of a description saying the video is a walk (WALK_DESC), its first two lines but the title's."""
+    lines = [x.strip() for x in (description or '').split('\n') if x.strip()]
+    lines = [x for x in lines if x.lower() != (title or '').strip().lower()][:2]
+    return next((hit.group(0).strip(' -|:') for x in lines if (hit := WALK_DESC.search(x))), None)
+
+
 def exclusion_reason(meta):
     """Why the protocol rules a video out from its metadata alone, or None."""
     if (meta.get('duration') or 0) < MIN_UPLOAD_S:
@@ -5005,6 +5026,11 @@ def exclusion_reason(meta):
     hit = AERIAL_TITLE.search(title)
     if hit:
         return f"drone or flight footage (title mentions '{hit.group(0)}')"
+    if (hit := AERIAL_DESC.search(meta.get('description') or '')):
+        return f"drone footage (the description says '{hit.group(0)}')"
+    if not MOVING_TITLE.search(title) and title_vehicle(title) is None \
+            and (walk := walk_description(meta.get('title'), meta.get('description'))):
+        return f"a walk, not a drive (the description opens with '{walk}')"
     if CAMERA_COMPARE.search(title) and DASHCAM_WORD.search(title):
         return 'a comparison of cameras (two pictures shown together, side by side or one above the other)'
     hit = (GAME_TITLE.search(title) or GAME_TEXT.search(f"{title}\n{meta.get('description') or ''}")
