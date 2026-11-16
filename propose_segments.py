@@ -5223,6 +5223,11 @@ BUS_DESC = re.compile(r'double[- ]?deck(?:er)?|双层|雙層|观光(?:巴士|车
 # and 3 reviewed "Netherlands Drive" videos of Eleonoraswalks proposed as bicycles; user, 2026-10-27); a channel of
 # motorbikes or trucks "drives" too (17 and 21 reviewed such titles kept their channel's vehicle)
 DRIVE_TITLE = re.compile(r'\b(?:driv(?:e|es|ing)|road ?trips?|car rides?|dash ?cam|by car)\b', re.IGNORECASE)
+# a plain "bike" in the title of a channel that mostly rides two-wheelers is its motorbike ("Kathmandu 4K Bike Ride"
+# of eyeandi: 11 proposed as bicycles; user, 2026-11-16: "bike ride mean two-wheeler and not bicycle"); "cycling",
+# "bicycle" or "e-bike" still say a bicycle
+BIKE_ONLY_TITLE = re.compile(r'\b(?:bike (?:route|ride|tour|path|lane)s?|by bike|on (?:a|my) bike)\b', re.IGNORECASE)
+BICYCLE_TITLE = re.compile(r'\b(?:cycling|biking|cycle (?:ride|tour)|bicycle|e-?bike)\b|🚲', re.IGNORECASE)
 NON_MOTOR = {4, 6, 7, 12}  # bicycle, electric scooter, monowheel, scooter (VEHICLE_TYPES)
 
 
@@ -10388,7 +10393,11 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
         vt, share = vehicle_cache[ch]
         vehicle_note = ('no channel history: vehicle assumed car, check the frames' if vt is None
                         else f'vehicle from channel history ({share:.0%} of its videos)')
-        if (title_vt := title_vehicle(title_text(meta['title']))) is not None:
+        if (title_vt := title_vehicle(title_text(meta['title']))) == 4 and vt == 3 \
+                and BIKE_ONLY_TITLE.search(title_text(meta['title'])) \
+                and not BICYCLE_TITLE.search(title_text(meta['title'])):
+            vehicle_note += '; "bike" in the title: its two-wheeler'
+        elif title_vt is not None:
             vt, vehicle_note = title_vt, f'vehicle from the title ({VEHICLE_TYPES[title_vt]})'
         elif vt in NON_MOTOR and DRIVE_TITLE.search(title_text(meta['title'])):
             vt, vehicle_note = 0, f'vehicle from the title (a drive; the channel mostly: {VEHICLE_TYPES[vt]})'
