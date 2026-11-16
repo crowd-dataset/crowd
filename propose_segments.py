@@ -8192,8 +8192,12 @@ def route_localities(title, df, home=None, max_km=None, map_path=None, via_names
             if (where and not own_ends[i] and (town := _town_at(lat, lon))
                     and _name_key(town) != _name_key((loc or hit)[0])):
                 rows = df[(df['country'] == where) & (df['locality'].map(_name_key) == _name_key(town))]
+                # ... a new one with its state, as the route's other points get theirs: Arambol from the point OSM
+                # has no town at came without its state, next to the Arambol, GA of the points after it
+                # (cU9tr6GwbTI; user, 2026-11-16)
                 loc = ([rows.iloc[0]['locality'], rows.iloc[0]['state'] if isinstance(rows.iloc[0]['state'], str)
-                        else None, where] if len(rows) else [re.sub(r' City$', '', town), loc and loc[1], where])
+                        else None, where] if len(rows) else
+                       [re.sub(r' City$', '', town), loc[1] if loc else _new_state(hit, df, where, (lat, lon)), where])
                 hit = (loc[0], *hit[1:])
                 a, start = (hit, loc) if i == 0 else (a, start)
                 b, end = (hit, loc) if i == 1 else (b, end)
@@ -8261,6 +8265,16 @@ def route_localities(title, df, home=None, max_km=None, map_path=None, via_names
     # where along the path each looked-up point lies, by distance: chapter_marks go on the clock by driving time
     return out, {'path': path, 'stops': stops, 'clock': _path_shares(path, points), 'ends': [start, end],
                  **({'at': {x[0]: [round(own[0], 6), round(own[1], 6)] for own, x in owns}} if owns else {})}
+
+
+def _new_state(hit, df, country, at):
+    """The mapping's state for a new locality of country at (lat, lon) in an OpenStreetMap hit's region, as
+    _hit_locality gives it; None where the country's localities carry no state."""
+    rows = df[df['country'] == country]
+    if not hit or not hit[3] or not len(rows) or rows['state'].notna().mean() <= 0.5:
+        return None
+    state = _mapping_state(hit[1], rows, country)
+    return state if state in set(rows['state']) else _mapping_region(hit[3], rows, at)
 
 
 def _path_shares(path, points):
@@ -9440,6 +9454,10 @@ def pin_town(stretches, t, loc):
         if not old:
             return stretches
     end = old[1] if old[1] > t else t + (old[1] - old[0])
+    # the town the drive starts in keeps its time before the sign: cU9tr6GwbTI starts at Arambol Beach, its "Welcome
+    # to Arambol" at 2:37 (user, 2026-11-16: its 1:52-2:37 approved as Arambol)
+    if old[0] <= min(a for a, _, _ in stretches) < t:
+        t = old[0]
     out = [(lo, hi, x) for a, b, x in stretches if not (x and tuple(x) == tuple(loc))
            for lo, hi in ((a, min(b, t)), (max(a, end), b)) if hi > lo]
     return sorted(out + [(t, end, loc)], key=lambda s: s[0])
