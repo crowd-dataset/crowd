@@ -8954,6 +8954,10 @@ SIGN_DISTRICT = re.compile(r"(?i)^\W*(?:lkr|landkreis|kreis|gemeinde|gem|gde|goe
                            r"|(?:gro(?:ß|ss)e\s+)?kreisstad\w*|gro(?:ß|ss)e)\b")
 SIGN_NAME = re.compile(r"^[A-ZÄÖÜ][A-Za-zÄÖÜäöüß.\-' ]{3,}$")
 SIGN_SPEED = re.compile(r'^\W*(?:[2-9]0|1[0-2]0)\W*$')  # a speed limit's number, read beside a town sign
+# ... or within this many seconds when that other text is another place's name: a direction sign's lines are read one
+# at a time ("Sargans", then "Walenstadt", "Berschis" 1.5 s later at a roundabout in Flums: W79ycR7Lp_o,
+# 2026-11-16)
+SIGN_ALONE_S = 1.5
 SIGN_MARK_SHARE = 0.3  # of the frames with text read: a text read in so many is the channel's mark (town_sign_events)
 SIGN_TOWN_S = {'city': float('inf'), 'town': 900}  # the longest a town's stretch from its sign runs; a village 300 s
 SIGN_LATE_S = 30  # a segment starting this long after a sign is still in its town
@@ -9093,13 +9097,18 @@ def town_sign_events(read, places):
         ws = [x for x in read[u] if wordy(x)]
         return (not any(re.search(r'\d', x) for x in read[u]) and len(ws) <= 2
                 and any((m := match(x)) and m[0] == name for x in ws))
+
+    def other_place(u, m0):  # another place's name read at u: a direction sign's next line
+        return any((m := match(x)) and (not m0 or m[0] != m0[0]) for x in read[u] if wordy(x))
+
     out, cur = [], None
     for u in times:
         t = float(u)
         if u in lone:
             m0 = next((m for x in read[u] if (m := match(x))), None)
             if any(v not in lone and v not in quiet and not (m0 and same_sign(v, m0[0]))
-                   for v in times if 0 < abs(float(v) - t) <= 1):
+                   and (abs(float(v) - t) <= 1 or other_place(v, m0))
+                   for v in times if 0 < abs(float(v) - t) <= SIGN_ALONE_S):
                 continue  # a name among others a moment before or after: a direction sign or a shop
         texts = [x.strip(' |)(]![') for x in read[u] if x.strip()]
         words = [x for x in texts if wordy(x)]
