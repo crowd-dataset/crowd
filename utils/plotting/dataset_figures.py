@@ -1056,17 +1056,16 @@ def _xyz(lon, lat, r=1.0):
 
 
 GLOBE_MIN_HOURS = 0.1  # spikes start at six minutes of footage
-# NASA Blue Marble (land_shallow_topo, public domain, 2048x1024, equirectangular), cached on first use
-EARTH_IMAGE_URL = "https://eoimages.gsfc.nasa.gov/images/imagerecords/57000/57752/land_shallow_topo_2048.jpg"
+# NASA Blue Marble (land_shallow_topo, public domain, 2048x1024, equirectangular), kept in the repository: NASA's
+# server (eoimages.gsfc.nasa.gov/images/imagerecords/57000/57752/land_shallow_topo_2048.jpg) stopped answering
+# GitHub's runners, which failed the weekly figures on 2026-11-09 and 11-16
+EARTH_IMAGE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "blue_marble_2048.jpg")
 
 
 def _earth_mesh(width: int = 180, height: int = 90):
     """The Earth as a sphere mesh coloured with the Blue Marble image: one vertex per image pixel, with plotly blending
     the true colours between vertices."""
-    path = os.path.join(common.output_dir, "blue_marble_2048.jpg")
-    if not os.path.exists(path):
-        map_labels.download(EARTH_IMAGE_URL, path)
-    pixels = np.asarray(Image.open(path).convert("RGB").resize((width + 1, height + 1), Image.LANCZOS))
+    pixels = np.asarray(Image.open(EARTH_IMAGE).convert("RGB").resize((width + 1, height + 1), Image.LANCZOS))
     lon, lat = np.meshgrid(np.linspace(-180, 180, width + 1), np.linspace(90, -90, height + 1))
     x, y, z = (a.ravel() for a in _xyz(lon, lat, 0.998))
     v = np.arange((height + 1) * (width + 1)).reshape(height + 1, width + 1)
