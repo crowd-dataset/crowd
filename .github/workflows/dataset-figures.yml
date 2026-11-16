@@ -82,7 +82,7 @@ jobs:
         uses: astral-sh/setup-uv@v6
 
       # Downloads the figures reuse (outlines, populations, World Bank and WHO
-      # data, the Blue Marble image); the code refreshes each by its own age.
+      # data); the code refreshes each by its own age.
       # A new key each week; a miss restores the latest of the week before.
       - name: Week
         id: week
@@ -94,7 +94,6 @@ jobs:
           path: |
             _output/geo_cache
             _output/world_110m_un.json
-            _output/blue_marble_2048.jpg
             .wb_cache
           key: figure-downloads-${{ steps.week.outputs.week }}
           restore-keys: figure-downloads-
