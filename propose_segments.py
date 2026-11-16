@@ -473,12 +473,17 @@ def dead_channel(plan):
     return n if n >= DEAD_CHANNEL_MIN else 0
 
 
-def walk_share(plan):
+def walk_share(plan, approved=True):
     """(walks, long videos) of a batch when at least WALK_BATCH_N and WALK_BATCH_SHARE of its long videos were left
-    out as walks, else None."""
+    out as walks, else None. approved=False: the videos with an approved segment do not count, so the share stays as
+    the reviewer approves the batch's drives (tvfjm: 19 walks of 31 videos once 16 drives were approved, not of 47;
+    user, 2026-11-15). For the rule that also needs a walker's bob (WALK_BATCH_BOB) only: in the 28 batches it
+    then holds for, of their reviewed videos so bobbing 4 rejected (43 min) and no approved one; the rule on the title
+    alone would hit 238 approved videos there."""
     ex = [str(q.get('exclude') or '') for q in plan.values()]
     walks = sum(bool(re.search(r'walk', e, re.I)) and 'min minimum' not in e for e in ex)
-    long_ = walks + sum('entries' in q for q in plan.values())
+    long_ = walks + sum('entries' in q and (approved or not any(
+        g.get('decision') == 'approve' for e in q['entries'] for g in e.get('segments', []))) for q in plan.values())
     return (walks, long_) if walks >= WALK_BATCH_N and walks / long_ >= WALK_BATCH_SHARE else None
 
 
@@ -10823,7 +10828,8 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
             plan[p['video']] = {'video': p['video'], 'title': p['title'], 'deferred': 'us',
                                 'exclude': 'held back for later: proposed in the US (footage from outside the US '
                                            'first)'}
-    if (share := walk_share(plan)):  # a batch of walks: its earlier videos that bob like one too (WALK_BATCH_BOB)
+    # a batch of walks: its earlier videos that bob like one too (WALK_BATCH_BOB)
+    if (share := walk_share(plan, approved=False)):
         for v, p in list(plan.items()):
             if ('entries' not in p or not undecided(p) or v not in sigs or gps_drive(sigs[v])
                     or MOVING_TITLE.search(p.get('title') or '')):
