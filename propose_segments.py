@@ -9824,16 +9824,28 @@ def locate_now(p, df, home, sig_path=None, meta=None, boilerplate=frozenset()):
 
 # a one-town video whose title names a highway or a road trip still has its rural and highway stretches of this
 # long cut (user, 2026-11-13): of 9,432 reviewed one-town videos, in those with such a title the reviewer rejected
-# 37 h of such stretches of 10+ min and approved 7.5 h (143 videos); in the others the two were about even
+# 37 h of such stretches of 10+ min and approved 7.5 h (143 videos); in the others the two were about even. Not in a
+# city of METRO_POP or more, whose freeways are its own (user, 2026-11-16): there such cuts held 3.4 h approved and
+# 5.2 h rejected (31 videos: Los Angeles, New York, Philadelphia, Istanbul), in smaller towns 4.3 h and 42.9 h
 ONE_PLACE_HIGHWAY = {**PARAMS, 'quiet_min_s': 600}
+
+
+@lru_cache(maxsize=2)
+def _populations(_mtime_ns):
+    """{(locality, state, country): population} of the mapping, read again when the file changes."""
+    return {(r.locality, r.state if isinstance(r.state, str) else None, r.country):
+            pd.to_numeric(r.population_locality, errors='coerce')
+            for r in add_video.load_csv(add_video.FILE_PATH).itertuples()}
 
 
 def one_place_segments(p, sig_path):
     """The segments of a proposal p all in one town, proposed again from its signals without the rural and highway
     cuts (ONE_PLACE: a quiet street of the town is no rural driving), but with the long ones of a highway or road
-    trip title (ONE_PLACE_HIGHWAY); p's note keeps only those cuts."""
+    trip title (ONE_PLACE_HIGHWAY) outside a city of METRO_POP; p's note keeps only those cuts."""
     title = p.get('title') or ''
-    highway = bool(HIGHWAY_TITLE.search(title) or motorway_title(title))
+    loc = ((p.get('entries') or [{}])[0].get('locality')) or []
+    big = _populations(add_video._mtime_ns(add_video.FILE_PATH)).get(tuple(loc), 0) >= METRO_POP
+    highway = bool(HIGHWAY_TITLE.search(title) or motorway_title(title)) and not big
     sig = load_signals(sig_path, title)
     segments, notes = night_from_title(*propose(sig, ONE_PLACE_HIGHWAY if highway else ONE_PLACE), sig, title)
     p['note'] = re.sub(r'; (?:rural|highway) driving \d+-\d+s', '', p.get('note') or '')
