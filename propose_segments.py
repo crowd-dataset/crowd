@@ -5163,7 +5163,66 @@ def title_countries(title):
     # ... or a hashtag does: "Derry Raod Mississauga #canada #automobile #ontario" (zyu3kdvagkQ; user, 2026-10-29)
     found += [c for c in COUNTRIES if c not in found
               and re.search(rf"#{re.escape(c.replace(' ', ''))}\b", title, re.IGNORECASE)]
+    # ... else a region of a country of the mapping after a comma names it (see title_region)
+    if not found and not pr and (c := title_region(title)):
+        found = [c]
     return found + [c for c in pr if c not in found]
+
+
+# a country's own region after a comma, at the end of the place's name, names that country: "Miramar Beach to Panaji
+# City, Goa 2022" is in India, not in Nepal where the channel lives (uF-35z8_7s8; user, 2026-11-17); "Winnipeg,
+# Manitoba Riding Shotgun", "Edinburgh, Scotland Driving Tour" likewise. Only the first level of regions, none of the
+# US (its states go by title_states), none named in two countries of the mapping ("Punjab") or after a locality of
+# the mapping in another country ("Santiago": a region of the Dominican Republic), and no compass word alone
+# ("North", "West", "Central" are regions of Cameroon and Ghana: "West Sussex", "North Carolina")
+REGION_AFTER = (r'(?=\s*(?:$|[^\w\s]|\d|(?:drive|driving|drives|tour|road ?trip|trip|ride|dash ?cam|pov|4k|hd|uhd|'
+                r'night|morning|evening|sunset|travel|vlog|scenic|exploring|walk|walking|riding)\b))')
+REGION_COMPASS = re.compile(r'(?:(?:north|south|east|west|central|northern|southern|eastern|western|middle|upper|'
+                            r'lower|far)\W*)+(?:region|province)?', re.IGNORECASE)
+
+
+def _fold(text):
+    return unicodedata.normalize('NFKD', text).encode('ascii', 'ignore').decode()
+
+
+@lru_cache(maxsize=4)
+def _regions(_mtime_ns):
+    """(regex of the regions after a comma, {region's name key: its country}) for title_region."""
+    where = _localities_by_name(_mtime_ns)
+    mapped = {c for places in where.values() for c, _, _ in places}
+    countries = {}
+    for c in mapped:
+        if (code := _iso2(c)) and code != 'US':
+            for sub in _subdivisions(code):
+                if sub.parent_code is None:
+                    # "Wales [Cymru GB-CYM]": the name before its brackets
+                    name = re.sub(r'\s*\[.*', '', _fold(sub.name)).strip()
+                    countries.setdefault(_name_key(name), {})[c] = name
+    names = {}
+    for key, cs in countries.items():
+        (c, name), = cs.items() if len(cs) == 1 else ((None, None),)
+        if c and len(key) > 2 and not REGION_COMPASS.fullmatch(name) \
+                and key not in {_name_key(x) for x in mapped} \
+                and all(lc == c for lc, _, _ in where.get(key, ())):
+            names[key] = (name, c)
+    alts = '|'.join(re.escape(n) for n, _ in sorted(names.values(), key=lambda x: -len(x[0])))
+    return re.compile(rf',\s*({alts}){REGION_AFTER}', re.IGNORECASE), {k: c for k, (_, c) in names.items()}
+
+
+def title_region(title):
+    """The country of the mapping whose region a title names after a comma, else None (see REGION_AFTER)."""
+    where = _localities_by_name(add_video._mtime_ns(add_video.FILE_PATH))
+    rx, country = _regions(add_video._mtime_ns(add_video.FILE_PATH))
+    title = _fold(title or '')
+    for m in rx.finditer(title):
+        c = country.get(_name_key(m.group(1)))
+        # not after a town the mapping has only in other countries: "Belmont, Long Island" is in New York, not in
+        # the Bahamas' Long Island
+        words = re.findall(r"[\w'.-]+", title[:m.start()])[-4:]
+        before = [where[k] for i in range(len(words)) if (k := _name_key(' '.join(words[i:]))) in where]
+        if c and not (before and all(lc != c for lc, _, _ in before[0])):
+            return c
+    return None
 
 
 @functools.lru_cache(maxsize=None)
