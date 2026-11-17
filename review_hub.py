@@ -97,7 +97,9 @@ background:#fff;color:#222;font-size:13px;cursor:pointer}
 </script></head><body>
 <h2>🚙 Batches to review <span class="s">({{ batches|sum(attribute="waiting") }} videos)</span></h2>
 <p class="ok"><a href="#" onclick="location.port=8771;return false">Pipeline status</a>:
- what each worker does, queues, channels</p>
+ what each worker does, queues, channels ·
+ <a href="#" onclick="location.port=8772;return false">Dataset figures</a>: the README's statistics and figures with
+ this mapping, unpushed reviews included (rebuilt nightly)</p>
 {% if health | selectattr('ok') | list %}
 <p class="load" title="load over the last 30 min: green busy, amber medium, red low">
 {%- for w in health if w.ok and not w.same %}{% if not loop.first %} · {% endif %}<span title="{{ w.what }}">
