@@ -9952,21 +9952,24 @@ def compass_city(loc, df, depth=3):
 
 @lru_cache(maxsize=64)
 def channel_places(channel_id, _mtime_ns, top=10):
-    """{total, top: [(locality, videos, percent)]} of a channel's videos in the mapping by locality, the top ones
-    first, for the review page (user, 2026-10-24: JAMPHILIPPINES143's earlier videos are 99% Manila); None without
-    any. _mtime_ns: the mapping's, so a changed mapping is counted again."""
+    """{total, top: [(label, [locality, state, country], videos, percent)]} of a channel's videos in the mapping by
+    locality, the top ones first, for the review page (user, 2026-10-24: JAMPHILIPPINES143's earlier videos are 99%
+    Manila; 2026-11-17: a click on one fills it in for the selected video); None without any. _mtime_ns: the
+    mapping's, so a changed mapping is counted again."""
     if not channel_id:
         return None
     df = add_video.load_csv(add_video.FILE_PATH)
     counts = Counter()
-    for vids, chans, loc, state in zip(df['videos'], df['channel'], df['locality'], df['state']):
+    for chans, loc, state, country in zip(df['channel'], df['locality'], df['state'], df['country']):
         n = sum(c == channel_id for c in re.findall(r'[\w-]+', str(chans)))
         if n:
-            counts[f'{loc}, {state}' if isinstance(state, str) else loc] += n
+            counts[(str(loc), *(x if isinstance(x, str) else '' for x in (state, country)))] += n
     total = sum(counts.values())
     if not total:
         return None
-    return {'total': total, 'top': [(loc, n, round(100 * n / total, 1)) for loc, n in counts.most_common(top)]}
+    top = [(f'{loc}, {state}' if state else loc, [loc, state, country], n, round(100 * n / total, 1))
+           for (loc, state, country), n in counts.most_common(top)]
+    return {'total': total, 'top': top}
 
 
 def merged_locality(loc, merges=None):
@@ -11111,6 +11114,7 @@ button.small { padding: 3px 8px; font-size: 13px; cursor: pointer;
                border: 1px solid #bbb; border-radius: 3px; background: #fafafa; }
 .channel { font-size: 16px; font-weight: 600; margin-bottom: 4px; }
 .chplaces { font-size: 12px; color: #555; margin: -2px 0 4px; max-width: 560px; }
+.chplaces a.chplace { color: inherit; text-decoration: underline dotted; cursor: pointer; }
 #vid, #clock { cursor: pointer; }
 #vid { font-family: monospace; }
 #vid-yt { text-decoration: none; }
@@ -11178,8 +11182,10 @@ background:#fff;color:#222;font-size:13px;cursor:pointer}
     {% if channel %}<div class="channel">🚕 <a href="{{ channel.url }}" target="_blank" rel="noopener">
       {{- channel.name }}</a></div>{% endif %}
     {% if channel_places %}<div class="chplaces" title="the localities of this channel's videos in the mapping, by
-      videos">Earlier videos ({{ '{:,}'.format(channel_places.total) }}):
-      {% for loc, n, pct in channel_places.top %}{{ loc }} {{ pct }}% ({{ '{:,}'.format(n) }})
+      videos; click one to set it as the locality of the selected video">Earlier videos
+      ({{ '{:,}'.format(channel_places.total) }}):
+      {% for label, loc, n, pct in channel_places.top %}<a href="#" class="chplace" data-loc='{{ loc | tojson }}'
+        onclick="useChannelPlace(this); return false">{{ label }}</a> {{ pct }}% ({{ '{:,}'.format(n) }})
       {{- ' · ' if not loop.last }}{% endfor %}</div>{% endif %}
     <div class="clock">Video: <span id="vid" title="click to copy">–</span>
       <a id="vid-yt" href="#" target="_blank" rel="noopener" title="open on YouTube here">↗</a>
@@ -11784,6 +11790,16 @@ async function suggest(input) {
     box.appendChild(div);
   }
   box.classList.toggle('open', list.length > 0);
+}
+// a locality of the channel's earlier videos (header), clicked: set for the selected video, in the group of its
+// outlined segment, else its first group whose locality can still change (user, 2026-11-17)
+function useChannelPlace(a) {
+  const row = keyRow(), video = row ? row.dataset.video : ytReady && playingVideo();
+  const boxes = [...document.querySelectorAll(`.locbox[data-video="${video}"]`)];
+  const box = (row && boxes.find(b => b.dataset.entry === row.dataset.entry)) || boxes[0];
+  if (!box) { alert(video ? `${video}: its locality cannot change any more` : 'Play or click a video first'); return; }
+  choose(box.querySelector('.loc-name'), JSON.parse(a.dataset.loc));
+  box.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 function hideSuggestions(input) {
   setTimeout(() => input.parentElement.querySelector('.loc-suggestions').classList.remove('open'), 150);
