@@ -4087,6 +4087,16 @@ def split_gps(p, df, out_dir):
         if loc is None or (add_video.get_existing_locality_row(df, *loc)[1] is None
                            and not _own_city(loc[0], (lat, lon), loc[2])):
             locs[i] = metro_locality(lat, lon, df, fences) or loc
+    # one town by two spellings is one locality, the first one's: OpenStreetMap named Ross-on-Wye "Ross on Wye" at
+    # some readings (xnT1A-PIywU, D2G3UkS5EjU; 2026-11-19)
+    # (not two towns of a name in two states)
+    seen = []
+    for i, loc in enumerate(locs):
+        same = loc and next((x for x in seen if (_name_key(x[0]), x[2]) == (_name_key(loc[0]), loc[2])
+                             and (x[1] == loc[1] or not x[1] or not loc[1])), None)
+        if loc and not same:
+            seen.append(loc)
+        locs[i] = same or loc
     for i, ((t, lat, lon), loc) in enumerate(zip(track, locs)):
         a = 0 if i == 0 else (track[i - 1][0] + t) / 2  # a border half way between two readings
         if stretches and stretches[-1][2] == loc:
