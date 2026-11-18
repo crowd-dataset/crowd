@@ -2975,8 +2975,14 @@ GPS_OCR = re.compile(r'(?<![A-Za-z])([NSEW])\s*([\dOoIl]{1,3})([.,])\s?([\dOoIl]
 OCR_DIGITS = str.maketrans('OoIl', '0011')
 
 
+# a colon after the hemisphere's letter and OCR's slips in the number after it: "N:51.8796 W:2.2013" read as
+# "N:51,.8796 W:2. 1963" (g4shf's dashcam, kpGeawJLR3o; user, 2026-11-17: "this video has GPS overlay")
+GPS_COLON = re.compile(r'(?<![A-Za-z])([NSEW])\s*:\s*(\d{1,3})(?:[.,]{1,2} ?|[.,]?\s(?=\d{4}))(\d{3,})')
+
+
 def parse_gps(text):
     """(lat, lon) of the first coordinates in a frame's text, else None (see GPS_OCR)."""
+    text = GPS_COLON.sub(r'\1\2.\3', text or '')
     return _parse_gps(text) or (_parse_gps(GPS_OCR.sub(
         lambda m: m[1] + m[2].translate(OCR_DIGITS) + m[3] + m[4].translate(OCR_DIGITS), text))
         if GPS_OCR.search(text or '') else None)
@@ -5083,9 +5089,13 @@ def us_title(title):
                 or re.search(rf'\b(?:{states})\b', t, flags=re.I) or re.search(rf',\s*(?:{codes})\b', t))
 
 
-# everyday names of countries the mapping writes otherwise (not Holland, Wales or England: the Holland Tunnel, New
-# South Wales, New England)
-COUNTRY_ALIASES = {'Turkey': 'Türkiye', 'Czech Republic': 'Czechia', 'Ivory Coast': "Côte d'Ivoire",
+# everyday names of countries the mapping writes otherwise (not Holland: the Holland Tunnel), and the nations of the
+# United Kingdom, not after "New" ("New England", "New South Wales": ALIAS_NAMED_BEFORE): "Slow TV - 4k - England by
+# Road - Glous" was looked up as a place near the channel's home and found in Riccione (kpGeawJLR3o; user,
+# 2026-11-17)
+COUNTRY_ALIASES = {'England': 'United Kingdom', 'Scotland': 'United Kingdom', 'Wales': 'United Kingdom',
+                   'Northern Ireland': 'United Kingdom', 'Turkey': 'Türkiye', 'Czech Republic': 'Czechia',
+                   'Ivory Coast': "Côte d'Ivoire",
                    'Swaziland': 'Eswatini', 'Burma': 'Myanmar', 'East Timor': 'Timor-Leste',
                    'Cape Verde': 'Cabo Verde', 'UAE': 'United Arab Emirates',
                    # German and Swedish names (FEMFiA4SJF4: "Bratislava Slovakien"; user, 2026-10-17)
@@ -5129,8 +5139,8 @@ COUNTRY_ALIASES = {'Turkey': 'Türkiye', 'Czech Republic': 'Czechia', 'Ivory Coa
 ALIAS_NAMED_AFTER = re.compile(r"\s+(?:Run|Creek|Lake|Hills?|Point|Island|Ridge|Hollow|Bay|Neck|Swamp|Knob|Mountains?|"
                                r"Valley|Springs?|Branch|Fork|Pond|Cove|Avenue|Ave|Blvd|Boulevard|Street|St|Sandwich|"
                                r"Club|Farms?|Trot)\b")
-ALIAS_NAMED_BEFORE = re.compile(r"\b(?:Jardim|Av|Avenida|Rua|Calle|Plaza|Praça|Parque|Vila|Villa|Colonia|Barrio)"
-                                r"\.?\s+$", re.IGNORECASE)
+ALIAS_NAMED_BEFORE = re.compile(r"\b(?:Jardim|Av|Avenida|Rua|Calle|Plaza|Praça|Parque|Vila|Villa|Colonia|Barrio|"
+                                r"New(?:\s+South)?)\.?\s+$", re.IGNORECASE)
 
 
 def title_countries(title):
@@ -5148,7 +5158,9 @@ def title_countries(title):
     title = re.sub(rf'\b(?:{states})\b', ' ', title, flags=re.I)
     # ... also in capitals ("DRIVING in MOSCOW: South-Eastern Okrug, RUSSIA", t0H4dB4tsVA; user, 2026-10-17), not in
     # lower case: a turkey, china, a jordan
-    found = [c for c in COUNTRIES if re.search(rf'\b(?:{re.escape(c)}|{re.escape(c.upper())})\b', title)]
+    # (not Ireland in "Northern Ireland": an alias of the United Kingdom)
+    found = [c for c in COUNTRIES if re.search(rf"{'(?<!Northern )(?<!NORTHERN )' if c == 'Ireland' else ''}"
+                                               rf'\b(?:{re.escape(c)}|{re.escape(c.upper())})\b', title)]
     # ... and by the everyday name where the mapping writes another (Io1qs4lQmS4: "GIRESUN, Turkey" is in Türkiye;
     # user, 2026-10-17); not in a place's or a thing's name ("Turkey Run", "Turkey Creek" are US places), but before
     # any other word ("Turkey Drive: Serik to Antalya" looked for Serik near Tehran and found Sevan, Armenia:
