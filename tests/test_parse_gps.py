@@ -11,6 +11,10 @@ cases = {
     '40.123456, -75.123456': (40.123456, -75.123456),
     'GARMIN 29-05-2021 12:05:10 49.29065 -123.13081': (49.29065, -123.13081),
     'lat: 23.18409 lon: 120.48879': (23.18409, 120.48879),
+    # a colon after the hemisphere, OCR's ",." and a space after the point (kpGeawJLR3o, 2026-11-17)
+    'N:51,.8796 W:2.2013 7 - - 16-10-2026 08:40:06': (51.8796, -2.2013),
+    'N:51.8798 W:2. 1963': (51.8798, -2.1963),
+    'N: 3 of 12, E: 2 x': None,
     '10.6686\n\x0c\n1.6482': None,  # the end of one line and a cut-off number on the next
     '': None,
 }
