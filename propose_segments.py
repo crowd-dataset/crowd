@@ -6357,8 +6357,32 @@ def _region_code(address):
 
 
 def _osm_name(raw):
-    """A result's own name (LocationIQ may give only the full display name, whose first part it is)."""
-    return raw.get('name') or (raw.get('display_name') or '').split(',')[0]
+    """A result's own name (LocationIQ may give only the full display name, whose first part it is), one of them
+    when OpenStreetMap writes two (_osm_names)."""
+    return _osm_names(raw.get('name') or (raw.get('display_name') or '').split(',')[0])[0]
+
+
+def _osm_names(name):
+    """[the name to use, its other names] of an OpenStreetMap name: "Gùspini/Guspini" and "Arcidanu/San Nicolò
+    d'Arcidano" are a town in Sardinian and Italian, offered for review as one name (XaKu6rRJEBw; user, 2026-11-19:
+    "choose one and add the other one to locality_aka"). The one the mapping has, else the last: the country's own
+    language comes last ("Donostia/San Sebastián", "Alacant/Alicante")."""
+    # (not inside brackets: "Area B (South Fraser Canyon/Sunshine Valley)" is one name)
+    parts = [x for x in re.split(r'\s*/\s*', name or '') if x.strip()] if '(' not in (name or '') else []
+    if len(parts) < 2:
+        return [name]
+    exact, known = _known_names(add_video._mtime_ns(add_video.FILE_PATH))
+    first = next((x for x in parts if x in exact), None) or next((x for x in parts if _name_key(x) in known),
+                                                                 parts[-1])
+    return [first] + [x for x in parts if x != first]
+
+
+@lru_cache(maxsize=4)
+def _known_names(_mtime_ns):
+    """(the mapping's locality names as written, the name keys of its localities and their other names)."""
+    df = add_video.load_csv(add_video.FILE_PATH)
+    akas = [a for cell in df['locality_aka'] for a in add_video._parse_flat_list_cell(cell)]
+    return set(df['locality'].dropna()), {_name_key(x) for x in list(df['locality'].dropna()) + akas}
 
 
 def _osm_type(raw):
@@ -6383,6 +6407,21 @@ def _remembered(fn):
                 return None
         return cache[args]
     return wrapper
+
+
+@_remembered
+def osm_aka(locality, country):
+    """The other names OpenStreetMap writes for a town of that name in the country (see _osm_names), [] without."""
+    code = _iso2(country)
+    if not locality or not code:
+        return []
+    found = _nominatim('geocode', {'city': locality, 'country': code}, exactly_one=False, limit=10,
+                       addressdetails=True, language='en', timeout=15) or []
+    for r in found:
+        names = _osm_names(r.raw.get('name') or '')
+        if len(names) > 1 and _name_key(locality) in {_name_key(x) for x in names}:
+            return [x for x in names if x != locality]
+    return []
 
 
 # a district of a city far from its middle is a place of its own: "Hengli Island Tip Nansha Guangzhou" is Nansha,
@@ -6510,7 +6549,7 @@ def _osm_place(phrase, country_codes, near=None, reach_km=None, home=None):
         return None
     a = r.raw.get('address', {})
     kind = next((k for k in ('city', 'town', 'village', 'municipality', 'hamlet') if a.get(k)), None)
-    town = a.get(kind) if kind else None
+    town = _osm_names(a.get(kind))[0] if kind else None
 
     # Croatian, Serbian, Bosnian and Slovenian towns and municipalities are "Grad", "Općina", "Opština", "Občina" in
     # OpenStreetMap: the name is the town's own when the phrase names it ("Općina Vladislavci" is Vladislavci), else
@@ -7195,7 +7234,7 @@ def _council(lat, lon):
     r = _nominatim('reverse', (round(lat, 3), round(lon, 3)), zoom=10, addressdetails=True, language='en',
                    timeout=15)
     a = (r.raw.get('address') or {}) if r else {}
-    name = a.get('municipality') or a.get('county') or a.get('city')
+    name = _osm_names(a.get('municipality') or a.get('county') or a.get('city'))[0]
     return re.sub(r'(?i)^(?:city|town|shire|municipality|borough|district) of ', '', name) if name else None
 
 
@@ -7405,7 +7444,7 @@ def _osm_reverse(lat, lon):
     r = _nominatim('reverse', (lat, lon), zoom=14, addressdetails=True, language='en', timeout=15)
     a = (r.raw.get('address') or {}) if r else {}
     kind = next((k for k in ('city', 'town', 'village', 'municipality', 'hamlet') if a.get(k)), None)
-    town = a.get(kind) if kind else None
+    town = _osm_names(a.get(kind))[0] if kind else None
     if a.get('state') == 'Puerto Rico' and a.get('county'):  # its localities are the municipios (Río Piedras is in
         town, kind = re.sub(r'\s+Municipio$', '', a['county']), 'city'  # San Juan), which OSM keeps as counties
     if town:
@@ -9684,7 +9723,7 @@ def _town_near(name, home):
     if _osm_type(r.raw) in ('city', 'town', 'village', 'municipality'):
         town = name
     else:
-        town = address.get('city') or address.get('town') or address.get('village')
+        town = _osm_names(address.get('city') or address.get('town') or address.get('village'))[0]
     # "Kamakura-shi" is Kamakura: a Japanese city's, ward's or town's suffix is no part of its name
     town = re.sub(r'-(?:shi|ku|cho|chō|machi|mura|gun)$', '', town or '') or None
     return (town, r.latitude, r.longitude, address.get('state') or address.get('province')) if town else None
@@ -11080,7 +11119,9 @@ def apply_segments(video_id, locality, state, country, segments, vehicle_type, u
                 if close and not at:
                     raise ValueError(f'"{locality}" is not in the mapping, but {close[0]} is: pick it, or put the new '
                                      f'locality on the map if it really is another place')
-                new_row = add_video.new_locality_row(locality, state or None, country, near=near, at=at)
+                # with OpenStreetMap's other names for it ("Gùspini" for Guspini)
+                new_row = add_video.new_locality_row(locality, state or None, country, osm_aka(locality, country),
+                                                     near=near, at=at)
                 if new_row['lat'] is None or new_row['lon'] is None:
                     raise ValueError(f'no coordinates found for "{locality}": check its spelling, '
                                      'or put it on the map')
