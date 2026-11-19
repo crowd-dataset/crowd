@@ -10753,3 +10753,7 @@ id,locality,locality_aka,state,country,iso3,continent,lat,lon,gmp,population_loc
 10752,Bečov nad Teplou,[Becov nad Teplou],,Czechia,CZE,Europe,50.0835097,12.8386736,,976,10886878,5.9,,174.58,43.9,25.7,0.0,[ZNVQTW2oqYA],[[0]],[[1426]],[[1966]],[0],[13032017],[UCIr4vtswoqOFOGyqjfAnwFg]
 10753,Beroun,[],,Czechia,CZE,Europe,49.9640292,14.0733907,,21521,10886878,5.9,,174.58,43.9,25.7,0.0,[rn3EXSx6IJo],[[0]],[[1441]],[[2127]],[0],[1032016],[UCIr4vtswoqOFOGyqjfAnwFg]
 10754,Buggerru,[],,Italy,ITA,Europe,39.3973967,8.4021815,,1037,58915656,5.3,99.48,168.12,48.0,34.3,0.0,[ZFZUVLyA4MQ],[[0]],[[466]],[[751]],[0],[31032026],[UC2fnpxL0qJBoEzS2-C1TlZA]
+10755,Guspini,[Gùspini],,Italy,ITA,Europe,39.54134,8.633131,,10458,58915656,5.3,99.48,168.12,48.0,34.3,0.0,"[aderTTrxdiM,XaKu6rRJEBw]","[[0],[0]]","[[1],[766]]","[[105],[900]]","[0,0]","[28032026,27032026]","[UC2fnpxL0qJBoEzS2-C1TlZA,UC2fnpxL0qJBoEzS2-C1TlZA]"
+10756,Arbus,[],,Italy,ITA,Europe,39.525839,8.597831,,5892,58915656,5.3,99.48,168.12,48.0,34.3,0.0,[aderTTrxdiM],[[0]],[[597]],[[900]],[0],[28032026],[UC2fnpxL0qJBoEzS2-C1TlZA]
+10757,San Nicolò d'Arcidano,[Arcidanu],,Italy,ITA,Europe,39.6833916,8.6468751,,2476,58915656,5.3,99.48,168.12,48.0,34.3,0.0,"[XaKu6rRJEBw,F8gUQyzhdmI]","[[0],[0]]","[[1],[491]]","[[35],[638]]","[0,0]","[27032026,26032026]","[UC2fnpxL0qJBoEzS2-C1TlZA,UC2fnpxL0qJBoEzS2-C1TlZA]"
+10758,Uras,[],,Italy,ITA,Europe,39.700643,8.70003,,2672,58915656,5.3,99.48,168.12,48.0,34.3,0.0,[F8gUQyzhdmI],[[0]],[[1]],[[195]],[0],[26032026],[UC2fnpxL0qJBoEzS2-C1TlZA]
