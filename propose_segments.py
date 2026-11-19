@@ -10371,6 +10371,14 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
             elif not driving and walk_no_stop(dict(np.load(sig_path))):
                 reason = (f"a walk, not a drive: the camera bobs at a walker's step rate "
                           f"({float(np.load(sig_path)['step_bob']):.0%} of its shake) and never stands {NO_STOP_S} s")
+            # ... or never stands a second (never_stands) with WALK_SHEET_FEW+ contact sheet frames on foot, nobody
+            # close by needed (hq1cQCEdCjg: courtyards of Simferopol; user, 2026-11-19: "walking"): of the reviewed
+            # videos so judged 24 rejected walks and no approved one (without the frames: 2 approved test drives)
+            elif (not driving and n_walk >= WALK_SHEET_FEW and not MOVING_TITLE.search(title_text(meta['title'] or ''))
+                  and never_stands(dict(np.load(sig_path)))):
+                reason = (f"a walk, not a drive: {n_walk} of {len(frames)} sampled frames look taken on foot, and the "
+                          f"camera bobs at a walker's step rate ({float(np.load(sig_path)['step_bob']):.0%} of its "
+                          "shake) and never stands still a second")
             # ... and in a batch mostly of walks, a title naming no vehicle or drive (AsQAgDtCWbw's showground walk
             # read as a drive by every check; user, 2026-10-21): of such reviewed videos 32 rejected, 2 approved
             elif (not driving and n_walk >= WALK_SHEET_FEW and not MOVING_TITLE.search(meta['title'] or '')
