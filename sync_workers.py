@@ -100,6 +100,13 @@ def merge_plan(name, remote_plan):
                 # over a proposal here (3QeTN5BygQE and others proposed here again were left out by the sync)
                 local[i] = p
                 added += 1
+            elif ('entries' not in p and 'entries' in local[i] and changed_there and untouched(local[i])
+                  and fingerprint(local[i]) == seen.get(p['video'])):
+                # left out there after its proposal came here (the batch's walk checks at the end of the run), the
+                # copy here still that proposal, unreviewed: left out here too (iPwIaBXpZ_8, solne4niykrim: "never
+                # stands still a second" at 06:36, offered for review from the 02:47 copy; user, 2026-11-19)
+                local[i] = p
+                added += 1
         # rejected in review here: what the worker proposed before it heard is rejected too (user, 2026-10-17:
         # tonechkanz offered again an hour after its rejection)
         rejected = (ps.reject_undecided(local)
