@@ -540,6 +540,28 @@ def walk_near(p, sig):
     return bool(total) and hinted / total >= WALK_BATCH_HINT and (not len(wv) or wv[:, 0].mean() >= WALK_PERSON_SHARE)
 
 
+# ... or, at any bob, a quiet walk: walker's bob (walk_hints) in WALK_QUIET_HINT+ of the proposed footage, a vehicle
+# ahead in under WALK_QUIET_AHEAD of the frames, people close by in WALK_QUIET_PERSON+, and a contact sheet frame on
+# foot (solne4niykrim's walks along Simferopol's streets, 0rpWRVCkRbw and LN1Nuipo9NA at step bob 0.48 and 0.43;
+# user, 2026-11-20: "walking"): of all reviewed videos so judged 3 rejected walks and no approved one
+WALK_QUIET_HINT, WALK_QUIET_AHEAD, WALK_QUIET_PERSON = 0.5, 0.2, 0.015
+
+
+def walk_quiet(p, sig, sheet):
+    """(share of the footage bobbing, vehicle ahead share, person close share, sheet frames on foot) of a proposed
+    video that looks like a quiet walk (WALK_QUIET_HINT), else None."""
+    wv = np.asarray(sig.get('walk_view', np.zeros((0, 2)))).reshape(-1, 2)
+    if len(wv) < 20 or wv[:, 1].mean() >= WALK_QUIET_AHEAD or wv[:, 0].mean() < WALK_QUIET_PERSON:
+        return None
+    segs = [g for e in p.get('entries', []) for g in e['segments']]
+    total = sum(g['end'] - g['start'] for g in segs)
+    hinted = sum(b - a for a, b in walk_hints(segs, np.asarray(sig.get('bob_track', np.zeros((0, 2)))).reshape(-1, 2)
+                                              .tolist()))
+    if not total or hinted / total < WALK_QUIET_HINT or not (n := walking_frames(sheet)):
+        return None
+    return hinted / total, float(wv[:, 1].mean()), float(wv[:, 0].mean()), n
+
+
 def walk_no_stop(sig, p=None):
     """Whether a video bobs like a walk (STEP_BOB_NO_STOP or more) and never stands NO_STOP_S s on end."""
     p = p or PARAMS
@@ -10993,18 +11015,22 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
             touched.append(v)
     for v, p in list(plan.items()):  # any batch: a walk among people close by (WALK_NEAR_ALONE)
         if ('entries' not in p or not undecided(p) or v not in sigs or gps_drive(sigs[v])
-                or MOVING_TITLE.search(title_text(p.get('title') or '')) or not walk_near(p, sigs[v])):
+                or MOVING_TITLE.search(title_text(p.get('title') or ''))):
             continue
         wv = np.asarray(sigs[v].get('walk_view', np.zeros((0, 2)))).reshape(-1, 2)
         near = len(wv) and wv[:, 0].mean() >= WALK_NEAR_ALONE
-        if not near and not never_stands(sigs[v]):
+        if walk_near(p, sigs[v]) and (near or never_stands(sigs[v])):
+            why = (f'people close by in {wv[:, 0].mean():.0%} of the frames' if near
+                   else 'it never stands still a second, as a car at lights does')
+            why = f"probably a walk: {why}, and it bobs like one ({float(sigs[v]['step_bob']):.0%} of its shake)"
+        elif quiet := walk_quiet(p, sigs[v], os.path.join(out_dir, f'{v}.jpg')):
+            why = (f'probably a walk: it bobs like one in {quiet[0]:.0%} of its footage, a vehicle ahead in only '
+                   f'{quiet[1]:.0%} of the frames, people close by in {quiet[2]:.0%}, and {quiet[3]} sampled '
+                   f"frame{'s' * (quiet[3] > 1)} taken on foot")
+        else:
             continue
-        why = (f'people close by in {wv[:, 0].mean():.0%} of the frames' if near
-               else 'it never stands still a second, as a car at lights does')
         committed.setdefault(v, json.dumps(p, sort_keys=True))  # replaced only if nobody changed it since
-        plan[v] = {'video': v, 'title': p['title'], 'analysed': True,
-                   'exclude': f"probably a walk: {why}, and it bobs like one ({float(sigs[v]['step_bob']):.0%} of "
-                              'its shake)'}
+        plan[v] = {'video': v, 'title': p['title'], 'analysed': True, 'exclude': why}
         touched.append(v)
     if (inset := batch_inset(plan, out_dir)):  # the batch's inset, faint in its other videos (PIP_BATCH_N)
         for v, p in list(plan.items()):
