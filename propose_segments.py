@@ -451,6 +451,10 @@ WALK_NEAR_ALONE = 0.15
 # walker in a crowd never stands while a car waits at lights (ZFJlelufPRA of wanderer_youtube; user, 2026-11-09):
 # of the reviewed videos so judged 55 rejected and no approved one (one 5-min approved clip never stood)
 WALK_NEVER_BOB, WALK_NEVER_MIN = 0.5, 8
+# ... and in any batch, never standing a second, people close by in WALK_NEVER_PERSON of the frames is enough (a walk
+# through a housing estate in Simferopol, lkswp3dfQFI of solne4niykrim at 2.3%, a vehicle ahead in 22%; user,
+# 2026-11-20: "walking"): of the reviewed videos so judged, from 1% close by, 1 rejected walk and no approved one
+WALK_NEVER_PERSON = 0.015
 # ... and, batch or not, from WALK_SHEET_FEW frames on foot with that bob (user, 2026-10-30): of 408 reviewed videos
 # at step_bob 0.5-0.65, 14 walks or rejected and no approved one (2 frames alone: 6 approved)
 WALK_SHEET_FEW = 2
@@ -528,8 +532,8 @@ def walk_view(sig):
     return (person, ahead) if person >= WALK_PERSON_SHARE and ahead < WALK_AHEAD_SHARE else None
 
 
-def walk_near(p, sig):
-    """Whether a proposed video bobs like a walk with people close by (WALK_BATCH_BOB_NEAR)."""
+def walk_near(p, sig, person=WALK_PERSON_SHARE):
+    """Whether a proposed video bobs like a walk with people close by in person of its frames (WALK_BATCH_BOB_NEAR)."""
     if float(sig.get('step_bob', 0)) < WALK_BATCH_BOB_NEAR:
         return False
     segs = [g for e in p.get('entries', []) for g in e['segments']]
@@ -537,7 +541,7 @@ def walk_near(p, sig):
     hinted = sum(b - a for a, b in walk_hints(segs, np.asarray(sig.get('bob_track', np.zeros((0, 2)))).reshape(-1, 2)
                                               .tolist()))
     wv = np.asarray(sig.get('walk_view', np.zeros((0, 2)))).reshape(-1, 2)
-    return bool(total) and hinted / total >= WALK_BATCH_HINT and (not len(wv) or wv[:, 0].mean() >= WALK_PERSON_SHARE)
+    return bool(total) and hinted / total >= WALK_BATCH_HINT and (not len(wv) or wv[:, 0].mean() >= person)
 
 
 # ... or, at any bob, a quiet walk: walker's bob (walk_hints) in WALK_QUIET_HINT+ of the proposed footage, a vehicle
@@ -11019,7 +11023,7 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
             continue
         wv = np.asarray(sigs[v].get('walk_view', np.zeros((0, 2)))).reshape(-1, 2)
         near = len(wv) and wv[:, 0].mean() >= WALK_NEAR_ALONE
-        if walk_near(p, sigs[v]) and (near or never_stands(sigs[v])):
+        if near and walk_near(p, sigs[v]) or never_stands(sigs[v]) and walk_near(p, sigs[v], WALK_NEVER_PERSON):
             why = (f'people close by in {wv[:, 0].mean():.0%} of the frames' if near
                    else 'it never stands still a second, as a car at lights does')
             why = f"probably a walk: {why}, and it bobs like one ({float(sigs[v]['step_bob']):.0%} of its shake)"
