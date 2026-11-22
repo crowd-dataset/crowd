@@ -64,6 +64,7 @@ SILENT_BATCH_S = 45 * 60  # a batch silent this long is stuck (the longest analy
 # mini, 2026-10-16/17; mini analyses an hour of footage in about 6 min)
 SILENT_SHARE = 0.5
 LONG_VIDEO = re.compile(r'long video: (\d+) min')
+ANALYSING = re.compile(r'\] analysing (\S+)')
 IDLE_WAIT_S = 10 * 60
 QUOTA_WAIT_S = 60 * 60  # the API quota resets at midnight Pacific time
 
@@ -314,6 +315,17 @@ FIRST_PHASES = {1}
 PAUSED_COUNTRIES = {'russia'}
 
 
+def note_stuck(vid):
+    """Counts a batch stopped as stuck on video vid in ps.STUCK_FILE, where propose_segments.py leaves the video out
+    once ps.STUCK_SKIP is reached; the new count."""
+    stuck = ps.stuck_counts()
+    stuck[vid] = int(stuck.get(vid) or 0) + 1
+    with open(ps.STUCK_FILE + '.tmp', 'w') as f:
+        json.dump(stuck, f, indent=1, sort_keys=True)
+    os.replace(ps.STUCK_FILE + '.tmp', ps.STUCK_FILE)
+    return stuck[vid]
+
+
 def run_chunk(url, country, chunk, single_city=False, new_only=False, deferred=False):
     """One batch of the channel with the latest code; its output, streamed. single_city: only drives within one
     city (set "single_city": true for the channel in channels.json)."""
@@ -327,6 +339,7 @@ def run_chunk(url, country, chunk, single_city=False, new_only=False, deferred=F
     out = []
     with subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env) as proc:
         fd, pending, last, done, silent = proc.stdout.fileno(), b'', time.time(), False, SILENT_BATCH_S
+        video = None  # the video being analysed
         while not done:
             # a read that never returns (a connection dropped mid-request, 2026-10-09) must not hold the routine;
             # raw reads, so no line waits in a buffer select cannot see
@@ -334,7 +347,10 @@ def run_chunk(url, country, chunk, single_city=False, new_only=False, deferred=F
             if not ready:
                 if time.time() - last > silent:
                     proc.terminate()
-                    log(f'the batch printed nothing for {silent // 60:.0f} min (stuck?): stopped it')
+                    n = note_stuck(video) if video else 0
+                    log(f'the batch printed nothing for {silent // 60:.0f} min (stuck?): stopped it'
+                        + (f' (on {video}, stuck {n} times' if video else '')
+                        + ('; left out from now on)' if video and n >= ps.STUCK_SKIP else ')' if video else ''))
                     break
                 continue
             chunk = os.read(fd, 65536)
@@ -344,6 +360,8 @@ def run_chunk(url, country, chunk, single_city=False, new_only=False, deferred=F
             *lines, pending = (pending + chunk).split(b'\n')
             for line in (raw.decode(errors='replace') + '\n' for raw in lines):
                 long = LONG_VIDEO.search(line)
+                if (m := ANALYSING.search(line)):
+                    video = m[1]
                 if long or '] analysing ' in line:  # the next video: its own limit
                     silent = max(SILENT_BATCH_S, int(long[1]) * 60 * SILENT_SHARE) if long else SILENT_BATCH_S
                 # stop downloading at once; the batch continues later
