@@ -247,7 +247,7 @@ def paces(rows, now):
 QUEUE_PHASES = [((1,), 'Refresh 1: subscriptions, new uploads'),
                 ((2,), "Refresh 2: the sheet's processed channels, new uploads"),
                 ((3,), "Refresh 3: the sheet's unfinished channels, every video"),
-                ((4, 5), 'Refresh 4-5: highway-titled videos left out before, analysed after all'),
+                ((4, 5), 'Refresh 4-5: highway-titled videos, held back and analysed after the queue'),
                 ((6,), 'Refresh 6: channels added to the sheet from the mapping, new uploads')]
 HELD = [('us', 'deferred:us:', 'Held back: US videos of channels elsewhere'),
         ('multi_city', 'deferred:', 'Held back: drives through several localities'),
@@ -283,10 +283,6 @@ def steps(state, queue):
         out.append(dict(title="The sheet's new channels", done=len(rows) - len(left), total=len(rows), unit='rows',
                         parts=[x for x in [('Processing', left.count('Processing')), ('blank', left.count(''))]
                                if x[1]]))
-    queue = [q for q in queue if (q.get('country') or '').strip().lower() != 'russia']
-    for phases, title in QUEUE_PHASES:
-        if (keys := ['refresh:' + q['url'] for q in queue if q.get('phase') in phases]):
-            out.append(channels(title, keys))
     held = {}  # kind -> {channel url: videos held back in its plan}
     for k, c in state.items():
         if k.startswith('deferred:'):
@@ -296,12 +292,22 @@ def steps(state, queue):
                 plan = json.load(f)
         except (OSError, ValueError):
             continue
-        for kind, _, _ in HELD:
+        for kind in [h[0] for h in HELD] + ['highway']:
             if (n := sum(p.get('deferred') == kind for p in plan)):
                 held.setdefault(kind, {})[c.get('url') or k.removeprefix('refresh:')] = n
+    queue = [q for q in queue if (q.get('country') or '').strip().lower() != 'russia']
+    for phases, title in QUEUE_PHASES:
+        keys, extra = ['refresh:' + q['url'] for q in queue if q.get('phase') in phases], ()
+        if phases == (4, 5):  # ... and the highway-titled videos held back since (user, 2026-11-22), their pass
+            urls = set(held.get('highway', {})) | {k[len('deferred:highway:'):] for k in state
+                                                   if k.startswith('deferred:highway:')}
+            keys += ['deferred:highway:' + u for u in sorted(urls)]
+            extra = [('videos held back', sum(held.get('highway', {}).values()))] if urls else ()
+        if keys:
+            out.append(channels(title, keys, extra))
     for kind, prefix, title in HELD:
         urls = set(held.get(kind, {})) | {k[len(prefix):] for k in state if k.startswith(prefix)
-                                          and not k[len(prefix):].startswith(('us:', 'long:'))}
+                                          and not k[len(prefix):].startswith(('us:', 'long:', 'highway:'))}
         if urls:
             out.append(channels(title, [prefix + u for u in sorted(urls)],
                                 [('videos held back', sum(held.get(kind, {}).values()))]))
