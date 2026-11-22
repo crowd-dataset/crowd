@@ -247,7 +247,7 @@ def paces(rows, now):
 QUEUE_PHASES = [((1,), 'Refresh 1: subscriptions, new uploads'),
                 ((2,), "Refresh 2: the sheet's processed channels, new uploads"),
                 ((3,), "Refresh 3: the sheet's unfinished channels, every video"),
-                ((4, 5), 'Refresh 4-5: highway-titled videos, held back and analysed after the queue'),
+                ((4, 5), 'Refresh 4-5: highway and country drives, held back and analysed the very last'),
                 ((6,), 'Refresh 6: channels added to the sheet from the mapping, new uploads')]
 HELD = [('us', 'deferred:us:', 'Held back: US videos of channels elsewhere'),
         ('multi_city', 'deferred:', 'Held back: drives through several localities'),
