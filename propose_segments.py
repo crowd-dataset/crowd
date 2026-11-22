@@ -6727,7 +6727,9 @@ def _same_name(a, b):
     Glojene and the mapping's Glozhene (3JKDClTIWuc; user, 2026-10-25); Sheremetia and Sheremetya. Not a near name:
     Ludesch is not Bludesch, East Haven not West Haven."""
     def key(name):
-        k = _name_key(_latin(name))
+        # ... "-iya" and "-ia", a "Ye" and an "E" at a word's start: the mapping's Yevpatoria, OpenStreetMap's
+        # Yevpatoriya and a title's Evpatoria (zRup7FUijq8; user, 2026-11-22)
+        k = re.sub(r'\bye', 'e', re.sub(r'iya\b', 'ia', _name_key(_latin(name))))
         for x, y in (('zh', 'j'), ('kh', 'h'), ('ts', 'c'), ('tz', 'c'), ('ya', 'ia'), ('yu', 'iu'), ('yo', 'io'),
                      ('y', 'i')):
             k = k.replace(x, y)
@@ -6954,6 +6956,10 @@ def place_localities(phrases, df, home=None):
     hits = [(p, h if h and h[0] or not land else min(
         _named_settlements(p.split(',')[0].strip(), land) or [h],
         key=lambda x: _km(home[3], home[4], x[4], x[5]) if home and x else 0)) for p, h in hits]
+    # a name nothing finds may be a mapping town written another way ("Evpatoria" for Yevpatoria): that town, when
+    # the text names no other ("Дорога на Евпаторию, Саки" stays Saki: XJif0QNAF_Q)
+    spelt = [(p, loc) for p, h in hits if not h and (loc := _spelt_otherwise(p, df, countries, home, only))]
+    found = False
     hits = [(p, h) for p, h in hits if usable(h)]
     if len(hits) > 1:
         anchor = max(hits, key=lambda ph: ph[1][6])
@@ -6984,11 +6990,35 @@ def place_localities(phrases, df, home=None):
                 not home or _km(home[3], home[4], hit[4], hit[5]) > PLAIN_FAR_KM):
             continue
         if usable(hit) and (loc := _hit_locality(hit, df, countries, named=bool(itself))):
+            found = True
             yield loc, phrase
+    for phrase, loc in spelt if not found else ():
+        yield loc, phrase
 
 
 REGION_KM = 150  # see place_localities
 PLAIN_FAR_KM = 100  # see place_localities
+
+
+def _spelt_otherwise(phrase, df, countries, home=None, only=()):
+    """[locality, state, country] of the mapping locality in the countries (place_localities' {code: country}; only
+    those of the codes only when given) that a phrase OpenStreetMap finds nothing for names in another
+    transliteration (_same_name): in the country the text names, else in the channel's home country, nearest home;
+    None for none, for no country to look in, or for several with no home to choose by. "Evpatoria" of a Crimean
+    title is the mapping's Yevpatoria, which OpenStreetMap knows by neither that name nor its other names
+    (zRup7FUijq8; user, 2026-11-22). Not abroad: "Brooklyn" of a New York title is no Brooklin, Ontario."""
+    name = phrase.split(',')[0].strip()
+    where = {countries[c] for c in only} if only else {home[2]} if home else set()
+    if not name or not where or plain_words(name):
+        return None
+    rows = [r for r in df[df['country'].isin(where)].itertuples() if pd.notna(r.lat) and any(
+        _same_name(n, name) for n in [r.locality] + add_video._parse_flat_list_cell(r.locality_aka))]
+    if home:
+        rows.sort(key=lambda r: _km(home[3], home[4], float(r.lat), float(r.lon)))
+    elif len(rows) > 1:
+        return None
+    return [rows[0].locality, rows[0].state if isinstance(rows[0].state, str) else None, rows[0].country] \
+        if rows else None
 
 
 def plain_words(phrase):
