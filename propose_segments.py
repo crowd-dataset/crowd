@@ -4633,6 +4633,22 @@ def sort_kept_copies(out_dir, plan):
 
 
 LONG_LATER_S = 3600  # videos longer than this wait for the very end (see process_channel)
+# a video whose batch run_channels.py stopped as stuck (silent too long) STUCK_SKIP times is left out; the count is
+# in STUCK_FILE, which run_channels.py writes (ETuz222qwKM, a 1.8 h livestream: its text reading outlasted the 45 min
+# silence 83 times in a row on wsl5090, 2026-11-20/22; user, 2026-11-22: "skip after 2 timeouts")
+STUCK_FILE, STUCK_SKIP = os.path.join('_output/proposals', 'stuck_videos.json'), 2
+
+
+def stuck_counts():
+    """{video id: how many times run_channels.py stopped its batch as stuck} from STUCK_FILE."""
+    try:
+        with open(STUCK_FILE) as f:
+            counts = json.load(f)
+        return counts if isinstance(counts, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
 MIN_UPLOAD_S = 300  # the paper requires source uploads of at least five minutes
 EXCLUDE_TITLE = re.compile(r'walking tour|walk tour|city walk|time[- ]?lapse|hyperlapse|compilation'
                            r'|sped[- ]?up|speed(?:ed)?[- ]?up|fast[- ]?forward|\b\d(?:\.\d)?x speed\b|\bx\d speed\b'
@@ -10343,6 +10359,8 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
                 scope.discard(vid)
                 continue  # search results come in no date order: older than the channel's newest video in the mapping
             reason = exclusion_reason(meta)
+            if not reason and (n_stuck := int(stuck_counts().get(vid) or 0)) >= STUCK_SKIP:
+                reason = f'its analysis was stopped as stuck {n_stuck} times (no output for too long)'
             # the Data API gives no chapters: YouTube's own, as yt-dlp sees them, once before the video is proposed
             # (JszmgYHlqug: "Lucerne", "Hergiswil", "Stans", ... "Sarnen" were left out, its town signs gave
             # Interlaken; user, 2026-11-13: "chapters show localities"). The review page marks them so too
