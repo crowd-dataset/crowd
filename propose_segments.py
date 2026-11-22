@@ -4691,6 +4691,33 @@ def motorway_title(title):
     return bool(MOTORWAY_TITLE.search(title or '')) and not CAR_MODEL.search(title or '')
 
 
+def highway_title(title):
+    """Whether a title names a highway or motorway (HIGHWAY_TITLE, motorway_title)."""
+    return bool(HIGHWAY_TITLE.search(title_text(title or '')) or motorway_title(title))
+
+
+# held back for after the refresh queue, more widely than HIGHWAY_TITLE: whatever is likely highway or country driving
+# (user, 2026-11-22: "be aggressive with leaving videos that are likely highway driving to later ... process as many
+# videos with city driving as possible"): expressways in other languages, motorway junctions ("M5 J21 Weston to
+# J25 Yeovil"), toll roads, rural and scenic roads
+LATER_TITLE = re.compile(r'(?i:\bexpressways?\b|\bexpwy\b|\btollway\b|\btoll ?roads?\b|\bturnpike\b|\bparkways?\b'
+                         r'|\bautoroutes?\b|\bautopistas?\b|\bautov[ií]as?\b|\bautostrad[ae]\b|\bautobahn(?:en)?\b'
+                         r'|\bautocesta\b|\bd[aá]lnice\b|\bsnelweg\b|\bmotorv(?:ei|eg|äg|ej)\b|\bmoottoritie\b'
+                         r'|\botoyol\b|\bautoestrada\b|\brodovia\b|\bcarretera\b|\bruta \d|\broute \d'
+                         r'|шосе|шоссе|трас[аc]|автобан|автомагістраль|автомагистраль|autostrady|\bdroga ekspresowa\b'
+                         r'|\brural\b|\bcountry ?(?:side|roads?|lanes?)\b|\bback ?roads?\b|\bmountain (?:roads?|pass)'
+                         r'|\bscenic (?:drive|route|road|byway)s?\b|\bcross[- ]country\b|\blong[- ]distance\b)'
+                         r'|高速|\bJ\d{1,2}[A-Z]?\b')
+
+
+def later_title(title):
+    """What in a title marks likely highway or country driving, held back for later (highway_title, LATER_TITLE),
+    or None."""
+    t = title_text(title or '')
+    hit = HIGHWAY_TITLE.search(t) or (motorway_title(title) and MOTORWAY_TITLE.search(title)) or LATER_TITLE.search(t)
+    return hit.group(0) if hit else None
+
+
 # ... and the expressways of a title (not a ring road, a city's own: user, 2026-10-23), for the highway check at night
 EXPRESSWAY_TITLE = re.compile(r'(?i:\bexpressways?\b|\bexpwy\b|\bexpy\b|\btollway\b|\bautoroutes?\b|\bautopistas?\b'
                               r'|\bautostrad[ae]\b|\bautobahn(?:en)?\b)|高速')
@@ -10376,6 +10403,16 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
                 plan[vid] = {'video': vid, 'title': meta['title'], 'deferred': 'us',
                              'exclude': 'held back for later: the title names a place in the US (footage from '
                                         'outside the US first)'}
+                touched.append(vid)
+                commit([vid])
+                continue
+            # a highway-titled video waits too (user, 2026-11-22: wsl5090b analysed g4shf's "UK Motorways - M5 J21
+            # Weston to J25 Yeovil" in the middle of its channel): held back, proposed by the 'highway' pass after
+            # the refresh queue (counted under "Refresh 4-5" on the status page)
+            if not reason and deferred != 'highway' and (later := later_title(meta['title'])):
+                plan[vid] = {'video': vid, 'title': meta['title'], 'deferred': 'highway',
+                             'exclude': f"held back for later: the title says '{later}', likely highway or country "
+                                        "driving (city drives first)"}
                 touched.append(vid)
                 commit([vid])
                 continue
