@@ -458,6 +458,12 @@ WALK_NEVER_PERSON = 0.015
 # ... and, batch or not, from WALK_SHEET_FEW frames on foot with that bob (user, 2026-10-30): of 408 reviewed videos
 # at step_bob 0.5-0.65, 14 walks or rejected and no approved one (2 frames alone: 6 approved)
 WALK_SHEET_FEW = 2
+# a shot between hard cuts of WALK_SHOT_MIN_S+ that is WALK_SHOT_SHARE+ cut as walking or a handheld camera is cut
+# whole: the drive ended at the cut and the stretches between the walking ones are the same walk (0F9fSS7z3Wc of
+# solne4niykrim from 5:25, 57%; user, 2026-11-22: "walking for the rest of the video"): of reviewed videos it cuts 8
+# min the reviewers rejected (4 videos) and 4 min approved that is a walk too (KVzVmCm7Jow 13:40-17:23 at 64%, since
+# taken out); a car with the camera held at its window comes close (LV5hBFSLweg 6:56-9:58 at 54%, approved)
+WALK_SHOT_MIN_S, WALK_SHOT_SHARE = 60, 0.55
 
 
 def bob_share(sig):
@@ -1683,6 +1689,7 @@ def propose(sig, p=PARAMS):
         in_town = score[at] >= TOWN_SCORE
         problems = [(label, bad & ~in_town if label in ('highway driving', 'rural driving') else bad)
                     for label, bad in problems]
+    walked = np.zeros(n, bool)  # cut as walking or a handheld camera, for WALK_SHOT_SHARE
     for label, bad in problems:
         min_s = p['quiet_min_s'] if label in ('highway driving', 'rural driving') else \
             25 if label.startswith('camera turned to the side') else SHOT_MIN_S if label == SIDE_SHOT else \
@@ -1729,7 +1736,15 @@ def propose(sig, p=PARAMS):
                              f'road?): check')
                 continue
             keep[a:b] = False
+            walked[a:b] |= label == 'walking or a handheld camera'
             notes.append(f'{label} {a / FPS:.0f}-{b / FPS:.0f}s')
+    # a shot between hard cuts that is mostly a walk is a walk all through: its stretches between the cut ones too
+    edges = np.array([0, *np.flatnonzero(cut), n])
+    for a, b in np.stack([edges[:-1], edges[1:]], 1):
+        if (b - a) / FPS >= WALK_SHOT_MIN_S and walked[a:b].mean() >= WALK_SHOT_SHARE and keep[a:b].any():
+            keep[a:b] = False
+            notes.append(f'walking {a / FPS:.0f}-{b / FPS:.0f}s (a shot between cuts, {walked[a:b].mean():.0%} of it '
+                         'walking or a handheld camera)')
     for t, x in fast_walkers(sig):  # see walk_cadence
         notes.append(f'people walk at {x:.1f} steps a second at {int(t) // 60}:{int(t) % 60:02d}: sped up? check')
     for a, b in np.asarray(sig.get('off_road', np.zeros((0, 2)))).reshape(-1, 2):  # see OFF_SCENES
