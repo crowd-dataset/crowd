@@ -513,8 +513,8 @@ def widen_refresh(state):
 def deferred_todo(state, args, kind='multi_city'):
     """[(None, state key, url, country, False)] of the channels here whose plans hold drives through several
     localities held back by SINGLE_CITY_FIRST: the very last work, after the sheet and the refresh queue; with kind
-    'us', those holding videos in the US of a channel elsewhere (US_LATER), done in the US step; 'highway', the
-    highway-titled videos, right after the refresh queue; 'long', videos over an hour, the very last. Not on the
+    'us', those holding videos in the US of a channel elsewhere (US_LATER), done in the US step; 'long', videos
+    over an hour; 'highway', likely highway or country drives, the very last. Not on the
     reviewing machine (--no-new), which has every machine's plans."""
     if args.no_new:
         return []
@@ -713,9 +713,10 @@ def main():
         todo = going(refresh_todo(state, args, only=args.first_phases)) \
             or [t for t in todo if not in_us(t)] or [t for t in queue if not in_us(t)] \
             or [t for t in todo if in_us(t)] or [t for t in queue if in_us(t)] \
-            or going(deferred_todo(state, args, 'highway')) \
             or (US_LATER and going(deferred_todo(state, args, 'us'))) or going(deferred_todo(state, args)) \
-            or going(deferred_todo(state, args, 'long'))  # videos over an hour: the very last (LONG_LATER_S)
+            or going(deferred_todo(state, args, 'long')) \
+            or going(deferred_todo(state, args, 'highway'))  # highway and country drives the very last (user,
+        # 2026-11-22), after the videos over an hour (LONG_LATER_S)
         if not todo:
             log('no channel left to process; waiting for reviews and the sheet')
             time.sleep(IDLE_WAIT_S)
