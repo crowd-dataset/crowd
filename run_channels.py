@@ -513,7 +513,8 @@ def widen_refresh(state):
 def deferred_todo(state, args, kind='multi_city'):
     """[(None, state key, url, country, False)] of the channels here whose plans hold drives through several
     localities held back by SINGLE_CITY_FIRST: the very last work, after the sheet and the refresh queue; with kind
-    'us', those holding videos in the US of a channel elsewhere (US_LATER), done in the US step. Not on the
+    'us', those holding videos in the US of a channel elsewhere (US_LATER), done in the US step; 'highway', the
+    highway-titled videos, right after the refresh queue; 'long', videos over an hour, the very last. Not on the
     reviewing machine (--no-new), which has every machine's plans."""
     if args.no_new:
         return []
@@ -529,7 +530,7 @@ def deferred_todo(state, args, kind='multi_city'):
         except (OSError, ValueError):
             continue
         url = c.get('url') or key.removeprefix('refresh:')
-        dkey = 'deferred:' + ({'us': 'us:', 'long': 'long:'}.get(kind, '')) + url
+        dkey = 'deferred:' + ({'us': 'us:', 'long': 'long:', 'highway': 'highway:'}.get(kind, '')) + url
         if held and state.get(dkey, {}).get('status') not in ('rejected', 'error'):
             seen.add(c['name'])
             todo.append((None, dkey, url, c.get('country') or '', False))
@@ -712,6 +713,7 @@ def main():
         todo = going(refresh_todo(state, args, only=args.first_phases)) \
             or [t for t in todo if not in_us(t)] or [t for t in queue if not in_us(t)] \
             or [t for t in todo if in_us(t)] or [t for t in queue if in_us(t)] \
+            or going(deferred_todo(state, args, 'highway')) \
             or (US_LATER and going(deferred_todo(state, args, 'us'))) or going(deferred_todo(state, args)) \
             or going(deferred_todo(state, args, 'long'))  # videos over an hour: the very last (LONG_LATER_S)
         if not todo:
@@ -743,7 +745,8 @@ def main():
         c = state.setdefault(key, {'row': n, 'name': channel_name(url), 'status': 'processing',
                                    **({} if n is not None else {'refresh': True, 'url': url, 'new_only': new_only}),
                                    **({'deferred': 'us' if key.startswith('deferred:us:') else
-                                       'long' if key.startswith('deferred:long:') else True}
+                                       'long' if key.startswith('deferred:long:') else
+                                       'highway' if key.startswith('deferred:highway:') else True}
                                       if key.startswith('deferred:') else {})})
         if c.get('deferred'):
             c['status'] = 'processing'  # held-back drives again since the last pass
