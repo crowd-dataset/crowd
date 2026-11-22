@@ -4696,7 +4696,7 @@ def highway_title(title):
     return bool(HIGHWAY_TITLE.search(title_text(title or '')) or motorway_title(title))
 
 
-# held back for after the refresh queue, more widely than HIGHWAY_TITLE: whatever is likely highway or country driving
+# held back for the very end, more widely than HIGHWAY_TITLE: whatever is likely highway or country driving
 # (user, 2026-11-22: "be aggressive with leaving videos that are likely highway driving to later ... process as many
 # videos with city driving as possible"): expressways in other languages, motorway junctions ("M5 J21 Weston to
 # J25 Yeovil"), toll roads, rural and scenic roads
@@ -10437,8 +10437,8 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
                 commit([vid])
                 continue
             # a highway-titled video waits too (user, 2026-11-22: wsl5090b analysed g4shf's "UK Motorways - M5 J21
-            # Weston to J25 Yeovil" in the middle of its channel): held back, proposed by the 'highway' pass after
-            # the refresh queue (counted under "Refresh 4-5" on the status page)
+            # Weston to J25 Yeovil" in the middle of its channel): held back, proposed by the 'highway' pass, the
+            # very last (after the US, multi-city and long passes; counted under "Refresh 4-5" on the status page)
             if not reason and deferred != 'highway' and (later := later_title(meta['title'])):
                 plan[vid] = {'video': vid, 'title': meta['title'], 'deferred': 'highway',
                              'exclude': f"held back for later: the title says '{later}', likely highway or country "
@@ -10448,7 +10448,8 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
                 continue
             # a video over LONG_LATER_S waits for the very end, after every queue phase (user, 2026-10-20: "leave
             # long videos of more than 1h for later"): held back like multi_city, proposed by the 'long' pass
-            if not reason and deferred != 'long' and (meta.get('duration') or 0) > LONG_LATER_S:
+            # (not in the highway pass, which comes after the long one: a long highway drive would go back and forth)
+            if not reason and deferred not in ('long', 'highway') and (meta.get('duration') or 0) > LONG_LATER_S:
                 plan[vid] = {'video': vid, 'title': meta['title'], 'deferred': 'long',
                              'exclude': f"held back for later: {int(meta['duration']) // 60} min long (videos of an "
                                         "hour or less first)"}
