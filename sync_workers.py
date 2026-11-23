@@ -207,6 +207,28 @@ def push_code(host):
                           check=True, capture_output=True, text=True, timeout=300).stdout.split()
 
 
+def running_copies(host, name, plan):
+    """Move here the analysis copies (ps.LOCAL_KEPT) of the videos a worker's running batch already proposes: it
+    keeps them as .tmp until it ends (ps.sort_kept_copies), while its plan is shown here at once, so the review page
+    fetched copies of the videos YouTube refused again, minutes each (autoworldandtourism7789's refresh: KSbMQP5eAi8
+    and 3 more; user, 2026-11-23). plan: the worker's, read before (a copy is complete once its video is in it)."""
+    alias, rem = place(host)
+    folder = os.path.join(rc.ROOT, name, ps.LOCAL_VIDEOS)
+    want = [f"{p['video']}{ps.LOCAL_KEPT}.tmp" for p in plan if 'entries' in p and not p.get('exclude')
+            and not any(os.path.exists(os.path.join(folder, p['video'] + x)) for x in (ps.LOCAL_KEPT, '.mp4'))]
+    if not want:
+        return
+    os.makedirs(folder, exist_ok=True)
+    r = subprocess.run(['rsync', '-a', '--remove-source-files', '--files-from=-',
+                        f'{alias}:{rem}/_output/proposals/{name}/{ps.LOCAL_VIDEOS}/', folder + '/'],
+                       input='\n'.join(want), text=True, capture_output=True, check=False)
+    if r.returncode not in (0, 23, 24):  # 23: some not there (no copy kept)
+        raise subprocess.CalledProcessError(r.returncode, r.args, r.stdout, r.stderr)
+    for f in want:
+        if os.path.exists(path := os.path.join(folder, f)):
+            os.replace(path, path[:-len('.tmp')])
+
+
 def sync(host):
     alias, rem = place(host)
     pushed = push_code(host)
@@ -232,6 +254,8 @@ def sync(host):
             raise subprocess.CalledProcessError(r.returncode, r.args, r.stdout, r.stderr)
         plan = json.loads(ssh(host, f'cat {rem}/_output/proposals/{name}/plan.json 2>/dev/null || echo "[]"'))
         added = merge_plan(name, plan)
+        if c.get('status') == 'processing':
+            running_copies(host, name, plan)
         mine_plan = os.path.join(rc.ROOT, name, 'plan.json')
         local = json.load(open(mine_plan)) if os.path.exists(mine_plan) else []
         # the whole channel rejected in review here: the worker stops it too
