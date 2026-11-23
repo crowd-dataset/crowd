@@ -5506,7 +5506,10 @@ MISSPELT_RATIO = 0.85
 def hashtag_locality(title, df):
     """[locality, state, country] of df whose name (or alias) a hashtag of the title spells, without spaces,
     accents or punctuation, when exactly one: "#barradatijuca" (-DQubgdlVY8; user, 2026-10-21: its title's other
-    places were a condominium and a hospital, put in Itabuna). 2 of 2 reviewed such titles right."""
+    places were a condominium and a hospital, put in Itabuna). 2 of 2 reviewed such titles right. Not when the rest
+    of the title names a bigger locality of df: "Brisbane CBD to Griffith university … Brisbane 2023 #griffith" is
+    Brisbane, not Griffith, NSW (-wd7AeHc2io; user, 2026-11-23), while "Bowen Hills to Brighton … #brisbane" stays
+    Brisbane. Of 209 reviewed titles with a hashtag locality this changes 3, all to the reviewer's."""
     tags = {k for t in re.findall(r'#(\w+)', title or '') if len(k := re.sub(r'\W', '', _name_key(t))) >= 4
             and not ordinary(t)}
     if not tags:
@@ -5517,7 +5520,16 @@ def hashtag_locality(title, df):
                                 if isinstance(r.locality_aka, str) else [])
         if any(isinstance(n, str) and re.sub(r'\W', '', _name_key(n)) in tags for n in names):
             hits.add((r.locality, None if pd.isna(r.state) else r.state, r.country))
-    return list(hits.pop()) if len(hits) == 1 else None
+    if len(hits) != 1:
+        return None
+    hit = list(hits.pop())
+    rest = re.sub(rf'(?i)\b{re.escape(hit[0])}\b', ' ', re.sub(r'#\w+', ' ', title))
+    other = _title_locality(rest, df)
+
+    def people(loc):
+        row = add_video.get_existing_locality_row(df, *loc)[1]
+        return float(pd.to_numeric(row.get('population_locality'), errors='coerce') or 0) if row is not None else 0
+    return None if other and other != hit and people(other) > people(hit) else hit
 
 
 def home_state_name(loc, title, country):
