@@ -3364,12 +3364,23 @@ def gps_track(video_id, duration, opening=None):
     small to read), so only a few are fetched."""
     if not shutil.which('tesseract') or not duration:
         return None, [], []
+    # ... or the opening's frames, read by EasyOCR (opening_texts), show coordinates the probes missed
+    # (aEIGIgrxOgM; user, 2026-10-20: "this should be done for all videos where coordinates are available")
+    seen = any(parse_gps(' '.join(x)) for x in (opening or {}).values())
     try:
-        stream = _stream(video_id)
-        texts = [(t, _frame_text(stream, t)) for t in GPS_PROBE_S if t < duration]
-        # ... or the opening's frames, read by EasyOCR (opening_texts), show coordinates the probes missed
-        # (aEIGIgrxOgM; user, 2026-10-20: "this should be done for all videos where coordinates are available")
-        seen = any(parse_gps(' '.join(x)) for x in (opening or {}).values())
+        # asked again after a while when the opening shows coordinates: YouTube's "Sign in to confirm you're not a
+        # bot" for the stream lost the track of 96 of 226 such videos of g4shf's refresh on wsl5090b, which then
+        # went by its description (dg7ejD2tVGM: Cairnryan for a drive into Stranraer; user, 2026-11-23)
+        for wait in GPS_STREAM_WAITS if seen else ():
+            try:
+                stream = _stream(video_id)
+                break
+            except (RuntimeError, KeyError, ValueError) as e:
+                print(f'  GPS overlay: no stream ({str(e)[:80]}), asking again in {wait} s', flush=True)
+                time.sleep(wait)
+        else:
+            stream = _stream(video_id)
+        texts = [(t, _overlay_text(stream, t)) for t in GPS_PROBE_S if t < duration]
         if not seen and not any(parse_gps(x) or parse_clock(x) or parse_stamp(x) for _, x in texts):
             return None, [], []
         # at most ~200 frames: a 3-hour road trip read every 30 s printed nothing for 45 min and was stopped as
@@ -3377,7 +3388,7 @@ def gps_track(video_id, duration, opening=None):
         every = max(GPS_EVERY_S, int(duration / 200))
         times = [t for t in range(GPS_EVERY_S * 4, int(duration), every) if t not in GPS_PROBE_S]
         for k, t in enumerate(times, 1):
-            texts.append((t, _frame_text(stream, t)))
+            texts.append((t, _overlay_text(stream, t)))
             if k % 50 == 0:
                 print(f'  reading the overlay: {k} of {len(times)} frames', flush=True)
     except (RuntimeError, subprocess.TimeoutExpired, KeyError, ValueError) as e:
@@ -3392,6 +3403,17 @@ def gps_track(video_id, duration, opening=None):
     # video joined from several, xowRRb32D2k's Pugachyov part; JyHYb3g7wxs began with 29.26695 for 49.26695)
     kept = gps_stretches(track, clean=False)
     return (kept if len(kept) >= 2 else None), clock, stamp
+
+
+GPS_STREAM_WAITS = (60, 300)  # see gps_track
+
+
+def _overlay_text(stream, t):
+    """_frame_text, '' for a frame that times out twice: one slow frame loses only itself, not the whole track."""
+    try:
+        return _frame_text(stream, t)
+    except subprocess.TimeoutExpired:
+        return ''
 
 
 def _stream(video_id):
