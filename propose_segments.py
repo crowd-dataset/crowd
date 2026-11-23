@@ -599,6 +599,12 @@ BOB_EVERY_S = 45  # step_bob_track: one 15-s reading this often through the vide
 # 399 cars (1 of 249 picked at random, 2 of the 150 that shake most sideways) and none of 60 buses and trucks; up
 # and down shaking alone tells little (bicycles 0.35 median, cars 0.32)
 BIKE_ROLL = 0.6
+# a path no car takes, named in a title that says no drive: with the roll of a bicycle the ride is one ("Dipolog City
+# Boulevard Boardwalk in 4K", EnDO-PK_rew, from a car channel; user, 2026-11-23). Of 33 reviewed videos rolling
+# 0.6-0.8 degrees 14 approved ones stayed cars, so the roll alone does not say; of the reviewed titles naming such a
+# path the three drives say so ("Drive", "Dash Cam", "Driving") and do not roll
+WALKWAY_TITLE = re.compile(r'(?i)\b(?:boardwalk|promenade|esplanade|baywalk|seawall|bike (?:path|lane|trail)s?'
+                           r'|cycle ?(?:path|way|track)s?)\b')
 
 
 def video_roll(sig):
@@ -10712,7 +10718,12 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
             vt, vehicle_note = plan[vid].get('vehicle_type', vt), 'vehicle as in the earlier proposal'
         elif (vt is None or vt == 0) and title_vt is None and not DRIVE_TITLE.search(title_text(meta['title'])) \
                 and analysed and (roll := video_roll(np.load(sig_path))) >= BIKE_ROLL:
-            vehicle_note += f'; the camera rolls side to side as on a bicycle ({roll:.1f} degrees): check the vehicle'
+            if (path := WALKWAY_TITLE.search(title_text(meta['title']))):
+                vt, vehicle_note = 4, (f'{VEHICLE_TYPES[4]}: the title names a {path[0].lower()} and the camera '
+                                       f'rolls side to side as on a bicycle ({roll:.1f} degrees)')
+            else:
+                vehicle_note += (f'; the camera rolls side to side as on a bicycle ({roll:.1f} degrees): check the '
+                                 'vehicle')
         named = title_countries(meta['title'])  # "…hacia Carolina, Puerto Rico": not San Juan, Texas
         guess = (transit_city(meta['title'], df)
                  or guess_locality(meta['title'], named[0] if len(named) == 1 else country, df))
