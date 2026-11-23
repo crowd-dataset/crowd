@@ -13089,7 +13089,13 @@ def review(plan_path, port=None):
             low = locality.lower()
             if q in low and (low, country) not in known:
                 hits.append((0 if low == q else 1 if low.startswith(q) else 2, locality, state, country, True))
-        hits.sort(key=lambda h: (h[0], h[1], h[2] or '', h[3]))  # some localities have no state
+        # of equal matches, those in the batch's countries first, then the bigger: "Brisbane" is Brisbane, QLD for an
+        # Australian channel, not Brisbane, CA, which came first by its state (-wd7AeHc2io; user, 2026-11-23)
+        here = {c for _, _, c in pending}
+        pop = _populations(add_video._mtime_ns(add_video.FILE_PATH))
+        people = {k: v for k, v in pop.items() if pd.notna(v)}
+        hits.sort(key=lambda h: (h[0], h[3] not in here, -people.get((h[1], h[2], h[3]), 0), h[1], h[2] or '',
+                                 h[3]))  # some localities have no state
         return jsonify([{'label': label(*h[1:4]) + (' (new: created on Apply)' if h[4] else ''),
                          'value': list(h[1:4])} for h in hits[:30]])
 
