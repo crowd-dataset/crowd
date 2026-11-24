@@ -8225,6 +8225,9 @@ DESC_DRIVE_REGION = re.compile(rf"(?i:(?:drive|driving|road ?trip)\s+(?:in|throu
 HYPHEN_DRIVE = re.compile(rf"\s*({_DASH_WORD})-({_DASH_WORD})\s+(?i:(?:highway|motorway|autobahn|freeway|road|scenic|"
                           r"night|morning|evening|[48]K|U?HD)\s+){0,3}(?i:drive|driving|road ?trip|trip|cruise)\b")
 BRACKET_PAIR = re.compile(rf"\(\s*({_DESC_PLACE})\s+(?:to|→|->)\s+({_DESC_PLACE})\s*\)")
+# ... or after a series' numbered label: "Czech Republic (37.) - Chrudim - Hradec Králové" (oC7N3sD-fNY, IxiJmvgqMgM,
+# duen969; user, 2026-11-24: proposed as Chrudim all through); a list of three or more is place_list's
+SERIES_PAIR = re.compile(rf"^[^|–—]*?\(\s*\d+\s*\.?\s*\)\s*[-–—]\s*({_LIST_PLACE})\s+[-–—]\s+({_LIST_PLACE})\s*$")
 
 
 def drive_title(title, description):
@@ -8254,6 +8257,8 @@ def drive_title(title, description):
         return f'from {m[1]} to {m[2]}'
     if stops := place_list(title):  # the first stop to the last (drive_via: the ones between)
         return f'from {stops[0]} to {stops[-1]}'
+    if (m := SERIES_PAIR.search(title)) and not any(ordinary(x.split()[0]) for x in (m[1], m[2])):
+        return f'from {m[1]} to {m[2]}'
     # "Grevenmacher  - Trier VIRTUAL DRIVE 4K" (iTzKa42lapA; user, 2026-10-19): two places, no common word in either
     # ("Sunny Day - Time Lapse Driving" is none), then a drive word
     if (m := DASH_DRIVE.match(title)) and not {w.lower() for w in f'{m[1]} {m[2]}'.split()} & DASH_NOT_PLACE:
