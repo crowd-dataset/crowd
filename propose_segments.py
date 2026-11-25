@@ -2391,6 +2391,10 @@ SKIP_STOP_S, SKIP_STOP_MOTION, SKIP_SAME_NCC = 2, 0.2, 0.9  # a car pulling away
 # right and none worse (XDBi8ukETEA, -TY9uuHDcP8, 7oAdCb9eINM); 30 lost 9eI2niyrIwo, -2,718 s
 STITCH_SKY_JUMP = 5
 HIGHWAY_GAP_S = 600  # a piece up to this long between rural/highway stretches of a highway title's video: no town
+# ... also a title naming a road by its number, "A4", "A35", "E531" (bB9u_pZb2bw, "Strasbourg - A4 onto A35 City
+# Centre": 9:44-10:41 between highway stretches; user, 2026-11-26: just highway driving): of 18 such reviewed pieces
+# all were rejected
+ROAD_NUMBER = re.compile(r'(?<![\w-])[AE]-?\d{1,3}(?![\w-])')
 DRIVER_GAP_S = 600  # footage between two camera-on-the-driver stretches up to this long is the driver too
 DRIVER_CUT_SHARE = 0.2  # face frames in a minute from which a camera on the driver is cut, not only noted
 WAIT_S, WAITS_PER_HOUR = 20, 3  # few waits at lights: see propose
@@ -10777,7 +10781,8 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
             # a highway in the title is analysed, not left out: such drives pass through towns on the way, which
             # the rural and highway checks and a GPS overlay find (user, 2026-10-11: uVHGEdTyAXk, Galt to Tulare)
             if hit := (HIGHWAY_TITLE.search(title_text(meta['title']))
-                       or (motorway_title(meta['title']) and MOTORWAY_TITLE.search(meta['title']))):
+                       or (motorway_title(meta['title']) and MOTORWAY_TITLE.search(meta['title']))
+                       or ROAD_NUMBER.search(meta['title'])):
                 notes.append(f"the title mentions '{hit.group(0)}': check that only driving through towns is left")
                 # ... and a short piece between two rural or highway stretches is no town on the way (1Rz63qdJN38
                 # 17:21-20:08; user, 2026-10-16): in reviewed videos with a highway title, of 31 such pieces up to
