@@ -10213,6 +10213,28 @@ def locate_now(p, df, home, sig_path=None, meta=None, boilerplate=frozenset()):
 # city of METRO_POP or more, whose freeways are its own (user, 2026-11-16): there such cuts held 3.4 h approved and
 # 5.2 h rejected (31 videos: Los Angeles, New York, Philadelphia, Istanbul), in smaller towns 4.3 h and 42.9 h
 ONE_PLACE_HIGHWAY = {**PARAMS, 'quiet_min_s': 600}
+# ... and a one-town video that by day is all highway, with no town in the picture, keeps every rural and highway
+# cut: "Calais to Croatia by Car - ... - Italy - Venice West to Meolo" (1AJ5FIkNWA4, g4shf; user, 2026-11-25: "videos
+# like this are just highway driving. detect them and skip"), guessed as Venice, was proposed all through. Of reviewed
+# one-town videos whose street signal says highway this share of the time, by day, with CLIP seeing no town and in a
+# town under METRO_POP, the reviewer rejected 739 min (33 videos) and approved 32 (5)
+ALL_HIGHWAY_SHARE = 0.95
+
+
+def all_highway(sig):
+    """Whether a video by day is highway driving nearly all through (the street signal's minutes, ALL_HIGHWAY_SHARE)
+    with no town scene anywhere (TOWN_SCORE)."""
+    if 'street' not in sig or 'town_scene' not in sig or 'sky' not in sig:
+        return False
+    street = np.asarray(sig['street'], float)
+    town = np.asarray(sig['town_scene'], float).reshape(-1, 2)
+    if not len(street) or not len(town):
+        return False
+    k = max(1, 60 // URBAN_EVERY_S)
+    minute = np.convolve(street, np.ones(k) / k, mode='same')
+    return (np.mean(np.asarray(sig['sky']) >= PARAMS['yolo_day_sky']) >= 0.9
+            and np.mean(minute < PARAMS['street_objects']) >= ALL_HIGHWAY_SHARE
+            and not (town[:, 1] >= TOWN_SCORE).any())
 
 
 @lru_cache(maxsize=2)
@@ -10232,10 +10254,13 @@ def one_place_segments(p, sig_path):
     big = _populations(add_video._mtime_ns(add_video.FILE_PATH)).get(tuple(loc), 0) >= METRO_POP
     highway = bool(HIGHWAY_TITLE.search(title) or motorway_title(title)) and not big
     sig = load_signals(sig_path, title)
-    segments, notes = night_from_title(*propose(sig, ONE_PLACE_HIGHWAY if highway else ONE_PLACE), sig, title)
+    every = not big and all_highway(sig)
+    segments, notes = night_from_title(*propose(sig, PARAMS if every else ONE_PLACE_HIGHWAY if highway else ONE_PLACE),
+                                       sig, title)
     p['note'] = re.sub(r'; (?:rural|highway) driving \d+-\d+s', '', p.get('note') or '')
     if (kept := [n for n in notes if re.fullmatch(r'(?:rural|highway) driving \d+-\d+s', n)]):
-        p['note'] = f"{p['note']}; {'; '.join(kept)} (cut: 10+ min, a highway or road trip title)".lstrip('; ')
+        why = 'highway by day nearly all through, no town seen' if every else '10+ min, a highway or road trip title'
+        p['note'] = f"{p['note']}; {'; '.join(kept)} (cut: {why})".lstrip('; ')
     return segments
 
 
