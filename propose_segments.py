@@ -7818,6 +7818,10 @@ def drive_ends(title, df, home=None):
     # Mandria; "711 Time Town" is no "711 Time", which found an industrial park)
     # a country the title names holds both ends: "Carolina a … San Juan, Puerto Rico" is not a Carolina in the US
     only = {code for code, name in countries.items() if name in title_countries(title)}
+    # ... but not one a drive before this one goes to: the trip's, not this leg's ("Calais to Croatia by Car -
+    # Day 6 Video 5 - A4 - San Stino di Livenza to Latisana", NrG-Gm311yY, g4shf)
+    only -= {code for code, name in countries.items()
+             if re.search(rf'(?i:\bto)\s+{re.escape(name)}\b', title[:m.start()])}
 
     # ... only when the longer name finds nothing, or a title in capitals finds a namesake by it: "Middle Village",
     # "Greenwich Village", "Century City" and "Notre Dame Village" are neighbourhoods, no Middle or Century
@@ -7864,9 +7868,15 @@ def drive_ends(title, df, home=None):
         last = f'{last}, {region}'
     # a named state says where, however far from home: no box around home (San Jose is 48 degrees from New York)
     near = (home[3], home[4]) if home and not named and not any(own) else None
-    if only and not named:  # looked up in it, as with a state ("Carolina, Puerto Rico")
+    if len(only) == 1 and not named:  # looked up in it, as with a state ("Carolina, Puerto Rico")
         country = countries[next(iter(only))]
         first, last = (x if country in x else f'{x}, {country}' for x in (first, last))
+    elif only and not named:  # ... in the first of several that has it: "... - Italy - Meolo to San Stino di Livenza"
+        # naming Croatia too (l3ELAZwTpYs, g4shf) was looked for as "Meolo, Croatia", found nowhere (user, 2026-11-25);
+        # the one country picked from the set also changed from run to run
+        names = sorted(countries[c] for c in only)
+        first, last = (x if any(c in x for c in names) else next(
+            (f'{x}, {c}' for c in names if _osm_place(f'{x}, {c}', codes)), f'{x}, {names[0]}') for x in (first, last))
 
     def place(phrase, near=None, reach=None):
         # an end that names no place ("Airport to Downtown": St George, UT, not a Downtown near the channel)
