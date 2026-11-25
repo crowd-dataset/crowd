@@ -95,11 +95,18 @@ background:#fff;color:#222;font-size:13px;cursor:pointer}
     document.body.appendChild(b);
   });
 })();
+</script><script>// the other pages: their port on the TU/e network; their own name through the Cloudflare
+// tunnel on lin4080 (from outside without VPN; user, 2026-11-25)
+function goPort(p) {
+  if (/^[0-9.]+$|^localhost$|^[[]/.test(location.hostname)) { location.port = p; return; }
+  const name = { 8770: 'crowd-review', 8771: 'crowd-status', 8772: 'crowd-dataset', 8090: 'crowd-machines' }[p];
+  location.href = `https://${name}.mobility-squad.com/`;
+}
 </script></head><body>
 <h2>🚙 Batches to review <span class="s">({{ batches|sum(attribute="waiting") }} videos)</span></h2>
-<p class="ok"><a href="#" onclick="location.port=8771;return false">Pipeline status</a>:
+<p class="ok"><a href="#" onclick="goPort(8771);return false">Pipeline status</a>:
  what each worker does, queues, channels ·
- <a href="#" onclick="location.port=8772;return false">Dataset figures</a>: the README's statistics and figures with
+ <a href="#" onclick="goPort(8772);return false">Dataset figures</a>: the README's statistics and figures with
  this mapping, unpushed reviews included (rebuilt nightly)</p>
 {% if health | selectattr('ok') | list %}
 <p class="load" title="load over the last 30 min: green busy, amber medium, red low">
