@@ -18,6 +18,7 @@ import socket
 import subprocess
 import sys
 import time
+import urllib.error
 import urllib.request
 
 import pandas as pd
@@ -345,17 +346,61 @@ def open_batch(name):
             'html[data-theme=dark] body{color:#e6e6e6;background:#1a1a1a}</style>'
             '<script>const m = document.cookie.match(/(?:^|; )theme=(dark|light)/);'
             'document.documentElement.dataset.theme = m ? m[1] : "dark";</script>'
-            '<meta http-equiv="refresh" content="90;url=http://{{h}}:{{p}}">Starting the review page…'
-            '<script>const u = "http://{{h}}:{{p}}/";'
-            '(async function go() { try { await fetch(u, { mode: "no-cors" }); location.href = u; }'
+            '<meta http-equiv="refresh" content="90;url={{u}}">Starting the review page…'
+            '<script>const u = "{{u}}";'
+            '(async function go() { try { const r = await fetch(u, { mode: "no-cors" });'
+            ' if (r.type === "opaque" || r.ok) location.href = u; else setTimeout(go, 1000); }'
             ' catch (e) { setTimeout(go, 1000); } })();</script>',
-            p=port, h=here())
-    return redirect(f'http://{here()}:{port}')
+            u=page_url(port))
+    return redirect(page_url(port))
 
 
 def here():
     """The hub's address as the browser reached it (127.0.0.1 here, the mini's address from another machine)."""
     return request.host.rsplit(':', 1)[0]
+
+
+def page_url(port):
+    """Where the browser finds a batch's review page: its own port on the TU/e network; through the hub's
+    Cloudflare tunnel (a host name, https://crowd-review.mobility-squad.com, from outside without VPN; user,
+    2026-11-25) under /b/PORT/ of the hub, which passes it on (the review pages use relative URLs only)."""
+    if re.fullmatch(r'[\d.]+|localhost|\[[\da-fA-F:]+\]', here()):
+        return f'http://{here()}:{port}/'
+    return f'/b/{port}/'
+
+
+@app.route('/b/<int:port>', methods=['GET', 'POST', 'HEAD'])
+@app.route('/b/<int:port>/', methods=['GET', 'POST', 'HEAD'])
+@app.route('/b/<int:port>/<path:sub>', methods=['GET', 'POST', 'HEAD'])
+def batch_page(port, sub=''):
+    """A review page passed on through the hub (see page_url); only the ports of the pages the hub started."""
+    if port not in {p for _, p in servers.values()}:
+        return 'no review page there (open the batch from the hub again)', 404
+    if not request.path.startswith(f'/b/{port}/'):
+        return redirect(f'/b/{port}/')
+    url = f'http://127.0.0.1:{port}/{sub}' + (f'?{request.query_string.decode()}' if request.query_string else '')
+    keep = ('Content-Type', 'Range', 'If-None-Match', 'If-Modified-Since', 'Cookie', 'Accept')
+    headers = {k: v for k, v in request.headers.items() if k in keep}
+    req = urllib.request.Request(url, data=request.get_data() if request.method == 'POST' else None,
+                                 headers=headers, method=request.method)
+    try:
+        resp = urllib.request.urlopen(req, timeout=600)
+    except urllib.error.HTTPError as e:  # the page's own error answers (an alert's text) go through as they are
+        resp = e
+    except OSError as e:
+        return f'the review page does not answer ({e}); open the batch from the hub again', 502
+    out = {k: v for k, v in resp.headers.items()
+           if k in ('Content-Type', 'Content-Length', 'Content-Range', 'Accept-Ranges', 'Cache-Control', 'ETag',
+                    'Last-Modified', 'Set-Cookie', 'Content-Disposition')}
+    if (loc := resp.headers.get('Location')):
+        out['Location'] = f'/b/{port}{loc}' if loc.startswith('/') else loc
+
+    def body():
+        with resp:
+            while chunk := resp.read(256 * 1024):
+                yield chunk
+    return app.response_class(body(), status=resp.status if hasattr(resp, 'status') else resp.code, headers=out,
+                              direct_passthrough=True)
 
 
 def git(*args, check_tree=False, **kw):
