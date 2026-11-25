@@ -3018,8 +3018,12 @@ GPS_SIGNED = re.compile(r'(?<![\d.])(-?\d{1,2}\.\d{4,})(?:[ \t]*[,;]?[ \t]+|[ \t
 
 # OCR's letters for digits and a space after the point, by a hemisphere's letter: "N03. 085395 ElOI. 490958" is
 # N03.085395 E101.490958 (ps81sxXVvkA's AZDOME dashcam; user, 2026-10-23); read so only when nothing else is
-GPS_OCR = re.compile(r'(?<![A-Za-z])([NSEW])\s*([\dOoIl]{1,3})([.,])\s?([\dOoIl]{4,7})(?![\w.])')
-OCR_DIGITS = str.maketrans('OoIl', '0011')
+GPS_OCR = re.compile(r'(?<![A-Za-z])([NSEW])\s*([\dOoIlg]{1,3})([.,])\s?([\dOoIl]{4,7})(?![\w.])')
+# ... and a 9 as "g" (EasyOCR's "N47.354720 Eg. 640152" on k8RLv-8fo98's overlay: E9.640152)
+OCR_DIGITS = str.maketrans('OoIlg', '00119')
+# ... and the degrees parted from the decimals by a comma, colon or dash and a space ("N47, 353654", "N47: 353166",
+# "N47- 353166" on k8RLv-8fo98)
+GPS_SLIP = re.compile(r'(?<![A-Za-z])([NSEW]\s*\d{1,3})\s*[,:-]\s+(?=\d{4,7}(?![\d.]))')
 
 
 # a colon after the hemisphere's letter and OCR's slips in the number after it: "N:51.8796 W:2.2013" read as
@@ -3030,6 +3034,7 @@ GPS_COLON = re.compile(r'(?<![A-Za-z])([NSEW])\s*:\s*(\d{1,3})(?:[.,]{1,2} ?|[.,
 def parse_gps(text):
     """(lat, lon) of the first coordinates in a frame's text, else None (see GPS_OCR)."""
     text = GPS_COLON.sub(r'\1\2.\3', text or '')
+    text = GPS_SLIP.sub(r'\1.', text)
     return _parse_gps(text) or (_parse_gps(GPS_OCR.sub(
         lambda m: m[1] + m[2].translate(OCR_DIGITS) + m[3] + m[4].translate(OCR_DIGITS), text))
         if GPS_OCR.search(text or '') else None)
@@ -3412,6 +3417,25 @@ def gps_track(video_id, duration, opening=None):
 
 
 GPS_STREAM_WAITS = (60, 300)  # see gps_track
+
+# ... only from readings that mark a hemisphere or a latitude (a road sign's or a shop's numbers parse as coordinates
+# too: "01/704504 01/704524", phone numbers on streetslebanon's shops), and at least this many positions
+GPS_MARKED = re.compile(r'(?<![A-Za-z])[NSEW]\s*[:.]?\s*\d|(?i:\blat)')
+OCR_GPS_MIN = 5
+
+
+def ocr_gps(sig):
+    """[(t, lat, lon)] of a GPS overlay as EasyOCR read it with the road signs, the head of the video or its opening
+    (signs, head_signs, screen_text), else None: tesseract, which gps_track reads it with, makes nothing of some
+    overlays' small text (k8RLv-8fo98, "N47.354720 E9.640152" read by EasyOCR all through: proposed as Götzis by its
+    road signs; user, 2026-11-25)."""
+    track = set()
+    for key in ('signs', 'head_signs', 'screen_text'):
+        if key in sig:
+            track |= {(float(t), *xy) for t, x in json.loads(str(sig[key])).items()
+                      if GPS_MARKED.search(' '.join(x)) and (xy := parse_gps(' '.join(x)))}
+    kept = gps_stretches(sorted(track), clean=False)
+    return kept if len(kept) >= OCR_GPS_MIN else None
 
 
 def _overlay_text(stream, t):
@@ -4619,7 +4643,7 @@ def analyse_video(video_id, out_dir, meta=None, signs=False, keep=False):
                                                os.path.join(out_dir, f'{video_id}_head.tmp'))):
             sig['head_signs'] = np.array(json.dumps({str(t): x for t, x in read.items()}))
         gps, clock, stamp = gps_track(video_id, meta['duration'], texts)
-        if gps:
+        if gps or (gps := ocr_gps(sig)):
             sig['gps'] = np.array(gps, float)
             print(f'  GPS overlay: {len(gps)} positions', flush=True)
         if clock:
