@@ -4887,24 +4887,6 @@ def _known_channel_id(url):
 
 
 @functools.cache
-def read_meta(path):
-    """A video's saved metadata, or None when it is missing or unreadable (an empty file left by a full disk:
-    wsl5090 2026-11-24 03:07, both workers crashed on it every 15 min until it was removed)."""
-    try:
-        with open(path) as f:
-            meta = json.load(f)
-    except (OSError, ValueError):
-        return None
-    return meta if isinstance(meta, dict) else None
-
-
-def write_meta(path, meta):
-    """Saves a video's metadata whole or not at all (through a .tmp file), so a full disk leaves no empty file."""
-    with open(path + '.tmp', 'w') as f:
-        json.dump(meta, f)
-    os.replace(path + '.tmp', path)
-
-
 def _channel_folders():
     """{channel id: folder name} of the channel folders, from a metadata file of each."""
     root, out = os.path.join(HERE, '_output', 'proposals'), {}
@@ -10347,9 +10329,10 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
             return False
         e = p['entries'][0]
         meta_path = os.path.join(out_dir, f"{p['video']}_meta.json")
-        if (e.get('locality') and not e.get('guessed')) or (meta := read_meta(meta_path)) is None:
+        if (e.get('locality') and not e.get('guessed')) or not os.path.exists(meta_path):
             return False
-        duration = meta.get('duration')
+        with open(meta_path) as f:
+            duration = json.load(f).get('duration')
         night = int(bool(NIGHT_TITLE.search(title_text(p.get('title')))))
         return e['segments'] == [{'start': 0, 'end': int(duration or -1), 'night': night}]
 
@@ -10438,7 +10421,7 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
         api_meta = fetch_metadata_api(todo[:limit * 10] if limit else todo) if use_api else {}
         saved = [os.path.join(out_dir, f) for f in os.listdir(out_dir) if f.endswith('_meta.json')]
         boilerplate = channel_boilerplate([m.get('description') for m in api_meta.values()]
-                                          + [(read_meta(f) or {}).get('description') for f in saved])
+                                          + [json.load(open(f)).get('description') for f in saved])
     except BotCheck as e:
         print(f'YouTube asks to sign in ({e}); try again later.')
         return None
@@ -10466,9 +10449,13 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
         try:
             if vid in api_meta:
                 meta = api_meta[vid]
-            elif (meta := read_meta(meta_path)) is None:  # missing, or unreadable: fetched again
+            elif os.path.exists(meta_path):
+                with open(meta_path) as f:
+                    meta = json.load(f)
+            else:
                 meta = fetch_metadata(vid)
-            write_meta(meta_path, meta)
+            with open(meta_path, 'w') as f:
+                json.dump(meta, f)
             if new_only and (newest := newest_upload(df).get(meta.get('channel_id'))) \
                     and _ymd(meta.get('upload_date')) < newest:
                 scope.discard(vid)
@@ -10482,7 +10469,8 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
             if not reason and 'yt_chapters' not in meta and not meta.get('chapters'):
                 try:
                     meta['chapters'], meta['yt_chapters'] = fetch_metadata(vid)['chapters'], True
-                    write_meta(meta_path, meta)
+                    with open(meta_path, 'w') as f:
+                        json.dump(meta, f)
                 except (RuntimeError, ValueError) as e:
                     print(f'  chapters not fetched: {str(e)[:80]}', flush=True)
             # footage from outside the US first (user, 2026-10-16): a channel elsewhere filming in the US waits
@@ -10832,8 +10820,10 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
     # and a genuine trip otherwise ("Seattle" has no namesake near LA)
     metas = {}
     for p in new:
-        if (meta := read_meta(os.path.join(out_dir, f"{p['video']}_meta.json"))) is not None:
-            metas[p['video']] = meta
+        path = os.path.join(out_dir, f"{p['video']}_meta.json")
+        if os.path.exists(path):
+            with open(path) as f:
+                metas[p['video']] = json.load(f)
     channels = Counter(p.get('channel_id') for p in plan.values() if p.get('channel_id'))
     home = channel_home(channels.most_common(1)[0][0], df, plan, country) if channels else None
     mapped = mapped_usual(channels.most_common(1)[0][0], df) if channels else None
@@ -11695,7 +11685,9 @@ background:#fff;color:#222;font-size:13px;cursor:pointer}
 {% elif more %}<p class="more">{{ more }} more videos to decide:
   they appear here as you finish these (reload the page).</p>{% endif %}
 <p class="more">{% if show_done %}<a href="?">hide the videos already applied</a>{% elif applied %}
-  <a href="?done=1">show the {{ applied }} videos already applied</a> (to correct one){% endif %}</p>
+  <a href="?done=1">show the {{ applied }} videos already applied</a> (to correct one){% endif %}
+  {% if show_rejected %}· <a href="?">hide the rejected videos</a>{% elif rejected %}
+  · <a href="?rejected=1">show the {{ rejected }} rejected videos</a> (to correct one){% endif %}</p>
 <details><summary>Excluded videos ({{ plan | selectattr('exclude') | list | length }})</summary>
 {% for p in plan if p.exclude %}
 <div class="excluded" data-video="{{ p.video }}"><a href="https://www.youtube.com/watch?v={{ p.video }}"
@@ -12844,6 +12836,12 @@ def review(plan_path, port=None):
         applied = {v for v, ss in segs.items() if any(s.get('applied') for s in ss)}
         if request.args.get('done'):
             open_videos |= applied
+        # a video with every segment rejected is off the page from the next load on, Apply or not (user, 2026-11-25:
+        # "don't show videos that I rejected previously"); ?rejected=1 shows those not past an Apply yet
+        rejected = {v for v, ss in segs.items() if ss and all(s.get('decision') == 'reject' for s in ss)
+                    and not all(s.get('done') for s in ss)} - applied
+        if not request.args.get('rejected'):
+            open_videos -= rejected
         approved_hidden = sum(s.get('decision') == 'approve' and not s.get('applied')
                               for v, ss in segs.items() if v not in open_videos for s in ss)
         descriptions = {v: describe(v) for v in open_videos}
@@ -12872,6 +12870,7 @@ def review(plan_path, port=None):
                                                              .agg(lambda x: x.notna().mean() > 0.5).items() if has),
                                       new_localities=new_localities, waiting=len(waiting),
                                       more=len(set(waiting) - open_videos), show_done=bool(request.args.get('done')),
+                                      rejected=len(rejected), show_rejected=bool(request.args.get('rejected')),
                                       applied=len(applied - (open_videos if not request.args.get('done') else set())),
                                       durations={v: video_duration(v) for v in open_videos},
                                       routes={p['video']: r for p in plan if p['video'] in open_videos
@@ -12907,15 +12906,20 @@ def review(plan_path, port=None):
 
     def video_duration(video_id):
         """The video's length in s from its saved metadata, or None."""
-        if (meta := read_meta(os.path.join(plan_dir, f'{video_id}_meta.json'))) is None:
+        path = os.path.join(plan_dir, f'{video_id}_meta.json')
+        if not os.path.exists(path):
             return None
-        duration = meta.get('duration')
+        with open(path) as f:
+            duration = json.load(f).get('duration')
         return int(duration) if duration else None
 
     def describe(video_id):
         """Description (escaped, with its timestamps as play links) and chapters from the saved metadata."""
-        if (meta := read_meta(os.path.join(plan_dir, f'{video_id}_meta.json'))) is None:
+        path = os.path.join(plan_dir, f'{video_id}_meta.json')
+        if not os.path.exists(path):
             return None
+        with open(path) as f:
+            meta = json.load(f)
         text, parts, last = meta.get('description') or '', [], 0
         # links open in a new tab (a route on Google Maps: 2k7ZlvIZJoA; user, 2026-10-26), timestamps play
         link = r'(https?://[^\s<>"]+[^\s<>".,;:!?)\]])'
@@ -12937,8 +12941,9 @@ def review(plan_path, port=None):
         [[s, name, English, language]]}, '' where the text is English already."""
         path = os.path.join(plan_dir, f'{video_id}_meta.json')
         meta = {}
-        if re.fullmatch(r'[\w-]{11}', video_id):
-            meta = read_meta(path) or {}
+        if re.fullmatch(r'[\w-]{11}', video_id) and os.path.exists(path):
+            with open(path) as f:
+                meta = json.load(f)
         p = next((p for p in load() if p['video'] == video_id), {})
         title = p.get('title') or meta.get('title')
         keep = [e['locality'][0] for e in p.get('entries', []) if e.get('locality')]  # the town names as written
@@ -12955,8 +12960,10 @@ def review(plan_path, port=None):
     def chapters(video_id):
         """The video's chapters, fetched from YouTube once (the Data API that listed the channel has none)."""
         path = os.path.join(plan_dir, f'{video_id}_meta.json')
-        if not re.fullmatch(r'[\w-]{11}', video_id) or (meta := read_meta(path)) is None:
+        if not re.fullmatch(r'[\w-]{11}', video_id) or not os.path.exists(path):
             return jsonify([])
+        with open(path) as f:
+            meta = json.load(f)
         if 'yt_chapters' not in meta:
             try:
                 meta['chapters'] = fetch_metadata(video_id)['chapters']
