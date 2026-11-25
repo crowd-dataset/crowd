@@ -90,13 +90,20 @@ border-radius:16px;background:var(--bg);color:var(--fg);font-size:13px;cursor:po
   });
 })();
 </script>
-</head><body>
+<script>// the other pages: their port on the TU/e network; their own name through the Cloudflare
+// tunnel on lin4080 (from outside without VPN; user, 2026-11-25)
+function goPort(p) {
+  if (/^[0-9.]+$|^localhost$|^[[]/.test(location.hostname)) { location.port = p; return; }
+  const name = { 8770: 'crowd-review', 8771: 'crowd-status', 8772: 'crowd-dataset', 8090: 'crowd-machines' }[p];
+  location.href = `https://${name}.mobility-squad.com/`;
+}
+</script></head><body>
 <header><h1>🚐 CROWD dataset</h1>
 <p>Built nightly on the mini from the review mapping, including reviews not yet pushed to GitHub ·
 last built __BUILT__ ·
-<a href="#" onclick="location.port=8770;return false">review hub</a> ·
-<a href="#" onclick="location.port=8771;return false">pipeline</a> ·
-<a href="#" onclick="location.port=8090;return false">machines</a></p></header>
+<a href="#" onclick="goPort(8770);return false">review hub</a> ·
+<a href="#" onclick="goPort(8771);return false">pipeline</a> ·
+<a href="#" onclick="goPort(8090);return false">machines</a></p></header>
 <main>__BODY__</main></body></html>"""
 
 if __name__ == '__main__':
