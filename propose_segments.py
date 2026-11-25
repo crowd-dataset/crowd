@@ -1753,6 +1753,9 @@ def propose(sig, p=PARAMS):
                          'walking or a handheld camera)')
     for t, x in fast_walkers(sig):  # see walk_cadence
         notes.append(f'people walk at {x:.1f} steps a second at {int(t) // 60}:{int(t) % 60:02d}: sped up? check')
+    if float(sig.get('repeat', np.nan)) >= REPEAT_SHARE:  # see repeated_frames (NaN: not read)
+        notes.append(f"{float(sig['repeat']):.0%} of the frames repeat the one before while the picture moves: slowed "
+                     'down (or filmed at a low frame rate)? check')
     for a, b in np.asarray(sig.get('off_road', np.zeros((0, 2)))).reshape(-1, 2):  # see OFF_SCENES
         keep[int(a * FPS):int(b * FPS)] = False
         notes.append(f'not the drive: people off the road (CLIP) {int(a) // 60}:{int(a) % 60:02d}-'
@@ -2099,6 +2102,37 @@ def cross_traffic(path, sig, p=PARAMS):
 # of a window, or CADENCE_SURE for one. Read in the first CADENCE_OPEN_S and the CADENCE_STOPS longest stops (up to
 # CADENCE_WINDOW_S each) of the 720p video, on a CUDA GPU only
 CADENCE_FAST, CADENCE_SURE = 3.0, 5.0
+# a video slowed down shows each frame twice or more: chriskrzentzpresents' WPBRYePf-rE and UVHK08MX7BA every other
+# frame, 0CLvSHvoeaE three of four (user, 2026-11-25: "such videos are slowed down"; rejected), its 2019 and 2023
+# drives none (approved). A source of a low frame rate shown at 30 frames a second looks the same: a hint to check
+REPEAT_AT, REPEAT_PIECE_S, REPEAT_SHARE = (0.25, 0.5, 0.75), 20, 0.3
+
+
+def repeated_frames(path, duration):
+    """The share of frames that repeat the one before (under 0.15 of a typical change) in the seconds the picture
+    moves, from REPEAT_PIECE_S pieces of the copy at REPEAT_AT of its length; NaN when none is read."""
+    shares = []
+    for frac in REPEAT_AT:
+        try:
+            raw = subprocess.run(['ffmpeg', '-v', 'error', '-ss', f'{(duration or 0) * frac:.0f}', '-t',
+                                  str(REPEAT_PIECE_S), '-i', path, '-vf', 'scale=96:54,format=gray', '-f', 'rawvideo',
+                                  '-'], capture_output=True, timeout=300, check=False).stdout
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        frames = np.frombuffer(raw, np.uint8)
+        frames = frames[:len(frames) // (96 * 54) * 96 * 54].reshape(-1, 54, 96).astype(float)
+        if len(frames) < 61:
+            continue
+        d = np.abs(np.diff(frames, axis=0)).mean(axis=(1, 2))
+        typical = float(np.median(d[d >= np.percentile(d, 50)]))
+        if typical <= 0:
+            continue
+        # seconds (30 frames) the picture moves in: a stop's still frames repeat whatever the speed
+        shares += [float(np.mean(w < 0.15 * typical)) for i in range(0, len(d) - 29, 30)
+                   if np.percentile(w := d[i:i + 30], 90) > 0.5 * typical]
+    return float(np.mean(shares)) if shares else np.nan
+
+
 CADENCE_OPEN_S, CADENCE_STOPS, CADENCE_WINDOW_S = 60, 3, 20
 CLIP_TIMEOUT_S = 600  # a clip of a minute downloads in seconds: one still going after 10 min has stalled (_yt_dlp)
 POSE_CODE = """
@@ -4592,6 +4626,7 @@ def analyse_video(video_id, out_dir, meta=None, signs=False, keep=False):
         sig['kerb'] = np.array(kerb_stops(path, sig, work_dir), float).reshape(-1, 2)
         sig['cross'] = cross_traffic(path, sig)
         sig['cadence'] = np.array(walk_cadence(video_id, sig), float).reshape(-1, 2)
+        sig['repeat'] = np.array(repeated_frames(path, meta.get('duration')), float)
         sig['ghost'] = ghost
         sig['intro_end'] = np.array(clip_intro(path, meta.get('duration'), work_dir) or 0, float)
         sig['outro_start'] = np.array(clip_outro(path, meta.get('duration'), work_dir) or 0, float)
