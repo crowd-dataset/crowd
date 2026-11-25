@@ -429,18 +429,25 @@ border-radius:16px;background:var(--bg);color:var(--fg);font-size:13px;cursor:po
   });
 })();
 </script>
-</head><body>
+<script>// the other pages: their port on the TU/e network; their own name through the Cloudflare
+// tunnel on lin4080 (from outside without VPN; user, 2026-11-25)
+function goPort(p) {
+  if (/^[0-9.]+$|^localhost$|^[[]/.test(location.hostname)) { location.port = p; return; }
+  const name = { 8770: 'crowd-review', 8771: 'crowd-status', 8772: 'crowd-dataset', 8090: 'crowd-machines' }[p];
+  location.href = `https://${name}.mobility-squad.com/`;
+}
+</script></head><body>
 <h1>🚚 Pipeline status</h1>
 <div class="muted small">snapshot {{ ago(s.at) }} ago (every 2 min) ·
- <a href="#" onclick="location.port=8770;return false">review hub</a>
- · <a href="#" onclick="location.port=8090;return false">machines</a>
+ <a href="#" onclick="goPort(8770);return false">review hub</a>
+ · <a href="#" onclick="goPort(8090);return false">machines</a>
  {% if s.error %} · <span style="color:var(--bad)">{{ s.error }}</span>{% endif %}</div>
 {% for c in s.cookies %}<div class="card cookie">🍪 <b>{{ c.host }} needs new YouTube cookies</b>: in a new
  Incognito window sign in to YouTube as <b>{{ c.account }}</b>, export the cookies as {{ c.file }}, close the window,
  then
  <code>{{ c.how }}</code></div>{% endfor %}
 <div class="tiles">
- <a class="tile" href="#" onclick="location.port=8770;return false"><span class="muted small">Batches to review</span>
+ <a class="tile" href="#" onclick="goPort(8770);return false"><span class="muted small">Batches to review</span>
   <b>{{ s.batches|length }}</b>
   <span class="small muted">{{ s.batches|sum(attribute='waiting') }} videos waiting
   {%- if s.pace %} · workers add {{ '%.1f'|format(s.pace.added) }}/day, you review
