@@ -6465,6 +6465,10 @@ def place_phrases(text, limit=4):
     # "IN THE WORLD" names no place: "THE MOST POLLUTED CITY IN THE WORLD" was a "The World" in Gurugram
     # (U-FxxqGEnXo; user, 2026-11-05); "Walt Disney World" is one
     out = [x for x in out if re.sub(r'^the\s+', '', x.strip().lower()) != 'world']
+    # ... nor a town's centre: "England by Road - Leominster - west to south via Town Centre" was "Town Centre,
+    # England", an area of Craven Arms (-m6wZpXTvM4, g4shf; user, 2026-11-26: the city is in the title), and
+    # "Honiton Town Centre from the east, Devon" is Honiton (vCXzVHx30ew: no locality found)
+    out = [y for x in out if (y := TOWN_CENTRE_TAIL.sub('', x.strip())) and not CITY_HEART.fullmatch(y)]
     return list(dict.fromkeys(out))
 
 
@@ -7752,6 +7756,7 @@ GENERIC_ENDS = {'downtown', 'uptown', 'midtown', 'airport', 'theairport', 'home'
                 'citycentre', 'thecity', 'city', 'center', 'centre', 'town', 'work', 'school', 'hotel', 'thehotel'}
 # ... and the middle of the city: "Richmond to the Heart of the City" in Sydney is no Heart of the City, Minneapolis
 # (NRsY5BxApNM; 7_n5PC-Lx_Q's report, 2026-11-05)
+TOWN_CENTRE_TAIL = re.compile(r'(?i)(?:^|\s+)(?:(?:old|historic)\s+)?(?:town|city)\s+(?:centre|center|centrum)$')
 CITY_HEART = re.compile(r"(?i:(?:the\s+)?(?:heart|centre|center|middle)\s+of\s+(?:the\s+)?(?:city|town)"
                         r"|(?:the\s+)?(?:city|town)\s+(?:centre|center|centrum))")
 # the time of day before a drive's start: "Early Morning Dublin to Wicklow Drive Ireland" (8WTeMx-AZ0w; user,
