@@ -128,6 +128,9 @@ VIDEO_SIDEWAYS_SHARE = 0.5   # sideways in more than this share of all moving fr
 YT_DLP = os.environ.get('YT_DLP', 'yt-dlp')
 
 
+STALL_S = 30  # a connection silent this long has stalled (_yt_dlp, _stream_ffmpeg)
+
+
 class BotCheck(RuntimeError):
     """YouTube wants a signed-in session; further requests will fail until it lifts."""
 
@@ -144,7 +147,12 @@ def _yt_dlp(*args, timeout=None):
     # yt-dlp solves YouTube's JavaScript challenge only with a JS runtime and uses just deno unless told,
     # so offer node: without it YouTube hands out thumbnails instead of the video
     js = ['--js-runtimes', 'node'] if shutil.which('node') else []
-    with subprocess.Popen([YT_DLP, '--no-warnings', *js, *cookies, *args], stdout=subprocess.PIPE,
+    # a stalled connection fails in STALL_S instead of waiting out the timeout: on lin5080 305 downloads in 4 weeks
+    # (2026-10-30 to 11-27) hung until it, 95 h; a clip's (--download-sections) through the ffmpeg yt-dlp runs
+    stall = ['--socket-timeout', str(STALL_S)]
+    if '--download-sections' in args:
+        stall += ['--downloader-args', f'ffmpeg_i:-rw_timeout {STALL_S * 10 ** 6}']
+    with subprocess.Popen([YT_DLP, '--no-warnings', *js, *cookies, *stall, *args], stdout=subprocess.PIPE,
                           stderr=subprocess.PIPE, text=True, start_new_session=True) as proc:
         try:
             out, err = proc.communicate(timeout=timeout)
@@ -244,11 +252,15 @@ def fetch_metadata(video_id):
     }
 
 
+WHOLE_DOWNLOAD_S = 1800  # a whole video's download (240p; 720p twice that) still going after this has hung
+
+
 def download_low_res(video_id, out_dir):
     template = os.path.join(out_dir, f'{video_id}_low.%(ext)s')
     # H.264 first: OpenCV (YOLO, CLIP frames) cannot decode AV1 ("Missing Sequence Header", AbaoAmbience)
+    # (a time limit: a download that hangs kept the batch silent until run_channels.py stopped it, its analysis lost)
     _yt_dlp('-q', '-f', 'bv*[height<=240][vcodec^=avc1]/bv*[height<=360][vcodec^=avc1]/bv*[height<=240][ext=mp4]'
-            '/bv*[height<=360]/wv*', '-o', template, _url(video_id))
+            '/bv*[height<=360]/wv*', '-o', template, _url(video_id), timeout=WHOLE_DOWNLOAD_S)
     for name in os.listdir(out_dir):
         if name.startswith(f'{video_id}_low.'):
             return os.path.join(out_dir, name)
@@ -3127,6 +3139,7 @@ def _parse_gps(text):
 def _stream_ffmpeg(cmd):
     """ffmpeg reading frames of YouTube's stream, once more when it times out: YouTube is slow for a while at times
     (lin5080, 2026-10-17: the opening, its caption and the GPS overlay lost on several videos; user: retry once)."""
+    cmd = [cmd[0], '-rw_timeout', str(STALL_S * 10 ** 6), *cmd[1:]]  # a stalled read fails, not waits (STALL_S)
     try:
         return subprocess.run(cmd, capture_output=True, timeout=120)
     except subprocess.TimeoutExpired:
@@ -3491,9 +3504,21 @@ def _overlay_text(stream, t):
         return ''
 
 
+_STREAMS = {}  # video id -> (time, (url, headers)): one request for the steps reading its 720p stream
+STREAM_REUSE_S = 3600  # YouTube's stream addresses last about 6 h
+
+
 def _stream(video_id):
     """(url, HTTP headers) of the video's 720p stream: YouTube refuses it (403) without the headers yt-dlp asked
-    for it with."""
+    for it with. Asked once per STREAM_REUSE_S: the opening, the GPS overlay, maps, captions and the rear camera
+    each asked YouTube again (more requests, more "Sign in to confirm you're not a bot")."""
+    if (got := _STREAMS.get(video_id)) and time.time() - got[0] < STREAM_REUSE_S:
+        return got[1]
+    _STREAMS[video_id] = (time.time(), _stream_ask(video_id))
+    return _STREAMS[video_id][1]
+
+
+def _stream_ask(video_id):
     # an https stream first: ffmpeg seeks an HLS playlist slowly, past its timeout (lin5080 got only format 609 for
     # Ejsknub-vjQ on 2026-11-13, an hour after mini and the workers got https ones)
     m = json.loads(_yt_dlp('-j', '-f', 'bv*[height<=720][ext=mp4][protocol=https]/bv*[height<=720][protocol=https]/'
@@ -3626,7 +3651,7 @@ def rear_camera(video_id):
     w = tempfile.mkdtemp(prefix='crowd_rear_')
     try:
         _yt_dlp('-q', '-f', 'bv*[height<=720][ext=mp4]/bv*[height<=720]', '-o', os.path.join(w, 'v.%(ext)s'),
-                _url(video_id))
+                _url(video_id), timeout=2 * WHOLE_DOWNLOAD_S)
         path = next(os.path.join(w, n) for n in os.listdir(w) if n.startswith('v.'))
         subprocess.run(['ffmpeg', '-v', 'error', '-i', path, '-vf',
                         f"fps=1/{REAR_STEP_S},crop=iw*0.32:ih*0.05:0:ih*0.905,scale=-2:120,format=gray,"
@@ -3751,7 +3776,7 @@ def read_signs(video_id, step=None, duration=None):
     work_dir = tempfile.mkdtemp(prefix='crowd_signs_')
     try:
         _yt_dlp('-q', '-f', 'bv*[height<=720][ext=mp4]/bv*[height<=720]', '-o', os.path.join(work_dir, 'v.%(ext)s'),
-                _url(video_id))
+                _url(video_id), timeout=2 * WHOLE_DOWNLOAD_S)
         path = next(os.path.join(work_dir, n) for n in os.listdir(work_dir) if n.startswith('v.'))
         subprocess.run(['ffmpeg', '-v', 'error', '-i', path, '-vf', f'fps=1/{step}', '-q:v', '3',
                         os.path.join(work_dir, 's%05d.jpg')], capture_output=True, timeout=4 * 3600)
@@ -4612,6 +4637,8 @@ NIGHT_TITLE_CLIP = 0.9  # see night_from_title (not NIGHT_CLIP_SURE: that one is
 def analyse_video(video_id, out_dir, meta=None, signs=False, keep=False):
     """Download a low resolution copy, propose segments, write a contact sheet; the copy is deleted, or with keep
     left for the review page (LOCAL_KEPT). signs: also read the road signs (read_signs), for a drive between towns."""
+    STEP_TIMES['own'].clear()
+    started = time.time()
     meta = meta or fetch_metadata(video_id)
     work_dir = tempfile.mkdtemp(prefix='crowd_')
     path = download_low_res(video_id, work_dir)
@@ -4713,6 +4740,7 @@ def analyse_video(video_id, out_dir, meta=None, signs=False, keep=False):
     sig['on_bus'] = np.array(title_vehicle(title_text(meta.get('title') or '')) == 1)
     segments, notes = night_from_title(*propose(sig), sig, meta.get('title'))
     np.savez_compressed(os.path.join(out_dir, f'{video_id}_signals.npz'), **sig)
+    print(step_times_line(time.time() - started), flush=True)
     return {'meta': meta, 'segments': segments, 'notes': notes}
 
 
@@ -13701,6 +13729,49 @@ def review(plan_path, port=None):
     port = port or 5000 + random.randint(0, 999)
     Timer(1.25, lambda: webbrowser.open(f'http://127.0.0.1:{port}')).start()
     app.run(host=os.environ.get('REVIEW_HOST', '127.0.0.1'), port=port, debug=False)  # see review_hub.py
+
+
+# how long each step of an analysis takes, one log line per video (user, 2026-11-27: "make the processing faster";
+# 4 weeks of worker logs gave no step times): each step's own seconds, a step's time inside another timed step
+# counted for the inner one only; yt-dlp and CLIP calls apart from the steps calling them
+TIMED_STEPS = ('fetch_metadata', 'download_low_res', 'signals', 'skip_events', 'skip_norm', 'fade_events',
+               'dusk_colours', 'ghost_and_urban', 'garage_edges', 'lit_garages', 'car_park_stretches', 'parked_edges',
+               'parking_lots', 'kerb_stops', 'cross_traffic', 'walk_cadence', 'repeated_frames', 'clip_intro',
+               'clip_outro', 'town_scene_track', 'night_scene_track', 'night_clip_track', 'light_spots_track',
+               'aerial_track', 'driver_clip_track', 'step_bob_track', 'opening_texts', 'rear_camera', 'caption_end',
+               'montage_label', 'map_frame', 'read_signs', 'head_signs', 'gps_track', 'refine_clock_cuts',
+               'side_forward_track', 'off_road_track', 'contact_sheet', '_yt_dlp', '_clip_run', '_frame_text')
+STEP_TIMES = {'stack': [], 'own': Counter()}
+
+
+def _timed(name, fn):
+    """fn, its own seconds added to STEP_TIMES['own'][name]; a yt-dlp, CLIP or tesseract call's under its step's
+    name too ("yt_dlp/head_signs")."""
+    @functools.wraps(fn)
+    def run(*args, **kwargs):
+        stack, t0 = STEP_TIMES['stack'], time.time()
+        key = name if not name.startswith('_') or not stack else f'{name.strip("_")}/{stack[-1][0]}'
+        stack.append([name.strip('_'), 0.0])
+        try:
+            return fn(*args, **kwargs)
+        finally:
+            spent = time.time() - t0
+            inner = stack.pop()[1]
+            STEP_TIMES['own'][key] += spent - inner
+            if stack:
+                stack[-1][1] += spent
+    return run
+
+
+def step_times_line(total):
+    """The log line of an analysis' step times (STEP_TIMES), the longest first, steps under 5 s left out."""
+    own = STEP_TIMES['own']
+    parts = [f'{k.strip("_")} {v:.0f}' for k, v in own.most_common() if v >= 5]
+    return f"  step times (s, of {total:.0f}): {', '.join(parts)}"
+
+
+for _name in TIMED_STEPS:
+    globals()[_name] = _timed(_name, globals()[_name])
 
 
 if __name__ == '__main__':
