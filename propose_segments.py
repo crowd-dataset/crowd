@@ -1602,6 +1602,13 @@ def propose(sig, p=PARAMS):
                 notes.append(f'camera on the driver? {a / FPS:.0f}-{b / FPS:.0f}s: CLIP says so, but at night and '
                              'with no face found: check')
                 continue
+            # ... nor a shortest run (DRIVER_CLIP_RUN readings) with no face in it: AFvSKLhkguo's 3:30-3:50 on a
+            # promenade (0.95, 0.97; one face frame in the whole video; user, 2026-11-27: "mislabelled detection, it
+            # happens often"). Reviewers took back 15-22% of such cuts whatever the scores; flagged, not cut (user)
+            if not far and (b - a) / FPS <= DRIVER_CLIP_RUN * DRIVER_CLIP_EVERY_S and not (sig['face'][a:b] > 0).any():
+                notes.append(f'camera on the driver? {a / FPS:.0f}-{b / FPS:.0f}s: CLIP says so twice, no face in '
+                             'it: check')
+                continue
             k = int(np.searchsorted([x for x, _ in runs], a))
             runs.insert(k, (a, b))
             sure.insert(k, True)
