@@ -5226,7 +5226,7 @@ def channel_towns(channel_id, df):
 def own_town(towns, title):
     """The one town of towns (channel_towns) a title names as a word, None when none or several names."""
     named = [t for t in towns if isinstance(t[0], str) and len(t[0]) > 2
-             and re.search(rf'(?<![\w-]){re.escape(t[0])}(?![\w-])', title or '', re.I)]
+             and re.search(rf'(?<![\w-]){re.escape(t[0])}(?![\w-])', title or '', re.IGNORECASE)]
     return named[0] if len(named) == 1 else None
 
 
