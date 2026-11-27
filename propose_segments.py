@@ -5213,6 +5213,23 @@ def usual_locality(plan, share=0.5, min_videos=5):
     return loc if n > share * total else None
 
 
+def channel_towns(channel_id, df):
+    """[[locality, state, country]] of the channel's videos in the mapping."""
+    out = set()
+    for _, row in df.iterrows():
+        if any(add_video._normalize_optional_text(c) == channel_id
+               for c in add_video._parse_flat_list_cell(row.get('channel', ''))):
+            out.add((row['locality'], row['state'] if isinstance(row['state'], str) else None, row['country']))
+    return [list(x) for x in sorted(out, key=str)]
+
+
+def own_town(towns, title):
+    """The one town of towns (channel_towns) a title names as a word, None when none or several names."""
+    named = [t for t in towns if isinstance(t[0], str) and len(t[0]) > 2
+             and re.search(rf'(?<![\w-]){re.escape(t[0])}(?![\w-])', title or '', re.I)]
+    return named[0] if len(named) == 1 else None
+
+
 MAPPED_USUAL_SHARE = 0.9  # see mapped_usual
 
 
@@ -7290,6 +7307,7 @@ def ay_as_ai(phrase):
 
 
 OWN_NAME_PLACE = 0.4  # ... and of a town found by its name alone at the other end of such a drive
+MINOR_PLACE = 0.1  # see place_localities
 MAJOR_PLACE = 0.65  # OpenStreetMap importance of a city known by its name alone: Atlanta 0.75, Brooklyn 0.74
 
 
@@ -7370,8 +7388,13 @@ def place_localities(phrases, df, home=None):
                  and (not h or h[6] < big[6] - 0.2) else h) for p, h in hits]
         # ... and with nothing of the text near home, a town or city of exactly the name anywhere in the countries:
         # "Driving Through Lahaina in 2026" from a Los Angeles channel is Lahaina, HI (jZS06VYyHug was Anaheim, from
-        # the description's "Maui"; user, 2026-10-24)
-        if not any(h for _, h in hits):
+        # the description's "Maui"; user, 2026-10-24). A minor place near home named so (under MINOR_PLACE, not a
+        # town of the name) counts as nothing: "Lancaster by Car - ... towards Morecambe" of g4shf, a channel
+        # filming all over Europe whose home the worker took to be Turin, was a "Lancaster" in Turin (dBjf_7dERHY;
+        # user, 2026-11-27)
+        minor = {p for p, h in hits if h and h[6] < MINOR_PLACE
+                 and _name_key(h[0] or '') != _name_key(p.split(',')[0])}
+        if not any(h for p, h in hits if p not in minor):
             hits = [(p, big if (big := _osm_place(p, codes, None, None, home[3:5])) and big[0]
                      and big[-1] in ('town', 'city')
                      and _name_key(big[0]) == _name_key(p.split(',')[0]) else h) for p, h in hits]
@@ -7399,15 +7422,25 @@ def place_localities(phrases, df, home=None):
     towns = [p for p, h in hits if h and h[0]]  # (for the regions below)
     hits = [(p, h) for p, h in hits if usable(h)]
     if len(hits) > 1:
-        anchor = max(hits, key=lambda ph: ph[1][6])
         # a name OpenStreetMap does not know near the anchor (a small neighbourhood) says nothing: a far
         # namesake (Longwood, PA for Longwood in the Bronx) would only look like a second town
         # ... but around a region (no town: a county, a province) a town of the name within REGION_KM of its middle
         # stays (Lt-Qdy5U78E: "Östra Frölunda, Västergötland" lies 85 km from the province's; user, 2026-10-22);
         # "York" in "Port Jefferson in Suffolk, New York" is York upstate, 430 km from Suffolk's
-        hits = [(p, h if p == anchor[0] else _osm_place(p, codes, anchor[1][4:6], 50) or (
-            h if h and not anchor[1][0] and _km(anchor[1][4], anchor[1][5], h[4], h[5]) <= REGION_KM else None))
-                for p, h in hits]
+        def around(anchor):
+            return [(p, h if p == anchor[0] else _osm_place(p, codes, anchor[1][4:6], 50) or (
+                h if h and not anchor[1][0] and _km(anchor[1][4], anchor[1][5], h[4], h[5]) <= REGION_KM else None))
+                    for p, h in hits]
+        # the best known, unless none of the other names lies around it and some lie around another: the places of
+        # one title lie together ("Lancaster ... towards Morecambe" is Lancaster, England beside Morecambe, not the
+        # better known Lancaster, PA; dBjf_7dERHY, user, 2026-11-27); not the anchor most names lie around
+        # whatever: "Blue Mountains | Olympic Park | Sydney" was Muswellbrook so (an "Olympic Park" is everywhere)
+        # ... towns of those very names, a town of its name the anchor: a hit named otherwise (Muswellbrook for
+        # "Olympic Park") is some place in that town
+        ways = [around(a) for a in sorted(hits, key=lambda ph: -ph[1][6])]
+        towns = [sum(bool(h and h[0] and _name_key(h[0]) == _name_key(p.split(',')[0])) for p, h in w) for w in ways]
+        alone = sum(bool(h) for _, h in ways[0]) == 1
+        hits = ways[towns.index(max(towns))] if alone and max(towns) > 1 else ways[0]
     for phrase, hit in hits:
         # the town the phrase itself names keeps its name ("Hazlet"); a sight in a town counts as usual
         # ... also with its state written after it without a comma ("Philadelphia Tennessee" is Philadelphia, not
@@ -11238,6 +11271,7 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
     channels = Counter(p.get('channel_id') for p in plan.values() if p.get('channel_id'))
     home = channel_home(channels.most_common(1)[0][0], df, plan, country) if channels else None
     mapped = mapped_usual(channels.most_common(1)[0][0], df) if channels else None
+    own_towns = channel_towns(channels.most_common(1)[0][0], df) if channels else []
     # places a video may be in: the channel's country, abroad within reach of its home, and the countries it has
     # filmed in before (a travel channel's trips; Puerto Rico for a New York channel), not anywhere: a title's
     # "Campo Alegre" is not the one in Brazil
@@ -11351,6 +11385,12 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
             reach = in_reach | df['country'].isin(title_countries(p['title']))
             for loc, phrase in title_places(p['title'], df[reach], home):
                 in_title.setdefault(tuple(loc), phrase)
+            # a town the channel has filmed before named in the title is that one, not a namesake elsewhere, and
+            # it is there when nothing else was found (dBjf_7dERHY: g4shf has 3 videos in Lancaster, England; user,
+            # 2026-11-27). Of 4,591 reviewed titles naming exactly one such town, 4,426 were approved there
+            if (mine := own_town(own_towns, p['title'])):
+                in_title = {tuple(mine): mine[0], **{k: v for k, v in in_title.items()
+                                                     if _name_key(k[0]) != _name_key(mine[0])}}
             if len(in_title) > 1 and (city := metro_of_all(list(in_title), df)):
                 in_title = {tuple(city): in_title[tuple(city)]}
             # the channel's usual locality named in the title, also as part of a road's name, goes first: "Which
@@ -11371,6 +11411,12 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
                                                            if p_.lower() in add_video.US_STATE_CODES], df[reach], home)
                 if inside:
                     in_title = {tuple(inside[0]): inside[1]}
+            # ... one of them a town the channel filmed before: that one, the others named in a note (of 1,506 such
+            # reviewed titles, 1,279 were approved in that town alone, 147 in both, 80 elsewhere)
+            if len(in_title) > 1 and mine and tuple(mine) in in_title:
+                others = [loc[0] for loc in in_title if loc != tuple(mine)]
+                in_title = {tuple(mine): in_title[tuple(mine)]}
+                p['note'] = (f"{p['note']}; the title also names {' and '.join(others)}: check").lstrip('; ')
             if len(in_title) > 1:
                 p['note'] = (f"{p['note']}; the title names " + ' and '.join(loc[0] for loc in in_title)
                              + ': set the locality').lstrip('; ')
