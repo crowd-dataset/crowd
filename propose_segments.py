@@ -7074,6 +7074,7 @@ def place_localities(phrases, df, home=None):
                or named and common.get_iso2_country_code(common.correct_country(p)) not in codes]
     # a state only qualifies the town named with it ("Palmerton, Pennsylvania"): as a place of its own it would
     # be the anchor, or match some "Pennsylvania" road in another town; the town is looked up in it
+    regions = [p for p in phrases if _name_key(p) in states]
     phrases = [p for p in phrases if _name_key(p) not in states]  # a state alone is no locality
     written = {}
     if len(named) == 1 and any(_name_key(p) not in states for p in phrases):
@@ -7120,6 +7121,7 @@ def place_localities(phrases, df, home=None):
     # the text names no other ("Дорога на Евпаторию, Саки" stays Saki: XJif0QNAF_Q)
     spelt = [(p, loc) for p, h in hits if not h and (loc := _spelt_otherwise(p, df, countries, home, only))]
     found = False
+    towns = [p for p, h in hits if h and h[0]]  # (for the regions below)
     hits = [(p, h) for p, h in hits if usable(h)]
     if len(hits) > 1:
         anchor = max(hits, key=lambda ph: ph[1][6])
@@ -7154,6 +7156,18 @@ def place_localities(phrases, df, home=None):
             yield loc, phrase
     for phrase, loc in spelt if not found else ():
         yield loc, phrase
+    # ... and with nothing else found, a region of the name of its seat is that town, a city or town of exactly the
+    # name: "FIER ALBANIA, SHETITJE ..." (ykSui8EUJ8Q; user, 2026-11-27) named only the county of Fier, Elbasan and
+    # Tirana were found as mapping towns; "Bran, Brasov" keeps Brasov as Bran's county; only one region, and no phrase
+    # that found a town giving no locality: "Driving by Kingston,New York" (CharruaNYC 4qZ4ysfD8Zg; Kingston is also
+    # a parish of Jamaica) is no New York City; and only in a country the text names: "ARTA news" is no Arta, Greece
+    for phrase in regions if len(regions) == 1 and only and not found and not spelt and not towns else ():
+        hit = _osm_place(phrase, codes, (home[3], home[4]) if home else None)
+        if (hit and hit[0] and _name_key(hit[0]) == _name_key(phrase) and hit[7] in ('city', 'town') and usable(hit)
+                and hit[2] in only
+                and (loc := _hit_locality(hit, df, countries, named=True))):
+            yield loc, phrase
+            break
 
 
 REGION_KM = 150  # see place_localities
