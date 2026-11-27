@@ -60,6 +60,7 @@ COUNTRY = {'USA': 'United States', 'US': 'United States', 'UK': 'United Kingdom'
 SHEET_COUNTRY = {'United States': 'USA', 'United Kingdom': 'UK', 'United Arab Emirates': 'UAE'}  # as the sheet writes
 BLOCKED_WAIT_S = 15 * 60
 SILENT_BATCH_S = 45 * 60  # a batch silent this long is stuck (the longest analysis so far: 7 min)
+PAUSED_S = 180  # the silence check's own loop stood still this long (it waits 60 s at most): the routine was paused
 # a long video may stay silent this part of its length (nOJ658hOlKM, 10 h: stopped at 45 min 31 times in a row on
 # mini, 2026-10-16/17; mini analyses an hour of footage in about 6 min)
 SILENT_SHARE = 0.5
@@ -340,10 +341,17 @@ def run_chunk(url, country, chunk, single_city=False, new_only=False, deferred=F
     with subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env) as proc:
         fd, pending, last, done, silent = proc.stdout.fileno(), b'', time.time(), False, SILENT_BATCH_S
         video = None  # the video being analysed
+        tick = time.time()
         while not done:
             # a read that never returns (a connection dropped mid-request, 2026-10-09) must not hold the routine;
             # raw reads, so no line waits in a buffer select cannot see
             ready, _, _ = select.select([fd], [], [], min(60, silent))
+            # time this loop itself stood still is no silence of the batch's: wsl_yield.py pauses the crowd user's
+            # jobs while someone uses win5090's desktop (wsl5090b 2026-11-27: paused 10:00-10:41, its batch then
+            # stopped as stuck at 10:44, the video's analysis lost; 54 h of such stops on wsl5090 in 4 weeks)
+            if time.time() - tick > PAUSED_S:
+                last += time.time() - tick
+            tick = time.time()
             if not ready:
                 if time.time() - last > silent:
                     proc.terminate()
