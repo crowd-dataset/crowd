@@ -267,6 +267,62 @@ def download_low_res(video_id, out_dir):
     raise RuntimeError(f'download produced no file for {video_id}')
 
 
+# one 720p copy an analysis' steps share (user, 2026-11-27: "make the processing of videos faster"; 35 % of 40
+# analyses on lin5080 was yt-dlp, mostly 720p pieces of the same video fetched apart): the first minutes head_signs
+# reads, or the whole video read_signs reads, fetched once by the first step needing any of it; walk_cadence's
+# windows, the opening's frames (opening_texts) and the rear camera's captions are then taken from that file
+HD = {}  # video id: {'upto': seconds fetched from the start (None: all), 'dir', 'path', 'tried'}
+HD_MARGIN_S = 2  # a section download ends at a key frame near its end: a piece is taken from it only this far within
+
+
+def hd_plan(video_id, upto):
+    """Share a 720p download of video_id's first `upto` seconds (None: the whole video) between the steps of
+    its analysis; hd_done ends it."""
+    hd_done(video_id)
+    HD[video_id] = {'upto': upto, 'dir': None, 'path': None, 'tried': False, 'lock': threading.Lock()}
+
+
+def hd_done(video_id):
+    x = HD.pop(video_id, None)
+    if x:
+        with x['lock']:  # (a background fetch still going is waited for, then its file deleted)
+            if x['dir']:
+                shutil.rmtree(x['dir'], ignore_errors=True)
+
+
+def hd_file(video_id, upto=0):
+    """The shared 720p file of video_id (hd_plan) when it holds its first `upto` seconds (None: all of it), fetched
+    on the first call; None when not planned so, or not fetched."""
+    x = HD.get(video_id)
+    if not x or x['upto'] is not None and (upto is None or upto > x['upto']):
+        return None
+    with x['lock']:  # a step asking while the background fetch runs waits for it (hd_fetch_quietly)
+        if not x['tried']:
+            _hd_fetch(video_id, x)
+    return x['path']
+
+
+def _hd_fetch(video_id, x):
+    """hd_file's download of x's part of the video (x['path'] stays None when it fails)."""
+    x['tried'], x['dir'] = True, tempfile.mkdtemp(prefix='crowd_hd_')
+    part = ['--download-sections', f"*0-{x['upto']:.0f}"] if x['upto'] is not None else []
+    try:
+        _yt_dlp('-q', '-f', 'bv*[height<=720][ext=mp4]/bv*[height<=720]', *part, '-o',
+                os.path.join(x['dir'], 'v.%(ext)s'), _url(video_id),
+                timeout=2 * (CLIP_TIMEOUT_S if part else WHOLE_DOWNLOAD_S))
+        x['path'] = next(os.path.join(x['dir'], n) for n in os.listdir(x['dir']) if n.startswith('v.'))
+    except BotCheck:
+        raise
+    except (RuntimeError, StopIteration) as e:
+        print(f'  720p copy not fetched: {e}', flush=True)
+
+
+def hd_stream(video_id, upto=0):
+    """(file, '') of the analysis' 720p copy when it holds the first `upto` seconds (None: all), else YouTube's
+    stream (url, headers) as _stream: frames read from it by _stream_ffmpeg either way."""
+    return (path, '') if (path := hd_file(video_id, upto)) else _stream(video_id)
+
+
 # a video YouTube's embedded player will not play (L6UOZXjIxw0: "This video is unavailable" in the review page, fine
 # on YouTube, its embedding allowed; user, 2026-11-01) plays on the review page from a copy fetched on the player's
 # first error, kept in the batch's folder until its review is done (review_hub.drop_local_videos). Fetched, not kept
@@ -2214,16 +2270,22 @@ def walk_cadence(video_id, sig, p=PARAMS):
     try:
         pieces = []
         for k, (a, b) in enumerate(windows):
-            try:
-                _yt_dlp('-q', '-f', 'bv*[height<=720][ext=mp4]/bv*[height<=720]', '--download-sections',
-                        f'*{a:.0f}-{b:.0f}', '-o', os.path.join(w, f'p{k}.%(ext)s'), _url(video_id),
-                        timeout=CLIP_TIMEOUT_S)
-            except RuntimeError:
-                continue
-            src = next((os.path.join(w, n) for n in os.listdir(w) if n.startswith(f'p{k}.')), None)
+            cut = []
+            if src := hd_file(video_id, b + HD_MARGIN_S):  # the window from the analysis' 720p copy (see HD)
+                cut = ['-ss', f'{a:.1f}', '-to', f'{b:.1f}']
+            else:
+                try:
+                    _yt_dlp('-q', '-f', 'bv*[height<=720][ext=mp4]/bv*[height<=720]', '--download-sections',
+                            f'*{a:.0f}-{b:.0f}', '-o', os.path.join(w, f'p{k}.%(ext)s'), _url(video_id),
+                            timeout=CLIP_TIMEOUT_S)
+                except BotCheck:
+                    raise
+                except RuntimeError:
+                    continue
+                src = next((os.path.join(w, n) for n in os.listdir(w) if n.startswith(f'p{k}.')), None)
             h264 = os.path.join(w, f'h{k}.mp4')  # OpenCV cannot decode AV1
-            if src and subprocess.run(['ffmpeg', '-v', 'error', '-y', '-i', src, '-an', '-c:v', 'libx264', '-preset',
-                                       'ultrafast', '-crf', '20', h264], capture_output=True,
+            if src and subprocess.run(['ffmpeg', '-v', 'error', '-y', *cut, '-i', src, '-an', '-c:v', 'libx264',
+                                       '-preset', 'ultrafast', '-crf', '20', h264], capture_output=True,
                                       timeout=900).returncode == 0:
                 pieces.append(f'{h264}@{a:.1f}')
         if not pieces:
@@ -2308,12 +2370,13 @@ for i, tr in tracks.items():
 """
 
 
-def ghost_and_urban(path):
+def ghost_and_urban(path, stop=None, why=None):
     """(ghost times, urban_objects' counts) of one pass over the video. Ghosts: times (s) a road user vanished
     mid-picture: a sure detection, big and well inside the frame, nothing passing in front of it and not found
     again nearby. A dissolve between two scenes fades people out where they stand (Q8iFS6Szcfc at 8:08: a woman on
     a crossing); one false alarm in 6 minutes of approved drives and far ones missed (5ki0IEvsSQI), so a hint only
-    (user, 2026-10-11). On a CUDA GPU only (wsl5090, lin5080): elsewhere no ghosts, and urban_objects counts."""
+    (user, 2026-10-11). On a CUDA GPU only (wsl5090, lin5080): elsewhere no ghosts, and urban_objects counts.
+    stop: an Event that ends the pass (nothing found); why: a list given the error of a failed pass."""
     if not os.path.exists(YOLO_PYTHON):
         return np.zeros(0), None
     # its progress shown as it goes: two workers sharing wsl5090's GPU took over 45 min for a 40-min video, and
@@ -2323,6 +2386,10 @@ def ghost_and_urban(path):
         proc = subprocess.Popen([YOLO_PYTHON, '-c', GHOST_CODE, path, str(URBAN_EVERY_S)], stdout=subprocess.PIPE,
                                 stderr=err, text=True, cwd=HERE)
         for line in proc.stdout:
+            if stop is not None and stop.is_set():
+                proc.kill()
+                proc.wait()
+                return np.zeros(0), None
             if line.startswith('P '):
                 print(f'  YOLO pass: frame {line.split()[1]} of {line.split()[2]}', flush=True)
             else:
@@ -2330,7 +2397,10 @@ def ghost_and_urban(path):
         failed = proc.wait()
         err.seek(0)
         if failed:
-            print(f'  YOLO tracking failed, no ghost check: {err.read().strip()[-300:]}', flush=True)
+            text = err.read().strip()[-300:]
+            if why is not None:
+                why.append(text)
+            print(f'  YOLO tracking failed, no ghost check: {text}', flush=True)
     counts = [[int(v) for v in x[1:]] for x in lines if x[:1] == ['U']]
     return (np.array([float(x[1]) for x in lines if x[:1] == ['G']], float),
             np.array(counts, float) if counts and not failed else urban_objects(path))
@@ -2601,6 +2671,14 @@ for line in sys.stdin:
     print(json.dumps(out), flush=True)
 """
 _CLIP = {'lock': threading.Lock()}
+
+
+def _clip_stop():
+    """End the SCENE_SERVER process (started again on its next use), its GPU memory freed for another model."""
+    with _CLIP['lock']:
+        if (proc := _CLIP.get('proc')) is not None and proc.poll() is None:
+            proc.kill()
+            proc.wait()
 
 
 def _clip_run(ask, paths):
@@ -3139,6 +3217,10 @@ def _parse_gps(text):
 def _stream_ffmpeg(cmd):
     """ffmpeg reading frames of YouTube's stream, once more when it times out: YouTube is slow for a while at times
     (lin5080, 2026-10-17: the opening, its caption and the GPS overlay lost on several videos; user: retry once)."""
+    if '-i' in cmd and os.path.isfile(cmd[cmd.index('-i') + 1]):  # the analysis' 720p copy (hd_stream)
+        k = cmd.index('-headers') if '-headers' in cmd else -2
+        return subprocess.run([x for j, x in enumerate(cmd) if j not in (k, k + 1)], capture_output=True,
+                              timeout=120, check=False)
     cmd = [cmd[0], '-rw_timeout', str(STALL_S * 10 ** 6), *cmd[1:]]  # a stalled read fails, not waits (STALL_S)
     try:
         return subprocess.run(cmd, capture_output=True, timeout=120)
@@ -3442,14 +3524,15 @@ def gps_track(video_id, duration, opening=None):
         # went by its description (dg7ejD2tVGM: Cairnryan for a drive into Stranraer; user, 2026-11-23)
         for wait in GPS_STREAM_WAITS if seen else ():
             try:
-                stream = _stream(video_id)
+                stream = hd_stream(video_id, None)
                 break
             except (RuntimeError, KeyError, ValueError) as e:
                 print(f'  GPS overlay: no stream ({str(e)[:80]}), asking again in {wait} s', flush=True)
                 time.sleep(wait)
         else:
-            stream = _stream(video_id)
-        texts = [(t, _overlay_text(stream, t)) for t in GPS_PROBE_S if t < duration]
+            stream = hd_stream(video_id, None)
+        # (the probes gps_probe read at the triage, when it did)
+        texts = _PROBED.pop(video_id, None) or [(t, _overlay_text(stream, t)) for t in GPS_PROBE_S if t < duration]
         if not seen and not any(parse_gps(x) or parse_clock(x) or parse_stamp(x) for _, x in texts):
             return None, [], []
         # at most ~200 frames: a 3-hour road trip read every 30 s printed nothing for 45 min and was stopped as
@@ -3555,7 +3638,7 @@ def caption_hit(texts):
 def montage_label(video_id, end, frames=4):
     """Whether OCR reads a highlights caption in the montage that montage_end puts before `end` seconds."""
     try:
-        stream = _stream(video_id)
+        stream = hd_stream(video_id, end)
         return any(caption_hit(_frame_text(stream, float(t)).splitlines())
                    for t in np.linspace(1.5, max(end - 1.5, 2), frames))
     except (RuntimeError, subprocess.TimeoutExpired, KeyError, ValueError) as e:
@@ -3650,14 +3733,16 @@ def rear_camera(video_id):
         return None
     w = tempfile.mkdtemp(prefix='crowd_rear_')
     try:
-        _yt_dlp('-q', '-f', 'bv*[height<=720][ext=mp4]/bv*[height<=720]', '-o', os.path.join(w, 'v.%(ext)s'),
-                _url(video_id), timeout=2 * WHOLE_DOWNLOAD_S)
-        path = next(os.path.join(w, n) for n in os.listdir(w) if n.startswith('v.'))
+        if not (path := hd_file(video_id, None)):  # the analysis' 720p copy (see HD), else fetched here
+            _yt_dlp('-q', '-f', 'bv*[height<=720][ext=mp4]/bv*[height<=720]', '-o', os.path.join(w, 'v.%(ext)s'),
+                    _url(video_id), timeout=2 * WHOLE_DOWNLOAD_S)
+            path = next(os.path.join(w, n) for n in os.listdir(w) if n.startswith('v.'))
         subprocess.run(['ffmpeg', '-v', 'error', '-i', path, '-vf',
                         f"fps=1/{REAR_STEP_S},crop=iw*0.32:ih*0.05:0:ih*0.905,scale=-2:120,format=gray,"
                         "lut=y='if(gt(val\\,170)\\,0\\,255)'", os.path.join(w, 'c%06d.png')],
                        capture_output=True, timeout=4 * 3600)
-        os.remove(path)
+        if path.startswith(w):
+            os.remove(path)
         shots = sorted(n for n in os.listdir(w) if n.startswith('c'))
 
         def read(n):
@@ -3706,7 +3791,7 @@ def opening_texts(video_id, start=1, upto=61, step=None, keep_dir=None):
     step = step or CAPTION_STEP_S
     work_dir = tempfile.mkdtemp(prefix='crowd_ocr_')
     try:
-        url, headers = _stream(video_id)
+        url, headers = hd_stream(video_id, upto + 1)
 
         def grab(t):
             shot = os.path.join(work_dir, f'{t:.0f}.png')
@@ -3775,12 +3860,14 @@ def read_signs(video_id, step=None, duration=None):
     step = step or (SIGN_STEP_S if (duration or 0) <= 7200 else SIGN_STEP_LONG_S)
     work_dir = tempfile.mkdtemp(prefix='crowd_signs_')
     try:
-        _yt_dlp('-q', '-f', 'bv*[height<=720][ext=mp4]/bv*[height<=720]', '-o', os.path.join(work_dir, 'v.%(ext)s'),
-                _url(video_id), timeout=2 * WHOLE_DOWNLOAD_S)
-        path = next(os.path.join(work_dir, n) for n in os.listdir(work_dir) if n.startswith('v.'))
+        if not (path := hd_file(video_id, None)):  # the analysis' 720p copy (see HD), else fetched here
+            _yt_dlp('-q', '-f', 'bv*[height<=720][ext=mp4]/bv*[height<=720]', '-o',
+                    os.path.join(work_dir, 'v.%(ext)s'), _url(video_id), timeout=2 * WHOLE_DOWNLOAD_S)
+            path = next(os.path.join(work_dir, n) for n in os.listdir(work_dir) if n.startswith('v.'))
         subprocess.run(['ffmpeg', '-v', 'error', '-i', path, '-vf', f'fps=1/{step}', '-q:v', '3',
                         os.path.join(work_dir, 's%05d.jpg')], capture_output=True, timeout=4 * 3600)
-        os.remove(path)
+        if path.startswith(work_dir):
+            os.remove(path)
         shots = sorted(n for n in os.listdir(work_dir) if n.startswith('s'))
         lines = _ocr_run([os.path.join(work_dir, n) for n in shots])
         if lines is None:
@@ -3820,12 +3907,15 @@ def head_signs(video_id, duration, keep_dir):
     upto = min(SIGN_HEAD_S, duration / 2)
     os.makedirs(keep_dir, exist_ok=True)
     try:
-        _yt_dlp('-q', '-f', 'bv*[height<=720][ext=mp4]/bv*[height<=720]', '--download-sections', f'*0-{upto:.0f}',
-                '-o', os.path.join(keep_dir, 'v.%(ext)s'), _url(video_id), timeout=2 * CLIP_TIMEOUT_S)
-        path = next(os.path.join(keep_dir, n) for n in os.listdir(keep_dir) if n.startswith('v.'))
+        if not (path := hd_file(video_id, upto)):  # the analysis' 720p copy (see HD), else fetched here
+            _yt_dlp('-q', '-f', 'bv*[height<=720][ext=mp4]/bv*[height<=720]', '--download-sections',
+                    f'*0-{upto:.0f}', '-o', os.path.join(keep_dir, 'v.%(ext)s'), _url(video_id),
+                    timeout=2 * CLIP_TIMEOUT_S)
+            path = next(os.path.join(keep_dir, n) for n in os.listdir(keep_dir) if n.startswith('v.'))
         subprocess.run(['ffmpeg', '-v', 'error', '-i', path, '-t', f'{upto:.0f}', '-vf', f'fps=1/{SIGN_STEP_S}',
                         '-q:v', '3', os.path.join(keep_dir, 's%05d.jpg')], capture_output=True, timeout=3600)
-        os.remove(path)
+        if path.startswith(keep_dir):
+            os.remove(path)
         shots = sorted(n for n in os.listdir(keep_dir) if n.startswith('s'))
         lines = _ocr_run([os.path.join(keep_dir, n) for n in shots])
         if lines is None:
@@ -4074,7 +4164,7 @@ def caption_end(video_id, sig, texts=None):
         jumps = [t for t, score, _ in ev if last < t <= last + CAPTION_STEP_S + 5 and score >= 0.1]
         return int(np.ceil(jumps[0])) if jumps else int(last + CAPTION_STEP_S / 2)
     try:
-        stream = _stream(video_id)
+        stream = hd_stream(video_id, CAPTION_MAX_S + 1)
         # OCR reads the caption on some frames only (PF094oAMKvU: "In tis wu ye" at 0:03, nothing at 0:13,
         # "In this video..." at 0:33 and 1:25): it may miss two frames in a row
         last, misses = None, 0
@@ -4634,27 +4724,110 @@ def night_from_title(segments, notes, sig, title):
 NIGHT_TITLE_CLIP = 0.9  # see night_from_title (not NIGHT_CLIP_SURE: that one is the day/night rule's)
 
 
-def analyse_video(video_id, out_dir, meta=None, signs=False, keep=False):
+# a video left out for its camera or as a walk is so before its costly steps (user, 2026-11-27: a third of the
+# analysed videos were left out, mostly as walks, after their 720p reads, OCR and the ghosts' YOLO pass): its
+# signals so far and contact sheet give video_reason the same reasons, those needing the YOLO pass's counts aside
+# (they come after the analysis as before); a GPS overlay that might show driving (its first frames, as gps_track
+# reads them) lets it go on to the end
+def triage_video(video_id, out_dir, sig, meta, triage):
+    """video_reason of the video from its signals so far (written to a scratch file), None when its overlay may show
+    a drive or GPS."""
+    if gps_probe(video_id, meta.get('duration') or len(sig['motion']) / FPS):
+        return None
+    scratch = os.path.join(out_dir, f'{video_id}_triage.npz')
+    try:
+        np.savez_compressed(scratch, **sig)
+        return video_reason(video_id, out_dir, scratch, *triage)
+    finally:
+        if os.path.exists(scratch):
+            os.remove(scratch)
+
+
+GHOST_BESIDE_MB = 6000  # see analyse_video
+
+
+def gpu_free_mb():
+    """Free memory of the GPU (the least free of several) in MB, 0 when nvidia-smi does not say."""
+    smi = shutil.which('nvidia-smi') or next((x for x in ('/usr/lib/wsl/lib/nvidia-smi',) if os.path.exists(x)), None)
+    try:
+        out = subprocess.run([smi, '--query-gpu=memory.free', '--format=csv,noheader,nounits'], capture_output=True,
+                             text=True, timeout=30, check=False).stdout if smi else ''
+        return min(int(x) for x in out.split()) if out.split() else 0
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return 0
+
+
+_PROBED = {}  # video id: [(second, text)] gps_probe read, for gps_track
+
+
+def gps_probe(video_id, duration):
+    """Whether a frame of the opening (GPS_PROBE_S, from the stream) shows coordinates, a clock or a date, as
+    gps_track's first look; True when the stream is not read."""
+    try:
+        stream = _stream(video_id)
+        texts = _PROBED[video_id] = [(t, _overlay_text(stream, t)) for t in GPS_PROBE_S if t < duration]
+        return any(parse_gps(x) or parse_clock(x) or parse_stamp(x) for _, x in texts)
+    except BotCheck:
+        raise
+    except (RuntimeError, subprocess.TimeoutExpired, KeyError, ValueError):
+        return True
+
+
+def hd_fetch_quietly(video_id):
+    """hd_file's fetch in the background: a failure is the step's own to meet when it asks."""
+    try:
+        hd_file(video_id)
+    except Exception as e:  # noqa: BLE001 (a thread's error would be lost; the step asking fetches itself)
+        print(f'  720p copy not fetched in the background: {str(e)[:120]}', flush=True)
+
+
+def analyse_video(video_id, out_dir, meta=None, signs=False, keep=False, triage=None):
     """Download a low resolution copy, propose segments, write a contact sheet; the copy is deleted, or with keep
-    left for the review page (LOCAL_KEPT). signs: also read the road signs (read_signs), for a drive between towns."""
+    left for the review page (LOCAL_KEPT). signs: also read the road signs (read_signs), for a drive between towns.
+    triage: video_reason's arguments after the signals' path, (meta, plan), to leave a video out before its costly
+    steps (TRIAGE)."""
     STEP_TIMES['own'].clear()
     started = time.time()
     meta = meta or fetch_metadata(video_id)
     work_dir = tempfile.mkdtemp(prefix='crowd_')
     path = download_low_res(video_id, work_dir)
+    stop_ghost, ghost_why = threading.Event(), []
     try:
         sig = signals(path)
         sig['skips'] = skip_events(path)
         sig['skip_norm'] = np.array(skip_norm(path, sig), float).reshape(-1, 2)
         sig['fades'] = fade_events(path)
         sig['saturation'], sig['lamps'] = dusk_colours(path)
-        ghost, urban = ghost_and_urban(path)
-        if urban is not None:
-            sig['urban'], sig['street'] = urban[:, 0], urban[:, 1]
-            if urban.shape[1] > 2:  # where road users sit (0 top, 1 bottom; NaN with none): see camera_tilt
-                sig['object_y'] = np.where(urban[:, 2] >= 0, urban[:, 2] / 1000, np.nan)
-            if urban.shape[1] > 4:  # a big person close by, a vehicle ahead (see walk_view)
-                sig['walk_view'] = urban[:, 3:5]
+        # the ghosts' YOLO pass on the GPU while the steps below run (user, 2026-11-27: "make the processing of
+        # videos faster"; it was 34 % of 40 analyses on lin5080, the main process waiting): only
+        # side_forward_track and off_road_track read what it finds. With GHOST_BESIDE_MB free on the GPU only:
+        # beside CLIP and EasyOCR on a full one, CLIP failed (lin5080 beside crowd-city, 2026-11-27); else after
+        # the triage, CLIP's server stopped for it (with it, the pass ran out of memory twice on lin5080)
+        ghost_job = ThreadPoolExecutor(1)
+        ghost_run = (ghost_job.submit(ghost_and_urban, path, stop_ghost, ghost_why)
+                     if gpu_free_mb() >= GHOST_BESIDE_MB else None)
+        duration = meta.get('duration') or len(sig['motion']) / FPS
+        # the camera, walk and drone checks before the costly steps (TRIAGE): the same reasons as after them
+        rolls = []
+        track = step_bob_track(path, meta.get('duration'), rolls=rolls)  # the whole video's measure is its middle
+        sig['roll_track'] = np.array(rolls, float).reshape(-1, 2)
+        sig['bob_track'] = np.array(track, float).reshape(-1, 2)
+        sig['step_bob'] = np.array(np.median([x for _, x in track]) if len(track) >= 3 else 0, float)
+        sig['aerial'] = np.array(aerial_track(path, meta.get('duration'), work_dir), float).reshape(-1, 2)
+        contact_sheet(path, duration, os.path.join(out_dir, f'{video_id}.jpg'))
+        if triage and (why := triage_video(video_id, out_dir, sig, meta, triage)):
+            stop_ghost.set()
+            print(f'  left out before its costly steps: {why}', flush=True)
+            np.savez_compressed(os.path.join(out_dir, f'{video_id}_signals.npz'), **sig, early=np.array(why))
+            print(step_times_line(time.time() - started), flush=True)
+            return {'meta': meta, 'segments': [], 'notes': [why]}
+        if not ghost_run:
+            _clip_stop()
+            ghost_now = ghost_and_urban(path)
+        # the 720p the sign steps read, fetched once for them and the others (see HD), in the background from now
+        if meta.get('duration') and ocr_gpu():
+            hd_plan(video_id, None if signs else min(SIGN_HEAD_S, meta['duration'] / 2))
+            threading.Thread(target=hd_fetch_quietly, args=(video_id,), daemon=True).start()
         sig['garage'] = np.array([(a, b) for a, b, _ in garage_edges(path, sig, work_dir)]
                                  + lit_garages(path, meta.get('duration'), work_dir)
                                  + (car_park_stretches(path, meta.get('duration'), work_dir)
@@ -4665,7 +4838,6 @@ def analyse_video(video_id, out_dir, meta=None, signs=False, keep=False):
         sig['cross'] = cross_traffic(path, sig)
         sig['cadence'] = np.array(walk_cadence(video_id, sig), float).reshape(-1, 2)
         sig['repeat'] = np.array(repeated_frames(path, meta.get('duration')), float)
-        sig['ghost'] = ghost
         sig['intro_end'] = np.array(clip_intro(path, meta.get('duration'), work_dir) or 0, float)
         sig['outro_start'] = np.array(clip_outro(path, meta.get('duration'), work_dir) or 0, float)
         sig['chapter_cuts'] = np.array(chapter_cuts(meta), float).reshape(-1, 2)
@@ -4674,14 +4846,8 @@ def analyse_video(video_id, out_dir, meta=None, signs=False, keep=False):
         sig['night_clip'] = np.array(night_clip_track(path, meta.get('duration'), work_dir), float).reshape(-1, 2)
         lit = np.array(light_spots_track(path, meta.get('duration')), float).reshape(-1, 3)
         sig['spots'], sig['lamp_spots'] = lit[:, :2], lit[:, [0, 2]]
-        sig['aerial'] = np.array(aerial_track(path, meta.get('duration'), work_dir), float).reshape(-1, 2)
         driver = driver_clip_track(path, sig.get('face', np.zeros(0)), work_dir)
         sig['driver_clip'] = np.array(driver, float).reshape(-1, 2)
-        rolls = []
-        track = step_bob_track(path, meta.get('duration'), rolls=rolls)  # the whole video's measure is its middle
-        sig['roll_track'] = np.array(rolls, float).reshape(-1, 2)
-        sig['bob_track'] = np.array(track, float).reshape(-1, 2)
-        sig['step_bob'] = np.array(np.median([x for _, x in track]) if len(track) >= 3 else 0, float)
         end = montage_end(sig)
         # read once: highlight captions and town labels (their frames kept for screen_locality)
         opened = os.path.join(out_dir, f'{video_id}_open.tmp')
@@ -4726,11 +4892,24 @@ def analyse_video(video_id, out_dir, meta=None, signs=False, keep=False):
         if stamp:
             sig['stamp'] = np.array(stamp, float)
         sig['on_bus'] = np.array(title_vehicle(title_text(meta.get('title') or '')) == 1)
+        ghost, urban = ghost_run.result() if ghost_run else ghost_now
+        if ghost_run and ghost_why and 'out of memory' in ghost_why[0]:  # the GPU was full beside the others
+            ghost, urban = ghost_and_urban(path)
+        sig['ghost'] = ghost
+        if urban is not None:
+            sig['urban'], sig['street'] = urban[:, 0], urban[:, 1]
+            if urban.shape[1] > 2:  # where road users sit (0 top, 1 bottom; NaN with none): see camera_tilt
+                sig['object_y'] = np.where(urban[:, 2] >= 0, urban[:, 2] / 1000, np.nan)
+            if urban.shape[1] > 4:  # a big person close by, a vehicle ahead (see walk_view)
+                sig['walk_view'] = urban[:, 3:5]
         sig['side_forward'] = np.array(side_forward_track(path, sig, work_dir), float).reshape(-1, 2)
         sig['off_road'] = np.array(off_road_track(path, sig, work_dir), float).reshape(-1, 2)
-        contact_sheet(path, meta['duration'] or len(sig['motion']) / FPS,
-                      os.path.join(out_dir, f'{video_id}.jpg'))
     finally:
+        stop_ghost.set()  # (left early, or failed: the YOLO pass ends too)
+        _PROBED.pop(video_id, None)
+        if 'ghost_job' in locals():
+            ghost_job.shutdown(wait=True)
+        hd_done(video_id)
         if keep and path.endswith('.mp4'):
             os.makedirs(os.path.join(out_dir, LOCAL_VIDEOS), exist_ok=True)
             shutil.move(path, os.path.join(out_dir, LOCAL_VIDEOS, f'{video_id}{LOCAL_KEPT}.tmp'))
@@ -4742,6 +4921,102 @@ def analyse_video(video_id, out_dir, meta=None, signs=False, keep=False):
     np.savez_compressed(os.path.join(out_dir, f'{video_id}_signals.npz'), **sig)
     print(step_times_line(time.time() - started), flush=True)
     return {'meta': meta, 'segments': segments, 'notes': notes}
+
+
+def video_reason(vid, out_dir, sig_path, meta, plan):
+    """Why an analysed video is left out for its camera or as a walk, from its signals and contact sheet, else None:
+    after its analysis, and before its costly steps by analyse_video's triage (see TRIAGE), which gives the same
+    reasons from the signals it has then."""
+    sheet, sig = os.path.join(out_dir, f'{vid}.jpg'), dict(np.load(sig_path))
+    reason = None
+    frames = sheet_frames(sheet)
+    if inset_rectangle(frames):
+        reason = 'another camera is shown in a corner of the picture (picture-in-picture)'
+    elif (n_driver := driver_frames(frames)) >= DRIVER_SHEET_FRAMES:
+        reason = f'the camera faces the driver (a big face in {n_driver} of {len(frames)} sampled frames)'
+    elif not (driving := gps_drive(sig)) and (n_walk := walking_frames(
+            sheet)) >= WALK_SHEET_FRAMES:
+        reason = f'a walk, not a drive ({n_walk} of {len(frames)} sampled frames look taken on foot)'
+    elif not driving and float(sig.get('step_bob', 0)) >= STEP_BOB_WALK:
+        reason = (f"a walk, not a drive: the camera bobs at a walker's step rate "
+                  f"({float(sig['step_bob']):.0%} of its shake)")
+    # (not a ride the title says is on a scooter or bicycle, in a bike lane or a park among people: 14
+    # electric scooter rides of wanderer_youtube were so left out, the 3 reviewed ones approved)
+    elif not driving and title_vehicle(title_text(meta['title'])) not in NON_MOTOR \
+            and (seen := walk_view(sig)):
+        reason = (f'a walk, not a drive: people close by in {seen[0]:.0%} of the frames, a vehicle ahead in '
+                  f'only {seen[1]:.0%}')
+    elif (not driving and n_walk >= WALK_SHEET_FEW
+          and float(sig.get('step_bob', 0)) >= WALK_BATCH_BOB
+          and (bob_share(sig) or 0) >= WALK_BATCH_HI):
+        reason = (f"a walk, not a drive: {n_walk} of {len(frames)} sampled frames look taken on foot and the "
+                  f"camera bobs at a walker's step rate ({float(sig['step_bob']):.0%} of its "
+                  f"shake, {bob_share(sig):.0%} of the video at a walk's)")
+    elif not driving and walk_no_stop(sig):
+        reason = (f"a walk, not a drive: the camera bobs at a walker's step rate "
+                  f"({float(sig['step_bob']):.0%} of its shake) and never stands {NO_STOP_S} s")
+    # ... or never stands a second (never_stands) with WALK_SHEET_FEW+ contact sheet frames on foot, nobody
+    # close by needed (hq1cQCEdCjg: courtyards of Simferopol; user, 2026-11-19: "walking"): of the reviewed
+    # videos so judged 24 rejected walks and no approved one (without the frames: 2 approved test drives)
+    elif (not driving and n_walk >= WALK_SHEET_FEW and not MOVING_TITLE.search(title_text(meta['title'] or ''))
+          and never_stands(sig)):
+        reason = (f"a walk, not a drive: {n_walk} of {len(frames)} sampled frames look taken on foot, and the "
+                  f"camera bobs at a walker's step rate ({float(sig['step_bob']):.0%} of its "
+                  "shake) and never stands still a second")
+    # ... and in a batch mostly of walks, a title naming no vehicle or drive (AsQAgDtCWbw's showground walk
+    # read as a drive by every check; user, 2026-10-21): of such reviewed videos 32 rejected, 2 approved
+    elif (not driving and n_walk >= WALK_SHEET_FEW and not MOVING_TITLE.search(meta['title'] or '')
+          and title_vehicle(title_text(meta['title'])) is None
+          and (empty := empty_road(sig))):
+        reason = (f'a walk, not a drive: {n_walk} of {len(frames)} sampled frames look taken on foot, a '
+                  f'vehicle ahead in only {empty[0]:.0%} of the frames and {empty[1]:.1f} road users a frame, '
+                  'and the title names no vehicle or drive')
+    elif not driving and (share := walk_share(plan)) and not MOVING_TITLE.search(meta['title'] or ''):
+        reason = (f'probably a walk: {share[0]} of {share[1]} long videos of this batch were walks and the '
+                  'title names no vehicle or drive')
+    elif dashboard_view(sheet):
+        reason = 'filmed from inside the car: the dashboard fills the picture, not a dashcam view'
+    elif pano_view(sheet, meta):
+        reason = 'a 360° video: no forward view to cut'
+    elif fast := overlay_speedup(sig):  # the cross traffic is a note: see below
+        reason = fast
+    else:
+        reason = footage_problem(sig)
+    return reason
+
+
+def early_stale(vid, out_dir, sig_path, meta, plan):
+    """Whether the video was left out at its analysis' triage (signals with 'early') for a reason that no longer
+    holds: then it is analysed in full."""
+    try:
+        with np.load(sig_path) as z:
+            if 'early' not in z.files:
+                return False
+    except (OSError, ValueError):
+        return False
+    return not video_reason(vid, out_dir, sig_path, meta, plan)
+
+
+# a channel whose first WALK_CHANNEL_FIRST analysed videos were mostly walks (WALK_CHANNEL_FIRST_N of them: left out
+# as walks, or proposed with the walk hint) has its other videos analysed only when the title names a drive or a
+# vehicle (user, 2026-11-27: "make the processing faster"; of 50 such channels, 2,786 later analyses gave 259
+# approved videos, 205 of them so titled: about 12 % of all analyses saved, 54 approved videos missed)
+WALK_CHANNEL_FIRST, WALK_CHANNEL_FIRST_N = 20, 14
+
+
+def walk_channel(plan):
+    """How many of the channel's first WALK_CHANNEL_FIRST analysed videos were walks, when WALK_CHANNEL_FIRST_N or
+    more, else 0."""
+    first = [p for p in plan.values() if p.get('analysed')][:WALK_CHANNEL_FIRST]
+    n = sum('walk' in (p.get('exclude') or '') or WALK_HINT in (p.get('note') or '') for p in first)
+    return n if len(first) >= WALK_CHANNEL_FIRST and n >= WALK_CHANNEL_FIRST_N else 0
+
+
+def drive_title_words(title):
+    """Whether a title names a drive or a vehicle (MOVING_TITLE, title_vehicle)."""
+    t = title or ''
+    return bool(MOVING_TITLE.search(title_text(t).lower()) or MOVING_TITLE.search(t.lower())
+                or title_vehicle(title_text(t)) is not None)
 
 
 def sort_kept_copies(out_dir, plan):
@@ -10647,6 +10922,9 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
             reason = exclusion_reason(meta)
             if not reason and (n_stuck := int(stuck_counts().get(vid) or 0)) >= STUCK_SKIP:
                 reason = f'its analysis was stopped as stuck {n_stuck} times (no output for too long)'
+            if not reason and (walks := walk_channel(plan)) and not drive_title_words(meta['title']):
+                reason = (f'not analysed: {walks} of the first {WALK_CHANNEL_FIRST} analysed videos of this channel '
+                          'were walks, and the title names no drive or vehicle')
             # the Data API gives no chapters: YouTube's own, as yt-dlp sees them, once before the video is proposed
             # (JszmgYHlqug: "Lucerne", "Hergiswil", "Stans", ... "Sarnen" were left out, its town signs gave
             # Interlaken; user, 2026-11-13: "chapters show localities"). The review page marks them so too
@@ -10705,13 +10983,16 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
                 break
             # a signals file without its sheet (not written on a full disk) is analysed again: wRGpg1CheKg crashed
             # every batch of wsl5090 for 9 h (2026-11-02)
-            if download and not (os.path.exists(sig_path) and os.path.exists(os.path.join(out_dir, f'{vid}.jpg'))):
+            # ... and one left out at its triage whose reason no longer holds (the rules changed) in full
+            if download and (not (os.path.exists(sig_path) and os.path.exists(os.path.join(out_dir, f'{vid}.jpg')))
+                             or early_stale(vid, out_dir, sig_path, meta, plan)):
                 print(f'[{n}/{len(ids)}] analysing {vid} {meta["title"][:60]}')
                 if (meta.get('duration') or 0) > 2 * 3600:  # run_channels.py waits longer for its silence
                     print(f'  long video: {int(meta["duration"]) // 60} min')
                 drive = drive_title(meta['title'], meta.get('description'))
                 analyse_video(vid, out_dir, meta, signs=any(r.search(english_states(drive)) for r in FROM_TO)
-                              or bool(town_sign_country(meta['title'], country)), keep=True)  # town_sign_split
+                              or bool(town_sign_country(meta['title'], country)), keep=True,  # town_sign_split
+                              triage=(meta, plan))
                 time.sleep(pause_s)  # spacing requests keeps YouTube's bot check away for longer
             failures_in_a_row = 0
         except BotCheck as e:
@@ -10739,59 +11020,7 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
             reread_opening(vid, sig_path, out_dir)
         reason = skip_note = None
         if analysed:
-            frames = sheet_frames(os.path.join(out_dir, f'{vid}.jpg'))
-            if inset_rectangle(frames):
-                reason = 'another camera is shown in a corner of the picture (picture-in-picture)'
-            elif (n_driver := driver_frames(frames)) >= DRIVER_SHEET_FRAMES:
-                reason = f'the camera faces the driver (a big face in {n_driver} of {len(frames)} sampled frames)'
-            elif not (driving := gps_drive(dict(np.load(sig_path)))) and (n_walk := walking_frames(
-                    os.path.join(out_dir, f'{vid}.jpg'))) >= WALK_SHEET_FRAMES:
-                reason = f'a walk, not a drive ({n_walk} of {len(frames)} sampled frames look taken on foot)'
-            elif not driving and float(np.load(sig_path).get('step_bob', 0)) >= STEP_BOB_WALK:
-                reason = (f"a walk, not a drive: the camera bobs at a walker's step rate "
-                          f"({float(np.load(sig_path)['step_bob']):.0%} of its shake)")
-            # (not a ride the title says is on a scooter or bicycle, in a bike lane or a park among people: 14
-            # electric scooter rides of wanderer_youtube were so left out, the 3 reviewed ones approved)
-            elif not driving and title_vehicle(title_text(meta['title'])) not in NON_MOTOR \
-                    and (seen := walk_view(dict(np.load(sig_path)))):
-                reason = (f'a walk, not a drive: people close by in {seen[0]:.0%} of the frames, a vehicle ahead in '
-                          f'only {seen[1]:.0%}')
-            elif (not driving and n_walk >= WALK_SHEET_FEW
-                  and float(np.load(sig_path).get('step_bob', 0)) >= WALK_BATCH_BOB
-                  and (bob_share(dict(np.load(sig_path))) or 0) >= WALK_BATCH_HI):
-                reason = (f"a walk, not a drive: {n_walk} of {len(frames)} sampled frames look taken on foot and the "
-                          f"camera bobs at a walker's step rate ({float(np.load(sig_path)['step_bob']):.0%} of its "
-                          f"shake, {bob_share(dict(np.load(sig_path))):.0%} of the video at a walk's)")
-            elif not driving and walk_no_stop(dict(np.load(sig_path))):
-                reason = (f"a walk, not a drive: the camera bobs at a walker's step rate "
-                          f"({float(np.load(sig_path)['step_bob']):.0%} of its shake) and never stands {NO_STOP_S} s")
-            # ... or never stands a second (never_stands) with WALK_SHEET_FEW+ contact sheet frames on foot, nobody
-            # close by needed (hq1cQCEdCjg: courtyards of Simferopol; user, 2026-11-19: "walking"): of the reviewed
-            # videos so judged 24 rejected walks and no approved one (without the frames: 2 approved test drives)
-            elif (not driving and n_walk >= WALK_SHEET_FEW and not MOVING_TITLE.search(title_text(meta['title'] or ''))
-                  and never_stands(dict(np.load(sig_path)))):
-                reason = (f"a walk, not a drive: {n_walk} of {len(frames)} sampled frames look taken on foot, and the "
-                          f"camera bobs at a walker's step rate ({float(np.load(sig_path)['step_bob']):.0%} of its "
-                          "shake) and never stands still a second")
-            # ... and in a batch mostly of walks, a title naming no vehicle or drive (AsQAgDtCWbw's showground walk
-            # read as a drive by every check; user, 2026-10-21): of such reviewed videos 32 rejected, 2 approved
-            elif (not driving and n_walk >= WALK_SHEET_FEW and not MOVING_TITLE.search(meta['title'] or '')
-                  and title_vehicle(title_text(meta['title'])) is None
-                  and (empty := empty_road(dict(np.load(sig_path))))):
-                reason = (f'a walk, not a drive: {n_walk} of {len(frames)} sampled frames look taken on foot, a '
-                          f'vehicle ahead in only {empty[0]:.0%} of the frames and {empty[1]:.1f} road users a frame, '
-                          'and the title names no vehicle or drive')
-            elif not driving and (share := walk_share(plan)) and not MOVING_TITLE.search(meta['title'] or ''):
-                reason = (f'probably a walk: {share[0]} of {share[1]} long videos of this batch were walks and the '
-                          'title names no vehicle or drive')
-            elif dashboard_view(os.path.join(out_dir, f'{vid}.jpg')):
-                reason = 'filmed from inside the car: the dashboard fills the picture, not a dashcam view'
-            elif pano_view(os.path.join(out_dir, f'{vid}.jpg'), meta):
-                reason = 'a 360° video: no forward view to cut'
-            elif fast := overlay_speedup(dict(np.load(sig_path))):  # the cross traffic is a note: see below
-                reason = fast
-            else:
-                reason = footage_problem(dict(np.load(sig_path)))
+            reason = video_reason(vid, out_dir, sig_path, meta, plan)
             # an edit cut is offered with a note to check, not left out (user, 2026-10-11: gaX_-_Nna9k's cuts are
             # legit and miss no intersection); ten in a row still say the channel edits its drives
             notes_skip = []
@@ -13754,8 +13983,9 @@ TIMED_STEPS = ('fetch_metadata', 'download_low_res', 'signals', 'skip_events', '
                'clip_outro', 'town_scene_track', 'night_scene_track', 'night_clip_track', 'light_spots_track',
                'aerial_track', 'driver_clip_track', 'step_bob_track', 'opening_texts', 'rear_camera', 'caption_end',
                'montage_label', 'map_frame', 'read_signs', 'head_signs', 'gps_track', 'refine_clock_cuts',
-               'side_forward_track', 'off_road_track', 'contact_sheet', '_yt_dlp', '_clip_run', '_frame_text')
-STEP_TIMES = {'stack': [], 'own': Counter()}
+               'side_forward_track', 'off_road_track', 'contact_sheet', 'hd_file', '_hd_fetch', '_yt_dlp', '_clip_run',
+               '_frame_text')
+STEP_TIMES = {'stack': threading.local(), 'own': Counter(), 'lock': threading.Lock()}
 
 
 def _timed(name, fn):
@@ -13763,7 +13993,8 @@ def _timed(name, fn):
     name too ("yt_dlp/head_signs")."""
     @functools.wraps(fn)
     def run(*args, **kwargs):
-        stack, t0 = STEP_TIMES['stack'], time.time()
+        local, t0 = STEP_TIMES['stack'], time.time()  # each thread its own (the YOLO pass runs beside the rest)
+        stack = local.__dict__.setdefault('steps', [])
         key = name if not name.startswith('_') or not stack else f'{name.strip("_")}/{stack[-1][0]}'
         stack.append([name.strip('_'), 0.0])
         try:
@@ -13771,14 +14002,16 @@ def _timed(name, fn):
         finally:
             spent = time.time() - t0
             inner = stack.pop()[1]
-            STEP_TIMES['own'][key] += spent - inner
+            with STEP_TIMES['lock']:
+                STEP_TIMES['own'][key] += spent - inner
             if stack:
                 stack[-1][1] += spent
     return run
 
 
 def step_times_line(total):
-    """The log line of an analysis' step times (STEP_TIMES), the longest first, steps under 5 s left out."""
+    """The log line of an analysis' step times (STEP_TIMES), the longest first, steps under 5 s left out (side by side
+    steps, the YOLO pass and the 720p fetch, add up to more than the total)."""
     own = STEP_TIMES['own']
     parts = [f'{k.strip("_")} {v:.0f}' for k, v in own.most_common() if v >= 5]
     return f"  step times (s, of {total:.0f}): {', '.join(parts)}"
