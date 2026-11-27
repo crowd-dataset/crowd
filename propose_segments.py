@@ -10184,6 +10184,24 @@ def locate_now(p, df, home, sig_path=None, meta=None, boilerplate=frozenset()):
             es[0]['locality'], es[0]['guessed'] = screen[0], True
             p['note'] = (f"{p['note']}; locality {screen[0][0]} from a label on the screen at "
                          f"{int(screen[1]) // 60}:{int(screen[1]) % 60:02d}").lstrip('; ')
+    # chapters naming other towns CHAPTER_TOWN_KM from the one the title gave split the drive at them: "TIRANE -
+    # ELBASAN" with chapters "Tirana", ..., "Bradashesh" (2A5NEjDZJnE; user, 2026-11-26) was all Tirana. Not a city's
+    # own districts or namesakes far off (Hollywood, Shibuya; Garden Grove): of 79 reviewed videos with
+    # such chapters, the 8 passing put 6,468 s in the reviewer's locality against the guess's 5,453
+    if meta and len(es) == 1 and es[0].get('locality') and es[0].get('guessed') and not p.get('route') \
+            and not es[0].get('gps'):
+        guess = es[0]['locality']
+        near_home = (lambda name: town_near(name, home, df)) if home else None
+        stretches = chapter_localities(video_chapters(meta), df, near_home)
+        others = {tuple(x[2]) for x in stretches} - {tuple(guess)}
+        at = _locality_anchor(guess, df)
+        if at and others and all((o := _locality_anchor(list(x), df))
+                                 and CHAPTER_TOWN_KM[0] <= _km(at[3], at[4], o[3], o[4]) <= CHAPTER_TOWN_KM[1]
+                                 for x in others):
+            p['entries'] = split_by_stretches(es[0]['segments'], stretches)
+            p['note'] = (f"{p['note']}; localities from the chapters: "
+                         + ', '.join(_stretch_label(a, loc) for a, _, loc in stretches)).lstrip('; ')
+            es = p.get('entries') or []
     if meta and len(es) == 1 and not es[0].get('locality') and not p.get('route'):
         e = es[0]
         near_home = (lambda name: town_near(name, home, df)) if home else None
@@ -10221,6 +10239,7 @@ def locate_now(p, df, home, sig_path=None, meta=None, boilerplate=frozenset()):
 # 37 h of such stretches of 10+ min and approved 7.5 h (143 videos); in the others the two were about even. Not in a
 # city of METRO_POP or more, whose freeways are its own (user, 2026-11-16): there such cuts held 3.4 h approved and
 # 5.2 h rejected (31 videos: Los Angeles, New York, Philadelphia, Istanbul), in smaller towns 4.3 h and 42.9 h
+CHAPTER_TOWN_KM = (15, 150)  # see locate_now
 ONE_PLACE_HIGHWAY = {**PARAMS, 'quiet_min_s': 600}
 # ... and a one-town video that by day is all highway, with no town in the picture, keeps every rural and highway
 # cut: "Calais to Croatia by Car - ... - Italy - Venice West to Meolo" (1AJ5FIkNWA4, g4shf; user, 2026-11-25: "videos
