@@ -29,13 +29,20 @@ PLANS = str(Path(__file__).resolve().parent.parent / '_output/proposals')  # the
 
 def applied_times(plans=PLANS):
     """video -> when a segment of it was first applied in review (a plan's applied is that time since 2026-11-01,
-    True before). Before that, the night a video first was in the mapping backups (applied_backfill.json, made once
+    True before), or first saved by the add_video form (form_added.json, add_video.note_added). Before that, the
+    night a video first was in the mapping backups (applied_backfill.json, made once
     on 2026-10-31 from lin5080's backups of mini: noon of the day before that night's 01:30 backup)."""
     try:
         with open(os.path.join(plans, 'applied_backfill.json')) as f:
             times = json.load(f)
     except (OSError, ValueError):
         times = {}
+    try:  # ... and videos saved by the add_video form on mini (mapping-pavlo.csv): the day of that save
+        with open(os.path.join(plans, 'form_added.json')) as f:
+            for video, t in json.load(f).items():
+                times[video] = min(t, times.get(video, t))
+    except (OSError, ValueError):
+        pass
     for path in glob.glob(os.path.join(plans, '*', 'plan.json')):
         try:
             with open(path) as f:
