@@ -10809,7 +10809,7 @@ id,locality,locality_aka,state,country,iso3,continent,lat,lon,gmp,population_loc
 10808,Karaoğlanoğlu,[Karaoglanoglu],,Cyprus,CYP,Europe,35.3424212,33.2716623,,967,1370754,5.8,99.29,166.65,39.1,31.8,0.0,[E6uxeBpoHUU],[[0]],[[1]],[[561]],[0],[4042023],[UCpoMO93mA1RP7ZkpH5PXjgg]
 10809,Güzelyurt,[Guzelyurt],,Cyprus,CYP,Europe,35.1993042,32.9928829,,24070,1370754,5.8,99.29,166.65,39.1,31.8,0.0,[YJPd14NiayU],[[0]],[[1]],[[2663]],[0],[6092021],[UCpoMO93mA1RP7ZkpH5PXjgg]
 10810,Yeni İskele,[Yeni Iskele],,Cyprus,CYP,Europe,35.5343185,34.188649,,1774,1370754,5.8,99.29,166.65,39.1,31.8,0.0,[pQjdPSDTFX8],"[[0,0]]","[[1,367]]","[[367,799]]",[0],[21072021],[UCpoMO93mA1RP7ZkpH5PXjgg]
-10811,Silifke,[],,Türkiye,,Asia,36.3778166,33.9260372,,119303,0,,,0.0,0.0,,9.09,[UfffuFDm4e4],[[0]],[[0]],[[300]],[0],[3102022],[UColHAp-4bJERwwKpUQE0ksg]
+10811,Silifke,[],,Türkiye,TUR,Asia,36.3778166,33.9260372,,119303,85878556,6.7,99.26,169.08,33.5,43.7,9.09,[UfffuFDm4e4],[[0]],[[0]],[[300]],[0],[3102022],[UColHAp-4bJERwwKpUQE0ksg]
 10812,Margao,[],GA,India,IND,Asia,15.272923,73.9583159,,87650,1463865525,15.6,85.69,160.84,29.5,23.0,0.0,[0yzwj11j750],[[0]],[[172]],[[586]],[0],[15042019],[UC2fnpxL0qJBoEzS2-C1TlZA]
 10813,Tossa de Mar,[],,Spain,ESP,Europe,41.7197773,2.9312155,,5001,49355143,3.9,99.81,169.07,45.0,33.4,0.0,[pPTZC0YjRtM],[[0]],[[1]],[[167]],[0],[11012017],[UC2fnpxL0qJBoEzS2-C1TlZA]
 10814,Blanes,[],,Spain,ESP,Europe,41.673681,2.790527,,40047,49355143,3.9,99.81,169.07,45.0,33.4,28.57,[oudowVIjxvg],[[0]],[[1]],[[490]],[0],[7012017],[UC2fnpxL0qJBoEzS2-C1TlZA]
