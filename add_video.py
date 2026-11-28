@@ -802,6 +802,11 @@ def new_locality_row(locality, state, country, locality_aka=None, near=None, at=
                     if not unicodedata.combining(c))
     if plain != locality and plain.isascii() and plain not in aka:  # not for other scripts or letters like ß
         aka.append(plain)
+    # a name with hyphens also goes with spaces: La Grande-Motte is La Grande Motte (user, 2026-11-28)
+    for name in [locality, *aka]:
+        spaced = ' '.join(name.replace('-', ' ').split())
+        if spaced != name and spaced != locality and spaced not in aka:
+            aka.append(spaced)
     country_corrected = common.correct_country(country)
     iso2_code = common.get_iso2_country_code(country_corrected)
     iso3_code = common.get_iso3_country_code(country_corrected)
