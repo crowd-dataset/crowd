@@ -9,6 +9,7 @@ so batches appear while run_channels.py adds videos and drop off once everything
 
 "Push the mapping" commits mapping.csv as it is here onto GitHub's main and pushes it.
 """
+import contextlib
 import io
 import json
 import os
@@ -678,11 +679,13 @@ def merge_mapping_files():
     the same locality, state and country, else as a new row; a video the mapping has stays as it is here. Then each
     mapping-NAME.csv becomes a copy of the merged mapping (user, 2026-10-11) and all are pushed in one commit.
     Returns a message."""
-    with ps.plan_lock(add_video.FILE_PATH):
+    local = [n for n in LOCAL_MAPPINGS if os.path.exists(n)]
+    with ps.plan_lock(add_video.FILE_PATH), contextlib.ExitStack() as held:
+        for n in local:  # the add_video form saves under the same lock (add_video.mapping_lock)
+            held.enter_context(ps.plan_lock(n))
         git('fetch', '-q', 'origin', 'main')
         names = [n for n in git('ls-tree', '--name-only', 'origin/main').split()
                  if re.fullmatch(r'mapping-[^/]+\.csv', n)]
-        local = [n for n in LOCAL_MAPPINGS if os.path.exists(n)]
         names += [n for n in local if n not in names]
         df = add_video.load_csv(add_video.FILE_PATH)
         have = {v for cell in df['videos'] for v in add_video._parse_flat_list_cell(cell)}
