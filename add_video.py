@@ -1921,6 +1921,8 @@ def get_worldpop_population(lat, lon, km=3):
 
 
 def get_country_average_height(iso3_code):
+    """Average of men's and women's mean height (cm), empty for a country without height data (as gini): 0.0 went
+    into McMurdo Station, Mata-Utu and Diego Garcia (2026-11-28)."""
     try:
         row = height_data[height_data['cca3'].str.lower() == iso3_code.lower()]
         if not row.empty:
@@ -1929,10 +1931,10 @@ def get_country_average_height(iso3_code):
             avg_height = (male_height + female_height) / 2
             return round(avg_height)
         else:
-            return 0.0
+            return ''
     except Exception as e:
         print(f"Error fetching height data: {e}")
-        return 0.0
+        return ''
 
 
 def get_country_median_age(iso2_code):
