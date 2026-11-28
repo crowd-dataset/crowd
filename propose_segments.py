@@ -135,11 +135,32 @@ class BotCheck(RuntimeError):
     """YouTube wants a signed-in session; further requests will fail until it lifts."""
 
 
-def _yt_dlp(*args, timeout=None):
+def _yt_dlp(*args, timeout=None, helpers=True):
     """yt-dlp's output; RuntimeError (BotCheck when YouTube asks to sign in) when it fails. timeout (s): stopped
     after that, with the ffmpeg it runs: a clip (--download-sections) goes through ffmpeg, which can wait on a
     stalled connection for ever (psNzTW-NFho on wsl5090b, 2026-10-26: run_channels.py stopped the silent batch
-    every 45 min, five times, and the stalled downloads stayed behind)."""
+    every 45 min, five times, and the stalled downloads stayed behind). helpers: when YouTube asks this machine to
+    sign in, the call runs on another (HELPERS) with that machine's own cookies (_yt_dlp_elsewhere)."""
+    if helpers and asked_here():  # straight to a helper: asking YouTube again here only prolongs its check
+        return _yt_dlp_elsewhere(args, timeout, BotCheck('YouTube asked this machine to sign in'))
+    try:
+        return _yt_dlp_here(*args, timeout=timeout)
+    except BotCheck as e:
+        _here_asked[0] = time.time()
+        if not helpers:
+            raise
+        return _yt_dlp_elsewhere(args, timeout, e)
+
+
+_here_asked = [0.0]  # when YouTube last asked this machine to sign in
+HERE_REST_S = 900  # ... after which this machine is tried again (run_channels.py's wait)
+
+
+def asked_here():
+    return time.time() - _here_asked[0] < HERE_REST_S
+
+
+def _yt_dlp_here(*args, timeout=None):
     # opt-in for when YouTube asks to sign in: YT_DLP_COOKIES=chrome (or firefox, ...) uses that browser's login,
     # or a path to a cookies.txt exported from a logged-in browser
     jar = os.environ.get('YT_DLP_COOKIES')
@@ -167,6 +188,81 @@ def _yt_dlp(*args, timeout=None):
         msg = (err.strip().splitlines() or [f'yt-dlp exited with {proc.returncode}'])[-1]
         raise (BotCheck if 'not a bot' in err else RuntimeError)(msg)
     return out
+
+
+# when YouTube asks a machine to sign in (its cookies signed out: wsl5090's lasted under a day three times,
+# 2026-11-24 to 11-27), its yt-dlp calls run on the first of these that YouTube does not ask, each with its own
+# account's cookies, which never leave their machine (user, 2026-11-28); the files come back by scp. In turn:
+# wired first (lin5080 is on Wi-Fi), never the machine itself (HELPER_NAMES: its host name)
+HELPERS = ('mini', 'wsl5090', 'lin5080')
+HELPER_NAMES = {'TUE018178': 'mini', 'TUE055687': 'wsl5090', 'tue20234844-X870-AORUS-ELITE-WIFI7': 'lin5080'}
+HELPER_DIR = '/tmp/crowd-helper'  # on the helper: one folder per call, deleted after its files are copied
+HELPER_REST_S = 1800  # a helper YouTube asked to sign in too is skipped this long
+_helper_asked = {}  # helper: when YouTube last asked it to sign in
+HELPER_RUN = ('cd crowd-routine && export PATH="$HOME/crowd-routine/.venv/bin:$HOME/micromamba/envs/crowd/bin:$PATH" '
+              "&& nice -n 10 python -c 'import propose_segments as ps; ps.yt_dlp_for_peer()'")
+
+
+def _yt_dlp_elsewhere(args, timeout, why):
+    """_yt_dlp's call on a helper (HELPERS): its output, its -o files copied here; `why` (the BotCheck here)
+    raised again when none can."""
+    import socket
+    import uuid
+    args = list(args)
+    local_dir = None
+    if '-o' in args:
+        i = args.index('-o') + 1
+        local_dir, name = os.path.split(args[i])
+        far = f'{HELPER_DIR}/{uuid.uuid4().hex}'
+        args[i] = f'{far}/{name}'
+    me = HELPER_NAMES.get(socket.gethostname())
+    for host in HELPERS:
+        if host == me or time.time() - _helper_asked.get(host, 0) < HELPER_REST_S:
+            continue
+        ssh = ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=15', host]
+        try:
+            r = subprocess.run(ssh + [HELPER_RUN], input=json.dumps(dict(args=args, timeout=timeout)),
+                               capture_output=True, text=True, timeout=(timeout or 3600) + 300, check=False)
+            lines = r.stdout.strip().splitlines()
+            got = json.loads(lines[-1]) if lines and lines[-1].startswith('{') else {}
+            if 'bot' in got:
+                _helper_asked[host] = time.time()
+                print(f'    {host} is asked to sign in too', flush=True)
+                continue
+            if 'error' in got:
+                raise RuntimeError(f"{got['error']} (on {host})")
+            if 'out' not in got:
+                print(f'    {host} could not help: {(r.stderr.strip() or r.stdout.strip())[-150:]}', flush=True)
+                continue
+            if local_dir is not None:
+                subprocess.run(['scp', '-q', '-o', 'BatchMode=yes', f'{host}:{far}/*', local_dir or '.'],
+                               check=True, capture_output=True, timeout=3600)
+            print(f'    fetched through {host} (YouTube asks this machine to sign in)', flush=True)
+            return got['out']
+        except (subprocess.SubprocessError, OSError, ValueError) as e:
+            print(f'    {host} could not help: {str(e)[:150]}', flush=True)
+        finally:
+            if local_dir is not None:
+                subprocess.run(ssh + [f'rm -rf {far}'], capture_output=True, check=False, timeout=60)
+    raise why
+
+
+def yt_dlp_for_peer():
+    """A helper's side of _yt_dlp_elsewhere: {args, timeout} as JSON on stdin, one JSON line out: {out}, {bot} when
+    YouTube asks this machine to sign in too, or {error}."""
+    req = json.load(sys.stdin)
+    if not os.environ.get('YT_DLP_COOKIES') and os.path.exists('cookies.txt'):  # as run_channels.py
+        os.environ['YT_DLP_COOKIES'] = 'cookies.txt'
+    args = req['args']
+    if '-o' in args:
+        os.makedirs(os.path.dirname(args[args.index('-o') + 1]), exist_ok=True)
+    try:
+        got = dict(out=_yt_dlp(*args, timeout=req.get('timeout'), helpers=False))
+    except BotCheck as e:
+        got = dict(bot=str(e))
+    except RuntimeError as e:
+        got = dict(error=str(e))
+    print(json.dumps(got), flush=True)
 
 
 # Number plates name their district: most cars in a city drive are registered there ("HRO" for Rostock in
@@ -283,6 +379,9 @@ def hd_plan(video_id, upto):
 
 
 def hd_done(video_id):
+    if (d := _STREAM_FILES.pop(video_id, None)):  # a helper's copy read as the stream (_stream_file)
+        _STREAMS.pop(video_id, None)
+        shutil.rmtree(d, ignore_errors=True)
     x = HD.pop(video_id, None)
     if x:
         with x['lock']:  # (a background fetch still going is waited for, then its file deleted)
@@ -3597,15 +3696,37 @@ def _stream(video_id):
     each asked YouTube again (more requests, more "Sign in to confirm you're not a bot")."""
     if (got := _STREAMS.get(video_id)) and time.time() - got[0] < STREAM_REUSE_S:
         return got[1]
-    _STREAMS[video_id] = (time.time(), _stream_ask(video_id))
+    try:
+        if asked_here():
+            raise BotCheck('YouTube asked this machine to sign in')
+        got = _stream_ask(video_id)
+    except BotCheck:  # the 720p copy through a helper, read as a file
+        got = (_stream_file(video_id), '')
+    _STREAMS[video_id] = (time.time(), got)
     return _STREAMS[video_id][1]
+
+
+_STREAM_FILES = {}  # video id: folder of _stream_file's copy, deleted by hd_done
+
+
+def _stream_file(video_id):
+    """The whole 720p video fetched through a helper (_yt_dlp_elsewhere), for the steps that read the stream when
+    YouTube asks this machine to sign in: a helper's stream address works only from the helper (its IP address is in
+    it). BotCheck when no helper can."""
+    if (path := hd_file(video_id, None)):
+        return path
+    d = _STREAM_FILES.setdefault(video_id, tempfile.mkdtemp(prefix='crowd_helped_'))
+    _yt_dlp('-q', '-f', 'bv*[height<=720][ext=mp4]/bv*[height<=720]', '-o', os.path.join(d, 'v.%(ext)s'),
+            _url(video_id), timeout=2 * WHOLE_DOWNLOAD_S)
+    return next(os.path.join(d, n) for n in os.listdir(d) if n.startswith('v.'))
 
 
 def _stream_ask(video_id):
     # an https stream first: ffmpeg seeks an HLS playlist slowly, past its timeout (lin5080 got only format 609 for
-    # Ejsknub-vjQ on 2026-11-13, an hour after mini and the workers got https ones)
+    # Ejsknub-vjQ on 2026-11-13, an hour after mini and the workers got https ones); here only (helpers=False): a
+    # stream address from a helper works only from the helper
     m = json.loads(_yt_dlp('-j', '-f', 'bv*[height<=720][ext=mp4][protocol=https]/bv*[height<=720][protocol=https]/'
-                                       'bv*[height<=720][ext=mp4]/bv*[height<=720]', _url(video_id)))
+                                       'bv*[height<=720][ext=mp4]/bv*[height<=720]', _url(video_id), helpers=False))
     return m['url'], ''.join(f'{k}: {v}\r\n' for k, v in (m.get('http_headers') or {}).items())
 
 
