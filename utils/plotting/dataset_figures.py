@@ -1005,7 +1005,9 @@ def _locality_maps(df_mapping, seg, flag, loc_hover) -> pl.DataFrame:
                .join(df_mapping.select("id", "locality", "state", "country", "continent", "lat", "lon"), on="id")
                .join(loc_hover, on="id").drop_nulls(["lat", "lon"]).sort("hours", descending=True))
     fig = go.Figure(_dot_traces(dots))
-    fig.update_geos(projection_type="natural earth", lataxis_range=[-57, 84], **GEO_STYLE)
+    # Antarctica left out below 57° S, unless a locality is there (McMurdo Station, 77.8° S)
+    fig.update_geos(projection_type="natural earth", lataxis_range=[min(-57, math.floor(dots["lat"].min()) - 3), 84],
+                    **GEO_STYLE)
     fig.add_annotation(text="Dot area proportional to hours of footage", x=0.01, y=0.02, xref="paper",
                        yref="paper", showarrow=False, font=dict(size=14, color="#666666"))
     _save(_style(fig, margin=dict(l=0, r=0, t=0, b=0),
@@ -1285,15 +1287,17 @@ def _dot_traces(d: pl.DataFrame, scale: float = 1.3, legend: bool = True, line: 
     """One Scattergeo trace per continent with a dot per locality in `d` (columns lat, lon, locality, continent,
     hours); dot area proportional to hours."""
     traces = []
-    for continent in CONTINENT_ORDER:
+    # ... and after them any other continent (Antarctica's stations, 2026-11-28), in grey
+    others = sorted(set(d["continent"].drop_nulls()) - set(CONTINENT_ORDER))
+    for rank, continent in enumerate(CONTINENT_ORDER + others):
         c = d.filter(pl.col("continent") == continent)
         if not c.height:
             continue
         traces.append(go.Scattergeo(
             lon=c["lon"], lat=c["lat"], name=continent, customdata=c["hours"], **_hover_args(c, line),
-            legendgroup=continent, showlegend=legend, legendrank=CONTINENT_ORDER.index(continent),
+            legendgroup=continent, showlegend=legend, legendrank=rank,
             marker=dict(size=np.clip(2 + scale * np.sqrt(c["hours"].to_numpy()), 2, 32),
-                        color=CONTINENT_COLORS[continent], opacity=0.6, line_width=0)))
+                        color=CONTINENT_COLORS.get(continent, "#666666"), opacity=0.6, line_width=0)))
     return traces
 
 
