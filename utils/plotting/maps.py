@@ -345,8 +345,14 @@ class Maps:
                 zoom=1.3  # pyright: ignore[reportArgumentType]
             )
             fig.update_traces(marker=dict(sizemin=2, opacity=0.85))
-            fig.update_layout(coloraxis_colorbar=dict(title=value_title,
-                                                      **self._log_ticks(df["log_value"].min(), df["log_value"].max())))
+            # the colour bar lying over Antarctica at the bottom left, where there are no localities: beside the
+            # map it took ~200 px from it, which then lacked the world's eastern edge (McMurdo Station, New
+            # Zealand), and over the top right corner it hid Japan (2026-11-28)
+            fig.update_layout(coloraxis_colorbar=dict(
+                title=dict(text=value_title, side="top"), orientation="h", x=0.01, xanchor="left", y=0.03,
+                yanchor="bottom", len=0.5, thickness=14, bgcolor="rgba(255,255,255,0.6)",
+                bordercolor="rgba(0,0,0,0.1)", borderwidth=1,
+                **self._log_ticks(df["log_value"].min(), df["log_value"].max())))
 
         if "hover" in df.columns:  # the full locality popup shared by all figures
             fig.update_traces(hovertemplate=hover.TEMPLATE)
@@ -378,12 +384,12 @@ class Maps:
         # their mean, 900 px left out McMurdo Station and Scott Base (77.8° S; 2026-11-28)
         lat = np.radians(np.clip(df["lat"].dropna().to_numpy(dtype=float), -85, 85))
         y = np.log(np.tan(np.pi / 4 + lat / 2))  # Web Mercator, in units of the world's width / 2π
-        top, bottom = 30, 90  # px beyond the outermost localities; at the bottom clear of the map's credits
+        top, bottom = 12, 28  # px beyond the outermost localities' centres; at the bottom above the map's credits
         px_y = 2 * np.pi / 1260  # Mercator units per pixel
         mid = (y.max() + y.min()) / 2 - (bottom - top) / 2 * px_y
         fig.update_layout(map_center=dict(lat=float(np.degrees(2 * np.arctan(np.exp(mid)) - np.pi / 2)),
                                           lon=fig.layout.map.center.lon))
-        height = max(900, int(np.ceil((y.max() - y.min()) / px_y)) + top + bottom)
+        height = int(np.ceil((y.max() - y.min()) / px_y)) + top + bottom
         io_class.save_plotly_figure(fig, file_name, width=1260, height=height, save_final=save_final)
 
     # State -> ((lon, lat) inside the state, (lon, lat) of its label off the coast),
