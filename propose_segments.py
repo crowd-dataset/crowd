@@ -157,7 +157,12 @@ HERE_REST_S = 900  # ... after which this machine is tried again (run_channels.p
 
 
 def asked_here():
-    return time.time() - _here_asked[0] < HERE_REST_S
+    return _me() in NO_YOUTUBE or time.time() - _here_asked[0] < HERE_REST_S
+
+
+def _me():
+    import socket
+    return HELPER_NAMES.get(socket.gethostname())
 
 
 def _yt_dlp_here(*args, timeout=None):
@@ -195,6 +200,10 @@ def _yt_dlp_here(*args, timeout=None):
 # account's cookies, which never leave their machine (user, 2026-11-28); the files come back by scp. In turn:
 # wired first (lin5080 is on Wi-Fi), never the machine itself (HELPER_NAMES: its host name)
 HELPERS = ('mini', 'wsl5090', 'lin5080')
+# machines that never ask YouTube themselves, only through a helper, and help none: YouTube signed out wsl5090's
+# cookies within hours on two accounts (oleg five times, bazilinskyy in 3 h on 2026-11-28), so its address is
+# flagged; its calls are spread over the other helpers at random (user, 2026-11-28)
+NO_YOUTUBE = ('wsl5090',)
 HELPER_NAMES = {'TUE018178': 'mini', 'TUE055687': 'wsl5090', 'tue20234844-X870-AORUS-ELITE-WIFI7': 'lin5080'}
 HELPER_DIR = '/tmp/crowd-helper'  # on the helper: one folder per call, deleted after its files are copied
 HELPER_REST_S = 1800  # a helper YouTube asked to sign in too is skipped this long
@@ -206,7 +215,6 @@ HELPER_RUN = ('cd crowd-routine && export PATH="$HOME/crowd-routine/.venv/bin:$H
 def _yt_dlp_elsewhere(args, timeout, why):
     """_yt_dlp's call on a helper (HELPERS): its output, its -o files copied here; `why` (the BotCheck here)
     raised again when none can."""
-    import socket
     import uuid
     args = list(args)
     local_dir = None
@@ -215,9 +223,12 @@ def _yt_dlp_elsewhere(args, timeout, why):
         local_dir, name = os.path.split(args[i])
         far = f'{HELPER_DIR}/{uuid.uuid4().hex}'
         args[i] = f'{far}/{name}'
-    me = HELPER_NAMES.get(socket.gethostname())
-    for host in HELPERS:
-        if host == me or time.time() - _helper_asked.get(host, 0) < HELPER_REST_S:
+    me = _me()
+    hosts = [h for h in HELPERS if h != me and h not in NO_YOUTUBE]
+    if me in NO_YOUTUBE:  # every call goes through a helper: spread them, not all on the first one's account
+        random.shuffle(hosts)
+    for host in hosts:
+        if time.time() - _helper_asked.get(host, 0) < HELPER_REST_S:
             continue
         ssh = ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=15', host]
         try:
