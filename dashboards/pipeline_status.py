@@ -259,6 +259,8 @@ def cookies_needed(workers, downloads):
             whys.setdefault(alias, []).append(f'its cookies file is signed out (checked {at})')
     out = []
     for alias, why in whys.items():
+        if alias in sw.ps.NO_YOUTUBE:  # it asks YouTube nothing itself: its cookies are not used (wsl5090, 2026-11-28)
+            continue
         a = accounts.get(alias) or {}
         f, d = a.get('file', 'cookies.txt'), a.get('dir', sw.REMOTE)
         link = f' && ln -sf {f} {d}/cookies.txt' if f != 'cookies.txt' else ''
@@ -884,9 +886,9 @@ def _check_cookies():
     signed['lin5080'] = (time.time(), 'out')  # also asked above: once
     c = cookies_needed([dict(w, host='lin5080b'), dict(w, host='lin5080'), dict(w, host='mini', problems=[])], {})
     assert [x['host'] for x in c] == ['lin5080'] and c[0]['why'].count('asks') == 2 and 'signed out' in c[0]['why'], c
-    signed['wsl5090'] = (time.time(), 'out')
+    signed['wsl5090'] = (time.time(), 'out')  # asks YouTube nothing itself (ps.NO_YOUTUBE): no warning
     c = cookies_needed([], {})
-    assert {x['host'] for x in c} == {'lin5080', 'wsl5090'} and 'signed out' in c[0]['why'], c
+    assert [x['host'] for x in c] == ['lin5080'] and 'signed out' in c[0]['why'], c
     signed.clear()
     assert cookies_needed([dict(w, problems=[dict(text='quota exceeded')], host='x')], {}) == []
 
