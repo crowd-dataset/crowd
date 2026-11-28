@@ -933,6 +933,28 @@ def new_locality_row(locality, state, country, locality_aka=None, near=None, at=
     return row
 
 
+# when each video was first saved by the form running on its own (__main__, mini's mapping-pavlo.csv): the hub's
+# "videos added" table counts it on that day, not the day the Merge brings it into mapping.csv
+# (dashboards/added_videos.py; user, 2026-11-28), as reviewed videos count on the day of their Apply
+FORM_ADDED = os.path.join(common.root_dir, '_output', 'proposals', 'form_added.json')
+
+
+def note_added(video_id):
+    if not LOCK_SAVES or not video_id:  # only the form on its own; its save holds the file's lock
+        return
+    try:
+        with open(FORM_ADDED) as f:
+            added = json.load(f)
+    except (OSError, ValueError):
+        added = {}
+    if video_id not in added:
+        added[video_id] = time.time()
+        os.makedirs(os.path.dirname(FORM_ADDED), exist_ok=True)
+        with open(FORM_ADDED + '.tmp', 'w') as f:
+            json.dump(added, f)
+        os.replace(FORM_ADDED + '.tmp', FORM_ADDED)
+
+
 # a save takes the file's lock only when this form runs on its own (__main__): the review pages' Apply and the hub
 # post to it (propose_segments.apply_segments) while holding that lock already, and waited on themselves for ever
 # (albertvideomaker's Apply, 2026-11-28)
@@ -1547,6 +1569,7 @@ def _form():
                         time_of_day_video = [int(x) for x in time_of_day]
 
                     save_csv(df, FILE_PATH)
+                    note_added(video_id)
                     message = "Video added or updated successfully."
                     if global_note_for_display:
                         message = message + " " + global_note_for_display
