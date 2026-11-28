@@ -891,6 +891,33 @@ def aerial_shots(sig, cut):
     return out
 
 
+# ... and a map or satellite view put into a drive, a shot between hard cuts or fades too short for those rules
+# (lHIGyXyJeno: a Google Maps route at 1:18-1:28 between two fades; RbNuhAic0hY: a Google Earth flight at
+# 0:11-0:20 between hard cuts; user, 2026-11-14: "map shows around here. should be cut"): a shot of INSERT_MAX_S or
+# less with a cut or fade at both ends and an aerial reading at AERIAL_SURE or more. On 21k signals 4.7k such shots
+# in 1k videos, nearly all already cut; 11 s of approved footage (JszmgYHlqug's lake view in its opening montage, the
+# edge of a cut a reviewer made at jk996WVUZ3M 74:20). Not the video's first or last shot: XgpRECgq4AE opens at an
+# airport kerb that CLIP reads as aerial under the terminal's roof
+INSERT_MAX_S = 30
+INSERT_CUT = re.compile(r'a map or aerial view (\d+)-(\d+)s')
+
+
+def insert_shots(sig, cut):
+    """[(start s, end s)] of the maps and aerial views put into a drive (see INSERT_MAX_S): from the cut or the start
+    of the fade before such a shot to the cut or the end of the fade after it."""
+    a = np.asarray(sig.get('aerial', np.zeros((0, 2)))).reshape(-1, 2)
+    if len(a) < 2 or np.median(np.diff(a[:, 0])) > 1.5 * AERIAL_EVERY_S:
+        return []
+    fades = np.asarray(sig.get('fades', np.zeros((0, 4)))).reshape(-1, 4)
+    marks = sorted([(i / FPS, i / FPS) for i in np.flatnonzero(cut)] + [(float(f[0]), float(f[1])) for f in fades])
+    out = []
+    for k in range(len(marks) - 1):
+        (s0, e0), (s1, e1) = marks[k], marks[k + 1]
+        if 0 < s1 - e0 <= INSERT_MAX_S and ((a[:, 0] >= e0) & (a[:, 0] < s1) & (a[:, 1] >= AERIAL_SURE)).any():
+            out.append((s0, e1))
+    return out
+
+
 # a camera facing the driver, seen by CLIP (user, 2026-10-16: jykQR2dKANc, AlCduyvTAxI, 1MDz3XJ82Oc; the Haar face
 # detector misses a face turned away or in sunglasses): a frame every DRIVER_CLIP_EVERY_S within DRIVER_NEAR_S of a
 # frame with a face. On those three videos 200 of 210 frames of the driver scored 0.9+, 4 of 524 of the road, never
@@ -1940,6 +1967,9 @@ def propose(sig, p=PARAMS):
     for a, b in [*aerial_runs(sig), *aerial_shots(sig, cut)]:
         keep[int(a * FPS):int(b * FPS)] = False
         notes.append(f'drone footage {a:.0f}-{b:.0f}s')
+    for a, b in insert_shots(sig, cut):
+        keep[int(a * FPS):int(np.ceil(b * FPS))] = False
+        notes.append(f'a map or aerial view {a:.0f}-{b:.0f}s')  # (INSERT_CUT reads it back)
     for a, b in bob_walks(sig):
         keep[int(a * FPS):int(b * FPS)] = False
         notes.append(f"walking {a:.0f}-{b:.0f}s (the camera bobs at a walker's step rate)")
@@ -4997,6 +5027,12 @@ def analyse_video(video_id, out_dir, meta=None, signs=False, keep=False, triage=
                 outro and (m := map_frame(video_id, opening_texts(video_id, outro + 1, min(
                     outro + 61, float(meta.get('duration') or outro + 61))))))):
             sig['map_labels'], sig['map_line'] = np.array(json.dumps(m[0])), np.array(m[1], float)
+        # ... else a map put into the drive, which propose cuts (insert_shots): lHIGyXyJeno's Google Maps route at
+        # 1:18 (user, 2026-11-14: "such maps can be used to get the route")
+        for a, b in ([] if 'map_labels' in sig else INSERT_CUT.findall('; '.join(propose(sig)[1]))[:2]):
+            if (m := map_frame(video_id, opening_texts(video_id, int(a) + 2, max(int(b) - 1, int(a) + 3), step=3))):
+                sig['map_labels'], sig['map_line'] = np.array(json.dumps(m[0])), np.array(m[1], float)
+                break
         if signs and (read := read_signs(video_id, duration=meta.get('duration'))):
             sig['signs'] = np.array(json.dumps({str(t): x for t, x in read.items()}))
         elif not signs and (read := head_signs(video_id, meta.get('duration'),
