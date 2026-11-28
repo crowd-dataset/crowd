@@ -58,6 +58,12 @@ table.days td.bar{width:30%;text-align:left}table.days td.bar i{display:block;he
 p.load{color:#666;margin:2px 0;font-size:13px}
 p.load b.hi{color:#1b7f3b}p.load b.mid{color:#b26a00}p.load b.lo{color:#b00020}
 p.bad{color:#b00020;font-weight:600;margin:4px 0}
+details.cookie{margin:6px 0;padding:8px 10px;border:1px solid #e0a000;border-radius:6px}
+details.cookie summary{cursor:pointer;color:#b00020;font-weight:600}details.cookie .w{color:#666;font-weight:400;
+ font-size:13px}details.cookie ol{margin:8px 0 6px;padding-left:20px;font-size:14px}
+.copy{display:flex;gap:8px;align-items:flex-start}.copy code{flex:1;user-select:all;padding:6px 8px;font-size:12px;
+ overflow-wrap:anywhere;border:1px solid #ddd;border-radius:4px;background:#f6f6f6}
+.copy button{font-size:12px;padding:4px 10px;border:1px solid #ccc;border-radius:4px;background:#fff;cursor:pointer}
 .acts{display:flex;gap:8px;margin-top:12px}
 button.g{flex:1;padding:10px 8px;font-size:14px;border:0;border-radius:4px;background:#007bff;
  color:#fff;cursor:pointer;
@@ -95,6 +101,15 @@ background:#fff;color:#222;font-size:13px;cursor:pointer}
     document.body.appendChild(b);
   });
 })();
+</script><script>// Copy of a cookies warning's command: on http too, which has no clipboard API
+function copyCmd(b) {
+  const code = b.previousElementSibling, r = document.createRange();
+  r.selectNodeContents(code);
+  const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r);
+  const done = () => { b.textContent = 'Copied'; setTimeout(() => { b.textContent = 'Copy'; }, 1500); };
+  if (navigator.clipboard && isSecureContext) navigator.clipboard.writeText(code.textContent).then(done);
+  else if (document.execCommand('copy')) done();
+}
 </script><script>// the other pages: their port on the TU/e network; their own name through the Cloudflare
 // tunnel on lin4080 (from outside without VPN; user, 2026-11-25)
 function goPort(p) {
@@ -116,9 +131,14 @@ function goPort(p) {
 {%- else %}: {{ w.short }}{% endif %}</span>
 {%- endfor %}</p>{% endif %}
 {% for w in health if not w.ok %}<p class="bad">{{ w.host }}: {{ w.what }}</p>{% endfor %}
-{% for c in cookies %}<p class="bad">🍪 {{ c.host }} needs new YouTube cookies: sign in as {{ c.account }} in a new
- Incognito window, export the cookies as {{ c.file or 'cookies.txt' }}, close the window, then <code>{{ c.how }}</code>
- </p>{% endfor %}
+{% for c in cookies %}<details class="cookie"><summary>🍪 {{ c.host }} needs new YouTube cookies
+ <span class="w">{{ c.why }} · click for what to do</span></summary>
+ <ol><li>In a new Incognito window, sign in to YouTube as <b>{{ c.account }}</b>.</li>
+ <li>Export the cookies (Get cookies.txt LOCALLY), rename the file to <b>{{ c.file or 'cookies.txt' }}</b>, close
+ the window at once.</li>
+ <li>On the laptop (TU/e network or VPN):</li></ol>
+ <div class="copy"><code>{{ c.how }}</code><button type="button" onclick="copyCmd(this)">Copy</button></div>
+</details>{% endfor %}
 {% for b in batches %}
 <a class="b" href="/open/{{ b.name }}" target="_blank"><span><span class="n">{{ b.name }}</span>
  <span class="s">{% if b.row %}· row {{ b.row }} {% endif %}· {{ b.state }}</span></span>
