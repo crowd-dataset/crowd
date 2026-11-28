@@ -9302,6 +9302,34 @@ def split_by_stretches(segments, stretches):
     return [{'locality': list(loc), 'guessed': True, 'segments': segs} for loc, segs in groups.items()]
 
 
+START_TOWN_S = (60, 300)  # footage from at most this second to at most this one: the opening of the drive
+
+
+def start_town(p, df, home, segs, t1, sig_path):
+    """Set the town a drive "from A to B" starts in for footage only of its opening, too short to reach B, where the
+    video is long enough to drive from A to B (else one of them is a namesake). Returns whether it was set.
+    "Sheppey by Car - Eastchurch to Warden" (d9_bKKn-p0k) kept 0:06-1:15 of 5:34 after a highway cut: 75 s reach no
+    town 3.4 km away, so the route was not split and the footage had no locality (user, 2026-11-28: Eastchurch).
+    Spreading the route over the whole video instead made 5 of 91 reviewed drives cut before their end worse."""
+    meta = read_meta(sig_path[:-len('_signals.npz')] + '_meta.json') if sig_path else None
+    span = int((meta or {}).get('duration') or 0)
+    if not (min(s['start'] for s in segs) <= START_TOWN_S[0] and t1 <= START_TOWN_S[1] < span):
+        return False
+    ends = drive_ends(p.get('drive_title') or p.get('title'), df, home)
+    if not ends or not all(loc for _, loc in ends) or ends[0][1] == ends[1][1]:
+        return False
+    (a, start), (b, _) = ends
+    if _km(a[4], a[5], b[4], b[5]) > span / 3600 * MAX_KMH:
+        return False
+    e = p['entries'][0]
+    if e.get('locality') and not e.get('guessed'):
+        return False
+    e['locality'], e['guessed'] = start, True
+    p['note'] = (f"{p.get('note') or ''}; locality {start[0]}: the footage is the opening of the drive from it, "
+                 'too short to reach its end').lstrip('; ')
+    return True
+
+
 def split_route(p, df, home=None, sig_path=None):
     """Split an untouched one-group proposal of a drive "from A to B" into the localities along its route, the
     driving time spread over them as on the route. Returns whether it was split. sig_path: the video's signals; without
@@ -9330,7 +9358,7 @@ def split_route(p, df, home=None, sig_path=None):
                                      map_path=map_route(sig, df), via_names=p.get('drive_via'),
                                      stop_names=p.get('drive_stops'), link_points=links)
     if not shares:
-        return False
+        return start_town(p, df, home, segs, t1, sig_path)
     if all(loc is None for _, _, loc in shares):
         p.pop('entries')
         p['exclude'] = 'rural driving: no town along the route'
