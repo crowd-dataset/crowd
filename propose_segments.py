@@ -14,6 +14,7 @@ import fcntl
 import glob
 import difflib
 import functools
+import itertools
 import json
 import os
 import random
@@ -9214,10 +9215,79 @@ def _path_shares(path, points):
     return [round(float(x), 4) for x in np.maximum.accumulate(near)]
 
 
+# a title ending in two places: "Lepote Srbije, voznja, vinski Srem, kraj Dunava, Susek - Nestin"
+PAIR_TITLE = re.compile(r"(?:^|[,|:]\s*)([A-ZÀ-ÞĀ-Ž][\w'’.-]*(?: [A-ZÀ-ÞĀ-Ž][\w'’.-]*){0,2})\s[-–—]\s"
+                        r"([A-ZÀ-ÞĀ-Ž][\w'’.-]*(?: [A-ZÀ-ÞĀ-Ž][\w'’.-]*){0,2})\s*$")
+PAIR_GAP_S = 120  # a cut at least this long between the footage of A and of B (split_pair)
+
+
+def channel_pair(title, plan, vid):
+    """(A, B) of a title ending in "A - B" when the channel's reviewed titles of that series (the same words before
+    the pair) were drives from A to B (both approved) more often than not; "Beograd, voznja, TC Piramida - Gazela" (a
+    shopping centre and a bridge, reviewed as Belgrade) is another series. Of 61 reviewed such titles only 5 were
+    (others: streets, bus stops, districts, border crossings: "Linia 131 Warszawa, Wilanów - Dw. Centralny"), 2 of
+    them of one series, "…, Susek - Nestin" (qfgYDUEjqz8; user, 2026-11-28: a rule for such channels only). None
+    otherwise."""
+    if not (m := PAIR_TITLE.search(title or '')) or any(r.search(title) for r in FROM_TO):
+        return None
+    both = other = 0
+    for q in plan.values():
+        if q.get('video') == vid or not (mq := PAIR_TITLE.search(q.get('title') or '')) \
+                or _name_key(q['title'][:mq.start()]) != _name_key(title[:m.start()]):
+            continue
+        got = {_name_key(e['locality'][0]) for e in q.get('entries') or [] if e.get('locality')
+               and any(s.get('decision') == 'approve' for s in e['segments'])}
+        if got:
+            if all(_name_key(x) in got for x in mq.groups()):
+                both += 1
+            else:
+                other += 1
+    return m.groups() if both > other else None
+
+
+def split_pair(p, df, home):
+    """Split an untouched one-group proposal of a channel's drive "A - B" (drive_pair) at its longest cut: the
+    footage before it A, after it B. Its route is not followed: OpenStreetMap names the villages of Serbia in
+    Cyrillic, so the route from Susek to Nestin passed no town and was left out (qfgYDUEjqz8, reviewed Susek 0:18-4:23
+    and Nestin 8:46-11:17 around the cut 3:15-8:46). Footage in one piece is not split. Returns whether it was."""
+    segs = sorted(p['entries'][0]['segments'], key=lambda s: s['start'])
+    if len(p['entries']) != 1 or len(segs) < 2 or any(s.get('decision') or s.get('applied') for s in segs):
+        return False
+    gap, i = max((b['start'] - a['end'], i) for i, (a, b) in enumerate(itertools.pairwise(segs)))
+    ends = drive_ends('from {} to {}'.format(*p['drive_pair']), df, home) if gap >= PAIR_GAP_S else None
+    if not ends:
+        return False
+    countries = {common.get_iso2_country_code(common.correct_country(c)): c for c in df['country'].dropna().unique()}
+    found = []
+    for (hit, loc), name in zip(ends, p['drive_pair']):
+        # a village not in the mapping yet, which OpenStreetMap names in Cyrillic only (Сусек): new, as the title
+        # writes it, at OpenStreetMap's point, in a country the mapping writes no states for
+        if not loc and hit and hit[4] is not None and (country := countries.get(hit[2])) \
+                and df.loc[df['country'] == country, 'state'].isna().all():
+            loc = [name, None, country]
+        found.append((loc, hit))
+    (a, a_hit), (b, b_hit) = found
+    if not (a and b) or list(a) == list(b):
+        return False
+    p['entries'] = [{'locality': list(a), 'guessed': True, 'segments': segs[:i + 1]},
+                    {'locality': list(b), 'guessed': True, 'segments': segs[i + 1:]}]
+    for e, hit in zip(p['entries'], (a_hit, b_hit)):
+        if hit and hit[4] is not None and not ((df['locality'] == e['locality'][0])
+                                               & (df['country'] == e['locality'][2])).any():
+            e['at'] = [hit[4], hit[5]]
+    p['note'] = (f"{p.get('note') or ''}; localities {a[0]} and {b[0]}: the channel's titles "
+                 f"'A - B' are drives between them, split at the cut {segs[i]['end'] // 60}:{segs[i]['end'] % 60:02d}"
+                 f"-{segs[i + 1]['start'] // 60}:{segs[i + 1]['start'] % 60:02d}").lstrip('; ')
+    return True
+
+
 def title_reach(df, in_reach, title):
     """in_reach and the countries a title names: "Cayey a Gurabo, Puerto Rico" from a New York channel; and the one
     a drive between two of its localities is in (pair_country)."""
-    return in_reach | df['country'].isin(title_countries(title) + [c for c in [pair_country(title)] if c])
+    # ... also in the title's English: "Kipar, voznja, zapadna obala, kroz grad Pafos" is in Cyprus ("Kipar"), so its
+    # Pafos was not looked for in a channel from Serbia (6IGew8lGeTo; user, 2026-11-28)
+    named = title_countries(title) or title_countries(english(title) or '')
+    return in_reach | df['country'].isin(named + [c for c in [pair_country(title)] if c])
 
 
 PAIR_KM = 150  # see pair_country
@@ -10707,8 +10777,10 @@ def locate_now(p, df, home, sig_path=None, meta=None, boilerplate=frozenset()):
             return
     # a drive between two towns goes by its route, also when the title's guess named one of them (iWbS0H_Prdc:
     # "Lilongwe to Mponela - …" was all Lilongwe)
-    elif (e.get('guessed') and any(r.search(p.get('drive_title') or p.get('title') or '') for r in FROM_TO)
-          and split_route(p, df, home, sig_path)):
+    # ... and a channel's drive "A - B" at its cut (split_pair)
+    elif ((e.get('guessed') and any(r.search(p.get('drive_title') or p.get('title') or '') for r in FROM_TO)
+           and split_route(p, df, home, sig_path))
+          or ((not e.get('locality') or e.get('guessed')) and p.get('drive_pair') and split_pair(p, df, home))):
         pass
     elif not e.get('locality') and not split_route(p, df, home, sig_path):
         title = p.get('title') or ''
@@ -11425,6 +11497,8 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
         plan[vid] = ({
             'video': vid, 'title': meta['title'], 'analysed': analysed,
             **({'drive_title': dt} if dt != meta['title'] else {}),
+            **({'drive_pair': list(pair)} if not any(r.search(english_states(dt)) for r in FROM_TO)
+               and (pair := channel_pair(meta['title'], plan, vid)) else {}),
             **({'drive_via': stops[1:-1]} if (stops := place_list(meta['title'])) and len(stops) > 2
                # ... or after "via" in the title of a drive between towns (title_via): stops on the way only, never
                # an end in place of one not found (ILw__0NlXys: "Percetakan Negara to Masjid Istiqlal ... via
@@ -12771,9 +12845,20 @@ async function suggest(input) {
   if (q.length < 2) return;
   await new Promise(r => setTimeout(r, 120));  // a pause in the typing: one request, not one a key
   if (mine !== input._request) return;
-  const list = await (await fetch('localities?q=' + encodeURIComponent(q))).json();
+  // a refused request says so: the public address's login timed out ("Log in again: reload the page", 401) or the
+  // page is restarting, not an empty list (user, 2026-11-28: "Paphos" showed no Pafos)
+  let res, list;
+  try { res = await fetch('localities?q=' + encodeURIComponent(q)); } catch (err) { res = null; }
   if (mine !== input._request) return;
   box.innerHTML = '';
+  if (!res || !res.ok) {
+    const div = document.createElement('div');
+    div.textContent = '⚠ ' + ((res && (await res.text()).trim()) || 'the page does not answer: reload it');
+    box.appendChild(div);
+    box.classList.add('open');
+    return;
+  }
+  list = await res.json();
   for (const item of list) {
     const div = document.createElement('div');
     div.textContent = item.label;
