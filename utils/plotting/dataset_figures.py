@@ -262,6 +262,43 @@ def _vs_indicators(df: pl.DataFrame, value: str, value_title: str, name: str, lo
 MIN_HOURS = 10  # countries with less footage are greyed out on share maps: a share of a few minutes is noise
 
 
+# plotly draws world maps with these outlines (1:110 m), which have no shape for 66 of the mapping's 238 countries
+# (Singapore, Malta, Hong Kong, Bahrain, most islands): those get a marker at their localities instead, or they would
+# not show at all (user, 2026-11-28)
+WORLD_SHAPES_URL = "https://cdn.plot.ly/world_110m.json"
+_COUNTRY_POINTS = {}  # iso3 -> (lat, lon): the median of its localities, for the markers
+
+
+def _remember_points(df_mapping: pl.DataFrame) -> None:
+    """Where each country's marker goes on the world maps (_COUNTRY_POINTS)."""
+    pts = df_mapping.drop_nulls(["iso3", "lat", "lon"]).group_by("iso3").agg(pl.median("lat"), pl.median("lon"))
+    _COUNTRY_POINTS.update({i: (la, lo) for i, la, lo in pts.select("iso3", "lat", "lon").iter_rows()})
+
+
+def _shapeless(iso3s) -> set:
+    """Those of these ISO3 codes the world map outlines have no shape for (none when they cannot be downloaded)."""
+    topo = _cached_json("world_110m", WORLD_SHAPES_URL, {}, 365)
+    if not topo:
+        return set()
+    return set(iso3s) - {g.get("id") for g in topo["objects"]["countries"]["geometries"]}
+
+
+def _small_country_markers(fig, d: pl.DataFrame, colour: str | None = None, line: str = "") -> None:
+    """A marker for each country of d (iso3, hover; _c: its colour value on the map's colour axis) the outlines lack,
+    in its colour, or `colour`."""
+    d = d.filter(pl.col("iso3").is_in(list(_shapeless(d["iso3"].to_list()) & set(_COUNTRY_POINTS))))
+    if not d.height:
+        return
+    marker = dict(size=7, line=dict(width=0.5, color="#555555"))
+    if colour:
+        marker["color"] = colour
+    else:  # on the choropleth's colour scale
+        marker.update(color=d["_c"].to_list(), coloraxis="coloraxis")
+    fig.add_trace(go.Scattergeo(lat=[_COUNTRY_POINTS[i][0] for i in d["iso3"]],
+                                lon=[_COUNTRY_POINTS[i][1] for i in d["iso3"]], mode="markers", marker=marker,
+                                showlegend=False, **_hover_args(d, line)))
+
+
 def _country_map(df: pl.DataFrame, value: str, title: str, scale: str, name: str, *, log: bool = False):
     """World map of a per-country `value` (log colour scale if `log`); countries with less than MIN_HOURS of footage
     (column hours, if any) are grey."""
@@ -278,11 +315,13 @@ def _country_map(df: pl.DataFrame, value: str, title: str, scale: str, name: str
         fig.update_layout(coloraxis_colorbar=dict(tickvals=np.log10(ticks).tolist(), ticktext=labels))
     fig.update_layout(coloraxis_colorbar=colorbar_top(title))
     fig.update_geos(domain=dict(x=[0, 1], y=[0, MAP_TOP_SHARE]))
+    _small_country_markers(fig, d)
     if few.height:
         fig.add_trace(go.Choropleth(locations=few["iso3"], z=[0] * few.height, locationmode="ISO-3",
                                     colorscale=[[0, "#cfcfcf"], [1, "#cfcfcf"]], showscale=False,
                                     marker_line_width=0.5,
                                     **_hover_args(few, f"Under {MIN_HOURS} hours of footage: grey on this map")))
+        _small_country_markers(fig, few, "#cfcfcf", f"Under {MIN_HOURS} hours of footage: grey on this map")
         fig.add_annotation(text=f"Grey: under {MIN_HOURS} hours of footage", x=0.01, y=0.02, xref="paper",
                            yref="paper", showarrow=False, font=dict(size=14, color="#666666"))
     _save(_style(fig, margin=dict(l=0, r=0, t=10, b=0)), name)
@@ -650,6 +689,7 @@ spin();
 
 def dataset_figures(df_mapping: pl.DataFrame, seg: pl.DataFrame, flags: dict) -> None:
     """Figures based on the mapping only, in the README's order. `flags` maps ISO3 codes to emoji flags for labels."""
+    _remember_points(df_mapping)
     flag = _flag(flags)
     # the popups shown on hover for each locality and country, the same in every figure
     loc_hover, cty_hover = hover.popups(df_mapping, seg, flags)
@@ -1461,6 +1501,7 @@ def detection_figures(df_mapping: pl.DataFrame, det: pl.DataFrame, classes: list
     Returns:
         README tables as (title, DataFrame).
     """
+    _remember_points(df_mapping)
     person = classes[0]
     loc_hover, cty_hover = hover.popups(df_mapping, seg, flags)
     flag = _flag(flags)
