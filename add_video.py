@@ -626,6 +626,63 @@ def build_video_occurrence_note(video_id, max_rows=8, exclude_idxs=None):
     )
 
 
+# the mapping the hub keeps (the config's): when the form writes another file (mapping-pavlo.csv on mini), a video
+# already in that mapping is refused: the hub's Merge adds only videos it lacks, so new segments of it would be lost
+# (user, 2026-11-28)
+MAIN_MAPPING = common.get_configs("mapping")
+
+
+def in_main_mapping(video_id):
+    """Where video_id already is in MAIN_MAPPING (HTML), or '' when it is not or the form writes that file."""
+    if not video_id or not os.path.exists(MAIN_MAPPING) or os.path.abspath(FILE_PATH) == os.path.abspath(MAIN_MAPPING):
+        return ''
+    df = _read_csv_cached(MAIN_MAPPING, _mtime_ns(MAIN_MAPPING))
+    rows = df[df['videos'].astype(str).str.contains(video_id, regex=False)]
+    hits = [f"{html.escape(row_label(r))}: {_format_segments(_segments_for_video_in_row(r, video_id))}"
+            for _, r in rows.iterrows() if video_id in _parse_videos_cell(r.get('videos'))]
+    if not hits:
+        return ''
+    return (f"<span style='color: red;'>This video is already in {html.escape(os.path.basename(MAIN_MAPPING))} "
+            f"({'; '.join(hits)}). The Merge on the review hub adds only videos that file lacks, so segments added "
+            f"here would be lost: change it there instead.</span>")
+
+
+def _iso_seconds(duration):
+    """PT1H2M3S -> 3723 (the Data API's contentDetails.duration), else None."""
+    m = re.fullmatch(r'P(?:(\d+)D)?T?(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?', duration or '')
+    if not m or not any(m.groups()):
+        return None
+    d, h, mi, sec = (int(x or 0) for x in m.groups())
+    return ((d * 24 + h) * 60 + mi) * 60 + sec
+
+
+def video_details_fallback(video_url, timeout=10):
+    """{id, upload_date (datetime), channel, description, length} without pytubefix, for when YouTube refuses it:
+    the YouTube Data API (no bot check), then yt-dlp as the pipeline runs it (its cookies, and another machine's when
+    YouTube asks this one to sign in). None when neither can."""
+    video_id = _extract_video_id(video_url)
+    if not video_id:
+        return None
+    try:
+        resp = requests.get('https://www.googleapis.com/youtube/v3/videos', timeout=timeout, params={
+            'part': 'snippet,contentDetails', 'id': video_id, 'key': common.get_secrets('youtube_api_key')})
+        items = resp.json().get('items', [])
+        if items:
+            sn, cd = items[0]['snippet'], items[0].get('contentDetails', {})
+            return dict(id=video_id, upload_date=youtube_day(sn['publishedAt']), channel=sn.get('channelId'),
+                        description=sn.get('description', ''), length=_iso_seconds(cd.get('duration')))
+    except Exception:  # noqa: BLE001 (no key, quota, network: yt-dlp next)
+        pass
+    try:
+        import propose_segments  # here only: it imports this module, and it is slow to load
+        m = propose_segments.fetch_metadata(video_id)
+        day = datetime.strptime(m['upload_date'], '%d%m%Y') if m.get('upload_date') else None
+        return dict(id=video_id, upload_date=day, channel=m.get('channel_id'), description=m.get('description', ''),
+                    length=int(m['duration']) if m.get('duration') else None)
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def row_label(row):
     return format_locality_label(
         str(row.get('locality', '')).strip(),
@@ -931,6 +988,7 @@ def _form():
     yt_upload_date = ''
     yt_channel = None
     yt_description = ''
+    yt_length = None  # seconds, when known: an end time past it is refused
     start_time_video = []
     end_time_video = []
     vehicle_type_video = 0
@@ -1003,7 +1061,8 @@ def _form():
             time_of_day_video=time_of_day_video,
             time_of_day_last=time_of_day_last,
             start_time_input=start_time_input,
-            end_time_input=end_time_input
+            end_time_input=end_time_input,
+            video_length=yt_length
         )
 
     if request.method == 'POST':
@@ -1028,10 +1087,10 @@ def _form():
 
             video_url = request.form.get('video_url')
 
+            failed, video_global_note = None, ''
             try:
                 yt = YouTube(video_url)  # type: ignore
                 video_id = yt.video_id
-                video_global_note = build_video_occurrence_note(video_id)
 
                 yt_upload_date = _fetch_upload_date(yt, video_url)
                 yt_channel = _normalize_optional_text(getattr(yt, 'channel_id', None))
@@ -1045,10 +1104,26 @@ def _form():
                         yt_description = yt.initial_data["engagementPanels"][n]["engagementPanelSectionListRenderer"]["content"]["structuredDescriptionContentRenderer"]["items"][1]["expandableVideoDescriptionBodyRenderer"]["attributedDescriptionBodyText"]["content"]  # noqa: E501
                     except Exception:
                         continue
+                try:
+                    yt_length = int(yt.length)
+                except Exception:  # noqa: BLE001
+                    yt_length = (video_details_fallback(video_url) or {}).get('length')
+                video_global_note = build_video_occurrence_note(video_id)
             except Exception as e:
+                # pytubefix refused (YouTube's bot check, a changed page): the Data API or yt-dlp instead
+                got = video_details_fallback(video_url)
+                if got:
+                    video_id, yt_upload_date, yt_channel = got['id'], got['upload_date'], got['channel']
+                    yt_description, yt_length = got['description'], got['length']
+                    video_global_note = build_video_occurrence_note(video_id)
+                else:
+                    failed = str(e)
+            if video_id and (main_note := in_main_mapping(video_id)):
+                video_global_note = (main_note + ' ' + video_global_note).strip()
+            if failed is not None:
                 return render_template(
                     "add_video.html",
-                    message=f"Invalid YouTube URL: {html.escape(str(e))}",
+                    message=f"Invalid YouTube URL: {html.escape(failed)}",
                     df=df,
                     locality=locality,
                     country=country,
@@ -1122,7 +1197,7 @@ def _form():
                                 time_of_day_video = hit_state['time_of_day_video']
                             break
 
-            if 'video_global_note' in locals() and video_global_note:
+            if video_global_note:
                 message = (message + " " + video_global_note).strip()
 
         elif 'submit_data' in request.form:
@@ -1167,6 +1242,7 @@ def _form():
             time_of_day_video = request.form.get('time_of_day')
             gini = request.form.get('gini')
             traffic_index = request.form.get('traffic_index')
+            yt_length = extract_last_int(request.form.get('video_length'))  # from the fetch, when known
 
             try:
                 vehicle_type_video_int = int(vehicle_type_video)  # pyright: ignore[reportArgumentType]
@@ -1185,19 +1261,27 @@ def _form():
                 # (e.g. direct/edited submissions, or an upstream fetch
                 # that partially failed). Otherwise this is just a save.
                 if not upload_date_video or not channel_video:
-                    yt = YouTube(video_url)  # pyright: ignore[reportArgumentType]
-                    video_id = yt.video_id
+                    try:
+                        yt = YouTube(video_url)  # pyright: ignore[reportArgumentType]
+                        video_id = yt.video_id
+                        if not upload_date_video:
+                            yt_upload_date = _fetch_upload_date(yt, video_url)
+                        if not channel_video:
+                            yt_channel = _normalize_optional_text(getattr(yt, 'channel_id', None))
+                            if not yt_channel:
+                                yt_channel = _fetch_channel_id_from_html(video_url)
+                            if not yt_channel:
+                                yt_channel = _fetch_channel_id_from_ytdlp(video_url)
+                    except Exception:  # pytubefix refused: the Data API or yt-dlp instead
+                        got = video_details_fallback(video_url)
+                        if not got:
+                            raise
+                        video_id = got['id']
+                        if not upload_date_video:
+                            yt_upload_date = got['upload_date']
+                        if not channel_video:
+                            yt_channel = got['channel']
                     video_matches_anywhere = find_video_occurrences(video_id)
-
-                    if not upload_date_video:
-                        yt_upload_date = _fetch_upload_date(yt, video_url)
-
-                    if not channel_video:
-                        yt_channel = _normalize_optional_text(getattr(yt, 'channel_id', None))
-                        if not yt_channel:
-                            yt_channel = _fetch_channel_id_from_html(video_url)
-                        if not yt_channel:
-                            yt_channel = _fetch_channel_id_from_ytdlp(video_url)
                     # ... and saved with the video (they were fetched, then left out of the row)
                     if not upload_date_video and yt_upload_date:
                         upload_date_video = yt_upload_date.strftime('%d%m%Y')
@@ -1255,6 +1339,10 @@ def _form():
                 message = "Type of vehicle must be one of: 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12."
             elif any(int(et) <= int(st) for st, et in zip(start_time, end_time)):
                 message = "End time must be larger than start time."
+            elif yt_length and any(et > yt_length for _, et in times):
+                message = f"The video is only {yt_length} s long: an end time past that cannot be right."
+            elif (main_note := in_main_mapping(video_id)):
+                message = main_note
 
             if message:
                 return render_current_template()
@@ -1365,23 +1453,7 @@ def _form():
                                 if channel_video is None and yt_channel:
                                     channel_video = yt_channel
 
-                                latest_segment_idx = get_latest_segment_index(end_time_video)
-
-                                try:
-                                    if latest_segment_idx is not None and isinstance(time_of_day_video, list):
-                                        time_of_day_last = int(time_of_day_video[latest_segment_idx])
-                                    else:
-                                        time_of_day_last = 0
-                                except (TypeError, ValueError, IndexError):
-                                    time_of_day_last = 0
-
-                                timestamp_value = 0
-                                try:
-                                    if latest_segment_idx is not None and isinstance(end_time_video, list):
-                                        timestamp_value = int(end_time_video[latest_segment_idx])
-                                except (TypeError, ValueError, IndexError):
-                                    timestamp_value = 0
-
+                                # (the player's time and time of day: render_current_template)
                                 return render_current_template()
 
                             time_of_day_list[video_index].append(int(time_of_day[-1]))
