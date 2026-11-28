@@ -31,7 +31,9 @@ from concurrent.futures import ThreadPoolExecutor
 
 app = Flask(__name__)
 
-FILE_PATH = common.get_configs("mapping")     # mapping file
+# the mapping file: CROWD_MAPPING when set (the form served on mini writes mapping-pavlo.csv, whose new videos the
+# hub's "Merge mapping-name & push" adds to mapping.csv; user, 2026-11-28), else the config's
+FILE_PATH = os.environ.get('CROWD_MAPPING') or common.get_configs("mapping")
 COUNTRY_CACHE_FILE = os.path.join(os.path.join(common.root_dir, 'cache_countries.json'))
 
 # average height data from kaggle
@@ -2058,6 +2060,9 @@ def to_float_safe(value):
 
 
 if __name__ == "__main__":
+    if os.environ.get('ADD_VIDEO_PORT'):  # served (mini's tmux addvideo, behind the tunnel's password): no browser
+        app.run(host=os.environ.get('REVIEW_HOST', '127.0.0.1'), port=int(os.environ['ADD_VIDEO_PORT']), debug=False)
+        raise SystemExit
     port = 5000 + random.randint(0, 999)
     url = "http://127.0.0.1:{0}".format(port)
     Timer(1.25, lambda: webbrowser.open(url)).start()
