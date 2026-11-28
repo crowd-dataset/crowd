@@ -114,7 +114,8 @@ function copyCmd(b) {
 // tunnel on lin4080 (from outside without VPN; user, 2026-11-25)
 function goPort(p) {
   if (/^[0-9.]+$|^localhost$|^[[]/.test(location.hostname)) { location.port = p; return; }
-  const name = { 8770: 'crowd-review', 8771: 'crowd-status', 8772: 'crowd-dataset', 8090: 'crowd-machines' }[p];
+  const name = { 8770: 'crowd-review', 8771: 'crowd-status', 8772: 'crowd-dataset', 8090: 'crowd-machines',
+                 8773: 'crowd-add' }[p];
   location.href = `https://${name}.mobility-squad.com/`;
 }
 </script></head><body>
@@ -122,7 +123,9 @@ function goPort(p) {
 <p class="ok"><a href="#" onclick="goPort(8771);return false">Pipeline status</a>:
  what each worker does, queues, channels ·
  <a href="#" onclick="goPort(8772);return false">Dataset figures</a>: the README's statistics and figures with
- this mapping, unpushed reviews included (rebuilt nightly)</p>
+ this mapping, unpushed reviews included (rebuilt nightly) ·
+ <a href="#" onclick="goPort(8773);return false">Add a video</a>: the add_video form, into mapping-pavlo.csv
+ (Merge mapping-name &amp; push adds them to mapping.csv)</p>
 {% if health | selectattr('ok') | list %}
 <p class="load" title="load over the last 30 min: green busy, amber medium, red low">
 {%- for w in health if w.ok and not w.same %}{% if not loop.first %} · {% endif %}<span title="{{ w.what }}">
@@ -665,6 +668,11 @@ def push_mapping(title='Update mapping.csv: reviewed batches', extra=()):
                     'Nothing to push: GitHub has this mapping already.')
 
 
+# mapping-NAME files written on this machine (the add_video form served here, tmux addvideo; user, 2026-11-28): merged
+# from this folder, not GitHub's copy, and pushed with the merged mapping like the others
+LOCAL_MAPPINGS = ('mapping-pavlo.csv',)
+
+
 def merge_mapping_files():
     """The videos of GitHub's mapping-NAME.csv files (Olena's) that mapping.csv lacks, added to it: to the row of
     the same locality, state and country, else as a new row; a video the mapping has stays as it is here. Then each
@@ -674,12 +682,15 @@ def merge_mapping_files():
         git('fetch', '-q', 'origin', 'main')
         names = [n for n in git('ls-tree', '--name-only', 'origin/main').split()
                  if re.fullmatch(r'mapping-[^/]+\.csv', n)]
+        local = [n for n in LOCAL_MAPPINGS if os.path.exists(n)]
+        names += [n for n in local if n not in names]
         df = add_video.load_csv(add_video.FILE_PATH)
         have = {v for cell in df['videos'] for v in add_video._parse_flat_list_cell(cell)}
         df, pulled = pull_github_mapping(df, have)
         added = []
         for name in names:
-            df, more = add_videos(df, have, pd.read_csv(io.StringIO(git('show', f'origin/main:{name}'))), name)
+            theirs = pd.read_csv(name if name in local else io.StringIO(git('show', f'origin/main:{name}')))
+            df, more = add_videos(df, have, theirs, name)
             added += more
         if pulled:
             add_video.save_csv(df, add_video.FILE_PATH)
