@@ -15,6 +15,9 @@ import random
 import requests
 from requests.exceptions import RequestException
 import ast
+import contextlib
+import fcntl
+import html
 import io
 import json
 import math
@@ -873,8 +876,28 @@ def new_locality_row(locality, state, country, locality_aka=None, near=None, at=
     return row
 
 
+@contextlib.contextmanager
+def mapping_lock(path=FILE_PATH):
+    """The lock propose_segments.plan_lock takes on a mapping file (<file>.lock): a save reads, changes and writes the
+    file under it, so two saves at once, or the hub's Merge copying the merged mapping over mapping-pavlo.csv, lose
+    nothing."""
+    with open(path + '.lock', 'w') as f:
+        fcntl.flock(f, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(f, fcntl.LOCK_UN)
+
+
 @app.route('/', methods=['GET', 'POST'])
 def form():
+    if request.method == 'POST' and 'submit_data' in request.form:
+        with mapping_lock():
+            return _form()
+    return _form()
+
+
+def _form():
     df = load_csv(FILE_PATH)
     message = ''
     locality = ''
@@ -1025,7 +1048,7 @@ def form():
             except Exception as e:
                 return render_template(
                     "add_video.html",
-                    message=f"Invalid YouTube URL: {e}",
+                    message=f"Invalid YouTube URL: {html.escape(str(e))}",
                     df=df,
                     locality=locality,
                     country=country,
@@ -1046,6 +1069,13 @@ def form():
                 filtered_df = df[df['country'] == country]
 
             existing_data = filtered_df[filtered_df.apply(lambda row: locality_matches(row, locality), axis=1)]
+            # without a state, a name several states have was taken from the first of them (Aberdeen: MS and WA; 221
+            # such names, 2026-11-28): the state is asked for instead
+            states = sorted({str(x) for x in existing_data['state'] if not _is_missing(x)})
+            if not state and len(states) > 1:
+                message = (f"{html.escape(str(locality))} is in more than one state of {html.escape(str(country))} "
+                           f"({', '.join(map(html.escape, states))}): fill in the state and fetch again.")
+                return render_current_template()
 
             if not existing_data.empty:
                 existing_data_row = existing_data.iloc[0].to_dict()
@@ -1053,6 +1083,8 @@ def form():
                 message = f"Entry for locality found ({n_videos} videos). You can update data."
                 existing_data_row = existing_data.iloc[0].to_dict()
                 locality = existing_data_row.get('locality')
+                if not state and not _is_missing(existing_data_row.get('state')):
+                    state = existing_data_row.get('state')  # the save looks the row up by its state too
 
                 existing_video_state = get_video_state_from_row(existing_data_row, video_id)
                 if existing_video_state['upload_date_video']:
@@ -1166,10 +1198,15 @@ def form():
                             yt_channel = _fetch_channel_id_from_html(video_url)
                         if not yt_channel:
                             yt_channel = _fetch_channel_id_from_ytdlp(video_url)
+                    # ... and saved with the video (they were fetched, then left out of the row)
+                    if not upload_date_video and yt_upload_date:
+                        upload_date_video = yt_upload_date.strftime('%d%m%Y')
+                    if not channel_video and yt_channel:
+                        channel_video = yt_channel
             except Exception as e:
                 return render_template(
                     "add_video.html",
-                    message=f"Invalid YouTube URL: {e}",
+                    message=f"Invalid YouTube URL: {html.escape(str(e))}",
                     df=df,
                     locality=locality,
                     country=country,
@@ -1204,7 +1241,15 @@ def form():
             if existing_video_state['time_of_day_video']:
                 time_of_day_video = existing_video_state['time_of_day_video']
 
-            if any(t not in ['0', '1'] for t in time_of_day):
+            try:
+                times = [(int(st), int(et)) for st, et in zip(start_time, end_time)]
+            except ValueError:
+                times = None
+            if not time_of_day or not start_time or not end_time:
+                message = "Time of day, start time and end time are all needed."
+            elif times is None or any(st < 0 for st, _ in times):
+                message = "Start and end times must be whole seconds, 0 or more."
+            elif any(t not in ['0', '1'] for t in time_of_day):
                 message = "Time of day must be either 0 or 1."
             elif vehicle_type_video_int not in range(13):
                 message = "Type of vehicle must be one of: 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12."
@@ -1268,9 +1313,9 @@ def form():
                         videos_list = df.at[idx, 'videos'].split(',') if pd.notna(df.at[idx, 'videos']) else []  # type: ignore # noqa: E501
                         videos_list = [video.strip('[]') for video in videos_list]  # type: ignore
 
-                        time_of_day_list = eval(df.at[idx, 'time_of_day']) if pd.notna(df.at[idx, 'time_of_day']) else []  # type: ignore   # noqa: E501
-                        start_time_list = eval(df.at[idx, 'start_time']) if pd.notna(df.at[idx, 'start_time']) else []  # type: ignore # noqa: E501
-                        end_time_list = eval(df.at[idx, 'end_time']) if pd.notna(df.at[idx, 'end_time']) else []  # type: ignore # noqa: E501
+                        time_of_day_list = _safe_literal_eval(df.at[idx, 'time_of_day'], [])
+                        start_time_list = _safe_literal_eval(df.at[idx, 'start_time'], [])
+                        end_time_list = _safe_literal_eval(df.at[idx, 'end_time'], [])
 
                         upload_date_list = df.at[idx, 'upload_date'].split(',') if pd.notna(df.at[idx, 'upload_date']) else []  # type: ignore  # noqa: E501
                         upload_date_list = [upload_date.strip('[]') for upload_date in upload_date_list]  # type: ignore  # noqa: E501
@@ -1359,17 +1404,19 @@ def form():
                         df.at[idx, 'time_of_day'] = compact_nested_list(time_of_day_list)
                         df.at[idx, 'start_time'] = compact_nested_list(start_time_list)
                         df.at[idx, 'end_time'] = compact_nested_list(end_time_list)
-                        df.at[idx, 'gmp'] = to_optional_float(gmp)
-                        df.at[idx, 'population_locality'] = to_int_safe(population_locality)
-                        df.at[idx, 'population_country'] = to_int_safe(population_country)
-                        df.at[idx, 'traffic_mortality'] = to_optional_float(traffic_mortality)
-                        df.at[idx, 'continent'] = continent
-                        df.at[idx, 'locality_aka'] = locality_aka
-                        df.at[idx, 'literacy_rate'] = to_optional_float(literacy_rate)
-                        df.at[idx, 'avg_height'] = to_float_safe(avg_height)
-                        df.at[idx, 'med_age'] = to_float_safe(med_age)
-                        df.at[idx, 'lat'] = to_float_safe(lat)
-                        df.at[idx, 'lon'] = to_float_safe(lon)
+                        # a field left blank keeps the row's value: blanks were saved as 0 (Aberdeen WA's height,
+                        # median age and population in a test, 2026-11-28), or emptied the mortality
+                        for col, raw, conv in (
+                                ('gmp', gmp, to_optional_float),
+                                ('population_locality', population_locality, to_int_safe),
+                                ('population_country', population_country, to_int_safe),
+                                ('traffic_mortality', traffic_mortality, to_optional_float),
+                                ('continent', continent, str), ('locality_aka', locality_aka, str),
+                                ('literacy_rate', literacy_rate, to_optional_float),
+                                ('avg_height', avg_height, to_float_safe), ('med_age', med_age, to_float_safe),
+                                ('lat', lat, to_float_safe), ('lon', lon, to_float_safe)):
+                            if not _is_missing(raw):
+                                df.at[idx, col] = conv(raw)
 
                         for i in range(len(upload_date_list)):
                             if upload_date_list[i] != 'None' and upload_date_list[i]:
@@ -1384,13 +1431,13 @@ def form():
                         vehicle_type_list = [int(x) for x in vehicle_type_list]
                         df.at[idx, 'vehicle_type'] = compact_flat_list(vehicle_type_list)
 
-                        df.at[idx, 'gini'] = to_optional_float(gini)
-
-                        df.at[idx, 'traffic_index'] = to_optional_float(traffic_index)
+                        for col, raw in (('gini', gini), ('traffic_index', traffic_index)):
+                            if not _is_missing(raw):
+                                df.at[idx, col] = to_optional_float(raw)
 
                     else:
                         new_row = {
-                            'id': int(df.iloc[-1]['id'] + 1),
+                            'id': int(df['id'].max() + 1) if len(df) else 1,
                             'locality': locality,
                             'locality_aka': locality_aka,
                             'state': state,
