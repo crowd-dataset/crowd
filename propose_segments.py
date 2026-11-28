@@ -248,7 +248,9 @@ def _yt_dlp_elsewhere(args, timeout, why):
             if local_dir is not None:
                 subprocess.run(['scp', '-q', '-o', 'BatchMode=yes', f'{host}:{far}/*', local_dir or '.'],
                                check=True, capture_output=True, timeout=3600)
-            print(f'    fetched through {host} (YouTube asks this machine to sign in)', flush=True)
+            why_here = ('this machine asks YouTube nothing' if me in NO_YOUTUBE
+                        else 'YouTube asks this machine to sign in')
+            print(f'    fetched through {host} ({why_here})', flush=True)
             return got['out']
         except (subprocess.SubprocessError, OSError, ValueError) as e:
             print(f'    {host} could not help: {str(e)[:150]}', flush=True)
