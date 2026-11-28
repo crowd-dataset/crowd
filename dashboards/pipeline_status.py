@@ -86,7 +86,7 @@ def parse_log(lines, mtime, now):
             progress.append(when(s))
         elif m := BATCH.match(line):
             out['batch'] = dict(added=int(m[3]), proposed=int(m[4]), excluded=int(m[5]), at=when(s))
-        elif sw.PROBLEM.search(line):
+        elif sw.problem(line):
             out['problems'].append(dict(text=line.strip()[:220], at=when(s)))
     recent = [t for t in progress if t and t > now - 3 * 3600]
     if len(recent) >= 3 and recent[-1] > recent[0]:
@@ -876,6 +876,13 @@ def _check_parse_log():
     assert parse_log(long_video, now - 6 * 3600, now)['state'] == 'stalled'
 
 
+def _check_helped():  # wsl5090 fetches all through helpers (ps.NO_YOUTUBE): working, not blocked
+    lines = ['15:19   [1023/1206] analysing 45P8fxcZOLg x',
+             '15:36       fetched through mini (YouTube asks this machine to sign in)']
+    w = parse_log(lines, 1_000_000.0, 1_000_000.0)
+    assert w['state'] == 'working' and not w['problems'], w
+
+
 def _check_cookies():
     w = parse_log(['08:00   Stopped early: YouTube asks to sign in (ERROR: Sign in to confirm you’re not a bot)'],
                   1_000_000.0, 1_000_000.0)
@@ -905,5 +912,6 @@ if __name__ == '__main__':
     _check_parse_log()
     _check_paces()
     _check_cookies()
+    _check_helped()
     threading.Thread(target=refresher, daemon=True).start()
     app.run(host=HOST, port=PORT, debug=False)
