@@ -128,6 +128,13 @@ HEALTH = os.path.join(rc.ROOT, 'worker_health.json')  # the latest check_workers
 LOW_GPU, LOW_CPU, LOW_FOR = 5, 15, 30  # % mean load (GPU, else CPU) over this many minutes: look why it is low
 STUCK_MIN = 60  # no new runner.log line for this long while it should be working
 PROBLEM = re.compile(r'sign in|bot check|quota|refused|Traceback|Error|could not|failed', re.I)
+HELPED = re.compile(r'^\d\d:\d\d\s+fetched through ')  # a helper fetched it (ps._yt_dlp_elsewhere): no problem
+
+
+def problem(line):
+    return bool(PROBLEM.search(line)) and not HELPED.search(line)
+
+
 IDLE = re.compile(r'no channel left|waiting for|nothing (?:left|to do)|paused', re.I)
 
 
@@ -174,7 +181,7 @@ def check_workers():
         age = (nh * 60 + nm - int(hm[1]) * 60 - int(hm[2])) % 1440 if hm else None
         if int(runners) == 0:
             what, ok = 'run_channels.py is not running', False
-        elif PROBLEM.search(last):
+        elif problem(last):
             what, ok = f'{low}: {last.strip()[:160]}', False
         elif IDLE.search(last):
             what, ok = f'idle: {last.strip()[:160]}', True
