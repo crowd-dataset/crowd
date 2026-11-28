@@ -5344,6 +5344,19 @@ def channel_towns(channel_id, df):
     return [list(x) for x in sorted(out, key=str)]
 
 
+# where a drive comes from: "approach from Montpellier", "Arrival from Lancaster", "Entering Sharjah from Dubai"
+CAME_FROM = (r"\b(?:approach(?:ing|es)?|arriv(?:al|ing|es)|entrance|entering|descent|coming|returning)\s+"
+             r"(?:[\w'-]+\s+)?from\s+(?:the\s+)?")
+
+
+def came_from(title, name):
+    """Whether a title names a place only as where its drive comes from: not in a route "from A to B" (FROM_TO) or
+    "A to B" ("Calais to Croatia by Car ... descent from Brenner" is no Calais: 0Hmo2zfQtOc)."""
+    return bool(name and re.search(CAME_FROM + re.escape(name) + r'\b', title or '', re.IGNORECASE)
+                and not re.search(r"\b\w+\s+to\s+[A-Z]", title or '')
+                and not any(r.search(title or '') for r in FROM_TO))
+
+
 def own_town(towns, title):
     """The one town of towns (channel_towns) a title names as a word, None when none or several names."""
     named = [t for t in towns if isinstance(t[0], str) and len(t[0]) > 2
@@ -11512,12 +11525,20 @@ def process_channel(url, country, out_dir, pause_s=15, limit=None, download=True
             if (mine := own_town(own_towns, p['title'])):
                 in_title = {tuple(mine): mine[0], **{k: v for k, v in in_title.items()
                                                      if _name_key(k[0]) != _name_key(mine[0])}}
+            # a place the drive only comes from is not where it is when the title names another: "La Grande Motte -
+            # approach from Montpellier" is La Grande-Motte, not Montpellier, the city around both (d6pGSmjp7Ic; user,
+            # 2026-11-28), "Entering Sharjah from Dubai" Sharjah. All 7 such reviewed titles were approved elsewhere
+            came = [k for k, ph in in_title.items() if came_from(p['title'], ph) or came_from(p['title'], k[0])]
+            if came and len(came) < len(in_title):
+                in_title = {k: v for k, v in in_title.items() if k not in came}
+                mine = None if mine and tuple(mine) in came else mine
             if len(in_title) > 1 and (city := metro_of_all(list(in_title), df)):
                 in_title = {tuple(city): in_title[tuple(city)]}
             # the channel's usual locality named in the title, also as part of a road's name, goes first: "Which
             # Nashville Road Should We Take?" is Nashville, not the "Roads" of a district in Ireland or the "Lead"
             # of Lead, SD (UCLgFDrgDENPf7a59tsj8d_A; user, 2026-10-16)
-            if (usual := usual_locality(plan)) and re.search(rf'\b{re.escape(usual[0])}\b', p['title'] or '', re.I):
+            if ((usual := usual_locality(plan)) and re.search(rf'\b{re.escape(usual[0])}\b', p['title'] or '', re.I)
+                    and not came_from(p['title'], usual[0])):
                 in_title = {tuple(usual): usual[0]}
             # ... and a worker's copy of the plan has no reviews to count: then the channel's home (from the mapping)
             # named in a title that names no other place (WqIQf-JUdSY, "Historic Nashville Street Cruise", and
