@@ -33,6 +33,7 @@
             margin: 0;        /* remove extra margin */
             overflow: hidden; /* prevent text overflow */
         }
+        .hint { color: #666; font-size: 12px; margin-left: 6px; }
         .message {
             color: green;
             margin-top: 20px;
@@ -328,35 +329,6 @@
 
         });
     </script>
-    <style>
-html[data-theme=dark]{filter:invert(.9) hue-rotate(180deg);background:#fff}
-html[data-theme=dark] img,html[data-theme=dark] iframe,html[data-theme=dark] video,
-html[data-theme=dark] .leaflet-container,html[data-theme=dark] .locmap,html[data-theme=dark] .routemap
-{filter:invert(1) hue-rotate(180deg)}
-#theme{position:fixed;right:12px;bottom:12px;z-index:9999;padding:6px 10px;border:1px solid #bbb;border-radius:16px;
-background:#fff;color:#222;font-size:13px;cursor:pointer}
-    </style>
-    <script>
-// dark unless switched to light; a cookie, not localStorage: the hub and each review page run on their own port,
-// and cookies are shared across the ports of a host
-(function () {
-  const m = document.cookie.match(/(?:^|; )theme=(dark|light)/);
-  document.documentElement.dataset.theme = m ? m[1] : 'dark';
-  addEventListener('DOMContentLoaded', () => {
-    const b = document.createElement('button');
-    b.id = 'theme';
-    const label = () => { b.textContent = document.documentElement.dataset.theme === 'dark' ? '☀️ Light' : '🌙 Dark'; };
-    b.onclick = () => {
-      const t = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
-      document.documentElement.dataset.theme = t;
-      document.cookie = `theme=${t}; path=/; max-age=31536000; SameSite=Lax`;
-      label();
-    };
-    label();
-    document.body.appendChild(b);
-  });
-})();
-</script>
 </head>
 <body>
     <div class="container">
@@ -657,6 +629,7 @@ background:#fff;color:#222;font-size:13px;cursor:pointer}
                 <input type="hidden" name="video_url" value="{{ video_url }}">
                 <input type="hidden" name="yt_description" value="{{ yt_description }}">
                 <input type="hidden" name="yt_upload_date" value="{{ yt_upload_date }}">
+                <input type="hidden" name="video_length" value="{{ video_length or '' }}">
 
                 <div class="form-group">
                     <label for="time_of_day">Time of day:</label>
@@ -696,12 +669,13 @@ background:#fff;color:#222;font-size:13px;cursor:pointer}
                 </div>
                 <div class="form-group">
                     <label for="start_time">Start time (seconds):</label>
-                    <input type="number" id="start_time" name="start_time" value="{{ start_time_input }}" required min="0" step="1">
+                    <input type="number" id="start_time" name="start_time" value="{{ start_time_input }}" required min="0" step="1"{% if video_length %} max="{{ video_length - 1 }}"{% endif %}>
                 </div>
 
                 <div class="form-group">
                     <label for="end_time">End time (seconds):</label>
-                    <input type="number" id="end_time" name="end_time" value="{{ end_time_input }}" required min="1" step="1">
+                    <input type="number" id="end_time" name="end_time" value="{{ end_time_input }}" required min="1" step="1"{% if video_length %} max="{{ video_length }}"{% endif %}>
+                    {% if video_length %}<span class="hint">video: {{ video_length }} s</span>{% endif %}
                 </div>
 
                 <div class="form-group">
