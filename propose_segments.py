@@ -8562,9 +8562,11 @@ def _written_locality(phrase, hit, df, km=15):
     if not (hit and phrase):
         return None
     key = _name_key(phrase)
-    rows = df[[bool(n) and (key == n or key.startswith(n + ' ') or _same_name(loc, re.sub(r',.*', '', phrase)))
-               for n, loc in zip(df['locality'].map(_name_key), df['locality'])]]
-    rows = rows[[_km(hit[4], hit[5], float(la), float(lo)) <= km for la, lo in zip(rows['lat'], rows['lon'])]]
+    # .loc: an empty list of rows is no rows (df[[]] would be no columns: KeyError 'lat' with no mapping places in
+    # reach, a batch with no country; 2026-11-28)
+    rows = df.loc[[bool(n) and (key == n or key.startswith(n + ' ') or _same_name(loc, re.sub(r',.*', '', phrase)))
+                   for n, loc in zip(df['locality'].map(_name_key), df['locality'])]]
+    rows = rows.loc[[_km(hit[4], hit[5], float(la), float(lo)) <= km for la, lo in zip(rows['lat'], rows['lon'])]]
     if len(rows) != 1:
         return None
     r = rows.iloc[0]
