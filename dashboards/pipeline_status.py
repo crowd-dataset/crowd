@@ -12,6 +12,7 @@ import io
 import json
 import os
 import re
+import subprocess
 import sys
 import threading
 import time
@@ -190,29 +191,78 @@ def masked(email):
     return f'{name[:7]}…@{domain}' if domain else (email or 'its account')
 
 
-def cookies_needed(workers, downloads):
-    """[{host, account, how}] of the machines YouTube asks to sign in now: a worker blocked by the sign-in check
-    (it waits for a fresh cookies.txt), the downloader paused and nothing downloaded for 2 h (its Chrome login)."""
+def load_accounts():
     try:
         with open(ACCOUNTS) as f:
             accounts = json.load(f)
     except (OSError, ValueError):
-        accounts = {}
+        return {}
+    return {k: a if isinstance(a, dict) else dict(email=a) for k, a in accounts.items()}
 
-    def need(host, alias):
+
+# each machine's cookies file (ACCOUNTS) is checked every COOKIE_CHECK_S on that machine (they never leave it): a
+# signed-out file shows on this page and the hub before YouTube blocks a worker (wsl5090's lasted under a day three
+# times, 2026-11-24 to 11-27, and its workers waited 15 min some 22 times a night; user, 2026-11-28). The check fetches
+# youtube.com/account with the file, read only (stdlib python3 on each machine); a redirect to accounts.google.com is
+# signed out. It prints only "in" or "out", never the file
+COOKIE_CHECK_S = 1800
+ACCOUNT_CHECK = """import http.cookiejar, sys, urllib.request
+j = http.cookiejar.MozillaCookieJar(sys.argv[1])
+j.load(ignore_discard=True, ignore_expires=True)
+o = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(j))
+r = o.open(urllib.request.Request('https://www.youtube.com/account', headers={'User-Agent': 'Mozilla/5.0'}),
+           timeout=30)
+print('out' if 'accounts.google.com' in r.geturl() else 'in')
+"""
+signed = {}  # machine: (time checked, 'in' | 'out' | None when the check failed)
+
+
+def check_signed(alias, a):
+    path = f"{a.get('dir', sw.REMOTE)}/{a.get('file', 'cookies.txt')}"
+    if alias == 'mini':  # this machine
+        cmd = [sys.executable, '-', os.path.expanduser(f'~/{path}')]
+    else:
+        cmd = ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=15', alias, 'python3', '-', path]
+    try:
+        r = subprocess.run(cmd, input=ACCOUNT_CHECK, capture_output=True, text=True, timeout=90, check=False)
+        got = r.stdout.strip()
+        signed[alias] = (time.time(), got if got in ('in', 'out') else signed.get(alias, (0, None))[1])
+    except (subprocess.SubprocessError, OSError):
+        pass
+
+
+def check_cookies_due():
+    """Checks the machines whose cookies were not checked for COOKIE_CHECK_S."""
+    accounts = load_accounts()
+    due = [k for k in accounts if time.time() - signed.get(k, (0, None))[0] > COOKIE_CHECK_S]
+    with ThreadPoolExecutor(max(1, len(due))) as ex:
+        list(ex.map(lambda k: check_signed(k, accounts[k]), due))
+
+
+def cookies_needed(workers, downloads):
+    """[{host, account, how, why}] of the machines YouTube asks to sign in now: a worker blocked by the sign-in
+    check (it waits for a fresh cookies.txt), the downloader paused and nothing downloaded for 2 h (its Chrome login),
+    and any machine whose cookies file is signed out (check_signed)."""
+    accounts = load_accounts()
+
+    def need(host, alias, why):
         a = accounts.get(alias) or {}
-        a = a if isinstance(a, dict) else dict(email=a)
         f, d = a.get('file', 'cookies.txt'), a.get('dir', sw.REMOTE)
         link = f' && ln -sf {f} {d}/cookies.txt' if f != 'cookies.txt' else ''
-        return dict(host=host, account=masked(a.get('email')), file=f,
+        return dict(host=host, alias=alias, account=masked(a.get('email')), file=f, why=why,
                     how=f"scp ~/Downloads/{f} {alias}:{d}/ && ssh {alias} 'chmod 600 {d}/{f}{link}'")
     out = []
     for w in workers:
         if w.get('state') == 'blocked' and w['problems'] and SIGN_IN.search(w['problems'][-1]['text']):
-            out.append(need(w['host'], sw.place(w['host'])[0]))  # a second worker on a machine shares its cookies
+            # a second worker on a machine shares its cookies
+            out.append(need(w['host'], sw.place(w['host'])[0], 'YouTube asks its worker to sign in'))
     last = max((r['t'] for r in downloads.get('recent', [])), default=downloads.get('started', time.time()))
     if str(downloads.get('state', '')).startswith('paused') and time.time() - last > 2 * 3600:
-        out.append(need(downloads['host'], downloads['host']))  # its cookies file, then its Chrome login
+        out.append(need(downloads['host'], downloads['host'], 'the downloader is paused'))  # then its Chrome login
+    for alias, (t, got) in sorted(signed.items()):
+        if got == 'out' and alias not in {c['alias'] for c in out}:
+            at = time.strftime('%H:%M', time.localtime(t))
+            out.append(need(alias, alias, f'its cookies file is signed out (checked {at})'))
     return out
 
 
@@ -317,8 +367,8 @@ def steps(state, queue):
 def collect():
     state = rc.load_state()
     by_url = {(c.get('url') or k.split('refresh:', 1)[-1]): c for k, c in state.items()}
-    with ThreadPoolExecutor(len(sw.WORKERS) + 2) as ex:
-        dl, inv = ex.submit(downloads), ex.submit(inventory)
+    with ThreadPoolExecutor(len(sw.WORKERS) + 3) as ex:
+        dl, inv, _ = ex.submit(downloads), ex.submit(inventory), ex.submit(check_cookies_due)
         workers = list(ex.map(worker, sw.WORKERS))
         dl, inv = dl.result(), inv.result()
     for w in workers:
@@ -399,6 +449,10 @@ h2{font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--mute
 .prob{font:12px ui-monospace,Menlo,monospace;color:var(--warn);margin:3px 0;overflow-wrap:anywhere}
 .prob.old{color:var(--muted)}
 .card.cookie{border-color:var(--warn);margin-top:12px}.cookie code{font-size:12px;overflow-wrap:anywhere}
+.cookie summary{cursor:pointer}.cookie ol{margin:8px 0 6px;padding-left:20px}
+.copy{display:flex;gap:8px;align-items:flex-start}.copy code{flex:1;user-select:all;padding:6px 8px;
+border:1px solid var(--line);border-radius:6px;background:var(--bg)}.copy button{font:inherit;font-size:12px;
+padding:4px 10px;border:1px solid var(--line);border-radius:6px;background:var(--card);color:var(--fg);cursor:pointer}
 table{border-collapse:collapse;width:100%;font-size:13px}
 td,th{padding:4px 8px;border-top:1px solid var(--line);text-align:left}
 th{color:var(--muted);font-weight:500}td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
@@ -429,6 +483,20 @@ border-radius:16px;background:var(--bg);color:var(--fg);font-size:13px;cursor:po
   });
 })();
 </script>
+<script>// a cookies warning opened stays open across the page's refresh; Copy works on http too (no clipboard API)
+function copyCmd(b) {
+  const code = b.previousElementSibling, r = document.createRange();
+  r.selectNodeContents(code);
+  const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r);
+  const done = () => { b.textContent = 'Copied'; setTimeout(() => { b.textContent = 'Copy'; }, 1500); };
+  if (navigator.clipboard && isSecureContext) navigator.clipboard.writeText(code.textContent).then(done);
+  else if (document.execCommand('copy')) done();
+}
+addEventListener('DOMContentLoaded', () => document.querySelectorAll('details.cookie').forEach(d => {
+  try { d.open = sessionStorage.getItem(d.id) === '1'; } catch (e) {}
+  d.addEventListener('toggle', () => { try { sessionStorage.setItem(d.id, d.open ? '1' : ''); } catch (e) {} });
+}));
+</script>
 <script>// the other pages: their port on the TU/e network; their own name through the Cloudflare
 // tunnel on lin4080 (from outside without VPN; user, 2026-11-25)
 function goPort(p) {
@@ -442,10 +510,14 @@ function goPort(p) {
  <a href="#" onclick="goPort(8770);return false">review hub</a>
  · <a href="#" onclick="goPort(8090);return false">machines</a>
  {% if s.error %} · <span style="color:var(--bad)">{{ s.error }}</span>{% endif %}</div>
-{% for c in s.cookies %}<div class="card cookie">🍪 <b>{{ c.host }} needs new YouTube cookies</b>: in a new
- Incognito window sign in to YouTube as <b>{{ c.account }}</b>, export the cookies as {{ c.file }}, close the window,
- then
- <code>{{ c.how }}</code></div>{% endfor %}
+{% for c in s.cookies %}<details class="card cookie" id="cookie-{{ c.alias }}"><summary>🍪 <b>{{ c.host }} needs
+ new YouTube cookies</b> <span class="small muted">{{ c.why }} · click for what to do</span></summary>
+ <ol class="small"><li>In a new Incognito window, sign in to YouTube as <b>{{ c.account }}</b>.</li>
+ <li>Export the cookies (Get cookies.txt LOCALLY), rename the file to <b>{{ c.file }}</b>, close the window at
+ once.</li>
+ <li>On the laptop (TU/e network or VPN):</li></ol>
+ <div class="copy"><code>{{ c.how }}</code><button type="button" onclick="copyCmd(this)">Copy</button></div>
+</details>{% endfor %}
 <div class="tiles">
  <a class="tile" href="#" onclick="goPort(8770);return false"><span class="muted small">Batches to review</span>
   <b>{{ s.batches|length }}</b>
@@ -808,6 +880,13 @@ def _check_cookies():
     c = cookies_needed([dict(w, host='lin5080')], {})
     assert [x['host'] for x in c] == ['lin5080'] and 'lin5080:crowd-routine/' in c[0]['how'], c
     assert masked('olena.bazilinska@gmail.com') == 'olena.b…@gmail.com'
+    signed['lin5080'] = (time.time(), 'out')  # also asked above: once
+    c = cookies_needed([dict(w, host='lin5080b'), dict(w, host='mini', problems=[])], {})
+    assert [x['alias'] for x in c] == ['lin5080'], c
+    signed['wsl5090'] = (time.time(), 'out')
+    c = cookies_needed([], {})
+    assert {x['host'] for x in c} == {'lin5080', 'wsl5090'} and 'signed out' in c[0]['why'], c
+    signed.clear()
     assert cookies_needed([dict(w, problems=[dict(text='quota exceeded')], host='x')], {}) == []
 
 
