@@ -245,24 +245,25 @@ def cookies_needed(workers, downloads):
     and any machine whose cookies file is signed out (check_signed)."""
     accounts = load_accounts()
 
-    def need(host, alias, why):
+    # machine: why it needs cookies; one warning a machine, its workers share its cookies (user, 2026-11-28)
+    whys = {}
+    for w in workers:
+        if w.get('state') == 'blocked' and w['problems'] and SIGN_IN.search(w['problems'][-1]['text']):
+            whys.setdefault(sw.place(w['host'])[0], []).append(f"YouTube asks {w['host']} to sign in")
+    last = max((r['t'] for r in downloads.get('recent', [])), default=downloads.get('started', time.time()))
+    if str(downloads.get('state', '')).startswith('paused') and time.time() - last > 2 * 3600:
+        whys.setdefault(downloads['host'], []).append('the downloader is paused')  # then its Chrome login
+    for alias, (t, got) in sorted(signed.items()):
+        if got == 'out':
+            at = time.strftime('%H:%M', time.localtime(t))
+            whys.setdefault(alias, []).append(f'its cookies file is signed out (checked {at})')
+    out = []
+    for alias, why in whys.items():
         a = accounts.get(alias) or {}
         f, d = a.get('file', 'cookies.txt'), a.get('dir', sw.REMOTE)
         link = f' && ln -sf {f} {d}/cookies.txt' if f != 'cookies.txt' else ''
-        return dict(host=host, alias=alias, account=masked(a.get('email')), file=f, why=why,
-                    how=f"scp ~/Downloads/{f} {alias}:{d}/ && ssh {alias} 'chmod 600 {d}/{f}{link}'")
-    out = []
-    for w in workers:
-        if w.get('state') == 'blocked' and w['problems'] and SIGN_IN.search(w['problems'][-1]['text']):
-            # a second worker on a machine shares its cookies
-            out.append(need(w['host'], sw.place(w['host'])[0], 'YouTube asks its worker to sign in'))
-    last = max((r['t'] for r in downloads.get('recent', [])), default=downloads.get('started', time.time()))
-    if str(downloads.get('state', '')).startswith('paused') and time.time() - last > 2 * 3600:
-        out.append(need(downloads['host'], downloads['host'], 'the downloader is paused'))  # then its Chrome login
-    for alias, (t, got) in sorted(signed.items()):
-        if got == 'out' and alias not in {c['alias'] for c in out}:
-            at = time.strftime('%H:%M', time.localtime(t))
-            out.append(need(alias, alias, f'its cookies file is signed out (checked {at})'))
+        out.append(dict(host=alias, alias=alias, account=masked(a.get('email')), file=f, why='; '.join(why),
+                        how=f"scp ~/Downloads/{f} {alias}:{d}/ && ssh {alias} 'chmod 600 {d}/{f}{link}'"))
     return out
 
 
@@ -881,8 +882,8 @@ def _check_cookies():
     assert [x['host'] for x in c] == ['lin5080'] and 'lin5080:crowd-routine/' in c[0]['how'], c
     assert masked('olena.bazilinska@gmail.com') == 'olena.b…@gmail.com'
     signed['lin5080'] = (time.time(), 'out')  # also asked above: once
-    c = cookies_needed([dict(w, host='lin5080b'), dict(w, host='mini', problems=[])], {})
-    assert [x['alias'] for x in c] == ['lin5080'], c
+    c = cookies_needed([dict(w, host='lin5080b'), dict(w, host='lin5080'), dict(w, host='mini', problems=[])], {})
+    assert [x['host'] for x in c] == ['lin5080'] and c[0]['why'].count('asks') == 2 and 'signed out' in c[0]['why'], c
     signed['wsl5090'] = (time.time(), 'out')
     c = cookies_needed([], {})
     assert {x['host'] for x in c} == {'lin5080', 'wsl5090'} and 'signed out' in c[0]['why'], c
