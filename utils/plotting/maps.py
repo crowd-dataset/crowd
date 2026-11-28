@@ -312,7 +312,8 @@ class Maps:
                 hover_data=hover_data,
                 hover_name="hover" if "hover" in df.columns else hover_name,
                 color=df["continent"],
-                color_discrete_map=CONTINENT_COLORS,
+                # a continent without a colour of its own (Antarctica) in grey, as on the other maps
+                color_discrete_map={c: CONTINENT_COLORS.get(c, "#666666") for c in df["continent"].dropna().unique()},
                 zoom=1.3  # pyright: ignore[reportArgumentType]
             )
 
@@ -373,8 +374,17 @@ class Maps:
         fig.update_layout(map_style="carto-positron")
         self._apply_carto_key(fig)
         # the world is 512 * 2 ** 1.3 = 1,260 px wide at zoom 1.3: a wider image shows Japan, Australia and
-        # Alaska twice
-        io_class.save_plotly_figure(fig, file_name, width=1260, save_final=save_final)
+        # Alaska twice. Its height and centre take in the southernmost and northernmost localities: centred on
+        # their mean, 900 px left out McMurdo Station and Scott Base (77.8° S; 2026-11-28)
+        lat = np.radians(np.clip(df["lat"].dropna().to_numpy(dtype=float), -85, 85))
+        y = np.log(np.tan(np.pi / 4 + lat / 2))  # Web Mercator, in units of the world's width / 2π
+        top, bottom = 30, 90  # px beyond the outermost localities; at the bottom clear of the map's credits
+        px_y = 2 * np.pi / 1260  # Mercator units per pixel
+        mid = (y.max() + y.min()) / 2 - (bottom - top) / 2 * px_y
+        fig.update_layout(map_center=dict(lat=float(np.degrees(2 * np.arctan(np.exp(mid)) - np.pi / 2)),
+                                          lon=fig.layout.map.center.lon))
+        height = max(900, int(np.ceil((y.max() - y.min()) / px_y)) + top + bottom)
+        io_class.save_plotly_figure(fig, file_name, width=1260, height=height, save_final=save_final)
 
     # State -> ((lon, lat) inside the state, (lon, lat) of its label off the coast),
     # for states whose label does not fit inside the state
