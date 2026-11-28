@@ -33,7 +33,7 @@
             margin: 0;        /* remove extra margin */
             overflow: hidden; /* prevent text overflow */
         }
-        .hint { color: #666; font-size: 12px; margin-left: 6px; }
+        .hint { color: #666; font-size: 12px; }
         .message {
             color: green;
             margin-top: 20px;
@@ -701,9 +701,8 @@ background:#fff;color:#222;font-size:13px;cursor:pointer}
                 </div>
 
                 <div class="form-group">
-                    <label for="end_time">End time (seconds):</label>
+                    <label for="end_time">End time (seconds):{% if video_length %}<br><span class="hint">video: {{ video_length }} s</span>{% endif %}</label>
                     <input type="number" id="end_time" name="end_time" value="{{ end_time_input }}" required min="1" step="1"{% if video_length %} max="{{ video_length }}"{% endif %}>
-                    {% if video_length %}<span class="hint">video: {{ video_length }} s</span>{% endif %}
                 </div>
 
                 <div class="form-group">
