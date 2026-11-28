@@ -989,6 +989,8 @@ def make_maps(df_mapping: pl.DataFrame, seg: pl.DataFrame) -> None:
     for iso3, lon, lat in df.select("iso3", "lon", "lat").iter_rows():
         owner_points.setdefault(iso3, []).append((lon, lat))
     for continent in df["continent"].drop_nulls().unique().sort():
+        if continent not in maps.CONTINENT_VIEWS:  # Antarctica (2026-11-28): its stations are on the world maps
+            continue
         maps.footage_map(df=df.filter(pl.col("continent") == continent)
                               .group_by(["iso3", "flag_country"])
                               .agg((pl.sum("total_time") / 3600).alias("footage_h"),
