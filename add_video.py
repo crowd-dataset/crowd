@@ -1146,8 +1146,7 @@ def _form():
                     video_global_note = build_video_occurrence_note(video_id)
                 else:
                     failed = str(e)
-            if video_id and (main_note := in_main_mapping(video_id)):
-                video_global_note = (main_note + ' ' + video_global_note).strip()
+            main_note = in_main_mapping(video_id) if video_id else ''
             if failed is not None:
                 return render_template(
                     "add_video.html",
@@ -1225,7 +1224,11 @@ def _form():
                                 time_of_day_video = hit_state['time_of_day_video']
                             break
 
-            if video_global_note:
+            # a video the save will refuse gets that note alone: "Entry for locality found ... You can update data" and
+            # the note on where else it is (the same segments) only contradicted it (user, 2026-11-28)
+            if main_note:
+                message = main_note
+            elif video_global_note:
                 message = (message + " " + video_global_note).strip()
 
         elif 'submit_data' in request.form:
