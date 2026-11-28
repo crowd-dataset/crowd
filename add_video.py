@@ -933,6 +933,12 @@ def new_locality_row(locality, state, country, locality_aka=None, near=None, at=
     return row
 
 
+# a save takes the file's lock only when this form runs on its own (__main__): the review pages' Apply and the hub
+# post to it (propose_segments.apply_segments) while holding that lock already, and waited on themselves for ever
+# (albertvideomaker's Apply, 2026-11-28)
+LOCK_SAVES = False
+
+
 @contextlib.contextmanager
 def mapping_lock(path=FILE_PATH):
     """The lock propose_segments.plan_lock takes on a mapping file (<file>.lock): a save reads, changes and writes the
@@ -948,7 +954,7 @@ def mapping_lock(path=FILE_PATH):
 
 @app.route('/', methods=['GET', 'POST'])
 def form():
-    if request.method == 'POST' and 'submit_data' in request.form:
+    if LOCK_SAVES and request.method == 'POST' and 'submit_data' in request.form:
         with mapping_lock():
             return _form()
     return _form()
@@ -2179,6 +2185,7 @@ def to_float_safe(value):
 
 
 if __name__ == "__main__":
+    LOCK_SAVES = True
     if os.environ.get('ADD_VIDEO_PORT'):  # served (mini's tmux addvideo, behind the tunnel's password): no browser
         app.run(host=os.environ.get('REVIEW_HOST', '127.0.0.1'), port=int(os.environ['ADD_VIDEO_PORT']), debug=False)
         raise SystemExit
